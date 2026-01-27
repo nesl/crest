@@ -1,0 +1,4 @@
+data1/syn/imu6.csv
+data2/syn/imu3.csv
+data3/syn/imu4.csv
+data4/syn/imu4.csv

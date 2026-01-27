@@ -1,0 +1,73 @@
+# Python
+*.egg
+*.egg-info/
+*.py[cod]
+*.so
+*$py.class
+.Python
+__pycache__/
+.eggs/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+.installed.cfg
+MANIFEST
+
+# Jupyter
+.ipynb_checkpoints
+
+# Environments
+.env
+.envrc
+.venv
+ENV/
+env/
+env.bak/
+venv/
+venv.bak/
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+
+# Linters
+.ruff_cache/
+
+# Source caches
+src/__pycache__/
+test/__pycache__/
+
+# Build outputs
+bin/
+models/
+model.*
+
+# Data artifacts
+*.csv
+*.db
+*.gif
+*.pdf
+*.png
+*.tflite
+*.xlsx
+*.zip
+
+# Firmware
+tinyodom_tcn
+
+# Tools
+tools/arduino-data/
+tools/arduino-downloads/
+tools/bin/
+tools/arduino-user/libraries/Adafruit_BusIO/
+tools/arduino-user/libraries/Adafruit_INA228_Library/

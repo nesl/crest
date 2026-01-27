@@ -1,0 +1,6 @@
+board_manager:
+  additional_urls: []
+directories:
+  data: <arduino-data_dir>
+  downloads: <arduino-downloads_dir>
+  user: <arduino_user_dir>

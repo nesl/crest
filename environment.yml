@@ -1,0 +1,31 @@
+name: tinyodomex
+channels:
+  - conda-forge
+dependencies:
+  # Core runtime shared by data_utils_ex.py, hardware_utils_ex.py, notebooks, and tests
+  - python=3.11
+  - numpy
+  - pandas
+  - scikit-learn        # sklearn.metrics + preprocessing in TinyOdomEx_OxIOD.ipynb
+  - matplotlib          # src/data_visualization.ipynb animations/plots
+  - tqdm                # progress bars in src/data_utils_ex.py
+  - ipykernel           # notebook execution
+  - ipywidgets          # interactive widgets in notebooks (optional but lightweight)
+  - pytest              # ensure test runner shares interpreter with installed deps
+  - pyserial==3.5       # serial communication with microcontroller
+  - pip
+  - pip:
+      # TinyML / HPO stack
+      - tensorflow==2.20.0
+      - tensorflow-io-gcs-filesystem==0.37.1
+      - tensorflow-model-optimization==0.8.0
+      - keras-tcn==3.5.6
+      - keras-flops==0.1.2
+      - tf-keras==2.20.1
+      - optuna==4.6.0
+      - addict==2.4.0
+      - pyyaml==6.0.2
+      # Dataset utilities
+      - giotto-tda==0.6.2         # SlidingWindow in src/data_utils_ex.py
+      - numpy-quaternion==2024.0.12
+      - pydometer==2019.2.8

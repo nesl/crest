@@ -1,0 +1,41 @@
+# Hardware / device configuration
+device:
+  name: ARDUINO_NANO_33_BLE_SENSE
+  hil: true
+  serial_port: "/dev/cu.usbmodem21101"
+
+# Dataset sampling and preprocessing parameters
+data:
+  sampling_rate_hz: 100           # Hz, derived from dataset
+  window_size: 200             # matches TinyODOM paper
+  stride: 20                   # matches TinyODOM paper
+  directory: "data/oxiod/"
+  calibration_windows: 10000    # windows to load for calibration-only jobs; set None for full split. Balances speed vs representative sampling
+
+# Training-time switches and limits
+training:
+  nas_epochs: 50
+  model_epochs: 900
+  nas_trials: 135
+  nas_multiobjective_population_size: 45 # population size for multi-objective NAS, note: nas trials should be at least 3x this value
+  nas_multiobjective: true # whether to use multi-objective NAS (accuracy + energy/latency) or single-objective (score combination of accuracy, latency, memory and energy)
+  max_total_trials: 270  # safety cap for total attempts to offset pruned/failed runs
+  quantization: true
+  latency_proxy_max_flops: 30000000.0
+  train: true
+  # Enable energy-aware scoring during NAS
+  energy_aware: false
+
+# Output directories and filenames
+outputs:
+  models_dir: "models"
+  tcn_dir: "tinyodom_tcn"
+  model_name: "TinyOdomEx_OxIOD_ARDUINO_NANO_33_BLE_SENSE_MO.tflite"
+  checkpoint_name: "TinyOdomEx_OxIOD_ARDUINO_NANO_33_BLE_SENSE_MO.keras"
+  log_file_name: "log_NAS_Oxiod_ARDUINO_NANO_33_BLE_SENSE_MO.csv"
+
+network:
+  host: "127.0.0.1"
+  port: 6001
+  recv_timeout_sec: 720
+  send_timeout_sec: 720
