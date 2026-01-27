@@ -50,7 +50,7 @@ test/__pycache__/
 # Build outputs
 bin/
 models/
-model.*
+model
 
 # Data artifacts
 *.csv
