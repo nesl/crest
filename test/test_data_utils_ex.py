@@ -13,7 +13,7 @@ SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-import data_utils_ex
+from tinyodom import data as data_utils_ex
 
 
 class FakeSlidingWindow:
@@ -51,9 +51,9 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
         self.window_size = 4
         self.stride = 2
         self.expected_windows = ((self.num_samples - self.window_size) // self.stride) + 1
-        self.read_csv_patcher = patch('src.data_utils_ex.pd.read_csv', side_effect=self.fake_read_csv)
-        self.sliding_patcher = patch('src.data_utils_ex.SlidingWindow', FakeSlidingWindow)
-        self.tqdm_patcher = patch('src.data_utils_ex.tqdm', _identity_tqdm)
+        self.read_csv_patcher = patch('tinyodom.data.pd.read_csv', side_effect=self.fake_read_csv)
+        self.sliding_patcher = patch('tinyodom.data.SlidingWindow', FakeSlidingWindow)
+        self.tqdm_patcher = patch('tinyodom.data.tqdm', _identity_tqdm)
         self.read_csv_patcher.start()
         self.sliding_patcher.start()
         self.tqdm_patcher.start()

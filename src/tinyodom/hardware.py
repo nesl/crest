@@ -68,7 +68,7 @@ def _xxd_supports_custom_names(xxd_path: Optional[str]) -> bool:
 
 
 # Resolve the Arduino CLI executable once so every subprocess call uses the same path.
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _REPO_ARDUINO_CLI = _PROJECT_ROOT / "tools" / "bin" / "arduino-cli"
 ARDUINO_CLI_BIN = os.environ.get("ARDUINO_CLI_BIN")
 ARDUINO_CLI_CONFIG = str(_PROJECT_ROOT / "tools" / "arduino-cli.yaml")

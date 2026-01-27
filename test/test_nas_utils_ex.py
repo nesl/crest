@@ -14,17 +14,18 @@ tf.get_logger().setLevel("ERROR")
 
 # Ensure `src` is importable when the suite is launched via `python -m unittest`.
 ROOT_DIR = Path(__file__).resolve().parents[1]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
-from src.nas_utils_ex import (
+from tinyodom.model import (
     DROP_RATE_CHOICES,
     collect_metrics,
     count_flops,
     load_config,
     log_trial,
 )  # noqa: E402
-from src.hardware_utils_ex import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
+from tinyodom.hardware import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
 
 try:  # Support both `python -m unittest test.test_*` and direct execution.
     from test.test_hardware_utils_ex import _cli_exists  # type: ignore  # noqa: E402
@@ -79,7 +80,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["chosen_device"], "ARDUINO_NANO_33_BLE_SENSE")
             return (None, 4096, None, 2048, 0, None)
 
-        with patch("src.nas_utils_ex.HIL_controller", fake_controller):
+        with patch("tinyodom.model.HIL_controller", fake_controller):
             metrics = collect_metrics(
                 hil_enabled=False,
                 flops=10_000_000,
@@ -108,7 +109,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["serial_port"], "ttyACM0")
             return (1024, 8192, 25.0, 4096, 0, None)
 
-        with patch("src.nas_utils_ex.HIL_controller", fake_controller):
+        with patch("tinyodom.model.HIL_controller", fake_controller):
             metrics = collect_metrics(
                 hil_enabled=True,
                 flops=5_000_000,
@@ -364,8 +365,8 @@ class LogTrialTests(unittest.TestCase):
             metrics = self._sample_metrics()
             hyperparams = self._sample_hyperparams()
 
-            with patch("src.nas_utils_ex.time.time", return_value=123.0), patch(
-                "src.nas_utils_ex.time.strftime", return_value="01-02-1970 00:02:03"
+            with patch("tinyodom.model.time.time", return_value=123.0), patch(
+                "tinyodom.model.time.strftime", return_value="01-02-1970 00:02:03"
             ):
                 log_trial(
                     score=0.5,

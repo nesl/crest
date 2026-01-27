@@ -16,12 +16,13 @@ from unittest.mock import patch
 
 tf.get_logger().setLevel('ERROR')  # Suppresses INFO and WARNING from TF's Python logger
 
-# Ensure the project root is importable when tests run via `python -m unittest`.
+# Ensure `src` is importable when tests run via `python -m unittest`.
 ROOT_DIR = Path(__file__).resolve().parents[1]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
-from src.hardware_utils_ex import (  # noqa: E402
+from tinyodom.hardware import (  # noqa: E402
     ARDUINO_CLI_BIN,
     ARDUINO_CLI_CONFIG,
     XXD_BIN,
@@ -493,7 +494,7 @@ class SerialHelperTests(unittest.TestCase):
         def factory(*_args, **_kwargs):
             return self._DummySerial(responses)
 
-        with patch("src.hardware_utils_ex.serial.Serial", side_effect=factory):
+        with patch("tinyodom.hardware.serial.Serial", side_effect=factory):
             latency, arena_line, serial_log = _collect_latency_seconds(
                 "COM1", 115200, timeout_s=0.05
             )
@@ -510,7 +511,7 @@ class SerialHelperTests(unittest.TestCase):
         def factory(*_args, **_kwargs):
             return self._DummySerial(responses)
 
-        with patch("src.hardware_utils_ex.serial.Serial", side_effect=factory):
+        with patch("tinyodom.hardware.serial.Serial", side_effect=factory):
             latency, arena_line, serial_log = _collect_latency_seconds(
                 "COM2", 115200, timeout_s=0.01
             )
@@ -521,7 +522,7 @@ class SerialHelperTests(unittest.TestCase):
     def test_collect_latency_invalid_port_raises(self):
         # Serial exceptions should bubble up as RuntimeError so callers can react.
         with patch(
-            "src.hardware_utils_ex.serial.Serial",
+            "tinyodom.hardware.serial.Serial",
             side_effect=serial.SerialException("boom"),
         ):
             with self.assertRaises(RuntimeError):
@@ -534,7 +535,7 @@ class SerialHelperTests(unittest.TestCase):
         def factory(*_args, **_kwargs):
             return self._DummySerial(responses)
 
-        with patch("src.hardware_utils_ex.serial.Serial", side_effect=factory):
+        with patch("tinyodom.hardware.serial.Serial", side_effect=factory):
             latency, arena_line, serial_log = _collect_latency_seconds(
                 "COM4", 115200, timeout_s=0.01
             )
@@ -549,7 +550,7 @@ class SerialHelperTests(unittest.TestCase):
         def factory(*_args, **_kwargs):
             return self._DummySerial(responses)
 
-        with patch("src.hardware_utils_ex.serial.Serial", side_effect=factory):
+        with patch("tinyodom.hardware.serial.Serial", side_effect=factory):
             latency, arena_line, serial_log = _collect_latency_seconds(
                 "COM4", 115200, timeout_s=0.01
             )
@@ -612,7 +613,7 @@ class HILSpecErrorTests(unittest.TestCase):
             compile_result = _FakeCompletedProcess(stdout=COMPILE_SAMPLE_OUTPUT)
             upload_result = _FakeCompletedProcess(returncode=1)
             with patch(
-                "src.hardware_utils_ex.subprocess.run",
+                "tinyodom.hardware.subprocess.run",
                 side_effect=[compile_result, upload_result],
             ) as mock_run:
                 ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -636,11 +637,11 @@ class HILSpecErrorTests(unittest.TestCase):
             compile_result = _FakeCompletedProcess(stdout=COMPILE_SAMPLE_OUTPUT)
             upload_result = _FakeCompletedProcess(stdout="upload ok")
             with patch(
-                "src.hardware_utils_ex.subprocess.run",
+                "tinyodom.hardware.subprocess.run",
                 side_effect=[compile_result, upload_result],
             ):
                 with patch(
-                    "src.hardware_utils_ex._collect_latency_seconds",
+                    "tinyodom.hardware._collect_latency_seconds",
                     return_value=(None, None, ["failed to allocate"]),
                 ):
                     ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -679,7 +680,7 @@ class HILSpecErrorTests(unittest.TestCase):
                 stderr=FLASH_OVERFLOW_STDERR,
             )
             with patch(
-                "src.hardware_utils_ex.subprocess.run",
+                "tinyodom.hardware.subprocess.run",
                 return_value=compile_result,
             ) as mock_run:
                 ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -703,7 +704,7 @@ class HILSpecErrorTests(unittest.TestCase):
                 stderr=RAM_OVERFLOW_STDERR,
             )
             with patch(
-                "src.hardware_utils_ex.subprocess.run",
+                "tinyodom.hardware.subprocess.run",
                 return_value=compile_result,
             ) as mock_run:
                 ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -724,11 +725,11 @@ class HILSpecErrorTests(unittest.TestCase):
             compile_result = _FakeCompletedProcess(stdout=COMPILE_SAMPLE_OUTPUT)
             upload_result = _FakeCompletedProcess(stdout="upload ok")
             with patch(
-                    "src.hardware_utils_ex.subprocess.run",
+                    "tinyodom.hardware.subprocess.run",
                     side_effect=[compile_result, upload_result],
                 ):
                 with patch(
-                    "src.hardware_utils_ex._collect_latency_seconds",
+                    "tinyodom.hardware._collect_latency_seconds",
                     return_value=(None, "size is too small for all buffers", ["size is too small for all buffers"]),
                 ):
                     ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -750,10 +751,10 @@ class HILControllerTests(unittest.TestCase):
         arena_candidates = np.array([10, 20])
         hil_return = (64000, 128000, 0.25, 10 * 1024, HIL_ERROR_OK, None)
         with patch(
-            "src.hardware_utils_ex.arena_size_candidates",
+            "tinyodom.hardware.arena_size_candidates",
             return_value=arena_candidates,
         ), patch(
-            "src.hardware_utils_ex.HIL_spec",
+            "tinyodom.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -779,10 +780,10 @@ class HILControllerTests(unittest.TestCase):
             return (50000, 100000, -1.0, arena, HIL_ERROR_LATENCY, None)
 
         with patch(
-            "src.hardware_utils_ex.arena_size_candidates",
+            "tinyodom.hardware.arena_size_candidates",
             return_value=arena_candidates,
         ), patch(
-            "src.hardware_utils_ex.HIL_spec",
+            "tinyodom.hardware.HIL_spec",
             side_effect=hil_side_effect,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -801,10 +802,10 @@ class HILControllerTests(unittest.TestCase):
         arena_candidates = np.array([10, 20])
         hil_return = (72000, 160000, -1.0, 10 * 1024, HIL_ERROR_COMPILE, None)
         with patch(
-            "src.hardware_utils_ex.arena_size_candidates",
+            "tinyodom.hardware.arena_size_candidates",
             return_value=arena_candidates,
         ), patch(
-            "src.hardware_utils_ex.HIL_spec",
+            "tinyodom.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -823,10 +824,10 @@ class HILControllerTests(unittest.TestCase):
         arena_candidates = np.array([10])
         hil_return = (-1, -1, -1.0, 10 * 1024, HIL_ERROR_FLASH_OVERFLOW, None)
         with patch(
-            "src.hardware_utils_ex.arena_size_candidates",
+            "tinyodom.hardware.arena_size_candidates",
             return_value=arena_candidates,
         ), patch(
-            "src.hardware_utils_ex.HIL_spec",
+            "tinyodom.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -845,10 +846,10 @@ class HILControllerTests(unittest.TestCase):
         arena_candidates = np.array([10])
         hil_return = (64000, 128000, -1.0, 10 * 1024, HIL_ERROR_UPLOAD, None)
         with patch(
-            "src.hardware_utils_ex.arena_size_candidates",
+            "tinyodom.hardware.arena_size_candidates",
             return_value=arena_candidates,
         ), patch(
-            "src.hardware_utils_ex.HIL_spec",
+            "tinyodom.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -878,10 +879,10 @@ class HILControllerTests(unittest.TestCase):
             return (-1, -1, -1.0, arena, HIL_ERROR_UNDER_SIZED, None)
 
         with patch(
-            "src.hardware_utils_ex.arena_size_candidates",
+            "tinyodom.hardware.arena_size_candidates",
             return_value=arena_candidates,
         ), patch(
-            "src.hardware_utils_ex.HIL_spec",
+            "tinyodom.hardware.HIL_spec",
             side_effect=hil_side_effect,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -901,10 +902,10 @@ class HILControllerTests(unittest.TestCase):
         arena_candidates = np.array([10])
         hil_return = (-1, -1, -1.0, 10 * 1024, HIL_ERROR_RAM_OVERFLOW, None)
         with patch(
-            "src.hardware_utils_ex.arena_size_candidates",
+            "tinyodom.hardware.arena_size_candidates",
             return_value=arena_candidates,
         ), patch(
-            "src.hardware_utils_ex.HIL_spec",
+            "tinyodom.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -932,10 +933,10 @@ class HILControllerTests(unittest.TestCase):
             return (-1, -1, -1.0, arena, HIL_ERROR_RAM_OVERFLOW, None)
 
         with patch(
-            "src.hardware_utils_ex.arena_size_candidates",
+            "tinyodom.hardware.arena_size_candidates",
             return_value=arena_candidates,
         ), patch(
-            "src.hardware_utils_ex.HIL_spec",
+            "tinyodom.hardware.HIL_spec",
             side_effect=hil_side_effect,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -971,10 +972,10 @@ class HILControllerTests(unittest.TestCase):
             return (-1, -1, -1.0, arena, HIL_ERROR_UNDER_SIZED, None)
 
         with patch(
-            "src.hardware_utils_ex.arena_size_candidates",
+            "tinyodom.hardware.arena_size_candidates",
             return_value=arena_candidates,
         ), patch(
-            "src.hardware_utils_ex.HIL_spec",
+            "tinyodom.hardware.HIL_spec",
             side_effect=hil_side_effect,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -1017,7 +1018,7 @@ class IntegrationTests(TinyModelMixin, unittest.TestCase):
             )
 
             compile_result = _FakeCompletedProcess(stdout=COMPILE_SAMPLE_OUTPUT)
-            with patch("src.hardware_utils_ex.subprocess.run", return_value=compile_result) as mock_run:
+            with patch("tinyodom.hardware.subprocess.run", return_value=compile_result) as mock_run:
                     ram, flash, latency, arena_bytes, err, _power = HIL_spec(
                     dirpath=sketch_dir,
                     chosen_device="ARDUINO_NANO_33_BLE_SENSE",

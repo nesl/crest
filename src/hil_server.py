@@ -1,8 +1,5 @@
-import importlib
 import logging
-import os
 import shutil
-import sys
 from pathlib import Path
 
 import absl.logging
@@ -19,18 +16,13 @@ from tensorflow.keras import optimizers
 # from tensorflow.keras.layers import Dense, Flatten, MaxPooling1D, Reshape
 # from tensorflow.keras.models import load_model
 
-sys.path.insert(0, os.path.abspath("src"))
-import hardware_utils_ex
-from data_utils_ex import import_oxiod_dataset
-
-importlib.reload(hardware_utils_ex)
-
-from hardware_utils_ex import (
+from tinyodom.data import import_oxiod_dataset
+from tinyodom.hardware import (
     convert_to_cpp_model,
     convert_to_tflite_model,
     HIL_MASTER_DEVICE_NOT_FOUND,
 )
-from nas_utils_ex import (
+from tinyodom.model import (
     DEFAULT_CONFIG_PATH,
     build_tinyodom_model,
     collect_metrics,

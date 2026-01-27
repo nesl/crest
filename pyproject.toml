@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tinyodom"
+version = "0.1.0"
+description = "Hardware-Aware NAS for Inertial Odometry"
+dependencies = [
+    "tensorflow",
+    "numpy",
+    "optuna",
+    "pyserial",
+    "pyzmq",
+    "addict",
+    "pyyaml",
+    "keras-tcn",
+    "scikit-learn",
+    "pandas"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

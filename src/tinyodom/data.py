@@ -20,7 +20,7 @@ from pydometer import Pedometer
 # from geographiclib.geodesic import Geodesic
 from tqdm import tqdm
 
-import geometry_helpers
+from . import geometry
 
 
 @dataclass
@@ -447,7 +447,7 @@ def random_rotate(input,useMagnetometer=True):
         input_rot = input[i,:,3:6]
         if(useMagnetometer):
             input_mag = input[i,:,6:9]  
-        Rot = geometry_helpers.euler2mat(euler[0],euler[1],euler[2])
+        Rot = geometry.euler2mat(euler[0], euler[1], euler[2])
         output_acc = np.dot(Rot, input_acc.T).T
         output_rot = np.dot(Rot, input_rot.T).T
         if(useMagnetometer):
