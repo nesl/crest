@@ -5,8 +5,12 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PROJECT_ROOT
 echo "Project root: $PROJECT_ROOT"
-BIN_DIR="$PROJECT_ROOT/tools/bin"
-CONFIG_FILE="$PROJECT_ROOT/tools/arduino-cli.yaml"
+TOOLS_DIR="$PROJECT_ROOT/tools"
+BIN_DIR="$TOOLS_DIR/bin"
+CONFIG_FILE="$TOOLS_DIR/arduino-cli.yaml"
+ARDUINO_DATA_DIR="$TOOLS_DIR/arduino-data"
+ARDUINO_DOWNLOADS_DIR="$TOOLS_DIR/arduino-downloads"
+ARDUINO_USER_DIR="$TOOLS_DIR/arduino-user"
 LIB_SUBMODULE="$PROJECT_ROOT/tools/arduino-user/libraries/Arduino_TensorFlowLite"
 
 mkdir -p "$BIN_DIR"
@@ -25,31 +29,17 @@ echo "Downloading Arduino CLI into $BIN_DIR ..."
 curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh \
   | BINDIR="$BIN_DIR" sh
 
-mkdir -p "$PROJECT_ROOT/tools"
+mkdir -p "$TOOLS_DIR" "$ARDUINO_DATA_DIR" "$ARDUINO_DOWNLOADS_DIR" "$ARDUINO_USER_DIR"
 
-echo "Initializing Arduino CLI config at $CONFIG_FILE ..."
-"$BIN_DIR/arduino-cli" config init --config-file "$CONFIG_FILE" --overwrite
-
-python - <<'PY'
-import os
-import pathlib
-import yaml
-
-project_root = pathlib.Path(os.environ["PROJECT_ROOT"])
-cfg_path = project_root / "tools" / "arduino-cli.yaml"
-tools_dir = project_root / "tools"
-cfg = {}
-if cfg_path.exists():
-    cfg = yaml.safe_load(cfg_path.read_text()) or {}
-
-cfg["directories"] = {
-    "data": str(tools_dir / "arduino-data"),
-    "downloads": str(tools_dir / "arduino-downloads"),
-    "user": str(tools_dir / "arduino-user"),
-}
-
-cfg_path.write_text(yaml.safe_dump(cfg))
-PY
+echo "Writing Arduino CLI config at $CONFIG_FILE ..."
+cat >"$CONFIG_FILE" <<EOF
+board_manager:
+  additional_urls: []
+directories:
+  data: "$ARDUINO_DATA_DIR"
+  downloads: "$ARDUINO_DOWNLOADS_DIR"
+  user: "$ARDUINO_USER_DIR"
+EOF
 
 echo "Updating core index and installing arduino:mbed_nano ..."
 "$BIN_DIR/arduino-cli" core update-index --config-file "$CONFIG_FILE"
