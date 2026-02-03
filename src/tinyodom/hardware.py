@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
-from typing import Iterable, Sequence, Tuple, Union, Optional, Literal, List, Dict
+from typing import Iterable, Sequence, Tuple, Union, Optional, Dict
 
 import numpy as np
 import tensorflow as tf
@@ -17,12 +16,27 @@ tf.autograph.set_verbosity(0)
 logger = logging.getLogger(__name__)
 
 import subprocess
-import re
 import time
 import tempfile
 
-import serial  
-
+from .devices import ArduinoDevice, DeviceInterface, DEVICE_SPECS  # legacy catalog moved to devices.py (Phase 1 bridge)
+from .errors import (
+    HIL_ERROR_OK,
+    HIL_ERROR_COMPILE,
+    HIL_ERROR_LATENCY,
+    HIL_ERROR_UNDER_SIZED,
+    HIL_ERROR_FLASH_OVERFLOW,
+    HIL_ERROR_RAM_OVERFLOW,
+    HIL_ERROR_UPLOAD,
+    HIL_MASTER_PENDING,
+    HIL_MASTER_SUCCESS,
+    HIL_MASTER_ARENA_EXHAUSTED,
+    HIL_MASTER_FATAL,
+    HIL_MASTER_FLASH_OVERFLOW,
+    HIL_MASTER_RAM_OVERFLOW,
+    HIL_MASTER_DEVICE_NOT_FOUND,
+)
+from .microcontrollers.arduino_base import normalize_power_metrics
 
 def _probe_xxd() -> Optional[str]:
     """Return the resolved xxd path when available."""
@@ -67,79 +81,11 @@ def _xxd_supports_custom_names(xxd_path: Optional[str]) -> bool:
     return True
 
 
-# Resolve the Arduino CLI executable once so every subprocess call uses the same path.
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_REPO_ARDUINO_CLI = _PROJECT_ROOT / "tools" / "bin" / "arduino-cli"
-ARDUINO_CLI_BIN = os.environ.get("ARDUINO_CLI_BIN")
-ARDUINO_CLI_CONFIG = str(_PROJECT_ROOT / "tools" / "arduino-cli.yaml")
-if not ARDUINO_CLI_BIN:
-    if _REPO_ARDUINO_CLI.exists():
-        ARDUINO_CLI_BIN = str(_REPO_ARDUINO_CLI)
-    else:
-        # Fallback to PATH lookup so developer installations still work.
-        ARDUINO_CLI_BIN = shutil.which("arduino-cli") or "arduino-cli"
-print(f"Using Arduino CLI at: {ARDUINO_CLI_BIN}")
-
-
 XXD_BIN = _probe_xxd()
 if XXD_BIN and not _xxd_supports_custom_names(XXD_BIN):
     XXD_BIN = None
 if not XXD_BIN:
     print("xxd not found on PATH or doesn't support names; convert_to_cpp_model will use Python fallback.")
-
-# -----------------------------------------------------------------------------
-# Device catalog
-# -----------------------------------------------------------------------------
-"""
-Add your target hardware device properties here.
-Ex: Arduino Nano 33 BLE Sense added to device_list.
-    SRAM: 256 KB -> usable maxRAM ≈ 200000 B (~78%) after RTOS/BLE overhead.
-    Flash: 1 MB -> usable maxFlash ≈ 800000 B (leaves room for firmware + TFLM).
-    Arena: preallocated memory buffer for TensorFlow Lite Micro tensors;
-           defines candidate model sizes (here up to ~200 KB for 256 KB SRAM).
-"""
-DEVICE_SPECS = {
-    "NUCLEO_F746ZG": {
-        "arena_sizes": np.array([10, 30, 50, 75, 100, 150, 175, 200, 250, 280, 280]),
-        "max_ram": 300_000, # notation for ease of reading, when accessed will be 300000
-        "max_flash": 800_000,
-        "fqbn": None,  # Mbed CLI workflow in the original project
-    },
-    "NUCLEO_L476RG": {
-        "arena_sizes": np.array([10, 25, 40, 70, 85, 100, 100]),
-        "max_ram": 100_000,
-        "max_flash": 800_000,
-        "fqbn": None,
-    },
-    "NUCLEO_F446RE": {
-        "arena_sizes": np.array([10, 25, 40, 70, 85, 100, 100]),
-        "max_ram": 100_000,
-        "max_flash": 400_000,
-        "fqbn": None,
-    },
-    "ARCH_MAX": {
-        "arena_sizes": np.array([10, 25, 40, 70, 95, 120, 140, 160, 170, 170]),
-        "max_ram": 180_000,
-        "max_flash": 400_000,
-        "fqbn": None,
-    },
-    # Arduino Nano 33 BLE Sense: nRF52840 microcontroller (Arm Cortex-M4, 64 MHz),
-    # 256 KB SRAM, 1 MB flash. Tuned for TinyODOM with BLE support.
-    "ARDUINO_NANO_33_BLE_SENSE": {
-        "arena_sizes": np.array([10, 25, 40, 70, 95, 120, 140, 160, 180, 200, 210]),
-        "max_ram": 215_000,  # Leave headroom for the RTOS/BLE stack.
-        "max_flash": 800_000,
-        "fqbn": "arduino:mbed_nano:nano33ble", # "fully qualified board name" how arduino specifies boards
-    },
-    # Arduino Nano RP2040 Connect: RP2040 microcontroller (dual-core Arm Cortex-M0+, 133 MHz),
-    # 264 KB SRAM, 16 MB external flash. Great for ML with more RAM than Nano 33 BLE Sense.
-    "ARDUINO_NANO_RP2040_CONNECT": {
-    "arena_sizes": np.array([10, 25, 40, 70, 95, 120, 140, 150, 160, 180, 200, 210, 220]),
-    "max_ram": 225_000,  # ~85% of 264 KB, leaving headroom for dual-core/Wi-Fi/BLE stack.
-    "max_flash": 15_000_000,  # ~94% of 16 MB, plenty for large ML models.
-    "fqbn": "arduino:mbed_nano:nano_rp2040_connect",
-    },
-}
 
 # -----------------------------------------------------------------------------
 # Conversion helpers
@@ -517,22 +463,6 @@ def arena_size_candidates(device_name: str) -> np.ndarray:
 # -----------------------------------------------------------------------------
 # Hardware-in-the-loop preparation
 # -----------------------------------------------------------------------------
-HIL_ERROR_OK = 0
-HIL_ERROR_COMPILE = 1            # Compile failure
-HIL_ERROR_LATENCY = 2            # Latency capture timed out (try larger arena)
-HIL_ERROR_UNDER_SIZED = 3        # Runtime reported insufficient tensor arena
-HIL_ERROR_FLASH_OVERFLOW = 4     # Sketch exceeds MCU flash limits
-HIL_ERROR_RAM_OVERFLOW = 5       # Linker reports RAM overflow; retry with smaller arena
-HIL_ERROR_UPLOAD = 6             # Upload/port failure (board missing or busy)
-
-HIL_MASTER_PENDING = 0
-HIL_MASTER_SUCCESS = 1
-HIL_MASTER_ARENA_EXHAUSTED = 2
-HIL_MASTER_FATAL = 3
-HIL_MASTER_FLASH_OVERFLOW = 4
-HIL_MASTER_RAM_OVERFLOW = 5
-HIL_MASTER_DEVICE_NOT_FOUND = 6
-
 _HIL_ERROR_LABELS = {
     HIL_ERROR_OK: "HIL_ERROR_OK",
     HIL_ERROR_COMPILE: "HIL_ERROR_COMPILE",
@@ -566,31 +496,8 @@ def describe_error_code(code: int, *, prefer_master: bool = True) -> str:
             return table[code]
     return f"UNKNOWN_ERROR_{code}"
 
-FLASH_USAGE_RE = re.compile(
-    r"Sketch uses (\d+) bytes.*?Maximum is (\d+)", re.IGNORECASE | re.DOTALL
-)
-RAM_USAGE_RE = re.compile(
-    r"Global variables use (\d+) bytes.*?Maximum is (\d+)", re.IGNORECASE | re.DOTALL
-)
-FLASH_OVERFLOW_PATTERNS = [
-    re.compile(r"section [`']?\.text[`']?\s+will not fit in region [`']?flash[`']?", re.IGNORECASE),
-    re.compile(r"region [`']?flash[`']?\s+overflowed", re.IGNORECASE),
-]
-RAM_OVERFLOW_PATTERNS = [
-    re.compile(r"region [`']?ram[`']?\s+overflowed", re.IGNORECASE),
-    re.compile(r"region [`']?sram[`']?\s+overflowed", re.IGNORECASE),
-    re.compile(r"cannot move location counter backwards", re.IGNORECASE),
-]
-ARENA_TOO_SMALL_PATTERNS = [
-    re.compile(r"size is too small for all buffers", re.IGNORECASE),
-    re.compile(r"failed\s+to\s+allocate", re.IGNORECASE),
-    re.compile(r"buffer\s+missing", re.IGNORECASE),
-    # re.compile(r"fault", re.IGNORECASE),  # TODO: Uncomment if "Fault" lines are indicative of arena size issues. TBD
-]
-MISSING_BYTES_RE = re.compile(r"missing:\s*(\d+)", re.IGNORECASE)
-REQUESTED_BYTES_RE = re.compile(r"requested:\s*(\d+)", re.IGNORECASE)
-RETRY_BACKOFF_SECONDS = 1.0
 
+RETRY_BACKOFF_SECONDS = 1.0
 _retry_hint_bytes: Optional[int] = None
 
 
@@ -607,295 +514,6 @@ def _pop_retry_hint_bytes() -> Optional[int]:
     _retry_hint_bytes = None
     return value
 
-
-def _compute_retry_hint_bytes(
-    current_arena_bytes: int, arena_error_line: Optional[str]
-) -> Optional[int]:
-    """
-    Derive a suggested arena size (bytes) from the device log when available.
-
-    The firmware emits lines like:
-    "Failed to resize buffer. Requested: 167360, available 113848, missing: 53512"
-    We use the "missing" field (preferred) or "requested" to jump to a
-    sufficiently large candidate on the next attempt.
-    """
-    if not arena_error_line:
-        return None
-    missing_match = MISSING_BYTES_RE.search(arena_error_line)
-    requested_match = REQUESTED_BYTES_RE.search(arena_error_line)
-    target_bytes: Optional[int] = None
-
-    if missing_match:
-        missing = int(missing_match.group(1))
-        if missing > 0:
-            target_bytes = current_arena_bytes + missing
-    elif requested_match:
-        requested = int(requested_match.group(1))
-        if requested > current_arena_bytes:
-            target_bytes = requested
-
-    if target_bytes is None or target_bytes <= current_arena_bytes:
-        return None
-
-    # Add a small cushion to avoid oscillating on an exact boundary.
-    return target_bytes + 2048
-
-
-def _classify_compile_failure(log_text: str) -> Optional[Literal["flash", "ram"]]:
-    """
-    Determine whether the Arduino CLI output indicates a flash or RAM overflow.
-
-    Parameters
-    ----------
-    log_text : str
-        Concatenated stdout/stderr from `arduino-cli compile`.
-
-    Returns
-    -------
-    Optional[Literal["flash", "ram"]]
-        "flash" when program storage overflowed, "ram" for RAM overflow, otherwise None.
-    """
-    normalized = log_text.lower()
-    for pattern in FLASH_OVERFLOW_PATTERNS:
-        if pattern.search(normalized):
-            return "flash"
-    for pattern in RAM_OVERFLOW_PATTERNS:
-        if pattern.search(normalized):
-            return "ram"
-    return None
-
-
-def _replace_define(text: str, name: str, value: str) -> str:
-    """
-    Replace a single `#define` directive within the sketch source.
-
-    Parameters
-    ----------
-    text : str
-        Sketch contents to mutate.
-    name : str
-        Macro symbol to replace.
-    value : str
-        Replacement literal inserted after the symbol.
-
-    Returns
-    -------
-    str
-        Updated sketch text with the new macro definition.
-    """
-    pattern = re.compile(rf"(#define\s+{re.escape(name)}\s+)([^\n]+)")
-    if not pattern.search(text):
-        raise ValueError(f"Unable to locate definition for {name}.")
-    # Use a callable replacement to avoid octal escape confusion when the new value is numeric.
-    return pattern.sub(lambda match: f"{match.group(1)}{value}", text, count=1)
-
-
-def _patch_sketch_constants(
-    sketch_path: Path, arena_kb: int, window_size: int, num_channels: int
-) -> None:
-    """
-    Rewrite TinyODOM deployment constants inside the Arduino sketch.
-
-    Parameters
-    ----------
-    sketch_path : pathlib.Path
-        Directory containing the target `.ino` file.
-    arena_kb : int
-        Tensor arena size expressed in KiB.
-    window_size : int
-        Sliding window length used by the model.
-    num_channels : int
-        Number of sensor channels captured per window.
-
-    Returns
-    -------
-    None
-    """
-    ino_files = sorted(sketch_path.glob('*.ino'))
-    if not ino_files:
-        raise FileNotFoundError(f"No .ino file found in {sketch_path}")
-    ino_path = ino_files[0]
-    text = ino_path.read_text()
-    text = _replace_define(text, 'TINYODOM_WINDOW_SIZE', str(window_size))
-    text = _replace_define(text, 'TINYODOM_NUM_CHANNELS', str(num_channels))
-    text = _replace_define(text, 'TINYODOM_TENSOR_ARENA_BYTES', f'({arena_kb} * 1024)')
-    ino_path.write_text(text)
-
-
-def _parse_memory_from_compile(output: str) -> Tuple[Optional[int], Optional[int]]:
-    """
-    Extract flash and RAM usage from Arduino CLI compile output.
-
-    Parameters
-    ----------
-    output : str
-        stdout emitted by `arduino-cli compile`.
-
-    Returns
-    -------
-    Tuple[Optional[int], Optional[int]]
-        Flash bytes and RAM bytes when parseable, otherwise None placeholders.
-    """
-    # print("compile output:", output)  # Debug print
-    flash_match = FLASH_USAGE_RE.search(output)
-    ram_match = RAM_USAGE_RE.search(output)
-    flash_bytes = int(flash_match.group(1)) if flash_match else None
-    
-    ram_bytes = int(ram_match.group(1)) if ram_match else None
-    return flash_bytes, ram_bytes
-
-# regex patterns for parsing power metrics from serial log.
-_FLOAT_CAPTURE = r"(?P<value>[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)"
-POWER_FIELD_SPECS: Dict[str, Tuple[str, re.Pattern[str]]] = {
-    "sequence": (
-        "int",
-        re.compile(r"^inference seq:\s*(?P<value>\d+)$", re.IGNORECASE),
-    ),
-    # This is the important one for energy measurements.
-    "energy_mj_per_inference": (
-        "float",
-        re.compile(rf"^energy output.*?:\s*{_FLOAT_CAPTURE}$", re.IGNORECASE),
-    ),
-    "avg_power_mw": (
-        "float",
-        re.compile(rf"^avg power output.*?:\s*{_FLOAT_CAPTURE}$", re.IGNORECASE),
-    ),
-    "avg_current_ma": (
-        "float",
-        re.compile(rf"^avg current output.*?:\s*{_FLOAT_CAPTURE}$", re.IGNORECASE),
-    ),
-    "bus_voltage_v": (
-        "float",
-        re.compile(rf"^bus voltage output.*?:\s*{_FLOAT_CAPTURE}$", re.IGNORECASE),
-    ),
-    "idle_power_mw": (
-        "float",
-        re.compile(rf"^idle power baseline.*?:\s*{_FLOAT_CAPTURE}$", re.IGNORECASE),
-    ),
-}
-
-POWER_METRIC_DEFAULTS: Dict[str, float] = {
-    "sequence": -1.0,
-    "energy_mj_per_inference": -1.0,
-    "avg_power_mw": -1.0,
-    "avg_current_ma": -1.0,
-    "bus_voltage_v": -1.0,
-    "idle_power_mw": -1.0,
-}
-
-
-def _parse_power_metrics(lines: Sequence[str]) -> Optional[Dict[str, Optional[float]]]:
-    """
-    Extract structured telemetry from the firmware serial log.
-
-    Parses power-related metrics from a sequence of serial log lines using
-    predefined regular expression patterns. Each metric is extracted only once
-    from the first matching line; subsequent matches for the same metric are
-    ignored (first match wins).
-
-    Parameters
-    ----------
-    lines : Sequence[str]
-        A sequence of strings representing the serial log lines from the firmware.
-
-    Returns
-    -------
-    Optional[Dict[str, Optional[float]]]
-        A dictionary containing the parsed power metrics if any were found,
-        otherwise None. The keys correspond to metric names (e.g., 'energy_mj_per_inference',
-        'avg_power_mw'), and values are floats or None if parsing failed.
-        Possible keys include: 'sequence', 'energy_mj_per_inference', 'avg_power_mw',
-        'avg_current_ma', 'bus_voltage_v', 'idle_power_mw'.
-    """
-    candidates: Dict[str, Optional[float]] = {key: None for key in POWER_FIELD_SPECS}
-    matched = False
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line:
-            continue
-        for key, (dtype, pattern) in POWER_FIELD_SPECS.items():
-            if candidates[key] is not None:
-                continue
-            match = pattern.match(line)
-            if not match:
-                continue
-            value = match.group("value")
-            try:
-                if dtype == "int":
-                    candidates[key] = float(int(value))
-                else:
-                    candidates[key] = float(value)
-                matched = True
-            except (TypeError, ValueError):
-                candidates[key] = None
-    return candidates if matched else None
-
-
-def normalize_power_metrics(power_metrics: Optional[Dict[str, Optional[float]]]) -> Dict[str, float]:
-    """Return power metrics with defaults so downstream code can rely on keys."""
-
-    normalized = POWER_METRIC_DEFAULTS.copy()
-    if not power_metrics:
-        return normalized
-    for key, value in power_metrics.items():
-        if key not in normalized or value is None:
-            continue
-        normalized[key] = value
-    return normalized
-
-
-def _collect_latency_seconds(
-    port: str, baud: int, timeout_s: float
-) -> Tuple[Optional[float], Optional[str], List[str]]:
-    """
-    Read the first `timer output:` line produced by the firmware.
-
-    Parameters
-    ----------
-    port : str
-        Serial port identifier.
-    baud : int
-        Serial baud rate.
-    timeout_s : float
-        Maximum time in seconds to wait for output.
-
-    Returns
-    -------
-    Tuple[Optional[float], Optional[str], List[str]]
-        Latency value in seconds (when available), the first arena error
-        message detected while reading the serial log, and the decoded serial
-        lines that were observed during the read window (for debugging).
-    """
-    decoded_lines: List[str] = []
-    try:
-        with serial.Serial(port, baudrate=baud, timeout=1.0) as ser:  # type: ignore[arg-type]
-            start_time = time.time()
-            while time.time() - start_time < timeout_s:
-                raw = ser.readline()
-                if not raw:
-                    continue
-                try:
-                    line = raw.decode('utf-8', errors='ignore').strip()
-                except UnicodeDecodeError:
-                    continue
-                if not line:
-                    continue
-                decoded_lines.append(line)
-    except serial.SerialException as exc:  # type: ignore[attr-defined]
-        raise RuntimeError(f'Failed to read serial port {port}: {exc}') from exc
-    for line in decoded_lines:
-        lower_line = line.lower()
-        if lower_line.startswith('timer output:'):
-            _, _, value = line.partition(':')
-            try:
-                return float(value.strip()), None, decoded_lines
-            except ValueError:
-                return None, None, decoded_lines
-        if any(pattern.search(lower_line) for pattern in ARENA_TOO_SMALL_PATTERNS):
-            return None, line, decoded_lines
-    return None, None, decoded_lines
-
-
 def HIL_spec(
     dirpath: Union[str, Path] = 'tinyodom_tcn/',
     chosen_device: str = 'ARDUINO_NANO_33_BLE_SENSE',
@@ -907,9 +525,10 @@ def HIL_spec(
     baud_rate: int = 115200, # potentially highest baud rate for BLE 33
     serial_timeout_s: float = 12.0,
     compile_only: bool = False,
+    device: Optional[DeviceInterface] = None,
 ) -> Tuple[int, int, float, int, int, Optional[Dict[str, Optional[float]]]]:
     """
-    Compile, deploy, and optionally profile TinyODOM on Arduino-class hardware.
+    Compile, deploy, and optionally profile TinyODOM on the target hardware.
     When ``compile_only`` is True the function stops after compilation so the
     caller can reuse the RAM/flash measurements without requiring a physical
     board. This keeps the objective function agnostic to whether HIL is
@@ -918,7 +537,7 @@ def HIL_spec(
     Parameters
     ----------
     dirpath : Union[str, Path], optional
-        Arduino sketch directory containing the TinyODOM sources.
+        Firmware project directory containing the TinyODOM sources.
     chosen_device : str, optional
         Hardware identifier that maps into DEVICE_SPECS.
     arenaSizes : Sequence[int], optional
@@ -937,6 +556,8 @@ def HIL_spec(
         Seconds to wait for the `timer output:` line.
     compile_only : bool, optional
         Skip upload/latency capture and return compile metrics only.
+    device : DeviceInterface | None, optional
+        Optional device implementation to use for compile/upload/measure.
 
     Returns
     -------
@@ -945,16 +566,20 @@ def HIL_spec(
         optional power telemetry parsed from the serial log).
     """
     _store_retry_hint_bytes(None)  # clear any stale hint from a previous call
+    if device is not None:
+        chosen_device = device.spec.name
     if chosen_device not in DEVICE_SPECS:
         raise ValueError(
             f"Unsupported device '{chosen_device}'. Supported devices: {list(DEVICE_SPECS)}"
         )
 
     spec = DEVICE_SPECS[chosen_device]
-    if spec['fqbn'] is None:
-        raise RuntimeError(
-            f"No Arduino FQBN defined for {chosen_device}. Use the legacy Mbed workflow."
-        )
+    if device is None:
+        if spec['fqbn'] is None:
+            raise RuntimeError(
+                f"No Arduino FQBN defined for {chosen_device}. Use the legacy Mbed workflow."
+            )
+        device = ArduinoDevice(chosen_device, serial_port=serial_port)
 
     # Resolve the sketch path up-front so all subsequent operations use absolute paths.
     sketch_path = Path(dirpath).resolve()
@@ -968,155 +593,29 @@ def HIL_spec(
     if idx < 0 or idx >= len(arena_sweep_list):
         raise IndexError(f"arenaSizes index {idx} out of range for device {chosen_device}.")
     arena_kb = int(arena_sweep_list[idx])
-    arena_bytes = arena_kb * 1024
 
-    _patch_sketch_constants(sketch_path, arena_kb, window_size, number_of_channels)
-    power_metrics: Optional[Dict[str, Optional[float]]] = None
-
-    # Compile the sketch; Arduino CLI mirrors `mbed compile` but for Arduino cores.
-    # Cache Arduino build artifacts inside the sketch folder so repeated compiles
-    # can reuse previously compiled objects instead of starting from scratch.
-    # This build directory is not cleaned up automatically to allow for faster
-    # iterative development; users can delete it manually if desired. It is git-
-    # ignored by default.
-    build_cache_root = sketch_path / ".arduino-build"
-    build_dir = build_cache_root / spec["fqbn"].replace(":", "_")
-    build_dir.mkdir(parents=True, exist_ok=True)
-    compile_cmd = [
-        ARDUINO_CLI_BIN,
-        '--config-file',
-        ARDUINO_CLI_CONFIG,
-        'compile',
-        '--fqbn',
-        spec['fqbn'],
-        '--build-path',
-        str(build_dir),
-        str(sketch_path),
-    ]
-    compile_proc = subprocess.run(
-        compile_cmd, capture_output=True, text=True, check=False
+    metrics = device.evaluate(
+        dirpath=sketch_path,
+        arena_kb=arena_kb,
+        window_size=window_size,
+        num_channels=number_of_channels,
+        serial_port=serial_port,
+        run_hil=not compile_only,
+        baud_rate=baud_rate,
+        serial_timeout_s=serial_timeout_s,
     )
-    compile_log = f"{compile_proc.stdout}\n{compile_proc.stderr}"
-    flash_bytes, ram_bytes = _parse_memory_from_compile(compile_log)
-    overflow_kind = _classify_compile_failure(compile_log)
-    
-    # Even if we don't go far enough to overflow the compile step, if the ram size is larger than the max, we should flag it as an overflow. 
-    if ram_bytes is not None and ram_bytes > spec["max_ram"]:
-        overflow_kind = "ram"
-    
-    # If we overflowed during compilation, return early with the appropriate error code.
-    if overflow_kind is not None:
-        error_code = (
-            HIL_ERROR_FLASH_OVERFLOW
-            if overflow_kind == "flash"
-            else HIL_ERROR_RAM_OVERFLOW
-        )
-        return (
-            ram_bytes if ram_bytes is not None else -1,
-            flash_bytes if flash_bytes is not None else -1,
-            -1.0,
-            arena_bytes,
-            error_code,
-            power_metrics,
-        )
-    
-    if compile_proc.returncode != 0: # compilation failure
-        print(f"Compilation failed: {compile_proc.stderr}")
-        return (
-            ram_bytes if ram_bytes is not None else -1,
-            flash_bytes if flash_bytes is not None else -1,
-            -1.0,
-            arena_bytes,
-            HIL_ERROR_COMPILE,
-            power_metrics,
-        )
-
+    _store_retry_hint_bytes(metrics.retry_hint_bytes)
     logger.info(
-        "Compile succeeded: RAM=%s bytes, Flash=%s bytes, Arena=%s bytes",
-        ram_bytes if ram_bytes is not None else "unknown",
-        flash_bytes if flash_bytes is not None else "unknown",
-        arena_bytes)
-
-    if compile_only:
-        # Compile-only mode surfaces RAM/flash/arena values without flashing hardware.
-        return (
-            ram_bytes if ram_bytes is not None else -1,
-            flash_bytes if flash_bytes is not None else -1,
-            -1.0,
-            arena_bytes,
-            HIL_ERROR_OK,
-            power_metrics,
-        )
-
-    if serial_port is None:
-        raise ValueError('serial_port must be provided when compile_only is False.')
-
-    # Upload the sketch so the board can execute one inference and emit latency.
-    # Construct the command to upload the compiled Arduino sketch to the board.
-    # - ARDUINO_CLI_BIN: Path to the Arduino CLI executable (env override or repo-local binary).
-    # - 'upload': Subcommand to flash the sketch to the connected board.
-    # - '-p': Flag specifying the serial port (e.g., '/dev/ttyACM0') where the board is connected.
-    # - serial_port: Variable holding the port string, determined earlier (e.g., from board detection).
-    # - '--fqbn': Flag for the Fully Qualified Board Name, which identifies the board type and core (e.g., 'arduino:mbed:nano33blesense').
-    # - spec['fqbn']: Retrieves the FQBN from the device specification dictionary for the chosen board.
-    # - str(sketch_path): Path to the sketch directory containing the compiled binary to upload.
-    upload_cmd = [
-        ARDUINO_CLI_BIN,
-        '--config-file',
-        ARDUINO_CLI_CONFIG,
-        'upload',
-        '-p',
-        serial_port,
-        '--fqbn',
-        spec['fqbn'],
-        '--build-path',
-        str(build_dir),
-        str(sketch_path),
-    ]
-    upload_proc = subprocess.run(upload_cmd, capture_output=True, text=True, check=False)
-    if upload_proc.returncode != 0: # upload failure
-        logger.warning("Upload failed: %s", upload_proc.stderr)
-        return (
-            ram_bytes if ram_bytes is not None else -1,
-            flash_bytes if flash_bytes is not None else -1,
-            -1.0,
-            arena_bytes,
-            HIL_ERROR_UPLOAD,
-            power_metrics,
-        )
-
-    # Capture the first `timer output:` line, which matches the legacy parser expectations.
-    latency_s, arena_error_line, serial_log = _collect_latency_seconds(
-        serial_port, baud_rate, serial_timeout_s
+        "Latency capture result: latency_s=%s",
+        metrics.latency_s if metrics.latency_s >= 0 else "None",
     )
-    logger.info(
-        "Latency capture result: latency_s=%s, arena_error_line=%s",
-        latency_s if latency_s is not None else "None",
-        arena_error_line if arena_error_line is not None else "None",)
-    power_metrics = _parse_power_metrics(serial_log)
-    
-    if latency_s is None:
-        if serial_log:
-            logger.warning("Serial capture (%d lines): %s", len(serial_log), serial_log)
-        hint_bytes = _compute_retry_hint_bytes(arena_bytes, arena_error_line)
-        _store_retry_hint_bytes(hint_bytes)
-        err_flag = HIL_ERROR_UNDER_SIZED if arena_error_line else HIL_ERROR_LATENCY
-        return (
-            ram_bytes if ram_bytes is not None else -1,
-            flash_bytes if flash_bytes is not None else -1,
-            -1.0,
-            arena_bytes,
-            err_flag,
-            power_metrics,
-        )
-
     return (
-        ram_bytes if ram_bytes is not None else -1,
-        flash_bytes if flash_bytes is not None else -1,
-        latency_s,
-        arena_bytes,
-        HIL_ERROR_OK,
-        power_metrics,
+        metrics.ram_bytes,
+        metrics.flash_bytes,
+        metrics.latency_s,
+        metrics.arena_bytes,
+        metrics.error_code,
+        metrics.power_metrics,
     )
 
 
@@ -1129,6 +628,7 @@ def HIL_controller(
     baud_rate: int = 115200,
     serial_timeout_s: float = 12.0,
     run_hil: bool = True,
+    device: Optional[DeviceInterface] = None,
 ) -> Tuple[
     int,
     int,
@@ -1146,7 +646,7 @@ def HIL_controller(
     Parameters
     ----------
     dirpath : Union[str, Path], optional
-        Arduino sketch directory containing TinyODOM sources.
+        Firmware project directory containing TinyODOM sources.
     chosen_device : str, optional
         Hardware identifier that maps into DEVICE_SPECS.
     window_size : int, optional
@@ -1159,6 +659,8 @@ def HIL_controller(
         Serial baud rate for latency capture.
     serial_timeout_s : float, optional
         Timeout when waiting for the `timer output:` line.
+    device : DeviceInterface | None, optional
+        Optional device implementation to use for compile/upload/measure.
     compile_only : bool, optional
         Skip flashing/measurement and return compile metrics only.
 
@@ -1168,6 +670,8 @@ def HIL_controller(
         Final RAM bytes, flash bytes, latency seconds, arena bytes, error code, and
         optional power telemetry captured from the winning firmware run.
     """
+    if device is not None:
+        chosen_device = device.spec.name
     arena_sweep_list = list(arena_size_candidates(chosen_device))
     finRAM = -1
     finFlash = -1
@@ -1193,6 +697,8 @@ def HIL_controller(
     finPower_metrics: Optional[Dict[str, Optional[float]]] = None
 
     compile_only = not run_hil  # compile-only allows proxy runs to reuse compiler metrics
+    if device is None:
+        device = ArduinoDevice(chosen_device, serial_port=serial_port)
 
     while (
         masterError == HIL_MASTER_PENDING
@@ -1240,6 +746,7 @@ def HIL_controller(
             baud_rate=baud_rate,
             serial_timeout_s=serial_timeout_s,
             compile_only=compile_only,
+            device=device,
         )
         retry_hint_bytes = _pop_retry_hint_bytes()
 

@@ -23,8 +23,6 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from tinyodom.hardware import (  # noqa: E402
-    ARDUINO_CLI_BIN,
-    ARDUINO_CLI_CONFIG,
     XXD_BIN,
     DEVICE_SPECS,
     HIL_ERROR_COMPILE,
@@ -42,21 +40,25 @@ from tinyodom.hardware import (  # noqa: E402
     HIL_MASTER_RAM_OVERFLOW,
     HIL_MASTER_FATAL,
     HIL_MASTER_SUCCESS,
-    _compute_retry_hint_bytes,
     _pop_retry_hint_bytes,
     _store_retry_hint_bytes,
-    _classify_compile_failure,
-    _collect_latency_seconds,
     _convert_to_cpp_model_python,
     _convert_to_cpp_model_xxd,
-    _parse_memory_from_compile,
-    _patch_sketch_constants,
-    _replace_define,
     arena_size_candidates,
     convert_to_cpp_model,
     convert_to_tflite_model,
     get_model_memory_usage,
     return_hardware_specs,
+)
+from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
+    ARDUINO_CLI_BIN,
+    ARDUINO_CLI_CONFIG,
+    _classify_compile_failure,
+    _collect_latency_seconds,
+    _compute_retry_hint_bytes,
+    _parse_memory_from_compile,
+    _patch_sketch_constants,
+    _replace_define,
 )
 
 
@@ -494,7 +496,7 @@ class SerialHelperTests(unittest.TestCase):
         def factory(*_args, **_kwargs):
             return self._DummySerial(responses)
 
-        with patch("tinyodom.hardware.serial.Serial", side_effect=factory):
+        with patch("tinyodom.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
             latency, arena_line, serial_log = _collect_latency_seconds(
                 "COM1", 115200, timeout_s=0.05
             )
@@ -511,7 +513,7 @@ class SerialHelperTests(unittest.TestCase):
         def factory(*_args, **_kwargs):
             return self._DummySerial(responses)
 
-        with patch("tinyodom.hardware.serial.Serial", side_effect=factory):
+        with patch("tinyodom.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
             latency, arena_line, serial_log = _collect_latency_seconds(
                 "COM2", 115200, timeout_s=0.01
             )
@@ -522,7 +524,7 @@ class SerialHelperTests(unittest.TestCase):
     def test_collect_latency_invalid_port_raises(self):
         # Serial exceptions should bubble up as RuntimeError so callers can react.
         with patch(
-            "tinyodom.hardware.serial.Serial",
+            "tinyodom.microcontrollers.arduino_base.serial.Serial",
             side_effect=serial.SerialException("boom"),
         ):
             with self.assertRaises(RuntimeError):
@@ -535,7 +537,7 @@ class SerialHelperTests(unittest.TestCase):
         def factory(*_args, **_kwargs):
             return self._DummySerial(responses)
 
-        with patch("tinyodom.hardware.serial.Serial", side_effect=factory):
+        with patch("tinyodom.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
             latency, arena_line, serial_log = _collect_latency_seconds(
                 "COM4", 115200, timeout_s=0.01
             )
@@ -550,7 +552,7 @@ class SerialHelperTests(unittest.TestCase):
         def factory(*_args, **_kwargs):
             return self._DummySerial(responses)
 
-        with patch("tinyodom.hardware.serial.Serial", side_effect=factory):
+        with patch("tinyodom.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
             latency, arena_line, serial_log = _collect_latency_seconds(
                 "COM4", 115200, timeout_s=0.01
             )
@@ -613,7 +615,7 @@ class HILSpecErrorTests(unittest.TestCase):
             compile_result = _FakeCompletedProcess(stdout=COMPILE_SAMPLE_OUTPUT)
             upload_result = _FakeCompletedProcess(returncode=1)
             with patch(
-                "tinyodom.hardware.subprocess.run",
+                "tinyodom.microcontrollers.arduino_base.subprocess.run",
                 side_effect=[compile_result, upload_result],
             ) as mock_run:
                 ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -637,11 +639,11 @@ class HILSpecErrorTests(unittest.TestCase):
             compile_result = _FakeCompletedProcess(stdout=COMPILE_SAMPLE_OUTPUT)
             upload_result = _FakeCompletedProcess(stdout="upload ok")
             with patch(
-                "tinyodom.hardware.subprocess.run",
+                "tinyodom.microcontrollers.arduino_base.subprocess.run",
                 side_effect=[compile_result, upload_result],
             ):
                 with patch(
-                    "tinyodom.hardware._collect_latency_seconds",
+                    "tinyodom.microcontrollers.arduino_base._collect_latency_seconds",
                     return_value=(None, None, ["failed to allocate"]),
                 ):
                     ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -680,7 +682,7 @@ class HILSpecErrorTests(unittest.TestCase):
                 stderr=FLASH_OVERFLOW_STDERR,
             )
             with patch(
-                "tinyodom.hardware.subprocess.run",
+                "tinyodom.microcontrollers.arduino_base.subprocess.run",
                 return_value=compile_result,
             ) as mock_run:
                 ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -704,7 +706,7 @@ class HILSpecErrorTests(unittest.TestCase):
                 stderr=RAM_OVERFLOW_STDERR,
             )
             with patch(
-                "tinyodom.hardware.subprocess.run",
+                "tinyodom.microcontrollers.arduino_base.subprocess.run",
                 return_value=compile_result,
             ) as mock_run:
                 ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -725,11 +727,11 @@ class HILSpecErrorTests(unittest.TestCase):
             compile_result = _FakeCompletedProcess(stdout=COMPILE_SAMPLE_OUTPUT)
             upload_result = _FakeCompletedProcess(stdout="upload ok")
             with patch(
-                    "tinyodom.hardware.subprocess.run",
+                    "tinyodom.microcontrollers.arduino_base.subprocess.run",
                     side_effect=[compile_result, upload_result],
                 ):
                 with patch(
-                    "tinyodom.hardware._collect_latency_seconds",
+                    "tinyodom.microcontrollers.arduino_base._collect_latency_seconds",
                     return_value=(None, "size is too small for all buffers", ["size is too small for all buffers"]),
                 ):
                     ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -1018,7 +1020,7 @@ class IntegrationTests(TinyModelMixin, unittest.TestCase):
             )
 
             compile_result = _FakeCompletedProcess(stdout=COMPILE_SAMPLE_OUTPUT)
-            with patch("tinyodom.hardware.subprocess.run", return_value=compile_result) as mock_run:
+            with patch("tinyodom.microcontrollers.arduino_base.subprocess.run", return_value=compile_result) as mock_run:
                     ram, flash, latency, arena_bytes, err, _power = HIL_spec(
                     dirpath=sketch_dir,
                     chosen_device="ARDUINO_NANO_33_BLE_SENSE",
