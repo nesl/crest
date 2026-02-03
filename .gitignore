@@ -71,3 +71,7 @@ tools/arduino-downloads/
 tools/bin/
 tools/arduino-user/libraries/Adafruit_BusIO/
 tools/arduino-user/libraries/Adafruit_INA228_Library/
+
+test_sketches/*
+tools/arduino-cli.yaml
+

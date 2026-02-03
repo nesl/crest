@@ -2,7 +2,7 @@
 device:
   name: ARDUINO_NANO_33_BLE_SENSE
   hil: true
-  serial_port: "/dev/cu.usbmodem21101"
+  serial_port: "/dev/ttyACM0"
 
 # Dataset sampling and preprocessing parameters
 data:
