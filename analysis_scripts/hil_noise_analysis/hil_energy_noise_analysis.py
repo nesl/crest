@@ -16,7 +16,6 @@ python analysis_scripts/hil_noise_analysis/hil_energy_noise_analysis.py --csv hi
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 from typing import Iterable
 
