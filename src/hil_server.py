@@ -151,12 +151,27 @@ class HILServer:
     def _sync_sketch_variant(self) -> Path:
         """Copy the requested sketch variant into the Arduino build directory."""
 
-        variants = {
-            True: "tinyodom_tcn_energy.ino",
-            False: "tinyodom_tcn_no_energy.ino",
-        }
-        variant_name = variants.get(bool(self.config.training.energy_aware))
-        variant_source = self.sketch_variants_dir / variant_name
+        if not bool(self.config.training.energy_aware):
+            variant_dir = self.sketch_variants_dir
+            variant_name = "tinyodom_tcn_no_energy.ino"
+        else:
+            input_mode = str(getattr(self.config.training, "input_mode", "standard")).lower()
+            variants = {
+                "standard": ("tinyodom_tcn_energy.ino", self.sketch_variants_dir),
+                "uniform": ("tinyodom_tcn_energy_uniform.ino", self.sketch_variants_dir / "analysis_sketches"),
+                "representative": (
+                    "tinyodom_tcn_energy_representative.ino",
+                    self.sketch_variants_dir / "analysis_sketches",
+                ),
+                "real": ("tinyodom_tcn_energy_real_data.ino", self.sketch_variants_dir / "analysis_sketches"),
+            }
+            if input_mode not in variants:
+                allowed = ", ".join(sorted(variants))
+                raise ValueError(
+                    f"Unsupported input_mode '{input_mode}'. Expected one of: {allowed}."
+                )
+            variant_name, variant_dir = variants[input_mode]
+        variant_source = variant_dir / variant_name
         if not variant_source.exists():
             raise FileNotFoundError(f"Sketch variant not found: {variant_source}")
 
@@ -164,51 +179,26 @@ class HILServer:
         sketch_dir.mkdir(parents=True, exist_ok=True)
         sketch_target = sketch_dir / "tinyodom_tcn.ino"
         shutil.copyfile(variant_source, sketch_target)
+
+        needs_header = variant_name in {
+            "tinyodom_tcn_energy_representative.ino",
+            "tinyodom_tcn_energy_real_data.ino",
+        }
+        header_source = self.sketch_variants_dir / "analysis_sketches" / "tinyodom_tcn_input_data.h"
+        if needs_header:
+            if not header_source.exists():
+                raise FileNotFoundError(f"Input header not found: {header_source}")
+            shutil.copyfile(header_source, sketch_dir / header_source.name)
         return sketch_target
+
+    def set_input_mode(self, input_mode: str) -> Path:
+        """Update the sketch input mode and resync the Arduino sketch variant."""
+        self.config.training.input_mode = str(input_mode).lower()
+        self.active_sketch_path = self._sync_sketch_variant()
+        logger.info("Using sketch variant: %s", self.active_sketch_path)
+        return self.active_sketch_path
+
 if __name__ == "__main__":
     server = HILServer()
 
     server.start()
-
-    # Energy noise scan (uncomment to run)
-    # import time
-    # import csv
-    # import tqdm
-    # runs = 20
-    # cooldown_s = 20.0
-    # csv_path = "hil_noise_scan.csv"
-    # # csv_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # hyperparams = Dict(
-    #     nb_filters=10,
-    #     kernel_size=12,
-    #     dilations=[1, 4, 8, 64],
-    #     dropout_rate=0.0,
-    #     use_skip_connections=False,
-    #     norm_flag=True,
-    #     batch_size=256,
-    #     timesteps=server.config.data.window_size,
-    #     input_dim=server.training_data.inputs.shape[2],
-    # )
-    # model = build_tinyodom_model(hyperparams)
-    # hyperparams.flops = count_flops(model, (hyperparams.timesteps, hyperparams.input_dim))
-
-    # logger.info("Starting noise scan: %s runs, cooldown %.1fs", runs, cooldown_s)
-    # with open(csv_path, "w", newline="") as csvfile:
-    #     writer = None
-    #     for run_idx in tqdm(range(1, runs + 1), desc="HIL noise scan"):
-    #         logger.info("Noise scan run %d/%d", run_idx, runs)
-    #         metrics = server.determine_metrics(hyperparams)
-    #         if writer is None:
-    #             fieldnames = ["run_index", *metrics.keys()]
-    #             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-    #             writer.writeheader()
-    #         row = {"run_index": run_idx, **metrics}
-    #         writer.writerow(row)
-    #         csvfile.flush()
-    #         if run_idx < runs:
-    #             logger.info("Cooling down for %.1f seconds", cooldown_s)
-    #             for _ in tqdm(range(int(cooldown_s)), desc="Cooldown", leave=False):
-    #                 time.sleep(1)
-
-    # logger.info("Noise scan complete. Metrics saved to %s", csv_path)

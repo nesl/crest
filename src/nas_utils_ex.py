@@ -111,6 +111,8 @@ def load_config(
         training.max_total_trials = int(training.nas_trials * 2)
     # If not explicitly set, disable training by default for faster debugging.
     training.energy_aware = bool(training.get("energy_aware", False))
+    # Input mode selects which Arduino sketch variant is used during HIL runs.
+    training.input_mode = str(training.get("input_mode", "standard")).lower()
     config.training.drop_rate_choices = DROP_RATE_CHOICES
 
     return config
