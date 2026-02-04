@@ -197,7 +197,8 @@ class HILServer:
         self.active_sketch_path = self._sync_sketch_variant()
         logger.info("Using sketch variant: %s", self.active_sketch_path)
         return self.active_sketch_path
+
 if __name__ == "__main__":
     server = HILServer()
 
-    # server.start()
+    server.start()

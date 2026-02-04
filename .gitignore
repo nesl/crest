@@ -76,3 +76,4 @@ analysis_scripts/hil_noise_analysis/analysis_output/
 analysis_scripts/hil_noise_analysis/__pycache__/
 sketches/analysis_sketches/tinyodom_tcn_input_data.h
 tools/arduino-cli.yaml
+analysis_scripts/hil_noise_analysis/summary_table.txt
