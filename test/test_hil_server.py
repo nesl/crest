@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -179,6 +180,130 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(kwargs["window_size"], self.config.data.window_size)
         self.assertEqual(kwargs["stride"], self.config.data.stride)
         self.assertEqual(kwargs["max_windows"], self.config.data.calibration_windows)
+
+
+class SketchVariantTests(unittest.TestCase):
+    """Validate sketch variant selection and input-mode behaviors."""
+
+    def _build_server(self, sketches_dir: Path, tcn_dir: Path, energy_aware: bool, input_mode: str) -> HILServer:
+        server = HILServer.__new__(HILServer)
+        server.config = SimpleNamespace(
+            training=SimpleNamespace(energy_aware=energy_aware, input_mode=input_mode),
+            outputs=SimpleNamespace(tcn_dir=tcn_dir),
+        )
+        server.sketch_variants_dir = sketches_dir
+        server.active_sketch_path = None
+        return server
+
+    def _write_sketch(self, path: Path, label: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"// {label}\n")
+
+    def test_selects_standard_energy_sketch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "standard")
+            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="standard")
+
+            out_path = server._sync_sketch_variant()
+
+            self.assertTrue(out_path.exists())
+            self.assertIn("standard", out_path.read_text())
+
+    def test_selects_uniform_variant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            self._write_sketch(sketches / "analysis_sketches/tinyodom_tcn_energy_uniform.ino", "uniform")
+            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="uniform")
+
+            out_path = server._sync_sketch_variant()
+
+            self.assertTrue(out_path.exists())
+            self.assertIn("uniform", out_path.read_text())
+
+    def test_selects_representative_variant_and_copies_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            self._write_sketch(
+                sketches / "analysis_sketches/tinyodom_tcn_energy_representative.ino",
+                "representative",
+            )
+            header = sketches / "analysis_sketches/tinyodom_tcn_input_data.h"
+            header.write_text("// header\n")
+            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="representative")
+
+            out_path = server._sync_sketch_variant()
+
+            self.assertTrue(out_path.exists())
+            self.assertIn("representative", out_path.read_text())
+            self.assertTrue((tcn_dir / header.name).exists())
+
+    def test_selects_real_variant_and_copies_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            self._write_sketch(
+                sketches / "analysis_sketches/tinyodom_tcn_energy_real_data.ino",
+                "real",
+            )
+            header = sketches / "analysis_sketches/tinyodom_tcn_input_data.h"
+            header.write_text("// header\n")
+            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="real")
+
+            out_path = server._sync_sketch_variant()
+
+            self.assertTrue(out_path.exists())
+            self.assertIn("real", out_path.read_text())
+            self.assertTrue((tcn_dir / header.name).exists())
+
+    def test_missing_header_raises_for_representative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            self._write_sketch(
+                sketches / "analysis_sketches/tinyodom_tcn_energy_representative.ino",
+                "representative",
+            )
+            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="representative")
+
+            with self.assertRaises(FileNotFoundError):
+                server._sync_sketch_variant()
+
+    def test_invalid_input_mode_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="bad_mode")
+
+            with self.assertRaises(ValueError):
+                server._sync_sketch_variant()
+
+    def test_energy_aware_false_uses_no_energy_sketch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            self._write_sketch(sketches / "tinyodom_tcn_no_energy.ino", "no_energy")
+            server = self._build_server(sketches, tcn_dir, energy_aware=False, input_mode="standard")
+
+            out_path = server._sync_sketch_variant()
+
+            self.assertTrue(out_path.exists())
+            self.assertIn("no_energy", out_path.read_text())
+
+    def test_set_input_mode_updates_config_and_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            self._write_sketch(sketches / "analysis_sketches/tinyodom_tcn_energy_uniform.ino", "uniform")
+            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="standard")
+
+            out_path = server.set_input_mode("uniform")
+
+            self.assertEqual(server.config.training.input_mode, "uniform")
+            self.assertTrue(out_path.exists())
 
 
 if __name__ == "__main__":

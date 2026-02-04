@@ -155,7 +155,7 @@ class HILServer:
             variant_dir = self.sketch_variants_dir
             variant_name = "tinyodom_tcn_no_energy.ino"
         else:
-            input_mode = str(self.config.training.get("input_mode", "standard")).lower()
+            input_mode = str(getattr(self.config.training, "input_mode", "standard")).lower()
             variants = {
                 "standard": ("tinyodom_tcn_energy.ino", self.sketch_variants_dir),
                 "uniform": ("tinyodom_tcn_energy_uniform.ino", self.sketch_variants_dir / "analysis_sketches"),
