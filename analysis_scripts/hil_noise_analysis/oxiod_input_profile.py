@@ -196,6 +196,11 @@ def main() -> int:
         help="Write a C header with dataset stats and real windows.",
     )
     parser.add_argument(
+        "--export-stats-csv",
+        default=None,
+        help="Write per-channel stats to a CSV file without exporting windows.",
+    )
+    parser.add_argument(
         "--real-window-count",
         type=int,
         default=10,
@@ -284,6 +289,38 @@ def main() -> int:
             f"{vmax: .4f}, {mean: .4f}, {std: .4f}, {frac_in: .4f}, "
             f"{mean_delta: .4f}, {std_ratio: .4f}"
         )
+
+    if args.export_stats_csv:
+        stats_path = Path(args.export_stats_csv)
+        stats_path.parent.mkdir(parents=True, exist_ok=True)
+        rows = []
+        for idx in range(n_channels):
+            name = CHANNEL_NAMES[idx] if idx < len(CHANNEL_NAMES) else f"ch_{idx}"
+            values = flat[:, idx]
+            p01, p05, p50, p95, p99 = _percentiles(values, percentiles)
+            rows.append(
+                {
+                    "channel": name,
+                    "min": float(np.min(values)),
+                    "p01": p01,
+                    "p05": p05,
+                    "p50": p50,
+                    "p95": p95,
+                    "p99": p99,
+                    "max": float(np.max(values)),
+                    "mean": float(np.mean(values)),
+                    "std": float(np.std(values)),
+                    "frac_in_0_5": float(np.mean((values >= 0.0) & (values <= 5.0))),
+                    "is_binary": bool(np.all((values == 0.0) | (values == 1.0))),
+                }
+            )
+        import csv
+
+        with stats_path.open("w", newline="") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"\nWrote stats CSV: {stats_path}")
 
     if args.export_header:
         header_path = Path(args.export_header)
