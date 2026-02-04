@@ -24,7 +24,9 @@ training:
   latency_proxy_max_flops: 30000000.0
   train: true
   # Enable energy-aware scoring during NAS
-  energy_aware: false
+  energy_aware: true
+  # Input mode for HIL sketches: standard, uniform, representative, or real
+  input_mode: "standard"
 
 # Output directories and filenames
 outputs:
