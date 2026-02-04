@@ -1,4 +1,4 @@
-# Test Sketches
+# Analysis Scripts
 
 This folder groups utilities that support hardware-in-the-loop (HIL) testing and
 input-distribution experiments for TinyODOM.
