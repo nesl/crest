@@ -7,6 +7,8 @@
 #include <cmath>
 
 #include "model.h"
+#include "common/tinyodom_hil_config.h"
+#include "common/tinyodom_power.h"
 
 // TensorFlow Lite Micro headers required to mirror the desktop deployment.
 #include "tensorflow/lite/micro/all_ops_resolver.h"
@@ -34,7 +36,8 @@ namespace {
 constexpr int kWindowSize   = TINYODOM_WINDOW_SIZE;
 constexpr int kNumChannels  = TINYODOM_NUM_CHANNELS;
 constexpr size_t kTensorArenaSize = TINYODOM_TENSOR_ARENA_BYTES;
-constexpr float kInvalidTelemetryValue = -1.0f;
+constexpr uint32_t kSerialTimeoutMs = 50;
+constexpr uint32_t kStartCommandTimeoutMs = 5000;
 
 // CMSIS-NN requires 16-byte alignment.
 alignas(16) uint8_t tensor_arena[kTensorArenaSize];
@@ -46,22 +49,24 @@ tflite::MicroInterpreter* interpreter = nullptr;
 TfLiteTensor* input = nullptr;
 uint32_t inference_seq = 0;
 
-void EmitPowerTelemetryStub(uint32_t sequence_id) {
-  Serial.print("inference seq: ");
-  Serial.println(sequence_id);
-  Serial.print("energy output (mJ): ");
-  Serial.println(kInvalidTelemetryValue, 6);
-  Serial.print("avg power output (mW): ");
-  Serial.println(kInvalidTelemetryValue, 3);
-  Serial.print("avg current output (mA): ");
-  Serial.println(kInvalidTelemetryValue, 3);
-  Serial.print("bus voltage output (V): ");
-  Serial.println(kInvalidTelemetryValue, 3);
-  Serial.print("idle power baseline (mW): ");
-  Serial.println(kInvalidTelemetryValue, 3);
-}
-
 }  // namespace
+
+bool WaitForStartCommand(uint32_t timeout_ms) {
+  // Poll for a host START command without blocking indefinitely.
+  const uint32_t start_ms = millis();
+  while (millis() - start_ms < timeout_ms) {
+    if (!Serial.available()) {
+      delay(5);
+      continue;
+    }
+    String line = Serial.readStringUntil('\n');
+    line.trim();
+    if (line.equalsIgnoreCase(TINYODOM_CMD_START)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // Populate the model input once with random data (0..5) like the legacy Mbed app.
 // This keeps the Arduino sketch compatible with the hardware_utils HIL pipeline.
@@ -92,11 +97,19 @@ void FillInputTensor() {
 void setup() {
   // Set up serial so the latency prints can be collected by the host.
   Serial.begin(115200);
+  Serial.setTimeout(kSerialTimeoutMs);
   while (!Serial && millis() < 2000) {
     delay(10);
   }
 
   delay(1000);  // Wait for serial to settle.
+
+  // Initialize the trigger pin used by the harness.
+  pinMode(TINYODOM_HARNESS_TRIGGER_PIN, OUTPUT);
+  digitalWrite(TINYODOM_HARNESS_TRIGGER_PIN, LOW);
+  // Keep harness disarmed until this DUT is ready to run inference.
+  pinMode(TINYODOM_HARNESS_ARM_PIN, OUTPUT);
+  digitalWrite(TINYODOM_HARNESS_ARM_PIN, HIGH);
 
   // Initialize the MCU-specific hooks required by TFLM.
   tflite::InitializeTarget();
@@ -133,10 +146,21 @@ void setup() {
   input = interpreter->input(0);
   FillInputTensor();
 
+  // Handshake with the host before starting inference.
+  Serial.println(TINYODOM_DUT_READY);
+  while (!WaitForStartCommand(kStartCommandTimeoutMs)) {
+    Serial.println(TINYODOM_DUT_READY);
+  }
+
   // Run several inferences back-to-back and average their latency (single timer span).
-  const int kRuns = 10;
+  const int kRuns = TINYODOM_INFERENCE_RUNS;
   int runs_completed = 0;
+  // Arm the harness first, then hold low long enough for stable-low detection.
+  digitalWrite(TINYODOM_HARNESS_ARM_PIN, LOW);
+  delay(TINYODOM_DUT_ARM_HOLD_MS);
+  // Signal the harness and start the timer window.
   delay(100);  // Ensure any prior serial output is complete.
+  digitalWrite(TINYODOM_HARNESS_TRIGGER_PIN, HIGH);
   const uint32_t start_us = micros();
   for (int i = 0; i < kRuns; ++i) {
     const TfLiteStatus invoke_status = interpreter->Invoke();
@@ -147,13 +171,22 @@ void setup() {
     runs_completed++;
   }
   const uint32_t total_latency_us = micros() - start_us;
+  // Signal the harness that inference is complete.
+  digitalWrite(TINYODOM_HARNESS_TRIGGER_PIN, LOW);
+  // Disarm harness after pulse completion.
+  digitalWrite(TINYODOM_HARNESS_ARM_PIN, HIGH);
 
   if (runs_completed > 0) {
     const float latency_s =
         (static_cast<float>(total_latency_us) / runs_completed) / 1000000.0f;
     ++inference_seq;
-    // Emit the latency line expected by hardware_utils.py as all -1s
-    EmitPowerTelemetryStub(inference_seq);
+    // Emit run count + telemetry for host parsing.
+    Serial.print("runs: ");
+    Serial.println(runs_completed);
+    tinyodom_power::EmitPowerTelemetry(
+        inference_seq, latency_s, runs_completed,
+        tinyodom_power::GetIdleBaselinePower(),
+        tinyodom_power::FlushEnergyWindow());
     Serial.print("timer output: ");
     Serial.println(latency_s, 6);
   }

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
+import logging
 
 from .errors import (
     HIL_ERROR_OK,
@@ -17,6 +18,8 @@ from .errors import (
     HIL_ERROR_UPLOAD,
 )
 from .microcontrollers import arduino_base
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -160,6 +163,7 @@ class DeviceInterface(ABC):
         arena_kb: int,
         window_size: int,
         num_channels: int,
+        build_defines: Optional[Dict[str, int]] = None,
     ) -> CompileResult:
         """Compile the firmware for the target device.
 
@@ -212,6 +216,18 @@ class DeviceInterface(ABC):
         serial_port: Optional[str],
         baud_rate: int,
         serial_timeout_s: float,
+        dut_ready_timeout_s: Optional[float] = None,
+        harness_serial_port: Optional[str] = None,
+        harness_fqbn: Optional[str] = None,
+        harness_auto_flash: Optional[str] = None,
+        harness_arm_pin: Optional[int] = None,
+        harness_trigger_pin: Optional[int] = None,
+        dut_arm_hold_ms: Optional[int] = None,
+        harness_stable_low_ms: Optional[int] = None,
+        harness_ready_timeout_s: Optional[float] = None,
+        harness_arm_timeout_s: Optional[float] = None,
+        harness_active_timeout_s: Optional[float] = None,
+        harness_done_timeout_s: Optional[float] = None,
     ) -> MeasureResult:
         """Capture latency/power metrics from the device.
 
@@ -223,6 +239,32 @@ class DeviceInterface(ABC):
             Serial baud rate.
         serial_timeout_s : float
             Timeout for log capture.
+        dut_ready_timeout_s : float | None
+            Time to wait for DUT READY before sending START.
+        dut_ready_timeout_s : float | None
+            Time to wait for DUT READY before sending START.
+        harness_serial_port : str | None
+            Optional serial port for the INA228 harness.
+        harness_fqbn : str | None
+            FQBN for the harness board (Arduino CLI only).
+        harness_auto_flash : str | None
+            Harness flashing policy (once, always, never).
+        harness_arm_pin : int | None
+            Harness/DUT arm pin number (active-low).
+        harness_trigger_pin : int | None
+            Harness/DUT trigger pin number.
+        dut_arm_hold_ms : int | None
+            Arm-low hold duration before DUT sets trigger HIGH.
+        harness_stable_low_ms : int | None
+            Stable-low window required before harness arms.
+        harness_ready_timeout_s : float | None
+            Timeout waiting for HARNESS READY.
+        harness_arm_timeout_s : float | None
+            Legacy host-side ARM timeout (unused with D3 hardware arming).
+        harness_active_timeout_s : float | None
+            Maximum time to wait for a harness measurement window.
+        harness_done_timeout_s : float | None
+            Timeout waiting for DONE response.
 
         Returns
         -------
@@ -242,6 +284,18 @@ class DeviceInterface(ABC):
         run_hil: bool = True,
         baud_rate: int = 115200,
         serial_timeout_s: float = 12.0,
+        dut_ready_timeout_s: Optional[float] = None,
+        harness_serial_port: Optional[str] = None,
+        harness_fqbn: Optional[str] = None,
+        harness_auto_flash: Optional[str] = None,
+        harness_arm_pin: Optional[int] = None,
+        harness_trigger_pin: Optional[int] = None,
+        dut_arm_hold_ms: Optional[int] = None,
+        harness_stable_low_ms: Optional[int] = None,
+        harness_ready_timeout_s: Optional[float] = None,
+        harness_arm_timeout_s: Optional[float] = None,
+        harness_active_timeout_s: Optional[float] = None,
+        harness_done_timeout_s: Optional[float] = None,
     ) -> DeviceMetrics:
         """Compile, upload, and measure a model on the target device.
 
@@ -263,6 +317,8 @@ class DeviceInterface(ABC):
             Serial baud rate for log capture.
         serial_timeout_s : float, optional
             Timeout for latency/power log capture.
+        dut_ready_timeout_s : float | None, optional
+            Time to wait for DUT READY before sending START.
 
         Returns
         -------
@@ -377,12 +433,18 @@ class ArduinoDevice(DeviceInterface):
         arena_kb: int,
         window_size: int,
         num_channels: int,
+        build_defines: Optional[Dict[str, int]] = None,
     ) -> CompileResult:
         """Compile firmware using the Arduino CLI toolchain."""
+        logger.info(
+            "ArduinoDevice.compile: patching constants and compiling sketch at %s",
+            sketch_path,
+        )
         arduino_base._patch_sketch_constants(sketch_path, arena_kb, window_size, num_channels)
         result = arduino_base.compile_sketch(
             sketch_path=sketch_path,
             fqbn=self._spec.fqbn,
+            build_defines=build_defines,
         )
         return CompileResult(
             success=result.success,
@@ -406,6 +468,7 @@ class ArduinoDevice(DeviceInterface):
             raise ValueError("serial_port must be provided for Arduino upload.")
         if build_dir is None:
             raise ValueError("build_dir must be provided for Arduino upload.")
+        logger.info("ArduinoDevice.upload: uploading sketch to %s", use_serial_port)
         result = arduino_base.upload_sketch(
             sketch_path=sketch_path,
             fqbn=self._spec.fqbn,
@@ -420,15 +483,45 @@ class ArduinoDevice(DeviceInterface):
         serial_port: Optional[str],
         baud_rate: int,
         serial_timeout_s: float,
+        dut_ready_timeout_s: Optional[float] = None,
+        harness_serial_port: Optional[str] = None,
+        harness_fqbn: Optional[str] = None,
+        harness_auto_flash: Optional[str] = None,
+        harness_arm_pin: Optional[int] = None,
+        harness_trigger_pin: Optional[int] = None,
+        dut_arm_hold_ms: Optional[int] = None,
+        harness_stable_low_ms: Optional[int] = None,
+        harness_ready_timeout_s: Optional[float] = None,
+        harness_arm_timeout_s: Optional[float] = None,
+        harness_active_timeout_s: Optional[float] = None,
+        harness_done_timeout_s: Optional[float] = None,
     ) -> MeasureResult:
         """Measure latency/power using the Arduino serial log."""
         use_serial_port = self._serial_port if serial_port is None else serial_port
         if use_serial_port is None:
             raise ValueError("serial_port must be provided for Arduino measurement.")
+        logger.info(
+            "ArduinoDevice.measure: starting serial measurement (dut=%s, harness=%s)",
+            use_serial_port,
+            harness_serial_port,
+        )
+        _default = lambda value, fallback: fallback if value is None else value
         result = arduino_base.measure_serial(
             serial_port=use_serial_port,
             baud_rate=baud_rate,
             serial_timeout_s=serial_timeout_s,
+            dut_ready_timeout_s=_default(dut_ready_timeout_s, 5.0),
+            harness_serial_port=harness_serial_port,
+            harness_fqbn=_default(harness_fqbn, "arduino:mbed_nano:nano33ble"),
+            harness_auto_flash=_default(harness_auto_flash, "once"),
+            harness_arm_pin=_default(harness_arm_pin, 3),
+            harness_trigger_pin=_default(harness_trigger_pin, 2),
+            dut_arm_hold_ms=_default(dut_arm_hold_ms, 600),
+            harness_stable_low_ms=_default(harness_stable_low_ms, 500),
+            harness_ready_timeout_s=_default(harness_ready_timeout_s, 5.0),
+            harness_arm_timeout_s=_default(harness_arm_timeout_s, 5.0),
+            harness_active_timeout_s=_default(harness_active_timeout_s, 30.0),
+            harness_done_timeout_s=_default(harness_done_timeout_s, 5.0),
         )
         return MeasureResult(
             latency_s=result.latency_s,
@@ -448,15 +541,36 @@ class ArduinoDevice(DeviceInterface):
         run_hil: bool = True,
         baud_rate: int = 115200,
         serial_timeout_s: float = 12.0,
+        dut_ready_timeout_s: Optional[float] = None,
+        harness_serial_port: Optional[str] = None,
+        harness_fqbn: Optional[str] = None,
+        harness_auto_flash: Optional[str] = None,
+        harness_arm_pin: Optional[int] = None,
+        harness_trigger_pin: Optional[int] = None,
+        dut_arm_hold_ms: Optional[int] = None,
+        harness_stable_low_ms: Optional[int] = None,
+        harness_ready_timeout_s: Optional[float] = None,
+        harness_arm_timeout_s: Optional[float] = None,
+        harness_active_timeout_s: Optional[float] = None,
+        harness_done_timeout_s: Optional[float] = None,
     ) -> DeviceMetrics:
         """Run a compile/upload/measure loop using the Arduino toolchain."""
         sketch_path = Path(dirpath).resolve()
         arena_bytes = arena_kb * 1024
+        build_defines = {
+            "TINYODOM_HARNESS_ARM_PIN": 3 if harness_arm_pin is None else int(harness_arm_pin),
+            "TINYODOM_HARNESS_TRIGGER_PIN": 2 if harness_trigger_pin is None else int(harness_trigger_pin),
+            "TINYODOM_DUT_ARM_HOLD_MS": 600 if dut_arm_hold_ms is None else int(dut_arm_hold_ms),
+            "TINYODOM_HARNESS_STABLE_LOW_MS": 500
+            if harness_stable_low_ms is None
+            else int(harness_stable_low_ms),
+        }
         compile_result = self.compile(
             sketch_path=sketch_path,
             arena_kb=arena_kb,
             window_size=window_size,
             num_channels=num_channels,
+            build_defines=build_defines,
         )
 
         overflow_kind = compile_result.overflow_kind
@@ -516,6 +630,18 @@ class ArduinoDevice(DeviceInterface):
             serial_port=serial_port,
             baud_rate=baud_rate,
             serial_timeout_s=serial_timeout_s,
+            dut_ready_timeout_s=dut_ready_timeout_s,
+            harness_serial_port=harness_serial_port,
+            harness_fqbn=harness_fqbn,
+            harness_auto_flash=harness_auto_flash,
+            harness_arm_pin=harness_arm_pin,
+            harness_trigger_pin=harness_trigger_pin,
+            dut_arm_hold_ms=dut_arm_hold_ms,
+            harness_stable_low_ms=harness_stable_low_ms,
+            harness_ready_timeout_s=harness_ready_timeout_s,
+            harness_arm_timeout_s=harness_arm_timeout_s,
+            harness_active_timeout_s=harness_active_timeout_s,
+            harness_done_timeout_s=harness_done_timeout_s,
         )
         if measure_result.latency_s is None:
             retry_hint = arduino_base._compute_retry_hint_bytes(

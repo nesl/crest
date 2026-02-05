@@ -3,6 +3,18 @@ device:
   name: ARDUINO_NANO_33_BLE_SENSE
   hil: true
   serial_port: "/dev/ttyACM0"
+  dut_ready_timeout_s: 14.5                    # Time to wait for DUT READY before sending START.
+  harness_serial_port: "/dev/ttyACM1"          # Serial port for the harness board (INA228 reader).
+  harness_fqbn: "arduino:mbed_nano:nano33ble"  # Arduino FQBN used to compile/upload the harness sketch.
+  harness_auto_flash: "once"                   # Harness flash policy: once, always, or never.
+  harness_arm_pin: 3                           # Active-low arm GPIO shared between DUT and harness.
+  harness_trigger_pin: 2                       # Trigger GPIO toggled HIGH/LOW around inference.
+  dut_arm_hold_ms: 600                         # DUT hold time after arm LOW before trigger HIGH.
+  harness_stable_low_ms: 500                   # Required D3 LOW + D2 LOW stability before harness arms.
+  harness_ready_timeout_s: 3.6                 # Time to wait for HARNESS READY after PING.
+  harness_arm_timeout_s: 0.0                   # Legacy host-side ARM timeout (unused when D3 hardware arming is enabled).
+  harness_active_timeout_s: 12.0               # Max duration of the measurement window.
+  harness_done_timeout_s: 3.6                  # Time to wait for DONE after the window completes.
 
 # Dataset sampling and preprocessing parameters
 data:
@@ -41,3 +53,7 @@ network:
   port: 6001
   recv_timeout_sec: 720
   send_timeout_sec: 720
+
+# Runtime logging controls
+logging:
+  level: "INFO"

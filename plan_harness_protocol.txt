@@ -1,0 +1,126 @@
+Title: Harness-First HIL with Protocol Abstraction (Arduino Today, STM-Ready Tomorrow)
+
+Summary
+When training.energy_aware is true, HIL always uses a BLE33 harness board to power/read INA228 and report energy + harness timing. The DUT never touches INA228. A serial handshake (PING/READY/ARM/START/DONE) and D2 trigger enforce synchronization across arena sweeps and re-flashes. Host code reads DUT and harness serial ports independently with explicit timeouts and a per-attempt barrier. The handshake and parsing live in a device-agnostic protocol layer so future DUTs (e.g., STM) only need to implement the same UART+GPIO contract.
+
+1. Protocol Abstraction (Generalizes Across DUTs) [DONE]
+Define a DUT/Harness protocol contract (documented in a new module, e.g., src/tinyodom/hil_protocol.py or docs/hil_protocol.md): [DONE]
+
+DUT must: [DONE]
+- Emit "DUT READY" [DONE]
+- Accept "START" [DONE]
+- Toggle a trigger GPIO HIGH before inference and LOW after [DONE]
+- Emit "runs: <N>" [DONE]
+- Emit "timer output: <seconds>" [DONE]
+
+Harness must: [DONE]
+- Respond to "PING" with "HARNESS READY" [DONE]
+- Respond to "ARM" with "ARMED" [DONE]
+- Use trigger GPIO edges to start/stop energy accumulation [DONE]
+- Emit "runs: <N>" [DONE]
+- Emit energy lines + "harness timer output: <seconds>" [DONE]
+- Emit "DONE" [DONE]
+
+Host must: [DONE]
+- Run a strict per-attempt handshake sequence [DONE]
+- Read DUT and harness serial ports independently [DONE]
+- Merge metrics deterministically and validate run count [DONE]
+
+This protocol layer will be device-agnostic; Arduino/STM differences are isolated in device adapters. [DONE]
+
+2. Config Changes [DONE]
+Add to nas_config.yaml + load_config(): [DONE]
+- device.harness_serial_port (required if training.energy_aware: true) [DONE]
+- device.harness_fqbn (default "arduino:mbed_nano:nano33ble") [DONE]
+- device.harness_auto_flash (default "once") [DONE]
+- device.harness_ready_timeout_s (default 5.0) [DONE]
+- device.harness_arm_timeout_s (default 5.0) [DONE]
+- device.harness_active_timeout_s (default 30.0) [DONE]
+- device.harness_done_timeout_s (default 5.0) [DONE]
+
+Validation: if training.energy_aware is true, device.harness_serial_port must be set. [DONE]
+
+3. Shared Constants + INA228 Header (Arduino-side only) [DONE]
+Add sketches/common/tinyodom_hil_config.h: [DONE]
+- TINYODOM_INFERENCE_RUNS [DONE]
+- TINYODOM_HARNESS_TRIGGER_PIN [DONE]
+- TINYODOM_HARNESS_STABLE_LOW_MS [DONE]
+- Protocol string constants (READY/ARMED/DONE) [DONE]
+
+Add sketches/common/tinyodom_power.h: [DONE]
+- INA228 constants + functions (InitializePowerMonitor, FlushEnergyWindow, EmitPowerTelemetry) [DONE]
+- All guarded by #if TINYODOM_USE_INA228 [DONE]
+- Provide stub telemetry when disabled [DONE]
+
+4. DUT Firmware Changes (Arduino now, STM later) [DONE]
+Arduino DUT sketches: [DONE]
+- Include tinyodom_hil_config.h and tinyodom_power.h [DONE]
+- pinMode(D2, OUTPUT); digitalWrite(LOW) in setup [DONE]
+- Print "DUT READY", wait for "START" with timeout; if timeout, re-print "DUT READY" [DONE]
+- On "START": D2 HIGH -> inference loop (TINYODOM_INFERENCE_RUNS) -> D2 LOW [DONE]
+- Emit "runs:" and "timer output:" [DONE]
+- Do not define TINYODOM_USE_INA228 (INA228 disabled on DUT) [DONE]
+
+STM (future):
+- Implement same UART protocol + GPIO trigger, same run count constant [NOT IMPLEMENTED]
+- Host logic unchanged [DONE]
+
+5. Harness Firmware (BLE33) [DONE]
+Add sketches/harness/harness.ino: [DONE]
+- Define TINYODOM_USE_INA228 1 [DONE]
+- State machine: [DONE]
+  - IDLE: PING->READY, ARM->ARMED [DONE]
+  - ARMED: require D2 low stable TINYODOM_HARNESS_STABLE_LOW_MS [DONE]
+  - ACTIVE: rising edge starts measurement, falling edge stops [DONE]
+  - Emit runs, energy telemetry, harness timer output, DONE [DONE]
+  - Return to IDLE after DONE [DONE]
+
+6. Host-Side Handshake (Device-Agnostic) [DONE]
+Per-attempt sequence (protocol layer): [DONE]
+1. [First attempt only] flash harness (if enabled), wait 500ms [DONE]
+2. Flush harness serial buffer [DONE]
+3. PING -> wait HARNESS READY (ready timeout) [DONE]
+4. ARM -> wait ARMED (arm timeout) [DONE]
+5. [If DUT needs upload] flash DUT [DONE]
+6. Open DUT serial immediately; flush buffer [DONE]
+7. Wait for DUT READY [DONE]
+8. START [DONE]
+9. Read DUT until timer output [DONE]
+10. Read harness until DONE (done timeout + active timeout) [DONE]
+11. Validate runs match [DONE]
+12. If mismatch/timeout -> warn, energy/harness timing = -1 [DONE]
+13. Close DUT serial [DONE]
+14. Repeat from step 2 for next attempt [DONE]
+
+7. Arduino-Specific Compile/Upload [DONE]
+Add dedicated harness flash path in arduino_base: [DONE]
+- compile_harness_sketch() + upload_harness_sketch() [DONE]
+- Call compile_sketch() directly (no _patch_sketch_constants()) [DONE]
+
+Keep Arduino build logic isolated in ArduinoDevice; handshake stays in protocol module. [DONE]
+
+8. Metrics + Parsing [DONE]
+- Parse DUT and harness logs separately [DONE]
+- DUT: timer output + arena errors [DONE]
+- Harness: energy fields + harness timer output [DONE]
+- Add harness_latency_ms to metrics [DONE]
+- Validate runs match; if mismatch, discard harness energy [DONE]
+
+9. Error Recovery [DONE]
+- If harness handshake fails: [DONE]
+  - Retry ARM once [DONE]
+  - If still failing, re-flash harness once [DONE]
+  - If still failing, warn and set energy/timing = -1 (do not abort HIL) [DONE]
+
+Tests / Scenarios [NOT RUN]
+1. Handshake: READY -> ARM -> START -> DONE [NOT RUN]
+2. Timeouts: no ARM, no DONE, no READY [NOT RUN]
+3. Run mismatch: DUT runs:10, harness runs:8 -> discard energy [NOT RUN]
+4. Spurious edges: D2 toggles before ARM -> ignored [NOT RUN]
+5. Regression: energy_aware: false -> single-board unchanged [NOT RUN]
+
+Assumptions / Defaults [CONFIRMED]
+- Harness is mandatory when training.energy_aware is true. [DONE]
+- DUT is Arduino-CLI for now, STM later by implementing the same protocol. [DONE]
+- Serial handshake is acceptable; no extra wires required. [DONE]
+- Energy failure does not abort HIL run. [DONE]

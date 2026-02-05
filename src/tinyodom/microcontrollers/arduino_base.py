@@ -5,12 +5,14 @@ import re
 import shutil
 import subprocess
 import time
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import serial
 
+from .. import hil_protocol
 
 # Resolve the Arduino CLI executable once so every subprocess call uses the same path.
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -24,6 +26,11 @@ if not ARDUINO_CLI_BIN:
         # Fallback to PATH lookup so developer installations still work.
         ARDUINO_CLI_BIN = shutil.which("arduino-cli") or "arduino-cli"
 print(f"Using Arduino CLI at: {ARDUINO_CLI_BIN}")
+
+logger = logging.getLogger(__name__)
+
+_HARNESS_SKETCH_DIR = _PROJECT_ROOT / "sketches" / "harness"
+_HARNESS_FLASHED_PORTS: set[str] = set()
 
 
 FLASH_USAGE_RE = re.compile(
@@ -255,7 +262,22 @@ def _resolve_build_dir(sketch_path: Path, fqbn: str) -> Path:
     return build_cache_root / fqbn.replace(":", "_")
 
 
-def compile_sketch(*, sketch_path: Path, fqbn: str) -> CompileResult:
+def _build_define_flags(build_defines: Optional[Dict[str, int]]) -> str:
+    """Format Arduino compile-time define flags from a key/value map."""
+    if not build_defines:
+        return ""
+    parts: List[str] = []
+    for name in sorted(build_defines):
+        parts.append(f"-D{name}={int(build_defines[name])}")
+    return " ".join(parts)
+
+
+def compile_sketch(
+    *,
+    sketch_path: Path,
+    fqbn: str,
+    build_defines: Optional[Dict[str, int]] = None,
+) -> CompileResult:
     """Compile an Arduino sketch with the Arduino CLI.
 
     Parameters
@@ -283,6 +305,14 @@ def compile_sketch(*, sketch_path: Path, fqbn: str) -> CompileResult:
         str(build_dir),
         str(sketch_path),
     ]
+    define_flags = _build_define_flags(build_defines)
+    if define_flags:
+        compile_cmd.extend(
+            [
+                "--build-property",
+                f"compiler.cpp.extra_flags={define_flags}",
+            ]
+        )
     compile_proc = subprocess.run(
         compile_cmd, capture_output=True, text=True, check=False
     )
@@ -296,6 +326,38 @@ def compile_sketch(*, sketch_path: Path, fqbn: str) -> CompileResult:
         ram_bytes=ram_bytes,
         overflow_kind=overflow_kind,
         build_dir=build_dir,
+    )
+
+
+def compile_harness_sketch(
+    *,
+    sketch_path: Optional[Path] = None,
+    fqbn: str,
+    build_defines: Optional[Dict[str, int]] = None,
+) -> CompileResult:
+    """Compile the harness sketch without patching deployment constants."""
+    target_path = sketch_path or _HARNESS_SKETCH_DIR
+    return compile_sketch(
+        sketch_path=target_path,
+        fqbn=fqbn,
+        build_defines=build_defines,
+    )
+
+
+def upload_harness_sketch(
+    *,
+    sketch_path: Optional[Path],
+    fqbn: str,
+    build_dir: Path,
+    serial_port: str,
+) -> UploadResult:
+    """Upload a compiled harness sketch."""
+    target_path = sketch_path or _HARNESS_SKETCH_DIR
+    return upload_sketch(
+        sketch_path=target_path,
+        fqbn=fqbn,
+        build_dir=build_dir,
+        serial_port=serial_port,
     )
 
 
@@ -369,6 +431,10 @@ POWER_FIELD_SPECS: Dict[str, Tuple[str, re.Pattern[str]]] = {
         "float",
         re.compile(rf"^idle power baseline.*?:\s*{_FLOAT_CAPTURE}$", re.IGNORECASE),
     ),
+    "harness_latency_s": (
+        "float",
+        re.compile(rf"^harness timer output.*?:\s*{_FLOAT_CAPTURE}$", re.IGNORECASE),
+    ),
 }
 
 POWER_METRIC_DEFAULTS: Dict[str, float] = {
@@ -378,6 +444,7 @@ POWER_METRIC_DEFAULTS: Dict[str, float] = {
     "avg_current_ma": -1.0,
     "bus_voltage_v": -1.0,
     "idle_power_mw": -1.0,
+    "harness_latency_s": -1.0,
 }
 
 
@@ -479,17 +546,25 @@ def _collect_latency_seconds(
                 decoded_lines.append(line)
     except serial.SerialException as exc:  # type: ignore[attr-defined]
         raise RuntimeError(f"Failed to read serial port {port}: {exc}") from exc
+    latency_s, arena_error_line = _parse_latency_from_log(decoded_lines)
+    return latency_s, arena_error_line, decoded_lines
+
+
+def _parse_latency_from_log(
+    decoded_lines: Sequence[str],
+) -> Tuple[Optional[float], Optional[str]]:
+    """Parse latency and arena errors from decoded serial lines."""
     for line in decoded_lines:
         lower_line = line.lower()
         if lower_line.startswith("timer output:"):
             _, _, value = line.partition(":")
             try:
-                return float(value.strip()), None, decoded_lines
+                return float(value.strip()), None
             except ValueError:
-                return None, None, decoded_lines
+                return None, None
         if any(pattern.search(lower_line) for pattern in ARENA_TOO_SMALL_PATTERNS):
-            return None, line, decoded_lines
-    return None, None, decoded_lines
+            return None, line
+    return None, None
 
 
 def measure_serial(
@@ -497,6 +572,18 @@ def measure_serial(
     serial_port: str,
     baud_rate: int,
     serial_timeout_s: float,
+    dut_ready_timeout_s: float = 5.0,
+    harness_serial_port: Optional[str] = None,
+    harness_fqbn: str = "arduino:mbed_nano:nano33ble",
+    harness_auto_flash: str = "once",
+    harness_arm_pin: int = 3,
+    harness_trigger_pin: int = 2,
+    dut_arm_hold_ms: int = 600,
+    harness_stable_low_ms: int = 500,
+    harness_ready_timeout_s: float = 5.0,
+    harness_arm_timeout_s: float = 5.0,
+    harness_active_timeout_s: float = 30.0,
+    harness_done_timeout_s: float = 5.0,
 ) -> MeasureResult:
     """Capture latency and power metrics from a device serial log.
 
@@ -508,22 +595,159 @@ def measure_serial(
         Serial baud rate.
     serial_timeout_s : float
         Timeout when waiting for output.
+    dut_ready_timeout_s : float
+        Time to wait for DUT READY before sending START.
 
     Returns
     -------
     MeasureResult
         Parsed latency, arena errors, and power metrics.
     """
-    latency_s, arena_error_line, serial_log = _collect_latency_seconds(
-        serial_port, baud_rate, serial_timeout_s
-    )
-    power_metrics = _parse_power_metrics(serial_log)
-    return MeasureResult(
-        latency_s=latency_s,
-        arena_error_line=arena_error_line,
-        serial_log=serial_log,
-        power_metrics=power_metrics,
-    )
+    if not harness_serial_port:
+        logger.info("measure_serial: running DUT-only flow on %s", serial_port)
+        dut_log = hil_protocol.run_dut_only(
+            dut_port=serial_port,
+            baud_rate=baud_rate,
+            dut_ready_timeout_s=dut_ready_timeout_s,
+            dut_timer_timeout_s=serial_timeout_s,
+        )
+        latency_s, arena_error_line = _parse_latency_from_log(dut_log)
+        power_metrics = _parse_power_metrics(dut_log)
+        return MeasureResult(
+            latency_s=latency_s,
+            arena_error_line=arena_error_line,
+            serial_log=dut_log,
+            power_metrics=power_metrics,
+        )
+    harness_auto_flash = (harness_auto_flash or "once").lower()
+
+    build_defines = {
+        "TINYODOM_HARNESS_ARM_PIN": int(harness_arm_pin),
+        "TINYODOM_HARNESS_TRIGGER_PIN": int(harness_trigger_pin),
+        "TINYODOM_DUT_ARM_HOLD_MS": int(dut_arm_hold_ms),
+        "TINYODOM_HARNESS_STABLE_LOW_MS": int(harness_stable_low_ms),
+    }
+
+    def _flash_harness(force: bool = False) -> bool:
+        if harness_auto_flash == "never":
+            return False
+        if harness_auto_flash == "once" and not force:
+            if harness_serial_port in _HARNESS_FLASHED_PORTS:
+                return False
+        logger.info(
+            "measure_serial: compiling/uploading harness (port=%s, force=%s)",
+            harness_serial_port,
+            force,
+        )
+        compile_result = compile_harness_sketch(
+            fqbn=harness_fqbn,
+            build_defines=build_defines,
+        )
+        if not compile_result.success or compile_result.build_dir is None:
+            raise RuntimeError("Harness compile failed.")
+        upload_result = upload_harness_sketch(
+            sketch_path=None,
+            fqbn=harness_fqbn,
+            build_dir=compile_result.build_dir,
+            serial_port=harness_serial_port,
+        )
+        if not upload_result.success:
+            raise RuntimeError("Harness upload failed.")
+        _HARNESS_FLASHED_PORTS.add(harness_serial_port)
+        time.sleep(0.5)
+        return True
+
+    def _run_handshake() -> hil_protocol.HandshakeResult:
+        logger.info(
+            "measure_serial: starting DUT+harness handshake (dut=%s, harness=%s)",
+            serial_port,
+            harness_serial_port,
+        )
+        return hil_protocol.run_handshake(
+            dut_port=serial_port,
+            harness_port=harness_serial_port,
+            baud_rate=baud_rate,
+            dut_ready_timeout_s=dut_ready_timeout_s,
+            dut_timer_timeout_s=serial_timeout_s,
+            harness_ready_timeout_s=harness_ready_timeout_s,
+            harness_active_timeout_s=harness_active_timeout_s,
+            harness_done_timeout_s=harness_done_timeout_s,
+        )
+
+    try:
+        _flash_harness()
+        result = _run_handshake()
+        if result.error:
+            logger.warning("Harness handshake failed: %s", result.error)
+            logger.info(
+                "measure_serial: skipping harness reflash for protocol error '%s'",
+                result.error,
+            )
+        if result.error:
+            logger.info("measure_serial: falling back to DUT-only flow after harness error")
+            dut_log = hil_protocol.run_dut_only(
+                dut_port=serial_port,
+                baud_rate=baud_rate,
+                dut_ready_timeout_s=dut_ready_timeout_s,
+                dut_timer_timeout_s=serial_timeout_s,
+            )
+            latency_s, arena_error_line = _parse_latency_from_log(dut_log)
+            serial_log = [f"DUT: {line}" for line in dut_log]
+            return MeasureResult(
+                latency_s=latency_s,
+                arena_error_line=arena_error_line,
+                serial_log=serial_log,
+                power_metrics=None,
+            )
+
+        latency_s, arena_error_line = _parse_latency_from_log(result.dut_log)
+        serial_log = [f"DUT: {line}" for line in result.dut_log] + [
+            f"HARNESS: {line}" for line in result.harness_log
+        ]
+        power_metrics = None
+        if result.harness_done and result.runs_dut is not None and result.runs_harness is not None:
+            if result.runs_dut == result.runs_harness:
+                power_metrics = _parse_power_metrics(result.harness_log)
+            else:
+                logger.warning(
+                    "Harness run-count mismatch (dut=%s harness=%s)",
+                    result.runs_dut,
+                    result.runs_harness,
+                )
+        else:
+            if not result.harness_done:
+                logger.warning("Harness did not report DONE; ignoring energy metrics.")
+        return MeasureResult(
+            latency_s=latency_s,
+            arena_error_line=arena_error_line,
+            serial_log=serial_log,
+            power_metrics=power_metrics,
+        )
+    except (RuntimeError, serial.SerialException) as exc:  # type: ignore[attr-defined]
+        logger.warning("Harness measurement failed: %s", exc)
+        if isinstance(exc, serial.SerialException):
+            try:
+                logger.info(
+                    "measure_serial: serial-port error detected; attempting harness reflash recovery"
+                )
+                _flash_harness(force=True)
+            except RuntimeError as reflash_exc:
+                logger.warning("Harness reflash after serial error failed: %s", reflash_exc)
+        logger.info("measure_serial: exception fallback to DUT-only flow")
+        dut_log = hil_protocol.run_dut_only(
+            dut_port=serial_port,
+            baud_rate=baud_rate,
+            dut_ready_timeout_s=dut_ready_timeout_s,
+            dut_timer_timeout_s=serial_timeout_s,
+        )
+        latency_s, arena_error_line = _parse_latency_from_log(dut_log)
+        serial_log = [f"DUT: {line}" for line in dut_log]
+        return MeasureResult(
+            latency_s=latency_s,
+            arena_error_line=arena_error_line,
+            serial_log=serial_log,
+            power_metrics=None,
+        )
 
 
 __all__ = [
@@ -538,12 +762,15 @@ __all__ = [
     "_compute_retry_hint_bytes",
     "_classify_compile_failure",
     "_collect_latency_seconds",
+    "_parse_latency_from_log",
     "_parse_memory_from_compile",
     "_parse_power_metrics",
     "_patch_sketch_constants",
     "_replace_define",
+    "compile_harness_sketch",
     "compile_sketch",
     "measure_serial",
     "normalize_power_metrics",
+    "upload_harness_sketch",
     "upload_sketch",
 ]
