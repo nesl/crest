@@ -16,7 +16,11 @@ dependencies = [
     "pyyaml",
     "keras-tcn",
     "scikit-learn",
-    "pandas"
+    "pandas",
+    "numpy-quaternion",
+    "giotto-tda",
+    "pydometer",
+    "tqdm"
 ]
 
 [tool.setuptools.packages.find]
