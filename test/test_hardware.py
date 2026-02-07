@@ -669,6 +669,52 @@ class ProtocolHandshakeTests(unittest.TestCase):
 
 
 class HarnessMetricSelectionTests(unittest.TestCase):
+    def test_measure_serial_discards_energy_without_dut_timer(self):
+        handshake_result = hil_protocol.HandshakeResult(
+            dut_log=["runs: 10"],
+            harness_log=[
+                "runs: 10",
+                "energy output (mJ): 10.0",
+                "harness timer output: 0.250000",
+                "DONE",
+            ],
+            dut_timer_found=False,
+            harness_done=True,
+            runs_dut=10,
+            runs_harness=10,
+            error=None,
+        )
+        compile_result = ArduinoCompileResult(
+            success=True,
+            log="ok",
+            flash_bytes=None,
+            ram_bytes=None,
+            overflow_kind=None,
+            build_dir=Path("/tmp"),
+        )
+        upload_result = ArduinoUploadResult(success=True, log="ok")
+
+        with patch(
+            "tinyodom.microcontrollers.arduino_base.compile_harness_sketch",
+            return_value=compile_result,
+        ), patch(
+            "tinyodom.microcontrollers.arduino_base.upload_harness_sketch",
+            return_value=upload_result,
+        ), patch(
+            "tinyodom.hil_protocol.run_handshake",
+            return_value=handshake_result,
+        ):
+            result = measure_serial(
+                serial_port="/dev/dut",
+                baud_rate=115200,
+                serial_timeout_s=1.0,
+                harness_serial_port="/dev/harness",
+                harness_auto_flash="always",
+            )
+
+        self.assertIsNone(result.latency_s)
+        self.assertIsNone(result.power_metrics)
+
     def test_measure_serial_discards_energy_on_run_mismatch(self):
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 10", "timer output: 0.250000"],

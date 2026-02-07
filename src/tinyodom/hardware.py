@@ -579,15 +579,17 @@ def HIL_spec(
         Tuple of (RAM bytes, flash bytes, latency seconds, arena bytes, error flag,
         optional power telemetry parsed from the serial log).
     """
+    _store_retry_hint_bytes(None)  # clear any stale hint from a previous call
+    requested_device = chosen_device
+    if device is not None:
+        chosen_device = device.spec.name
     logger.info(
-        "HIL_spec: start attempt (device=%s, idx=%d, run_hil=%s)",
+        "HIL_spec: start attempt (requested_device=%s, resolved_device=%s, idx=%d, run_hil=%s)",
+        requested_device,
         chosen_device,
         idx,
         not compile_only,
     )
-    _store_retry_hint_bytes(None)  # clear any stale hint from a previous call
-    if device is not None:
-        chosen_device = device.spec.name
     if chosen_device not in DEVICE_SPECS:
         raise ValueError(
             f"Unsupported device '{chosen_device}'. Supported devices: {list(DEVICE_SPECS)}"

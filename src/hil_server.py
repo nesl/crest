@@ -55,8 +55,12 @@ def _configure_logging(level_name: str) -> None:
     )
 
 class HILServer:
-    def __init__(self, config_path: Path=DEFAULT_CONFIG_PATH) -> None:
-        self.config = load_config(config_path)
+    def __init__(
+        self,
+        config_path: Path = DEFAULT_CONFIG_PATH,
+        config: Dict | None = None,
+    ) -> None:
+        self.config = config if config is not None else load_config(config_path)
 
         # Resolve repository root once so sketch variants can be copied before each compile.
         self.repo_root = Path(__file__).resolve().parent.parent
@@ -276,8 +280,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     cfg_path = Path(args.config)
-    preview_config = load_config(cfg_path)
-    _configure_logging(preview_config.logging.level)
+    config = load_config(cfg_path)
+    _configure_logging(config.logging.level)
 
-    server = HILServer(config_path=cfg_path)
+    server = HILServer(config_path=cfg_path, config=config)
     server.start()

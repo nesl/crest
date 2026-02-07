@@ -126,8 +126,7 @@ void loop() {
     if (arm_pin_state == HIGH) {
       // DUT disarmed before asserting D2 HIGH; return to idle.
       EnterIdle();
-    } else
-    if (kArmTimeoutMs > 0 && millis() - arm_start_ms > kArmTimeoutMs) {
+    } else if (kArmTimeoutMs > 0 && millis() - arm_start_ms > kArmTimeoutMs) {
       Serial.println("harness error: arm_timeout");
       EnterIdle();
     } else if (pin_state == HIGH && last_pin_state == LOW) {

@@ -732,7 +732,6 @@ def measure_serial(
                 "measure_serial: skipping harness reflash for protocol error '%s'",
                 result.error,
             )
-        if result.error:
             logger.info("measure_serial: falling back to DUT-only flow after harness error")
             dut_log = hil_protocol.run_dut_only(
                 dut_port=serial_port,
@@ -754,18 +753,20 @@ def measure_serial(
             f"HARNESS: {line}" for line in result.harness_log
         ]
         power_metrics = None
-        if result.harness_done and result.runs_dut is not None and result.runs_harness is not None:
-            if result.runs_dut == result.runs_harness:
-                power_metrics = _parse_power_metrics(result.harness_log)
-            else:
-                logger.warning(
-                    "Harness run-count mismatch (dut=%s harness=%s)",
-                    result.runs_dut,
-                    result.runs_harness,
-                )
+        if not result.dut_timer_found or latency_s is None:
+            logger.warning("DUT timer output missing; ignoring harness energy metrics.")
+        elif not result.harness_done:
+            logger.warning("Harness did not report DONE; ignoring energy metrics.")
+        elif result.runs_dut is None or result.runs_harness is None:
+            logger.warning("Missing DUT/harness run count; ignoring energy metrics.")
+        elif result.runs_dut != result.runs_harness:
+            logger.warning(
+                "Harness run-count mismatch (dut=%s harness=%s)",
+                result.runs_dut,
+                result.runs_harness,
+            )
         else:
-            if not result.harness_done:
-                logger.warning("Harness did not report DONE; ignoring energy metrics.")
+            power_metrics = _parse_power_metrics(result.harness_log)
         return MeasureResult(
             latency_s=latency_s,
             arena_error_line=arena_error_line,
