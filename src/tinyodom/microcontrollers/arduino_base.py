@@ -31,6 +31,8 @@ print(f"Using Arduino CLI at: {ARDUINO_CLI_BIN}")
 logger = logging.getLogger(__name__)
 
 _HARNESS_SKETCH_DIR = _PROJECT_ROOT / "sketches" / "harness"
+_SHARED_COMMON_DIR = _PROJECT_ROOT / "sketches" / "common"
+_SHARED_HEADER_NAMES = ("tinyodom_hil_config.h", "tinyodom_power.h")
 _HARNESS_FLASHED_SIGNATURES: Dict[str, str] = {}
 
 
@@ -350,8 +352,21 @@ def compile_harness_sketch(
     fqbn: str,
     build_defines: Optional[Dict[str, int]] = None,
 ) -> CompileResult:
-    """Compile the harness sketch without patching deployment constants."""
+    """Compile the harness sketch without patching deployment constants.
+
+    The harness keeps local `common/` headers for Arduino include compatibility.
+    Before each compile, shared protocol/power headers from `sketches/common/`
+    are copied into the harness `common/` directory so there is one source of
+    truth and no manual sync step.
+    """
     target_path = sketch_path or _HARNESS_SKETCH_DIR
+    harness_common_dir = target_path / "common"
+    harness_common_dir.mkdir(parents=True, exist_ok=True)
+    for header_name in _SHARED_HEADER_NAMES:
+        shared_header = _SHARED_COMMON_DIR / header_name
+        if not shared_header.exists():
+            raise FileNotFoundError(f"Shared header not found: {shared_header}")
+        shutil.copy2(shared_header, harness_common_dir / header_name)
     return compile_sketch(
         sketch_path=target_path,
         fqbn=fqbn,
