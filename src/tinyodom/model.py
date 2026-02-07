@@ -261,7 +261,10 @@ def collect_metrics(
     harness_ready_timeout_s : float | None, optional
         Timeout waiting for HARNESS READY.
     harness_arm_timeout_s : float | None, optional
-        Legacy host-side ARM timeout (unused with D3 hardware arming).
+        Harness-side arm timeout (seconds) while waiting for a valid D2 trigger
+        after the D3 active-low arming condition. This value is compiled into
+        the harness firmware as `TINYODOM_HARNESS_ARM_TIMEOUT_MS`; set to 0 to
+        disable the harness arm timeout.
     harness_active_timeout_s : float | None, optional
         Maximum time for an active measurement window.
     harness_done_timeout_s : float | None, optional

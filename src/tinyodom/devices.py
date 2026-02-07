@@ -258,7 +258,9 @@ class DeviceInterface(ABC):
         harness_ready_timeout_s : float | None
             Timeout waiting for HARNESS READY.
         harness_arm_timeout_s : float | None
-            Legacy host-side ARM timeout (unused with D3 hardware arming).
+            Harness-side arm timeout while waiting for a valid D2 trigger after
+            D3 active-low arming. This value is compiled into harness firmware
+            as `TINYODOM_HARNESS_ARM_TIMEOUT_MS`; set to 0 to disable it.
         harness_active_timeout_s : float | None
             Maximum time to wait for a harness measurement window.
         harness_done_timeout_s : float | None

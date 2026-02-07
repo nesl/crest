@@ -63,8 +63,16 @@ def _flush_input(ser: serial.Serial) -> None:
     try:
         ser.reset_input_buffer()
     except AttributeError:
-        while ser.in_waiting:
-            ser.read(ser.in_waiting)
+        while True:
+            pending = 0
+            in_waiting = getattr(ser, "in_waiting", None)
+            if in_waiting is not None:
+                pending = int(in_waiting)
+            elif hasattr(ser, "inWaiting"):
+                pending = int(ser.inWaiting())
+            if pending <= 0:
+                break
+            ser.read(pending)
 
 
 def _send_line(ser: serial.Serial, text: str) -> None:
