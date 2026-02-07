@@ -112,8 +112,8 @@ class MeasureResult:
 
     latency_s: Optional[float]
     arena_error_line: Optional[str]
-    serial_log: List[str]
-    power_metrics: Optional[Dict[str, Optional[float]]]
+    serial_log: list[str]
+    power_metrics: Optional[dict[str, Optional[float]]]
 
 
 def _compute_retry_hint_bytes(
