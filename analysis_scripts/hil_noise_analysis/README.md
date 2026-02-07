@@ -6,9 +6,21 @@ how input distributions affect latency and energy measurements.
 ## Scripts
 
 - `hil_energy_noise_scan.py`
-  - Runs a multi-mode (standard / uniform / representative / real) HIL noise scan.
+  - Runs a multi-mode (`uniform` / `representative` / `real`) HIL noise scan.
+  - Runs one or more model variants (`untrained`, `trained_50ep`) against each input mode.
   - Re-syncs the Arduino sketch variant for each input mode and records per-run metrics.
-  - Writes a CSV that includes an `input_mode` column so you can compare distributions.
+  - Writes a CSV with `model_variant`, `input_mode`, and per-run metrics.
+
+- `train_noise_scan_model.py`
+  - GPU-side utility to train the fixed noise-scan architecture for up to 50 epochs
+    with NAS-style early stopping (`patience=40`).
+  - Exports a `.keras` checkpoint plus metadata JSON for transfer to the HIL host.
+  - Can optionally export a `.tflite` copy for audit/debug.
+
+- `noise_scan_model_spec.py`
+  - Shared fixed hyperparameter spec for the noise scan architecture
+    (`nb_filters=10`, `kernel_size=12`, `dilations=[1,4,8,64]`, etc.).
+  - Used by both scan and training scripts to keep architecture definitions aligned.
 
 - `oxiod_input_profile.py`
   - Loads OxIOD windows using the same data loader and config parameters used by
@@ -20,6 +32,8 @@ how input distributions affect latency and energy measurements.
 
 - `hil_energy_noise_analysis.py`
   - Analyzes the noise scan CSV and writes summary stats plus plots.
+  - If `model_variant` is present, outputs a grouped summary by
+    (`model_variant`, `input_mode`) in addition to the legacy input-mode summary.
   - Outputs to `analysis_scripts/hil_noise_analysis/analysis_output/` by default.
 
 ## Test sketch variants
@@ -43,10 +57,45 @@ Set the following in `src/nas_config.yaml` to choose a variant when `energy_awar
 - `input_mode: "representative"` uses `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino`
 - `input_mode: "real"` uses `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino`
 
-## Typical usage
+## Two-Machine Workflow (GPU Train + HIL Scan)
 
 ```bash
+# 1) Optional: regenerate representative/real input header
 python analysis_scripts/hil_noise_analysis/oxiod_input_profile.py --split train --export-header sketches/analysis_sketches/tinyodom_tcn_input_data.h --real-window-count 10
-python analysis_scripts/hil_noise_analysis/hil_energy_noise_scan.py
+
+# 2) On the GPU host, train and package the fixed 50-epoch artifact
+python analysis_scripts/hil_noise_analysis/train_noise_scan_model.py \
+  --config src/nas_config.yaml \
+  --epochs 50 \
+  --out-dir analysis_scripts/hil_noise_analysis/artifacts \
+  --artifact-prefix noise_scan_50ep
+
+# 3) Copy artifacts from GPU host to HIL host
+scp analysis_scripts/hil_noise_analysis/artifacts/noise_scan_50ep.keras <hil_host>:<repo>/analysis_scripts/hil_noise_analysis/artifacts/
+scp analysis_scripts/hil_noise_analysis/artifacts/noise_scan_50ep.json <hil_host>:<repo>/analysis_scripts/hil_noise_analysis/artifacts/
+
+# 4) On the HIL host, run trained vs untrained scan across the three input modes
+python analysis_scripts/hil_noise_analysis/hil_energy_noise_scan.py \
+  --model-variants untrained,trained_50ep \
+  --input-modes uniform,representative,real \
+  --trained-checkpoint analysis_scripts/hil_noise_analysis/artifacts/noise_scan_50ep.keras \
+  --trained-meta analysis_scripts/hil_noise_analysis/artifacts/noise_scan_50ep.json \
+  --csv-path hil_energy_noise_scan.csv
+
+# 5) Analyze grouped results
 python analysis_scripts/hil_noise_analysis/hil_energy_noise_analysis.py --csv hil_energy_noise_scan.csv
 ```
+
+## Key CLI Flags
+
+- `hil_energy_noise_scan.py`
+  - `--model-variants` (default: `untrained,trained_50ep`)
+  - `--trained-checkpoint` (required when any `trained*` variant is requested)
+  - `--trained-meta` (optional metadata JSON)
+  - Use `--model-variants untrained` if you only want legacy untrained behavior.
+
+- `train_noise_scan_model.py`
+  - `--epochs` (default: `50`)
+  - `--out-dir` (default: `analysis_scripts/hil_noise_analysis/artifacts`)
+  - `--artifact-prefix` (default: `noise_scan_50ep`)
+  - `--export-tflite` (optional)

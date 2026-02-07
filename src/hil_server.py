@@ -11,11 +11,11 @@ import tensorflow as tf
 import zmq
 from addict import Dict
 # from sklearn.metrics import mean_squared_error  # , root_mean_squared_error
-# from tcn import TCN
+from tcn import TCN
 from tensorflow.keras import optimizers
 # from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 # from tensorflow.keras.layers import Dense, Flatten, MaxPooling1D, Reshape
-# from tensorflow.keras.models import load_model
+from tensorflow.keras.models import load_model
 
 from tinyodom.data import import_oxiod_dataset
 from tinyodom.hardware import (
@@ -28,7 +28,6 @@ from tinyodom.model import (
     build_tinyodom_model,
     collect_metrics,
     load_config,
-    count_flops
 )
 
 tf.get_logger().setLevel(logging.ERROR)
@@ -113,12 +112,62 @@ class HILServer:
             self.socket.close(linger=0)
             self.context.term()
 
-    def determine_metrics(self, hyperparams: Dict) -> dict:
-        model = build_tinyodom_model(hyperparams)
+    @staticmethod
+    def _validate_loaded_model_input_shape(model, hyperparams: Dict) -> None:
+        """Ensure a loaded checkpoint matches the expected HIL input dimensions."""
+        input_shape = model.input_shape
+        if isinstance(input_shape, list):
+            if len(input_shape) != 1:
+                raise ValueError(
+                    f"Expected a single-input model but checkpoint exposes {len(input_shape)} inputs."
+                )
+            input_shape = input_shape[0]
+        if not isinstance(input_shape, tuple) or len(input_shape) != 3:
+            raise ValueError(f"Unexpected checkpoint input shape: {input_shape}")
+
+        expected_timesteps = int(hyperparams.timesteps)
+        expected_input_dim = int(hyperparams.input_dim)
+        actual_timesteps = input_shape[1]
+        actual_input_dim = input_shape[2]
+        if (
+            actual_timesteps not in (None, expected_timesteps)
+            or actual_input_dim not in (None, expected_input_dim)
+        ):
+            raise ValueError(
+                "Checkpoint input shape mismatch: "
+                f"expected (None, {expected_timesteps}, {expected_input_dim}), "
+                f"got {input_shape}."
+            )
+
+    def determine_metrics(
+        self,
+        hyperparams: Dict,
+        checkpoint_path: Path | str | None = None,
+        model_variant: str = "untrained",
+    ) -> dict:
+        variant = str(model_variant).strip().lower()
+        if variant == "untrained":
+            model = build_tinyodom_model(hyperparams)
+            print("Model created from untrained architecture")
+        elif variant.startswith("trained"):
+            if checkpoint_path is None:
+                raise ValueError(
+                    f"model_variant '{model_variant}' requires checkpoint_path to be provided."
+                )
+            ckpt_path = Path(checkpoint_path)
+            if not ckpt_path.exists():
+                raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+            model = load_model(str(ckpt_path), custom_objects={"TCN": TCN})
+            self._validate_loaded_model_input_shape(model, hyperparams)
+            print(f"Model loaded from checkpoint: {ckpt_path}")
+        else:
+            raise ValueError(
+                f"Unsupported model_variant '{model_variant}'. "
+                "Use 'untrained' or a variant that starts with 'trained'."
+            )
+
         optimizer = optimizers.Adam()
         model.compile(loss={"velx": "mse", "vely": "mse"}, optimizer=optimizer)
-
-        print("Model created")
 
         # Convert the model to a TFLite format for deployment on the target device and save to OUTPUT_PATH
         convert_to_tflite_model(
