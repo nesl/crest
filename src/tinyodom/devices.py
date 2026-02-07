@@ -241,8 +241,6 @@ class DeviceInterface(ABC):
             Timeout for log capture.
         dut_ready_timeout_s : float | None
             Time to wait for DUT READY before sending START.
-        dut_ready_timeout_s : float | None
-            Time to wait for DUT READY before sending START.
         harness_serial_port : str | None
             Optional serial port for the INA228 harness.
         harness_fqbn : str | None
