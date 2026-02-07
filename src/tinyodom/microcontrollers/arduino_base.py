@@ -740,7 +740,10 @@ def measure_serial(
                 dut_timer_timeout_s=serial_timeout_s,
             )
             latency_s, arena_error_line = _parse_latency_from_log(dut_log)
-            serial_log = [f"DUT: {line}" for line in dut_log]
+            serial_log = [f"HANDSHAKE_ERROR: {result.error}"]
+            serial_log.extend(f"HARNESS_PRE: {line}" for line in result.harness_log)
+            serial_log.extend(f"DUT_PRE: {line}" for line in result.dut_log)
+            serial_log.extend(f"DUT: {line}" for line in dut_log)
             return MeasureResult(
                 latency_s=latency_s,
                 arena_error_line=arena_error_line,

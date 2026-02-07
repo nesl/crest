@@ -44,12 +44,9 @@ def _decode_line(raw: bytes) -> str:
     Returns
     -------
     str
-        Decoded and stripped line, or empty string on decode failure.
+        Decoded and stripped line. Invalid UTF-8 bytes are dropped.
     """
-    try:
-        return raw.decode("utf-8", errors="ignore").strip()
-    except UnicodeDecodeError:
-        return ""
+    return raw.decode("utf-8", errors="ignore").strip()
 
 
 def _flush_input(ser: serial.Serial) -> None:
@@ -379,7 +376,9 @@ def run_handshake(
     harness_active_timeout_s : float
         Maximum time to wait for a measurement window (<= 0 disables the timeout).
     harness_done_timeout_s : float
-        Timeout waiting for DONE after measurement (<= 0 disables the timeout).
+        Timeout waiting for DONE after DUT timer output is observed
+        (<= 0 disables the timeout). This timeout applies only to the final
+        DONE read phase and does not include harness arming time before START.
 
     Returns
     -------
@@ -438,6 +437,8 @@ def run_handshake(
                 stage="DUT timer output",
             )
 
+        # DONE waiting starts only after DUT timer output is observed, so this
+        # budget is intentionally scoped to harness completion after that point.
         if harness_active_timeout_s <= 0 or harness_done_timeout_s <= 0:
             total_harness_timeout = 0.0
         else:
