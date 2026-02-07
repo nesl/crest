@@ -16,6 +16,8 @@ how input distributions affect latency and energy measurements.
     with NAS-style early stopping (`patience=40`).
   - Exports a `.keras` checkpoint plus metadata JSON for transfer to the HIL host.
   - Can optionally export a `.tflite` copy for audit/debug.
+  - Automatically falls back to a numpy-only data loader if `tinyodom.data` (pandas-based)
+    is unavailable in the environment.
 
 - `noise_scan_model_spec.py`
   - Shared fixed hyperparameter spec for the noise scan architecture
@@ -99,3 +101,4 @@ python analysis_scripts/hil_noise_analysis/hil_energy_noise_analysis.py --csv hi
   - `--out-dir` (default: `analysis_scripts/hil_noise_analysis/artifacts`)
   - `--artifact-prefix` (default: `noise_scan_50ep`)
   - `--export-tflite` (optional)
+  - If pandas import fails with a GLIBCXX/libstdc++ mismatch, the script falls back automatically.
