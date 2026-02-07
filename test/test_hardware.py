@@ -50,12 +50,18 @@ from tinyodom.hardware import (  # noqa: E402
     get_model_memory_usage,
     return_hardware_specs,
 )
+from tinyodom import hil_protocol  # noqa: E402
+from tinyodom.devices import ArduinoDevice  # noqa: E402
 from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
     ARDUINO_CLI_BIN,
     ARDUINO_CLI_CONFIG,
+    CompileResult as ArduinoCompileResult,
+    UploadResult as ArduinoUploadResult,
+    MeasureResult as ArduinoMeasureResult,
     _classify_compile_failure,
     _collect_latency_seconds,
     _compute_retry_hint_bytes,
+    measure_serial,
     _parse_memory_from_compile,
     _patch_sketch_constants,
     _replace_define,
@@ -594,6 +600,242 @@ class RetryHintHelperTests(unittest.TestCase):
         self.assertIsNone(_pop_retry_hint_bytes())
 
 
+class ProtocolHandshakeTests(unittest.TestCase):
+    class _DummySerial:
+        def __init__(self, responses):
+            self._responses = iter(responses)
+
+        def readline(self):
+            try:
+                return next(self._responses)
+            except StopIteration:
+                return b""
+
+        def reset_input_buffer(self):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def test_run_handshake_sends_ping_and_start_without_arm(self):
+        harness_lines = [
+            b"HARNESS READY\n",
+            b"ARMED\n",
+            b"runs: 10\n",
+            b"harness timer output: 0.250000\n",
+            b"DONE\n",
+        ]
+        dut_lines = [
+            b"DUT READY\n",
+            b"runs: 10\n",
+            b"timer output: 0.250000\n",
+        ]
+
+        def serial_factory(port, *args, **kwargs):
+            if port == "/dev/harness":
+                return self._DummySerial(harness_lines)
+            if port == "/dev/dut":
+                return self._DummySerial(dut_lines)
+            raise AssertionError(f"Unexpected port: {port}")
+
+        sent_commands: list[str] = []
+        with patch("tinyodom.hil_protocol.serial.Serial", side_effect=serial_factory):
+            with patch(
+                "tinyodom.hil_protocol._send_line",
+                side_effect=lambda _ser, text: sent_commands.append(text),
+            ):
+                result = hil_protocol.run_handshake(
+                    dut_port="/dev/dut",
+                    harness_port="/dev/harness",
+                    baud_rate=115200,
+                    dut_ready_timeout_s=1.0,
+                    dut_timer_timeout_s=1.0,
+                    harness_ready_timeout_s=1.0,
+                    harness_active_timeout_s=1.0,
+                    harness_done_timeout_s=1.0,
+                )
+
+        self.assertIsNone(result.error)
+        self.assertTrue(result.dut_timer_found)
+        self.assertTrue(result.harness_done)
+        self.assertEqual(result.runs_dut, 10)
+        self.assertEqual(result.runs_harness, 10)
+        self.assertIn("PING", sent_commands)
+        self.assertIn("START", sent_commands)
+        self.assertNotIn("ARM", sent_commands)
+
+
+class HarnessMetricSelectionTests(unittest.TestCase):
+    def test_measure_serial_discards_energy_without_dut_timer(self):
+        handshake_result = hil_protocol.HandshakeResult(
+            dut_log=["runs: 10"],
+            harness_log=[
+                "runs: 10",
+                "energy output (mJ): 10.0",
+                "harness timer output: 0.250000",
+                "DONE",
+            ],
+            dut_timer_found=False,
+            harness_done=True,
+            runs_dut=10,
+            runs_harness=10,
+            error=None,
+        )
+        compile_result = ArduinoCompileResult(
+            success=True,
+            log="ok",
+            flash_bytes=None,
+            ram_bytes=None,
+            overflow_kind=None,
+            build_dir=Path("/tmp"),
+        )
+        upload_result = ArduinoUploadResult(success=True, log="ok")
+
+        with patch(
+            "tinyodom.microcontrollers.arduino_base.compile_harness_sketch",
+            return_value=compile_result,
+        ), patch(
+            "tinyodom.microcontrollers.arduino_base.upload_harness_sketch",
+            return_value=upload_result,
+        ), patch(
+            "tinyodom.hil_protocol.run_handshake",
+            return_value=handshake_result,
+        ):
+            result = measure_serial(
+                serial_port="/dev/dut",
+                baud_rate=115200,
+                serial_timeout_s=1.0,
+                harness_serial_port="/dev/harness",
+                harness_auto_flash="always",
+            )
+
+        self.assertIsNone(result.latency_s)
+        self.assertIsNone(result.power_metrics)
+
+    def test_measure_serial_discards_energy_on_run_mismatch(self):
+        handshake_result = hil_protocol.HandshakeResult(
+            dut_log=["runs: 10", "timer output: 0.250000"],
+            harness_log=[
+                "runs: 8",
+                "energy output (mJ): 10.0",
+                "harness timer output: 0.250000",
+                "DONE",
+            ],
+            dut_timer_found=True,
+            harness_done=True,
+            runs_dut=10,
+            runs_harness=8,
+            error=None,
+        )
+        compile_result = ArduinoCompileResult(
+            success=True,
+            log="ok",
+            flash_bytes=None,
+            ram_bytes=None,
+            overflow_kind=None,
+            build_dir=Path("/tmp"),
+        )
+        upload_result = ArduinoUploadResult(success=True, log="ok")
+
+        with patch(
+            "tinyodom.microcontrollers.arduino_base.compile_harness_sketch",
+            return_value=compile_result,
+        ), patch(
+            "tinyodom.microcontrollers.arduino_base.upload_harness_sketch",
+            return_value=upload_result,
+        ), patch(
+            "tinyodom.hil_protocol.run_handshake",
+            return_value=handshake_result,
+        ):
+            result = measure_serial(
+                serial_port="/dev/dut",
+                baud_rate=115200,
+                serial_timeout_s=1.0,
+                harness_serial_port="/dev/harness",
+                harness_auto_flash="always",
+            )
+
+        self.assertAlmostEqual(result.latency_s, 0.25)
+        self.assertIsNone(result.power_metrics)
+
+    def test_measure_serial_keeps_latency_when_harness_done_missing(self):
+        handshake_result = hil_protocol.HandshakeResult(
+            dut_log=["runs: 10", "timer output: 0.125000"],
+            harness_log=["runs: 10", "harness error: active_timeout"],
+            dut_timer_found=True,
+            harness_done=False,
+            runs_dut=10,
+            runs_harness=10,
+            error=None,
+        )
+        compile_result = ArduinoCompileResult(
+            success=True,
+            log="ok",
+            flash_bytes=None,
+            ram_bytes=None,
+            overflow_kind=None,
+            build_dir=Path("/tmp"),
+        )
+        upload_result = ArduinoUploadResult(success=True, log="ok")
+
+        with patch(
+            "tinyodom.microcontrollers.arduino_base.compile_harness_sketch",
+            return_value=compile_result,
+        ), patch(
+            "tinyodom.microcontrollers.arduino_base.upload_harness_sketch",
+            return_value=upload_result,
+        ), patch(
+            "tinyodom.hil_protocol.run_handshake",
+            return_value=handshake_result,
+        ):
+            result = measure_serial(
+                serial_port="/dev/dut",
+                baud_rate=115200,
+                serial_timeout_s=1.0,
+                harness_serial_port="/dev/harness",
+                harness_auto_flash="always",
+            )
+
+        self.assertAlmostEqual(result.latency_s, 0.125)
+        self.assertIsNone(result.power_metrics)
+
+
+class DeviceTimeoutPassThroughTests(unittest.TestCase):
+    def test_arduino_device_measure_preserves_zero_timeouts(self):
+        device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE")
+        fake_result = ArduinoMeasureResult(
+            latency_s=0.1,
+            arena_error_line=None,
+            serial_log=["timer output: 0.1"],
+            power_metrics=None,
+        )
+        with patch(
+            "tinyodom.microcontrollers.arduino_base.measure_serial",
+            return_value=fake_result,
+        ) as mock_measure:
+            device.measure(
+                serial_port="/dev/dut",
+                baud_rate=115200,
+                serial_timeout_s=1.0,
+                dut_ready_timeout_s=0.0,
+                harness_serial_port="/dev/harness",
+                harness_ready_timeout_s=0.0,
+                harness_arm_timeout_s=0.0,
+                harness_active_timeout_s=0.0,
+                harness_done_timeout_s=0.0,
+            )
+
+        call_kwargs = mock_measure.call_args.kwargs
+        self.assertEqual(call_kwargs["dut_ready_timeout_s"], 0.0)
+        self.assertEqual(call_kwargs["harness_ready_timeout_s"], 0.0)
+        self.assertEqual(call_kwargs["harness_arm_timeout_s"], 0.0)
+        self.assertEqual(call_kwargs["harness_active_timeout_s"], 0.0)
+        self.assertEqual(call_kwargs["harness_done_timeout_s"], 0.0)
+
+
 class HILSpecErrorTests(unittest.TestCase):
     def _write_sketch(self, sketch_dir: Path) -> None:
         sketch_dir.mkdir(parents=True, exist_ok=True)
@@ -643,8 +885,8 @@ class HILSpecErrorTests(unittest.TestCase):
                 side_effect=[compile_result, upload_result],
             ):
                 with patch(
-                    "tinyodom.microcontrollers.arduino_base._collect_latency_seconds",
-                    return_value=(None, None, ["failed to allocate"]),
+                    "tinyodom.hil_protocol.run_dut_only",
+                    return_value=["boot ok"],
                 ):
                     ram, flash, latency, arena_bytes, err, _power = HIL_spec(
                         dirpath=sketch_dir,
@@ -731,8 +973,8 @@ class HILSpecErrorTests(unittest.TestCase):
                     side_effect=[compile_result, upload_result],
                 ):
                 with patch(
-                    "tinyodom.microcontrollers.arduino_base._collect_latency_seconds",
-                    return_value=(None, "size is too small for all buffers", ["size is too small for all buffers"]),
+                    "tinyodom.hil_protocol.run_dut_only",
+                    return_value=["size is too small for all buffers"],
                 ):
                     ram, flash, latency, arena_bytes, err, _power = HIL_spec(
                         dirpath=sketch_dir,

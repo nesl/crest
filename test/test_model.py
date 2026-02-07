@@ -28,9 +28,9 @@ from tinyodom.model import (
 from tinyodom.hardware import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
 
 try:  # Support both `python -m unittest test.test_*` and direct execution.
-    from test.test_hardware_utils_ex import _cli_exists  # type: ignore  # noqa: E402
+    from test.test_hardware import _cli_exists  # type: ignore  # noqa: E402
 except ModuleNotFoundError:
-    from test_hardware_utils_ex import _cli_exists  # type: ignore  # noqa: E402
+    from test_hardware import _cli_exists  # type: ignore  # noqa: E402
 
 
 class CountFlopsTests(unittest.TestCase):

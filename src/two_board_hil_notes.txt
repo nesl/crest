@@ -1,0 +1,136 @@
+Two-Board HIL Notes (D3 Arm + D2 Trigger)
+=========================================
+
+Date context
+------------
+- Validation work completed on February 6, 2026.
+- Hardware setup: DUT on /dev/ttyACM0, harness (BLE33 + INA228) on /dev/ttyACM1.
+
+
+1) Goal
+-------
+Move from single-board energy measurement to a two-board HIL design where:
+- DUT runs inference only.
+- Harness board owns INA228 power measurement.
+- Timing/energy window is controlled by GPIO instead of DUT-side INA I2C.
+
+
+2) Final architecture
+---------------------
+Signal/control model:
+- D2: trigger line from DUT to harness.
+- D3: active-low arm line from DUT to harness.
+
+Per-attempt sequence:
+1. Host pings harness over serial (PING -> HARNESS READY).
+2. Host waits for DUT READY, then sends START.
+3. DUT drives D3 LOW (arm), waits hold time, then drives D2 HIGH.
+4. Harness auto-arms only after D3 LOW + D2 LOW stable window.
+5. DUT completes inference, drives D2 LOW, then D3 HIGH (disarm).
+6. Harness emits energy/timing telemetry and DONE.
+
+Protocol behavior:
+- Serial ARM command was removed from host handshake.
+- ARMED is retained as observability logging on harness side.
+- Host validity gate for energy metrics is:
+  DUT timer output present + HARNESS DONE + runs_dut == runs_harness.
+
+
+3) What was implemented
+-----------------------
+Firmware:
+- Added D3 arm + D2 trigger semantics in DUT sketches.
+- Updated harness state machine to arm on D3/D2 stable-low, measure on D2 edges, auto-disarm.
+- Kept INA228 on harness only.
+
+Host/Python:
+- Handshake updated to PING/READY + START + DONE flow.
+- Dual-port parsing retained (DUT and harness logs parsed separately).
+- Added richer protocol logging:
+  wait-stage logs + heartbeat logs while waiting.
+- Changed harness recovery behavior:
+  no forced harness reflash on dut_ready_timeout;
+  forced reflash now reserved for serial-port exceptions.
+- Build-cache correctness improvement:
+  Arduino build directories now include a short hash of compile-time define
+  flags, so changing `compiler.cpp.extra_flags` cannot reuse stale artifacts.
+- Timeout alignment improvement:
+  host timeout settings for harness arm/active windows are converted to
+  milliseconds and compiled into the harness sketch macros so host + firmware
+  use the same timeout values.
+
+Config:
+- Added and used:
+  harness_arm_pin, harness_trigger_pin, dut_arm_hold_ms, harness_stable_low_ms.
+- Added finite timeout tuning for faster failure on impossible arenas.
+
+
+4) What was tested
+------------------
+A) Toy-level GPIO/energy validation
+- Script: analysis_scripts/hil_single_run/run_toy_hil.py
+- Sketches:
+  analysis_scripts/toy_gpio_dut/toy_gpio_dut.ino
+  analysis_scripts/toy_gpio_harness/toy_gpio_harness.ino
+- Verified:
+  - false pulses during upload exist with D2-only strategy;
+  - D3 active-low gating + stable-low arming removes false captures;
+  - pulse-by-pulse harness timing and energy capture are stable;
+  - harness can remain flashed once while DUT reflashes repeatedly.
+
+B) Real single-run HIL validation
+- Script: analysis_scripts/hil_single_run/run_single_hil.py
+- Config: src/nas_config.yaml (energy_aware true, two-board enabled).
+- Observed arena sweep behavior:
+  - successful runs at 120, 95, 70, 40, 25 KiB;
+  - 10 KiB fails (no DUT READY / no timer), expected.
+- Controller returns last successful arena result (25 KiB).
+
+
+5) Outcome (validated state)
+----------------------------
+Two-board HIL is functioning end-to-end.
+
+Representative successful output (single-run final result):
+- arena_bytes: 25600 (25 KiB)
+- latency_ms: ~152.99
+- harness_latency_ms: ~151.63
+- energy_mj_per_inference: ~7.29
+- error_label: HIL_MASTER_SUCCESS
+
+Interpretation:
+- Harness energy path is working (non-default energy fields present).
+- DUT/harness timing is consistent with small expected clock/edge offsets.
+- Smallest arena (10 KiB) fails as expected; controller selects smallest passing arena.
+
+
+6) Timeout/recovery tuning used
+-------------------------------
+Current practical values in src/nas_config.yaml:
+- dut_ready_timeout_s: 14.5
+- harness_ready_timeout_s: 3.6
+- harness_active_timeout_s: 12.0
+- harness_done_timeout_s: 3.6
+
+Rationale:
+- Faster failure on impossible candidate arenas.
+- Avoid long dead-time at end of sweep.
+- Keep enough margin for normal DUT boot and harness completion.
+
+
+7) Lessons learned
+------------------
+- Upload-time GPIO noise is real; D2-only trigger is insufficient.
+- Hardware arming (D3) is robust and cleaner than serial ARM as primary gate.
+- Stable-low arming window prevents accidental arm during reset/bootloader transitions.
+- Host-stage logging is critical for debugging perceived "hangs."
+- Recovery policy matters:
+  avoid costly harness reflashes for DUT-side failures.
+
+
+8) Remaining caveats / future work
+----------------------------------
+- Current single-run path still performs arena search by design (not fixed-arena).
+- A dedicated "single-attempt fixed arena" mode could speed debug iterations.
+- Keep monitoring for edge cases where DUT never emits READY after upload.
+- For cross-platform DUTs (e.g., STM), preserve the same UART + D2/D3 contract.

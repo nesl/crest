@@ -1,3 +1,4 @@
+// Flash this sketch to the harness board (BLE33) that powers/reads the INA228.
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_INA228.h>

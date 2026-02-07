@@ -524,6 +524,18 @@ def HIL_spec(
     serial_port: Optional[str] = None,
     baud_rate: int = 115200, # potentially highest baud rate for BLE 33
     serial_timeout_s: float = 12.0,
+    dut_ready_timeout_s: Optional[float] = None,
+    harness_serial_port: Optional[str] = None,
+    harness_fqbn: Optional[str] = None,
+    harness_auto_flash: Optional[str] = None,
+    harness_arm_pin: Optional[int] = None,
+    harness_trigger_pin: Optional[int] = None,
+    dut_arm_hold_ms: Optional[int] = None,
+    harness_stable_low_ms: Optional[int] = None,
+    harness_ready_timeout_s: Optional[float] = None,
+    harness_arm_timeout_s: Optional[float] = None,
+    harness_active_timeout_s: Optional[float] = None,
+    harness_done_timeout_s: Optional[float] = None,
     compile_only: bool = False,
     device: Optional[DeviceInterface] = None,
 ) -> Tuple[int, int, float, int, int, Optional[Dict[str, Optional[float]]]]:
@@ -554,6 +566,8 @@ def HIL_spec(
         Serial baud rate for latency capture.
     serial_timeout_s : float, optional
         Seconds to wait for the `timer output:` line.
+    dut_ready_timeout_s : float, optional
+        Seconds to wait for DUT READY before sending START.
     compile_only : bool, optional
         Skip upload/latency capture and return compile metrics only.
     device : DeviceInterface | None, optional
@@ -566,8 +580,16 @@ def HIL_spec(
         optional power telemetry parsed from the serial log).
     """
     _store_retry_hint_bytes(None)  # clear any stale hint from a previous call
+    requested_device = chosen_device
     if device is not None:
         chosen_device = device.spec.name
+    logger.info(
+        "HIL_spec: start attempt (requested_device=%s, resolved_device=%s, idx=%d, run_hil=%s)",
+        requested_device,
+        chosen_device,
+        idx,
+        not compile_only,
+    )
     if chosen_device not in DEVICE_SPECS:
         raise ValueError(
             f"Unsupported device '{chosen_device}'. Supported devices: {list(DEVICE_SPECS)}"
@@ -603,6 +625,25 @@ def HIL_spec(
         run_hil=not compile_only,
         baud_rate=baud_rate,
         serial_timeout_s=serial_timeout_s,
+        dut_ready_timeout_s=dut_ready_timeout_s,
+        harness_serial_port=harness_serial_port,
+        harness_fqbn=harness_fqbn,
+        harness_auto_flash=harness_auto_flash,
+        harness_arm_pin=harness_arm_pin,
+        harness_trigger_pin=harness_trigger_pin,
+        dut_arm_hold_ms=dut_arm_hold_ms,
+        harness_stable_low_ms=harness_stable_low_ms,
+        harness_ready_timeout_s=harness_ready_timeout_s,
+        harness_arm_timeout_s=harness_arm_timeout_s,
+        harness_active_timeout_s=harness_active_timeout_s,
+        harness_done_timeout_s=harness_done_timeout_s,
+    )
+    logger.info(
+        "HIL_spec: evaluate complete (ram=%d, flash=%d, latency=%s, err=%d)",
+        metrics.ram_bytes,
+        metrics.flash_bytes,
+        metrics.latency_s,
+        metrics.error_code,
     )
     _store_retry_hint_bytes(metrics.retry_hint_bytes)
     logger.info(
@@ -628,6 +669,18 @@ def HIL_controller(
     baud_rate: int = 115200,
     serial_timeout_s: float = 12.0,
     run_hil: bool = True,
+    dut_ready_timeout_s: Optional[float] = None,
+    harness_serial_port: Optional[str] = None,
+    harness_fqbn: Optional[str] = None,
+    harness_auto_flash: Optional[str] = None,
+    harness_arm_pin: Optional[int] = None,
+    harness_trigger_pin: Optional[int] = None,
+    dut_arm_hold_ms: Optional[int] = None,
+    harness_stable_low_ms: Optional[int] = None,
+    harness_ready_timeout_s: Optional[float] = None,
+    harness_arm_timeout_s: Optional[float] = None,
+    harness_active_timeout_s: Optional[float] = None,
+    harness_done_timeout_s: Optional[float] = None,
     device: Optional[DeviceInterface] = None,
 ) -> Tuple[
     int,
@@ -659,6 +712,8 @@ def HIL_controller(
         Serial baud rate for latency capture.
     serial_timeout_s : float, optional
         Timeout when waiting for the `timer output:` line.
+    dut_ready_timeout_s : float, optional
+        Seconds to wait for DUT READY before sending START.
     device : DeviceInterface | None, optional
         Optional device implementation to use for compile/upload/measure.
     compile_only : bool, optional
@@ -745,6 +800,18 @@ def HIL_controller(
             serial_port=serial_port,
             baud_rate=baud_rate,
             serial_timeout_s=serial_timeout_s,
+            dut_ready_timeout_s=dut_ready_timeout_s,
+            harness_serial_port=harness_serial_port,
+            harness_fqbn=harness_fqbn,
+            harness_auto_flash=harness_auto_flash,
+            harness_arm_pin=harness_arm_pin,
+            harness_trigger_pin=harness_trigger_pin,
+            dut_arm_hold_ms=dut_arm_hold_ms,
+            harness_stable_low_ms=harness_stable_low_ms,
+            harness_ready_timeout_s=harness_ready_timeout_s,
+            harness_arm_timeout_s=harness_arm_timeout_s,
+            harness_active_timeout_s=harness_active_timeout_s,
+            harness_done_timeout_s=harness_done_timeout_s,
             compile_only=compile_only,
             device=device,
         )

@@ -76,3 +76,5 @@ tools/arduino-user/libraries/Adafruit_INA228_Library/
 
 <arduino-data_dir>
 tools/arduino-cli.yaml
+
+.arduino-build/

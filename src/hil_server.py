@@ -1,3 +1,4 @@
+import argparse
 import logging
 import shutil
 from pathlib import Path
@@ -36,11 +37,30 @@ logging.getLogger("absl").setLevel(logging.ERROR)
 tf.autograph.set_verbosity(0)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+
+
+def _configure_logging(level_name: str) -> None:
+    """
+    Configure root logging for the HIL server process.
+
+    Parameters
+    ----------
+    level_name : str
+        Logging level name (e.g., INFO, DEBUG).
+    """
+    level_value = getattr(logging, level_name.upper(), logging.INFO)
+    logging.basicConfig(
+        level=level_value,
+        format="%(levelname)s:%(name)s:%(message)s",
+    )
 
 class HILServer:
-    def __init__(self, config_path: Path=DEFAULT_CONFIG_PATH) -> None:
-        self.config = load_config(config_path)
+    def __init__(
+        self,
+        config_path: Path = DEFAULT_CONFIG_PATH,
+        config: Dict | None = None,
+    ) -> None:
+        self.config = config if config is not None else load_config(config_path)
 
         # Resolve repository root once so sketch variants can be copied before each compile.
         self.repo_root = Path(__file__).resolve().parent.parent
@@ -133,6 +153,62 @@ class HILServer:
             # Stride=20 at 100 Hz emits an inference roughly every 0.2s, so normalize
             # latency by the stride cadence rather than the full window length.
             latency_budget_ms=latency_budget_ms,
+            dut_ready_timeout_s=getattr(self.config.device, "dut_ready_timeout_s", 5.0),
+            harness_serial_port=(
+                self.config.device.harness_serial_port
+                if self.config.training.energy_aware
+                else None
+            ),
+            harness_fqbn=(
+                self.config.device.harness_fqbn
+                if self.config.training.energy_aware
+                else None
+            ),
+            harness_auto_flash=(
+                self.config.device.harness_auto_flash
+                if self.config.training.energy_aware
+                else None
+            ),
+            harness_arm_pin=(
+                self.config.device.harness_arm_pin
+                if self.config.training.energy_aware
+                else None
+            ),
+            harness_trigger_pin=(
+                self.config.device.harness_trigger_pin
+                if self.config.training.energy_aware
+                else None
+            ),
+            dut_arm_hold_ms=(
+                self.config.device.dut_arm_hold_ms
+                if self.config.training.energy_aware
+                else None
+            ),
+            harness_stable_low_ms=(
+                self.config.device.harness_stable_low_ms
+                if self.config.training.energy_aware
+                else None
+            ),
+            harness_ready_timeout_s=(
+                self.config.device.harness_ready_timeout_s
+                if self.config.training.energy_aware
+                else None
+            ),
+            harness_arm_timeout_s=(
+                self.config.device.harness_arm_timeout_s
+                if self.config.training.energy_aware
+                else None
+            ),
+            harness_active_timeout_s=(
+                self.config.device.harness_active_timeout_s
+                if self.config.training.energy_aware
+                else None
+            ),
+            harness_done_timeout_s=(
+                self.config.device.harness_done_timeout_s
+                if self.config.training.energy_aware
+                else None
+            ),
         )
         if self.config.device.hil:
             metrics["latency_budget_ms"] = latency_budget_ms
@@ -172,6 +248,10 @@ class HILServer:
         sketch_target = sketch_dir / "tinyodom_tcn.ino"
         shutil.copyfile(variant_source, sketch_target)
 
+        common_source = self.sketch_variants_dir / "common"
+        if common_source.exists():
+            shutil.copytree(common_source, sketch_dir / "common", dirs_exist_ok=True)
+
         needs_header = variant_name in {
             "tinyodom_tcn_energy_representative.ino",
             "tinyodom_tcn_energy_real_data.ino",
@@ -191,6 +271,17 @@ class HILServer:
         return self.active_sketch_path
 
 if __name__ == "__main__":
-    server = HILServer()
+    parser = argparse.ArgumentParser(description="Run the TinyODOM HIL server.")
+    parser.add_argument(
+        "--config",
+        default=str(DEFAULT_CONFIG_PATH),
+        help="Path to config YAML.",
+    )
+    args = parser.parse_args()
 
+    cfg_path = Path(args.config)
+    config = load_config(cfg_path)
+    _configure_logging(config.logging.level)
+
+    server = HILServer(config_path=cfg_path, config=config)
     server.start()

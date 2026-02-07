@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -59,6 +60,10 @@ def _build_hyperparams(server: HILServer) -> Dict:
 
 
 def main() -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s:%(name)s:%(message)s",
+    )
     parser = argparse.ArgumentParser(description="Run one HIL controller pass and print metrics.")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Path to config YAML.")
     parser.add_argument(
@@ -71,11 +76,49 @@ def main() -> int:
         default=None,
         help="Optional JSON output path to write the metrics.",
     )
+    parser.add_argument(
+        "--harness-arm-pin",
+        type=int,
+        default=None,
+        help="Override device.harness_arm_pin for this run.",
+    )
+    parser.add_argument(
+        "--harness-trigger-pin",
+        type=int,
+        default=None,
+        help="Override device.harness_trigger_pin for this run.",
+    )
+    parser.add_argument(
+        "--dut-arm-hold-ms",
+        type=int,
+        default=None,
+        help="Override device.dut_arm_hold_ms for this run.",
+    )
+    parser.add_argument(
+        "--harness-stable-low-ms",
+        type=int,
+        default=None,
+        help="Override device.harness_stable_low_ms for this run.",
+    )
     args = parser.parse_args()
 
     server = HILServer(config_path=Path(args.config))
+    if args.harness_arm_pin is not None:
+        server.config.device.harness_arm_pin = args.harness_arm_pin
+    if args.harness_trigger_pin is not None:
+        server.config.device.harness_trigger_pin = args.harness_trigger_pin
+    if args.dut_arm_hold_ms is not None:
+        server.config.device.dut_arm_hold_ms = args.dut_arm_hold_ms
+    if args.harness_stable_low_ms is not None:
+        server.config.device.harness_stable_low_ms = args.harness_stable_low_ms
     if args.input_mode:
         server.set_input_mode(args.input_mode)
+
+    print("Effective harness wiring/timing:")
+    print(f"  harness_arm_pin: {server.config.device.harness_arm_pin}")
+    print(f"  harness_trigger_pin: {server.config.device.harness_trigger_pin}")
+    print(f"  dut_arm_hold_ms: {server.config.device.dut_arm_hold_ms}")
+    print(f"  harness_stable_low_ms: {server.config.device.harness_stable_low_ms}")
 
     hyperparams = _build_hyperparams(server)
     metrics = server.determine_metrics(hyperparams)
