@@ -31,7 +31,7 @@ print(f"Using Arduino CLI at: {ARDUINO_CLI_BIN}")
 logger = logging.getLogger(__name__)
 
 _HARNESS_SKETCH_DIR = _PROJECT_ROOT / "sketches" / "harness"
-_HARNESS_FLASHED_PORTS: set[str] = set()
+_HARNESS_FLASHED_SIGNATURES: Dict[str, str] = {}
 
 
 FLASH_USAGE_RE = re.compile(
@@ -630,11 +630,13 @@ def measure_serial(
     harness_ready_timeout_s : float
         Timeout waiting for ``HARNESS READY`` after PING.
     harness_arm_timeout_s : float
-        Legacy host-side ARM timeout. Currently unused in the D3 hardware-arming
-        flow and retained for backwards-compatible config plumbing.
+        Harness arm timeout in seconds. This value is converted to milliseconds
+        and compiled into the harness firmware (`TINYODOM_HARNESS_ARM_TIMEOUT_MS`).
+        Set to ``0`` to disable harness-side arm timeout.
     harness_active_timeout_s : float
-        Maximum allowed active measurement window duration used to bound wait for
-        harness completion.
+        Maximum allowed active measurement window in seconds. This value is used
+        both for host-side wait bounds and for the harness firmware timeout
+        (`TINYODOM_HARNESS_ACTIVE_TIMEOUT_MS`).
     harness_done_timeout_s : float
         Timeout waiting for harness ``DONE`` after the active window completes.
 
@@ -661,19 +663,25 @@ def measure_serial(
             power_metrics=power_metrics,
         )
     harness_auto_flash = (harness_auto_flash or "once").lower()
+    harness_arm_timeout_ms = max(0, int(round(float(harness_arm_timeout_s) * 1000.0)))
+    harness_active_timeout_ms = max(0, int(round(float(harness_active_timeout_s) * 1000.0)))
 
     build_defines = {
         "TINYODOM_HARNESS_ARM_PIN": int(harness_arm_pin),
         "TINYODOM_HARNESS_TRIGGER_PIN": int(harness_trigger_pin),
         "TINYODOM_DUT_ARM_HOLD_MS": int(dut_arm_hold_ms),
         "TINYODOM_HARNESS_STABLE_LOW_MS": int(harness_stable_low_ms),
+        "TINYODOM_HARNESS_ARM_TIMEOUT_MS": harness_arm_timeout_ms,
+        "TINYODOM_HARNESS_ACTIVE_TIMEOUT_MS": harness_active_timeout_ms,
     }
+    define_flags = _build_define_flags(build_defines)
+    flashed_signature = f"{harness_fqbn}|{define_flags}"
 
     def _flash_harness(force: bool = False) -> bool:
         if harness_auto_flash == "never":
             return False
         if harness_auto_flash == "once" and not force:
-            if harness_serial_port in _HARNESS_FLASHED_PORTS:
+            if _HARNESS_FLASHED_SIGNATURES.get(harness_serial_port, "") == flashed_signature:
                 return False
         logger.info(
             "measure_serial: compiling/uploading harness (port=%s, force=%s)",
@@ -694,7 +702,7 @@ def measure_serial(
         )
         if not upload_result.success:
             raise RuntimeError("Harness upload failed.")
-        _HARNESS_FLASHED_PORTS.add(harness_serial_port)
+        _HARNESS_FLASHED_SIGNATURES[harness_serial_port] = flashed_signature
         time.sleep(0.5)
         return True
 

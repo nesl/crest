@@ -149,7 +149,7 @@ class HILServer:
             # Stride=20 at 100 Hz emits an inference roughly every 0.2s, so normalize
             # latency by the stride cadence rather than the full window length.
             latency_budget_ms=latency_budget_ms,
-            dut_ready_timeout_s=self.config.device.dut_ready_timeout_s,
+            dut_ready_timeout_s=getattr(self.config.device, "dut_ready_timeout_s", 5.0),
             harness_serial_port=(
                 self.config.device.harness_serial_port
                 if self.config.training.energy_aware

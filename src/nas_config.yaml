@@ -12,7 +12,7 @@ device:
   dut_arm_hold_ms: 600                         # DUT hold time after arm LOW before trigger HIGH.
   harness_stable_low_ms: 500                   # Required D3 LOW + D2 LOW stability before harness arms.
   harness_ready_timeout_s: 3.6                 # Time to wait for HARNESS READY after PING.
-  harness_arm_timeout_s: 0.0                   # Legacy host-side ARM timeout (unused when D3 hardware arming is enabled).
+  harness_arm_timeout_s: 0.0                   # Harness arm timeout in seconds (compiled into harness firmware; 0 disables).
   harness_active_timeout_s: 12.0               # Max duration of the measurement window.
   harness_done_timeout_s: 3.6                  # Time to wait for DONE after the window completes.
 

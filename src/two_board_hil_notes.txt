@@ -54,6 +54,10 @@ Host/Python:
 - Build-cache correctness improvement:
   Arduino build directories now include a short hash of compile-time define
   flags, so changing `compiler.cpp.extra_flags` cannot reuse stale artifacts.
+- Timeout alignment improvement:
+  host timeout settings for harness arm/active windows are converted to
+  milliseconds and compiled into the harness sketch macros so host + firmware
+  use the same timeout values.
 
 Config:
 - Added and used:
