@@ -1,7 +1,5 @@
 import csv
 import itertools
-import os
-import sys
 import time
 from pathlib import Path
 from typing import Any, Protocol
@@ -21,15 +19,14 @@ from tensorflow.python.framework.convert_to_constants import (
     convert_variables_to_constants_v2,
 )
 
-sys.path.insert(0, os.path.abspath("src"))
-from hardware_utils_ex import (
+from .hardware import (
     HIL_controller,
     describe_error_code,
     normalize_power_metrics,
 )
-from data_utils_ex import OxIODSplitData
+from .data import OxIODSplitData
 
-DEFAULT_CONFIG_PATH = Path(__file__).with_name("nas_config.yaml")
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "nas_config.yaml"
 MIN_TCN_LAYERS = 3
 MAX_TCN_LAYERS = 8
 DILATION_POOL = [1, 2, 4, 8, 16, 32, 64, 128, 256]

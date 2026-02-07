@@ -50,7 +50,7 @@ test/__pycache__/
 # Build outputs
 bin/
 models/
-model.*
+model
 
 # Data artifacts
 *.csv
@@ -68,12 +68,11 @@ tinyodom_tcn
 # Tools
 tools/arduino-data/
 tools/arduino-downloads/
+tools/arduino-cli.yaml
 tools/bin/
 tools/arduino-user/libraries/Adafruit_BusIO/
 tools/arduino-user/libraries/Adafruit_INA228_Library/
 
-analysis_scripts/hil_noise_analysis/analysis_output/
-analysis_scripts/hil_noise_analysis/__pycache__/
-sketches/analysis_sketches/tinyodom_tcn_input_data.h
+
+<arduino-data_dir>
 tools/arduino-cli.yaml
-analysis_scripts/hil_noise_analysis/summary_table.txt

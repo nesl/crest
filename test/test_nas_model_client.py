@@ -13,12 +13,13 @@ from optuna.trial import TrialState
 
 # Ensure `src` is importable when the suite is launched via `python -m unittest`.
 ROOT_DIR = Path(__file__).resolve().parents[1]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 # The NASModelClient is the unit under test for this module.
-from src.nas_model_client import NASModelClient  # noqa: E402
-from src.hardware_utils_ex import (
+from nas_model_client import NASModelClient  # noqa: E402
+from tinyodom.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
     HIL_MASTER_FLASH_OVERFLOW,
     HIL_MASTER_RAM_OVERFLOW,
@@ -157,11 +158,11 @@ class ObjectiveTests(unittest.TestCase):
         self.client = _build_test_client()
 
         # Patch the heavy TensorFlow / hardware helpers to keep tests fast.
-        self.build_patcher = patch("src.nas_model_client.build_tinyodom_model", return_value=MagicMock(compile=MagicMock()))
-        self.count_patcher = patch("src.nas_model_client.count_flops", return_value=1234)
-        self.train_patcher = patch("src.nas_model_client.train_and_score", return_value=(0.1, 0.2, 0.3, 0.4))
-        self.hw_specs_patcher = patch("src.nas_model_client.return_hardware_specs", return_value=(2048, 4096))
-        self.log_patcher = patch("src.nas_model_client.log_trial")
+        self.build_patcher = patch("nas_model_client.build_tinyodom_model", return_value=MagicMock(compile=MagicMock()))
+        self.count_patcher = patch("nas_model_client.count_flops", return_value=1234)
+        self.train_patcher = patch("nas_model_client.train_and_score", return_value=(0.1, 0.2, 0.3, 0.4))
+        self.hw_specs_patcher = patch("nas_model_client.return_hardware_specs", return_value=(2048, 4096))
+        self.log_patcher = patch("nas_model_client.log_trial")
 
         self.mock_build = self.build_patcher.start()
         self.mock_count = self.count_patcher.start()
@@ -267,7 +268,7 @@ class SmokeTestTests(unittest.TestCase):
 
         fake_study = DummyStudy()
 
-        with patch("src.nas_model_client.optuna.create_study", return_value=fake_study):
+        with patch("nas_model_client.optuna.create_study", return_value=fake_study):
             client.smoke_test(train=False, hil=False, trials=2, epochs=1)
 
         self.assertEqual(fake_study.optimize_calls[0][1], 2)
@@ -301,7 +302,7 @@ class SmokeTestTests(unittest.TestCase):
 
         fake_study = DummyStudy()
 
-        with patch("src.nas_model_client.optuna.create_study", return_value=fake_study) as mock_create:
+        with patch("nas_model_client.optuna.create_study", return_value=fake_study) as mock_create:
             client.smoke_test(train=False, hil=False, trials=1, epochs=1, multiobjective=True)
 
         self.assertEqual(fake_study.optimize_calls[0][1], 1)
@@ -345,7 +346,7 @@ class RunNASTests(unittest.TestCase):
         dummy = self.DummyStudy(states)
         client.objective = MagicMock()
 
-        with patch("src.nas_model_client.optuna.create_study", return_value=dummy):
+        with patch("nas_model_client.optuna.create_study", return_value=dummy):
             study = client.run_nas(study_name="demo", storage="sqlite:///dummy.db")
 
         self.assertIs(study, dummy)
@@ -374,7 +375,7 @@ class RunNASTests(unittest.TestCase):
         dummy = self.DummyStudy(states)
         client.objective = MagicMock()
 
-        with patch("src.nas_model_client.optuna.create_study", return_value=dummy):
+        with patch("nas_model_client.optuna.create_study", return_value=dummy):
             study = client.run_nas(study_name="demo", storage="sqlite:///dummy.db")
 
         self.assertIs(study, dummy)
@@ -444,7 +445,7 @@ class EvaluateCheckpointTests(unittest.TestCase):
                     return [np.ones_like(gt_vx), np.ones_like(gt_vy)]
 
             metrics_path = base / "metrics.json"
-            with patch("src.nas_model_client.load_model", return_value=FakeModel()):
+            with patch("nas_model_client.load_model", return_value=FakeModel()):
                 metrics = client.evaluate_checkpoint(
                     checkpoint_path=base / "ckpt.keras",
                     metrics_path=metrics_path,
@@ -474,8 +475,8 @@ class EvaluateCheckpointTests(unittest.TestCase):
                     return [gt_vx, gt_vy]
 
             tflite_path = base / "model.tflite"
-            with patch("src.nas_model_client.load_model", return_value=FakeModel()), patch(
-                "src.nas_model_client.convert_to_tflite_model"
+            with patch("nas_model_client.load_model", return_value=FakeModel()), patch(
+                "nas_model_client.convert_to_tflite_model"
             ) as mock_convert:
                 client.evaluate_checkpoint(
                     checkpoint_path=base / "ckpt.keras",
@@ -511,7 +512,7 @@ class TrajectoryMetricsTests(unittest.TestCase):
                 def predict(self, _inputs):
                     return [vx, vy]
 
-            with patch("src.nas_model_client.load_model", return_value=FakeModel()):
+            with patch("nas_model_client.load_model", return_value=FakeModel()):
                 metrics = client.trajectory_metrics_and_plots(
                     checkpoint_path=base / "ckpt.keras",
                     plot_dir=base,
@@ -546,7 +547,7 @@ class SummaryBundleTests(unittest.TestCase):
                 def __init__(self):
                     self.best_trial = SimpleNamespace(params={"nb_filters": 8})
 
-            with patch("src.nas_model_client.optuna.load_study", return_value=DummyStudy()):
+            with patch("nas_model_client.optuna.load_study", return_value=DummyStudy()):
                 summary_path = client.write_summary_bundle(
                     study_storage="sqlite:///dummy.db",
                     study_name="demo",

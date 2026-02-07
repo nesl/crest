@@ -18,7 +18,12 @@
    ```
    Stay inside this shell for every training or preprocessing command—our tooling scripts expect `CONDA_PREFIX` and `python` to point into this env.
 
-3. **(If using GPUs) Install TensorFlow with bundled CUDA wheels.**  
+3. **Install the TinyODOM package in editable mode.**  
+   ```bash
+   make install
+   ```
+
+4. **(If using GPUs) Install TensorFlow with bundled CUDA wheels.**  
    TensorFlow ships CUDA/cuDNN wheels via the `and-cuda` extra, so you do **not** need system-level CUDA installs beyond the NVIDIA driver. The latest stable release as of 14 Nov 2025 is `2.20.0`, so pin it explicitly on shared servers:  
    ```bash
    pip install --upgrade pip
@@ -33,8 +38,9 @@
 1. **Download OxIOD.** Grab the “Complete Dataset” zip from http://deepio.cs.ox.ac.uk/ and rename it to `OxIOD.zip` once it’s on the server.  
 2. **Run the provided splitter.** From the repo root:  
    ```bash
-   python data/dataset_download_and_splits/prepare_oxiod.py --zip-path OxIOD.zip
-   ```  
+   make prepare-dataset
+   # or: make prepare-dataset OXIOD_ZIP=/path/to/OxIOD.zip
+   ```
    The script extracts into `data/oxiod`, normalizes folder names, and regenerates the curated `Train.txt`, `Valid.txt`, `Test.txt`, and `Train_Valid.txt` files that match the splits documented in `data/dataset_download_and_splits/README.md`.
 3. **Verify folder structure.** You should now have `data/oxiod/<device>/<syn|raw>/...` plus the four split text files under each activity folder as described in the dataset README.
 
@@ -45,7 +51,7 @@ All firmware builds happen in a sandboxed `tools/` directory inside this repo so
 1. **Ensure the Conda env is active** (`conda activate tinyodomex`). The setup script installs Conda activation hooks into `CONDA_PREFIX`.
 2. **Run the bootstrapper:**  
    ```bash
-   ./setup_arduino.sh
+   make arduino-setup
    ```  
    This script:
    - Downloads the Arduino CLI binary into `tools/bin` without requiring root.  
@@ -71,9 +77,10 @@ All firmware builds happen in a sandboxed `tools/` directory inside this repo so
 - [ ] Clone with submodules: `git clone --recurse-submodules <url>`
 - [ ] `conda env create -f environment.yml -n tinyodomex`
 - [ ] `conda activate tinyodomex`
+- [ ] `make install`
 - [ ] (GPU) `pip install tensorflow[and-cuda]==2.20.0`
-- [ ] Download OxIOD and run `python data/dataset_download_and_splits/prepare_oxiod.py --zip-path OxIOD.zip`
-- [ ] `./setup_arduino.sh` then `conda deactivate && conda activate tinyodomex`
+- [ ] Download OxIOD and run `make prepare-dataset` (or `make prepare-dataset OXIOD_ZIP=/path/to/OxIOD.zip`)
+- [ ] (Alt) `make arduino-setup` then `conda deactivate && conda activate tinyodomex`
 - [ ] `arduino-cli --config-file tools/arduino-cli.yaml version`
 - [ ] Start HIL server on the device host: `python src/hil_server.py`
 - [ ] SSH to the GPU box with reverse tunnel: `ssh -R "6001:127.0.0.1:6001" <gpu_server>`

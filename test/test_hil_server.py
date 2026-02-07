@@ -8,13 +8,14 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from addict import Dict
 
-# Ensure the repository root (`src` directory) is importable whenever this test
-# module is executed via `python -m unittest`.
+# Ensure `src` is importable whenever this test module is executed via
+# `python -m unittest`.
 ROOT_DIR = Path(__file__).resolve().parents[1]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
-from src.hil_server import HILServer  # noqa: E402
+from hil_server import HILServer  # noqa: E402
 
 
 class HILServerTestCase(unittest.TestCase):
@@ -52,12 +53,12 @@ class HILServerTestCase(unittest.TestCase):
 
         # Patch expensive initialization hooks so we can observe the calls without
         # touching disk or hardware.
-        self.load_settings_patcher = patch("src.hil_server.load_config", return_value=self.config)
-        self.dataset_patcher = patch("src.hil_server.import_oxiod_dataset", return_value=self.dataset)
+        self.load_settings_patcher = patch("hil_server.load_config", return_value=self.config)
+        self.dataset_patcher = patch("hil_server.import_oxiod_dataset", return_value=self.dataset)
         self.context = MagicMock()
         self.socket = MagicMock()
         self.context.socket.return_value = self.socket
-        self.zmq_patcher = patch("src.hil_server.zmq.Context.instance", return_value=self.context)
+        self.zmq_patcher = patch("hil_server.zmq.Context.instance", return_value=self.context)
 
         self.load_settings_mock = self.load_settings_patcher.start()
         self.dataset_mock = self.dataset_patcher.start()
@@ -81,10 +82,10 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_metrics = {"ram_bytes": 1024}
 
         # Mock the entire pipeline to verify call order and arguments.
-        with patch("src.hil_server.build_tinyodom_model", return_value=fake_model) as build_mock, patch(
-            "src.hil_server.convert_to_tflite_model"
-        ) as to_tflite_mock, patch("src.hil_server.convert_to_cpp_model") as to_cpp_mock, patch(
-            "src.hil_server.collect_metrics", return_value=fake_metrics
+        with patch("hil_server.build_tinyodom_model", return_value=fake_model) as build_mock, patch(
+            "hil_server.convert_to_tflite_model"
+        ) as to_tflite_mock, patch("hil_server.convert_to_cpp_model") as to_cpp_mock, patch(
+            "hil_server.collect_metrics", return_value=fake_metrics
         ) as collect_mock:
             hyperparams = Dict(flops=123, input_dim=6)
             result = server.determine_metrics(hyperparams)
@@ -106,9 +107,9 @@ class DetermineMetricsTests(HILServerTestCase):
     def test_collect_metrics_receives_expected_fields(self) -> None:
         """Key hyperparameters should flow through untouched to the controller."""
         server = self.build_server()
-        with patch("src.hil_server.build_tinyodom_model"), patch("src.hil_server.convert_to_tflite_model"), patch(
-            "src.hil_server.convert_to_cpp_model"
-        ), patch("src.hil_server.collect_metrics", return_value={"ok": True}) as collect_mock:
+        with patch("hil_server.build_tinyodom_model"), patch("hil_server.convert_to_tflite_model"), patch(
+            "hil_server.convert_to_cpp_model"
+        ), patch("hil_server.collect_metrics", return_value={"ok": True}) as collect_mock:
             hyperparams = Dict(flops=999, input_dim=3)
             server.determine_metrics(hyperparams)
 

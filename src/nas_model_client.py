@@ -1,10 +1,7 @@
 import argparse
 import csv
 import json
-import importlib
 import logging
-import os
-import sys
 import time
 import socket
 import shutil
@@ -27,13 +24,8 @@ from optuna.trial import TrialState
 # from tensorflow.keras.layers import Dense, Flatten, MaxPooling1D, Reshape
 from tensorflow.keras.models import load_model
 
-sys.path.insert(0, os.path.abspath("src"))
-import hardware_utils_ex
-from data_utils_ex import import_oxiod_dataset
-
-importlib.reload(hardware_utils_ex)
-
-from hardware_utils_ex import (
+from tinyodom.data import import_oxiod_dataset
+from tinyodom.hardware import (
     HIL_MASTER_ARENA_EXHAUSTED,
     HIL_MASTER_DEVICE_NOT_FOUND,
     HIL_MASTER_FATAL,
@@ -43,7 +35,17 @@ from hardware_utils_ex import (
     convert_to_tflite_model,
     return_hardware_specs,
 )
-from nas_utils_ex import build_tinyodom_model, train_and_score, count_flops, log_trial, load_config, DEFAULT_CONFIG_PATH, DILATION_CANDIDATES, DROP_RATE_CHOICES, set_error_code
+from tinyodom.model import (
+    build_tinyodom_model,
+    train_and_score,
+    count_flops,
+    log_trial,
+    load_config,
+    DEFAULT_CONFIG_PATH,
+    DILATION_CANDIDATES,
+    DROP_RATE_CHOICES,
+    set_error_code,
+)
 
 tf.get_logger().setLevel(logging.ERROR)
 absl.logging.set_verbosity(absl.logging.ERROR)
