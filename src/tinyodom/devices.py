@@ -496,7 +496,7 @@ class ArduinoDevice(DeviceInterface):
             )
 
         if serial_port is None and self._serial_port is None:
-            raise ValueError("serial_port must be provided when compile_only is False.")
+            raise ValueError("serial_port must be provided when running HIL measurements.")
 
         upload_result = self.upload(
             sketch_path=sketch_path,
