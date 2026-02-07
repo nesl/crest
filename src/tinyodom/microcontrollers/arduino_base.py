@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -256,10 +257,24 @@ def _classify_compile_failure(log_text: str) -> Optional[str]:
     return None
 
 
-def _resolve_build_dir(sketch_path: Path, fqbn: str) -> Path:
-    """Return the Arduino build cache directory for a sketch and FQBN."""
+def _resolve_build_dir(
+    sketch_path: Path,
+    fqbn: str,
+    build_defines: Optional[Dict[str, int]] = None,
+) -> Path:
+    """Return the Arduino build cache directory for a sketch/FQBN/define set.
+
+    The cache path includes a short hash of compile-time defines so changing
+    ``--build-property compiler.cpp.extra_flags`` cannot accidentally reuse
+    artifacts from a previous define set.
+    """
     build_cache_root = sketch_path / ".arduino-build"
-    return build_cache_root / fqbn.replace(":", "_")
+    fqbn_key = fqbn.replace(":", "_")
+    define_flags = _build_define_flags(build_defines)
+    if not define_flags:
+        return build_cache_root / fqbn_key
+    defines_hash = hashlib.sha1(define_flags.encode("utf-8")).hexdigest()[:12]
+    return build_cache_root / f"{fqbn_key}_{defines_hash}"
 
 
 def _build_define_flags(build_defines: Optional[Dict[str, int]]) -> str:
@@ -292,7 +307,7 @@ def compile_sketch(
     CompileResult
         Parsed compile results including RAM/flash usage and overflow status.
     """
-    build_dir = _resolve_build_dir(sketch_path, fqbn)
+    build_dir = _resolve_build_dir(sketch_path, fqbn, build_defines)
     build_dir.mkdir(parents=True, exist_ok=True)
     compile_cmd = [
         ARDUINO_CLI_BIN,
@@ -590,18 +605,44 @@ def measure_serial(
     Parameters
     ----------
     serial_port : str
-        Serial port used to read the log.
+        DUT serial port used for upload-time handshake and timer capture.
     baud_rate : int
         Serial baud rate.
     serial_timeout_s : float
-        Timeout when waiting for output.
+        Timeout waiting for DUT ``timer output:``.
     dut_ready_timeout_s : float
         Time to wait for DUT READY before sending START.
+    harness_serial_port : str | None
+        Harness serial port. When None, run DUT-only measurement without harness
+        handshake or energy parsing.
+    harness_fqbn : str
+        Arduino FQBN used to compile/upload the harness sketch.
+    harness_auto_flash : str
+        Harness flashing policy: ``once``, ``always``, or ``never``.
+    harness_arm_pin : int
+        D3 arm pin number used by DUT/harness.
+    harness_trigger_pin : int
+        D2 trigger pin number used by DUT/harness.
+    dut_arm_hold_ms : int
+        DUT delay between asserting arm LOW and raising trigger HIGH.
+    harness_stable_low_ms : int
+        Harness stable-low window before arming.
+    harness_ready_timeout_s : float
+        Timeout waiting for ``HARNESS READY`` after PING.
+    harness_arm_timeout_s : float
+        Legacy host-side ARM timeout. Currently unused in the D3 hardware-arming
+        flow and retained for backwards-compatible config plumbing.
+    harness_active_timeout_s : float
+        Maximum allowed active measurement window duration used to bound wait for
+        harness completion.
+    harness_done_timeout_s : float
+        Timeout waiting for harness ``DONE`` after the active window completes.
 
     Returns
     -------
     MeasureResult
-        Parsed latency, arena errors, and power metrics.
+        Parsed latency, arena errors, merged serial log, and optional power
+        metrics.
     """
     if not harness_serial_port:
         logger.info("measure_serial: running DUT-only flow on %s", serial_port)

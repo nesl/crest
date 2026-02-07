@@ -294,6 +294,10 @@ def run_dut_only(
 ) -> List[str]:
     """Run a DUT-only handshake to capture timer output.
 
+    This path uses best-effort startup behavior: if ``DUT READY`` is not
+    observed within ``dut_ready_timeout_s``, START is still sent so recovery is
+    possible when READY was missed in logs but the DUT is actually ready.
+
     Parameters
     ----------
     dut_port : str
@@ -313,13 +317,18 @@ def run_dut_only(
     dut_log: List[str] = []
     with serial.Serial(dut_port, baudrate=baud_rate, timeout=0.1) as dut:
         _flush_input(dut)
-        _wait_for_token(
+        ready_seen = _wait_for_token(
             dut,
             DUT_READY,
             dut_ready_timeout_s,
             dut_log,
             stage="DUT READY",
         )
+        if not ready_seen:
+            logger.warning(
+                "hil_protocol: DUT READY not observed on %s; sending START in best-effort mode",
+                dut_port,
+            )
         logger.info("hil_protocol: sending START to DUT (%s)", dut_port)
         _send_line(dut, CMD_START)
         _read_until_prefix(
