@@ -78,3 +78,7 @@ tools/arduino-user/libraries/Adafruit_INA228_Library/
 tools/arduino-cli.yaml
 
 .arduino-build/
+
+*.log
+*.keras
+*.json

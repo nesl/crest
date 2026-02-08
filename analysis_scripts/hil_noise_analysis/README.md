@@ -7,7 +7,7 @@ how input distributions affect latency and energy measurements.
 
 - `hil_energy_noise_scan.py`
   - Runs a multi-mode (`uniform` / `representative` / `real`) HIL noise scan.
-  - Runs one or more model variants (`untrained`, `trained_50ep`) against each input mode.
+  - Runs one or more model variants (`trained_50ep`, `untrained`) against each input mode.
   - Re-syncs the Arduino sketch variant for each input mode and records per-run metrics.
   - Writes a CSV with `model_variant`, `input_mode`, and per-run metrics.
 
@@ -78,7 +78,7 @@ scp analysis_scripts/hil_noise_analysis/artifacts/noise_scan_50ep.json <hil_host
 
 # 4) On the HIL host, run trained vs untrained scan across the three input modes
 python analysis_scripts/hil_noise_analysis/hil_energy_noise_scan.py \
-  --model-variants untrained,trained_50ep \
+  --model-variants trained_50ep,untrained \
   --input-modes uniform,representative,real \
   --trained-checkpoint analysis_scripts/hil_noise_analysis/artifacts/noise_scan_50ep.keras \
   --trained-meta analysis_scripts/hil_noise_analysis/artifacts/noise_scan_50ep.json \
@@ -91,7 +91,7 @@ python analysis_scripts/hil_noise_analysis/hil_energy_noise_analysis.py --csv hi
 ## Key CLI Flags
 
 - `hil_energy_noise_scan.py`
-  - `--model-variants` (default: `untrained,trained_50ep`)
+  - `--model-variants` (default: `trained_50ep,untrained`)
   - `--trained-checkpoint` (required when any `trained*` variant is requested)
   - `--trained-meta` (optional metadata JSON)
   - Use `--model-variants untrained` if you only want legacy untrained behavior.

@@ -2,8 +2,8 @@
 """
 Run a multi-mode HIL energy/latency noise scan and save results to CSV.
 
-This script cycles through one or more model variants (e.g., untrained,
-trained_50ep) and input modes (uniform, representative, real), re-syncs the
+This script cycles through one or more model variants (e.g., trained_50ep,
+untrained) and input modes (uniform, representative, real), re-syncs the
 Arduino sketch variant for each mode, and records the per-run metrics returned
 by the HIL controller.
 
@@ -12,7 +12,7 @@ Examples
 python analysis_scripts/hil_noise_analysis/hil_energy_noise_scan.py
 python analysis_scripts/hil_noise_analysis/hil_energy_noise_scan.py --runs 5 --cooldown 10
 python analysis_scripts/hil_noise_analysis/hil_energy_noise_scan.py --input-modes uniform,real
-python analysis_scripts/hil_noise_analysis/hil_energy_noise_scan.py --model-variants untrained,trained_50ep --trained-checkpoint artifacts/noise_scan_50ep.keras
+python analysis_scripts/hil_noise_analysis/hil_energy_noise_scan.py --model-variants trained_50ep,untrained --trained-checkpoint artifacts/noise_scan_50ep.keras
 """
 
 from __future__ import annotations
@@ -68,8 +68,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--model-variants",
-        default="untrained,trained_50ep",
-        help="Comma-separated model variants to scan (e.g. untrained,trained_50ep).",
+        default="trained_50ep,untrained",
+        help="Comma-separated model variants to scan (e.g. trained_50ep,untrained).",
     )
     parser.add_argument(
         "--trained-checkpoint",
