@@ -20,7 +20,7 @@ dependencies = [
     "numpy-quaternion",
     "giotto-tda",
     "pydometer",
-    "tqdm",
+    "tqdm"
 ]
 
 [tool.setuptools.packages.find]
