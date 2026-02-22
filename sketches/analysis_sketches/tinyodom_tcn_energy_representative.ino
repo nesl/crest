@@ -3,7 +3,7 @@
 // sensor buffer with representative synthetic data, runs one inference, and prints the
 // measured latency in the format expected by the HIL tooling.
 #include <Arduino.h>
-#include <TensorFlowLite.h>
+#include <Chirale_TensorFlowLite.h>
 #include <cstdlib>
 #include <cmath>
 

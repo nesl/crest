@@ -2,7 +2,7 @@
 // Keeps the latency harness identical while skipping I2C sensor setup so
 // larger tensor arenas/models fit on constrained boards.
 #include <Arduino.h>
-#include <TensorFlowLite.h>
+#include <Chirale_TensorFlowLite.h>
 #include <cstdlib>
 #include <cmath>
 

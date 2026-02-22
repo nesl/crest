@@ -63,6 +63,6 @@ Arduino CLI bootstrap complete.
 - Config file: $CONFIG_FILE
 - Conda hooks installed under $CONDA_PREFIX/etc/conda
 - Arduino library root: $PROJECT_ROOT/tools/arduino-user/libraries
-  $(if [[ -d "$LIB_SUBMODULE" ]]; then echo "TensorFlow Lite Micro examples detected."; else echo "TensorFlow Lite Micro repo missing; run 'git submodule update --init --recursive' to fetch tools/arduino-user/libraries/Arduino_TensorFlowLite."; fi)
+  $(if [[ -d "$LIB_SUBMODULE" ]]; then echo "Chirale TensorFlow Lite library detected."; else echo "Chirale TensorFlow Lite repo missing; run 'git submodule update --init --recursive' to fetch tools/arduino-user/libraries/Arduino_TensorFlowLite."; fi)
 Remember to add tools directories to .gitignore to keep binaries out of Git.
 EOF
