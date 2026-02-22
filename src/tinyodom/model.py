@@ -2,6 +2,7 @@ import csv
 import itertools
 import logging
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -128,9 +129,9 @@ def iter_layers(model: tf.keras.Model) -> list[tf.keras.layers.Layer]:
         except TypeError:
             pass
 
-    queue: list[object] = [model]
+    queue: deque[object] = deque([model])
     while queue:
-        node = queue.pop(0)
+        node = queue.popleft()
         node_id = id(node)
         if node_id in seen_nodes:
             continue
