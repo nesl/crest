@@ -86,3 +86,6 @@ tools/arduino-cli.yaml
 # Probe summaries
 analysis_scripts/hil_noise_analysis/op_transition_probe_output/op_transition_probe_summary.txt
 analysis_scripts/hil_noise_analysis/op_transition_probe_output_bias_cmp/op_transition_probe_summary.txt
+
+uv.lock
+.axon

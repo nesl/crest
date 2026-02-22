@@ -2,9 +2,9 @@
 
 ## Environment Setup
 
-0. **Ensure TensorFlowLite Micro is installed**
+0. **Ensure Chirale TensorFlow Lite Micro is installed**
    When cloning, ensure to use `git clone --recurse-submodules <url>`.
-   If this wasn't done, run `git submodule update --init --recursive` to ensure that TensorFlowLite Micro is installed.
+   If this wasn't done, run `git submodule update --init --recursive` to ensure that the Chirale TensorFlow Lite submodule is installed.
 
 1. **Create the Conda environment.**  
    ```bash
