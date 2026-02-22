@@ -78,3 +78,11 @@ tools/arduino-user/libraries/Adafruit_INA228_Library/
 tools/arduino-cli.yaml
 
 .arduino-build/
+
+*.log
+*.keras
+*.json
+
+# Probe summaries
+analysis_scripts/hil_noise_analysis/op_transition_probe_output/op_transition_probe_summary.txt
+analysis_scripts/hil_noise_analysis/op_transition_probe_output_bias_cmp/op_transition_probe_summary.txt

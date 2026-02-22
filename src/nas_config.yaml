@@ -37,8 +37,8 @@ training:
   train: true
   # Enable energy-aware scoring during NAS
   energy_aware: true
-  # Input mode for HIL sketches: standard, uniform, representative, or real
-  input_mode: "standard"
+  # Input mode for HIL sketches: uniform, representative, or real
+  input_mode: "uniform"
 
 # Output directories and filenames
 outputs:

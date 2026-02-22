@@ -100,6 +100,10 @@ Before running long NAS jobs, skim and adjust `src/nas_config.yaml`:
    - `nas_trials`, `nas_epochs`, `model_epochs`: trade off search depth vs wall-clock time.
    - `nas_multiobjective`: enable/disable multi-objective NAS (accuracy + latency/energy).
    - `energy_aware`: toggle whether energy (instead of latency) is used as the secondary objective/penalty; leave `false` if you do not have INA228 energy hardware attached.
+   - `input_mode`: choose Arduino-side inference input source.
+     - `uniform`: random values in `[0, 5]` using `sketches/tinyodom_tcn_energy.ino`.
+     - `representative`: synthetic OxIOD-shaped values using `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino`.
+     - `real`: fixed real OxIOD windows using `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino`.
 - **Outputs and network (`outputs.*`, `network.*`)**
    - `models_dir`, `tcn_dir`: where Optuna DBs, metrics, and TFLite/C++ artifacts are written.
    - `host`, `port`: must match the HIL server and SSH tunnel; defaults (`127.0.0.1:6001`) usually work as-is.

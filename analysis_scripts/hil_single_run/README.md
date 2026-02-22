@@ -1,7 +1,7 @@
 # Single HIL Run
 
 This folder provides a minimal, single-pass HIL sanity check. It builds a
-standard TinyODOM model, runs the HIL controller once, and prints the returned
+fixed TinyODOM model, runs the HIL controller once, and prints the returned
 metrics (latency/energy/RAM/flash/etc.).
 
 ## Usage
@@ -13,11 +13,31 @@ python analysis_scripts/hil_single_run/run_single_hil.py
 Optional overrides:
 
 ```bash
-python analysis_scripts/hil_single_run/run_single_hil.py --input-mode standard
 python analysis_scripts/hil_single_run/run_single_hil.py --input-mode uniform
+python analysis_scripts/hil_single_run/run_single_hil.py --input-mode representative
 python analysis_scripts/hil_single_run/run_single_hil.py --output analysis_scripts/hil_single_run/last_run.json
 python analysis_scripts/hil_single_run/run_single_hil.py --harness-arm-pin 3 --harness-trigger-pin 2
 python analysis_scripts/hil_single_run/run_single_hil.py --dut-arm-hold-ms 600 --harness-stable-low-ms 500
+```
+
+## Perturbed One-Run Variant
+
+Run exactly one HIL pass with the BN+bias perturbed model variant:
+
+- Forces `energy_aware = true`
+- Forces `input_mode = uniform`
+- Forces `model_variant = approx_trained`
+
+```bash
+python analysis_scripts/hil_single_run/run_single_hil_perturbed.py
+```
+
+Optional overrides:
+
+```bash
+python analysis_scripts/hil_single_run/run_single_hil_perturbed.py --output analysis_scripts/hil_single_run/last_run_perturbed.json
+python analysis_scripts/hil_single_run/run_single_hil_perturbed.py --harness-arm-pin 3 --harness-trigger-pin 2
+python analysis_scripts/hil_single_run/run_single_hil_perturbed.py --dut-arm-hold-ms 600 --harness-stable-low-ms 500
 ```
 
 ## Toy GPIO test

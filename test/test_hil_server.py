@@ -200,23 +200,11 @@ class SketchVariantTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"// {label}\n")
 
-    def test_selects_standard_energy_sketch(self) -> None:
+    def test_selects_uniform_energy_sketch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "standard")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="standard")
-
-            out_path = server._sync_sketch_variant()
-
-            self.assertTrue(out_path.exists())
-            self.assertIn("standard", out_path.read_text())
-
-    def test_selects_uniform_variant(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            self._write_sketch(sketches / "analysis_sketches/tinyodom_tcn_energy_uniform.ino", "uniform")
+            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform")
             server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server._sync_sketch_variant()
@@ -287,7 +275,7 @@ class SketchVariantTests(unittest.TestCase):
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
             self._write_sketch(sketches / "tinyodom_tcn_no_energy.ino", "no_energy")
-            server = self._build_server(sketches, tcn_dir, energy_aware=False, input_mode="standard")
+            server = self._build_server(sketches, tcn_dir, energy_aware=False, input_mode="uniform")
 
             out_path = server._sync_sketch_variant()
 
@@ -298,8 +286,8 @@ class SketchVariantTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            self._write_sketch(sketches / "analysis_sketches/tinyodom_tcn_energy_uniform.ino", "uniform")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="standard")
+            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform")
+            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server.set_input_mode("uniform")
 

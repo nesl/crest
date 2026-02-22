@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import numpy as np
 import tensorflow as tf
+from addict import Dict
 
 # Silence long TF logs during unit runs.
 tf.get_logger().setLevel("ERROR")
@@ -20,10 +21,15 @@ if str(SRC_DIR) not in sys.path:
 
 from tinyodom.model import (
     DROP_RATE_CHOICES,
+    apply_combined_perturbation,
+    collect_bn_layers,
+    collect_non_bn_bias_layers,
     collect_metrics,
     count_flops,
+    iter_layers,
     load_config,
     log_trial,
+    validate_loaded_model_input_shape,
 )  # noqa: E402
 from tinyodom.hardware import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
 
@@ -66,6 +72,137 @@ class CountFlopsTests(unittest.TestCase):
         self.assertIsInstance(small_flops, int)
         self.assertGreater(small_flops, 0)
         self.assertGreater(big_flops, small_flops)
+
+
+class ModelVariantHelperTests(unittest.TestCase):
+    """Validate model-variant helper utilities used by HILServer."""
+
+    def tearDown(self) -> None:
+        tf.keras.backend.clear_session()
+
+    def _build_perturbation_test_model(self) -> tf.keras.Model:
+        inputs = tf.keras.Input(shape=(16, 4))
+        x = tf.keras.layers.Conv1D(8, kernel_size=3, use_bias=True, name="conv_bias")(inputs)
+        x = tf.keras.layers.BatchNormalization(name="bn1")(x)
+        x = tf.keras.layers.Conv1D(8, kernel_size=3, use_bias=False, name="conv_no_bias")(x)
+        x = tf.keras.layers.BatchNormalization(name="bn2")(x)
+        x = tf.keras.layers.GlobalAveragePooling1D(name="gap")(x)
+        x = tf.keras.layers.Dense(4, use_bias=True, name="dense_bias")(x)
+        outputs = tf.keras.layers.Dense(2, use_bias=True, name="dense_out")(x)
+        return tf.keras.Model(inputs, outputs)
+
+    def _snapshot_touched_tensors(self, model: tf.keras.Model) -> dict[str, np.ndarray]:
+        snapshot: dict[str, np.ndarray] = {}
+        for layer in collect_bn_layers(model):
+            for attr in ("gamma", "beta", "moving_mean", "moving_variance"):
+                tensor = getattr(layer, attr, None)
+                if tensor is not None:
+                    snapshot[f"{layer.name}.{attr}"] = np.array(tensor.numpy(), copy=True)
+        for layer in collect_non_bn_bias_layers(model):
+            bias = getattr(layer, "bias", None)
+            if bias is not None:
+                snapshot[f"{layer.name}.bias"] = np.array(bias.numpy(), copy=True)
+        return snapshot
+
+    def test_iter_layers_flattens_without_duplicates(self) -> None:
+        inputs = tf.keras.Input(shape=(8,))
+        shared_dense = tf.keras.layers.Dense(8, activation="relu", name="shared_dense")
+        x = shared_dense(inputs)
+        x = shared_dense(x)
+        nested_stack = tf.keras.Sequential(
+            [tf.keras.layers.Dense(8, name="nested_dense")],
+            name="nested_stack",
+        )
+        x = nested_stack(x)
+        outputs = tf.keras.layers.Dense(1, name="head_dense")(x)
+        model = tf.keras.Model(inputs, outputs)
+
+        layers = iter_layers(model)
+        self.assertEqual(len(layers), len({id(layer) for layer in layers}))
+        self.assertEqual(sum(layer is shared_dense for layer in layers), 1)
+        self.assertTrue(any(layer.name == "nested_dense" for layer in layers))
+
+    def test_collect_bn_layers_returns_only_batchnorm(self) -> None:
+        inputs = tf.keras.Input(shape=(8,))
+        x = tf.keras.layers.Dense(8, use_bias=True, name="dense1")(inputs)
+        x = tf.keras.layers.BatchNormalization(name="bn1")(x)
+        x = tf.keras.layers.Dense(4, use_bias=True, name="dense2")(x)
+        outputs = tf.keras.layers.BatchNormalization(name="bn2")(x)
+        model = tf.keras.Model(inputs, outputs)
+
+        bn_layers = collect_bn_layers(model)
+        self.assertEqual(len(bn_layers), 2)
+        self.assertTrue(
+            all(isinstance(layer, tf.keras.layers.BatchNormalization) for layer in bn_layers)
+        )
+
+    def test_collect_non_bn_bias_layers_excludes_bn(self) -> None:
+        inputs = tf.keras.Input(shape=(16, 4))
+        x = tf.keras.layers.Conv1D(8, kernel_size=3, use_bias=True, name="conv_bias")(inputs)
+        x = tf.keras.layers.BatchNormalization(name="bn")(x)
+        x = tf.keras.layers.GlobalAveragePooling1D(name="gap")(x)
+        x = tf.keras.layers.Dense(4, use_bias=True, name="dense_bias")(x)
+        outputs = tf.keras.layers.Dense(2, use_bias=False, name="dense_no_bias")(x)
+        model = tf.keras.Model(inputs, outputs)
+
+        layers = collect_non_bn_bias_layers(model)
+        layer_names = {layer.name for layer in layers}
+        self.assertSetEqual(layer_names, {"conv_bias", "dense_bias"})
+        self.assertTrue(
+            all(not isinstance(layer, tf.keras.layers.BatchNormalization) for layer in layers)
+        )
+
+    def test_apply_combined_perturbation_returns_expected_counts(self) -> None:
+        model = self._build_perturbation_test_model()
+        bn_touched, bias_touched = apply_combined_perturbation(model, seed=1337)
+        self.assertEqual(bn_touched, 2)
+        self.assertEqual(bias_touched, 3)
+
+    def test_apply_combined_perturbation_is_deterministic_for_seed(self) -> None:
+        seed = 2026
+        model_a = self._build_perturbation_test_model()
+        model_b = self._build_perturbation_test_model()
+
+        apply_combined_perturbation(model_a, seed=seed)
+        apply_combined_perturbation(model_b, seed=seed)
+        snapshot_a = self._snapshot_touched_tensors(model_a)
+        snapshot_b = self._snapshot_touched_tensors(model_b)
+
+        self.assertSetEqual(set(snapshot_a), set(snapshot_b))
+        self.assertGreater(len(snapshot_a), 0)
+        for key, value_a in snapshot_a.items():
+            np.testing.assert_allclose(value_a, snapshot_b[key], atol=0.0, rtol=0.0)
+
+    def test_validate_loaded_model_input_shape_accepts_matching_shape(self) -> None:
+        inputs = tf.keras.Input(shape=(20, 6))
+        outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
+        model = tf.keras.Model(inputs, outputs)
+        hyperparams = Dict(timesteps=20, input_dim=6)
+        validate_loaded_model_input_shape(model, hyperparams)
+
+    def test_validate_loaded_model_input_shape_rejects_mismatch(self) -> None:
+        inputs = tf.keras.Input(shape=(20, 6))
+        outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
+        model = tf.keras.Model(inputs, outputs)
+
+        mismatched_hyperparams = (
+            Dict(timesteps=21, input_dim=6),
+            Dict(timesteps=20, input_dim=7),
+        )
+        for hyperparams in mismatched_hyperparams:
+            with self.subTest(hyperparams=dict(hyperparams)):
+                with self.assertRaises(ValueError):
+                    validate_loaded_model_input_shape(model, hyperparams)
+
+    def test_validate_loaded_model_input_shape_rejects_multi_input_model(self) -> None:
+        input_a = tf.keras.Input(shape=(20, 6), name="input_a")
+        input_b = tf.keras.Input(shape=(20, 6), name="input_b")
+        outputs = tf.keras.layers.Add(name="sum")([input_a, input_b])
+        model = tf.keras.Model([input_a, input_b], outputs)
+        hyperparams = Dict(timesteps=20, input_dim=6)
+
+        with self.assertRaises(ValueError):
+            validate_loaded_model_input_shape(model, hyperparams)
 
 
 class CollectMetricsTests(unittest.TestCase):

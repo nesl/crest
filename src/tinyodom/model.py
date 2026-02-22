@@ -2,9 +2,11 @@ import csv
 import itertools
 import logging
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any, Protocol
 
+import numpy as np
 import tensorflow as tf
 import yaml
 from addict import Dict
@@ -51,6 +53,185 @@ def set_error_code(metrics: dict, code: int) -> None:
     """Attach a numeric error code and its descriptive label to `metrics`."""
     metrics["error_code"] = code
     metrics["error_label"] = describe_error_code(code)
+
+
+def validate_loaded_model_input_shape(model: tf.keras.Model, hyperparams: Dict) -> None:
+    """Validate that a loaded checkpoint input shape matches HIL expectations.
+
+    Parameters
+    ----------
+    model : tf.keras.Model
+        Loaded Keras model from a checkpoint.
+    hyperparams : Dict
+        Hyperparameter set that provides expected ``timesteps`` and
+        ``input_dim``.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    ValueError
+        If the checkpoint has an unexpected number of inputs or incompatible
+        input dimensions.
+    """
+    input_shape = model.input_shape
+    if isinstance(input_shape, list):
+        if len(input_shape) != 1:
+            raise ValueError(
+                f"Expected a single-input model but checkpoint exposes {len(input_shape)} inputs."
+            )
+        input_shape = input_shape[0]
+    if not isinstance(input_shape, tuple) or len(input_shape) != 3:
+        raise ValueError(f"Unexpected checkpoint input shape: {input_shape}")
+
+    expected_timesteps = int(hyperparams.timesteps)
+    expected_input_dim = int(hyperparams.input_dim)
+    actual_timesteps = input_shape[1]
+    actual_input_dim = input_shape[2]
+    if (
+        actual_timesteps not in (None, expected_timesteps)
+        or actual_input_dim not in (None, expected_input_dim)
+    ):
+        raise ValueError(
+            "Checkpoint input shape mismatch: "
+            f"expected (None, {expected_timesteps}, {expected_input_dim}), "
+            f"got {input_shape}."
+        )
+
+
+def iter_layers(model: tf.keras.Model) -> list[tf.keras.layers.Layer]:
+    """Flatten model layers across TensorFlow/Keras versions.
+
+    Parameters
+    ----------
+    model : tf.keras.Model
+        Model whose layers should be traversed.
+
+    Returns
+    -------
+    list[tf.keras.layers.Layer]
+        De-duplicated list of all layers reachable from the model graph.
+    """
+    layers: list[tf.keras.layers.Layer] = []
+    seen_nodes: set[int] = set()
+
+    if hasattr(model, "_flatten_layers"):
+        try:
+            for layer in model._flatten_layers(include_self=False, recursive=True):
+                if id(layer) in seen_nodes:
+                    continue
+                seen_nodes.add(id(layer))
+                layers.append(layer)
+            if layers:
+                return layers
+        except TypeError:
+            pass
+
+    queue: deque[object] = deque([model])
+    while queue:
+        node = queue.popleft()
+        node_id = id(node)
+        if node_id in seen_nodes:
+            continue
+        seen_nodes.add(node_id)
+        if isinstance(node, tf.keras.layers.Layer):
+            layers.append(node)
+        for child in getattr(node, "layers", []) or []:
+            queue.append(child)
+    return layers
+
+
+def collect_bn_layers(model: tf.keras.Model) -> list[tf.keras.layers.BatchNormalization]:
+    """Collect all BatchNormalization layers from a model.
+
+    Parameters
+    ----------
+    model : tf.keras.Model
+        Model to inspect.
+
+    Returns
+    -------
+    list[tf.keras.layers.BatchNormalization]
+        BatchNormalization layers found in the model graph.
+    """
+    out: list[tf.keras.layers.BatchNormalization] = []
+    for layer in iter_layers(model):
+        if isinstance(layer, tf.keras.layers.BatchNormalization):
+            out.append(layer)
+    return out
+
+
+def collect_non_bn_bias_layers(model: tf.keras.Model) -> list[tf.keras.layers.Layer]:
+    """Collect non-BN layers that expose a ``bias`` variable.
+
+    Parameters
+    ----------
+    model : tf.keras.Model
+        Model to inspect.
+
+    Returns
+    -------
+    list[tf.keras.layers.Layer]
+        Layers that are not BatchNormalization and have a bias tensor.
+    """
+    out: list[tf.keras.layers.Layer] = []
+    for layer in iter_layers(model):
+        if isinstance(layer, tf.keras.layers.BatchNormalization):
+            continue
+        bias = getattr(layer, "bias", None)
+        if bias is None:
+            continue
+        out.append(layer)
+    return out
+
+
+def apply_combined_perturbation(
+    model: tf.keras.Model,
+    seed: int = 1337,
+) -> tuple[int, int]:
+    """Apply BN-full + non-BN-bias perturbations.
+
+    Parameters
+    ----------
+    model : tf.keras.Model
+        Model whose BN statistics/affine parameters and non-BN biases are
+        perturbed in place.
+    seed : int, optional
+        Random seed used to make perturbation deterministic.
+
+    Returns
+    -------
+    tuple[int, int]
+        (number of BN layers touched, number of non-BN bias layers touched)
+    """
+    rng = np.random.default_rng(int(seed))
+    bn_touched = 0
+    for layer in collect_bn_layers(model):
+        if layer.gamma is not None:
+            gamma_values = rng.uniform(0.7, 1.3, size=layer.gamma.shape).astype(np.float32)
+            layer.gamma.assign(gamma_values)
+        if layer.beta is not None:
+            beta_values = rng.uniform(-0.3, 0.3, size=layer.beta.shape).astype(np.float32)
+            layer.beta.assign(beta_values)
+        if layer.moving_mean is not None:
+            mean_values = rng.uniform(-0.5, 0.5, size=layer.moving_mean.shape).astype(np.float32)
+            layer.moving_mean.assign(mean_values)
+        if layer.moving_variance is not None:
+            var_values = rng.uniform(0.3, 2.0, size=layer.moving_variance.shape).astype(np.float32)
+            layer.moving_variance.assign(var_values)
+        bn_touched += 1
+
+    bias_touched = 0
+    for layer in collect_non_bn_bias_layers(model):
+        bias = getattr(layer, "bias", None)
+        if bias is None:
+            continue
+        bias_values = rng.uniform(-0.3, 0.3, size=bias.shape).astype(np.float32)
+        bias.assign(bias_values)
+        bias_touched += 1
+    return bn_touched, bias_touched
 
 
 def load_config(
@@ -111,7 +292,7 @@ def load_config(
     # If not explicitly set, disable training by default for faster debugging.
     training.energy_aware = bool(training.get("energy_aware", False))
     # Input mode selects which Arduino sketch variant is used during HIL runs.
-    training.input_mode = str(training.get("input_mode", "standard")).lower()
+    training.input_mode = str(training.get("input_mode", "uniform")).lower()
     config.training.drop_rate_choices = DROP_RATE_CHOICES
 
     device = config.device
