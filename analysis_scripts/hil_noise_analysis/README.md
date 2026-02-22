@@ -103,7 +103,7 @@ python analysis_scripts/hil_noise_analysis/hil_energy_noise_analysis.py --csv hi
 ## Key CLI Flags
 
 - `hil_energy_noise_scan.py`
-  - `--model-variants` (default: `trained_50ep,untrained`)
+  - `--model-variants` (default: `untrained`)
   - `--trained-checkpoint` (required when any `trained*` variant is requested)
   - `--trained-meta` (optional metadata JSON)
   - Use `--model-variants untrained` if you only want legacy untrained behavior.

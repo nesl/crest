@@ -80,7 +80,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--model-variants",
-        default="trained_50ep,untrained",
+        default="untrained",
         help=(
             "Comma-separated model variants to scan (e.g. trained_50ep,untrained,"
             "approx_trained)."

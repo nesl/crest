@@ -71,6 +71,11 @@ def _parse_epoch_filter(raw: str | None) -> set[int] | None:
 
 
 def _load_training_rows(training_csv: Path, selected_epochs: set[int] | None) -> list[dict[str, str]]:
+    """
+    Load checkpoint-bearing rows from the training CSV.
+
+    Rows without a checkpoint path (for example audit-only rows) are skipped.
+    """
     if not training_csv.exists():
         raise FileNotFoundError(f"Training CSV not found: {training_csv}")
 
@@ -82,13 +87,33 @@ def _load_training_rows(training_csv: Path, selected_epochs: set[int] | None) ->
             raise ValueError(f"Training CSV missing required columns: {missing}")
 
         rows: list[dict[str, str]] = []
-        for row in reader:
-            epoch = int(row["epoch"])
+        for row_index, row in enumerate(reader, start=2):
+            try:
+                epoch = int(str(row["epoch"]).strip())
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid epoch value in training CSV row {row_index}: {row.get('epoch')!r}"
+                ) from exc
             if selected_epochs is not None and epoch not in selected_epochs:
                 continue
-            checkpoint_path = str(row["checkpoint_path"]).strip()
+            checkpoint_path = str(row.get("checkpoint_path", "")).strip()
             if not checkpoint_path:
-                raise ValueError(f"Empty checkpoint_path in training CSV row for epoch={epoch}")
+                stage_type = str(row.get("stage_type", "")).strip().lower()
+                if stage_type in {"fresh_untrained_audit"}:
+                    logger.info(
+                        "Skipping non-checkpoint training CSV row %d (stage_type=%s, epoch=%s).",
+                        row_index,
+                        stage_type,
+                        epoch,
+                    )
+                else:
+                    logger.warning(
+                        "Skipping training CSV row %d with empty checkpoint_path (stage_type=%s, epoch=%s).",
+                        row_index,
+                        stage_type or "<missing>",
+                        epoch,
+                    )
+                continue
             rows.append(row)
 
     rows.sort(key=lambda item: int(item["epoch"]))
