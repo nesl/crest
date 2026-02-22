@@ -212,18 +212,6 @@ class SketchVariantTests(unittest.TestCase):
             self.assertTrue(out_path.exists())
             self.assertIn("uniform", out_path.read_text())
 
-    def test_selects_uniform_variant(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="uniform")
-
-            out_path = server._sync_sketch_variant()
-
-            self.assertTrue(out_path.exists())
-            self.assertIn("uniform", out_path.read_text())
-
     def test_selects_representative_variant_and_copies_header(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"

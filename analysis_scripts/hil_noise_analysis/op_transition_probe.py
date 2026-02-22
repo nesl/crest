@@ -31,7 +31,13 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from analysis_scripts.hil_noise_analysis.noise_scan_model_spec import build_noise_scan_hyperparams
 from analysis_scripts.hil_noise_analysis.train_noise_scan_model import _load_split
 from tinyodom.hardware import convert_to_tflite_model
-from tinyodom.model import DEFAULT_CONFIG_PATH, build_tinyodom_model, load_config
+from tinyodom.model import (
+    DEFAULT_CONFIG_PATH,
+    build_tinyodom_model,
+    collect_bn_layers,
+    collect_non_bn_bias_layers,
+    load_config,
+)
 
 
 ALLOWED_VARIANTS = (
@@ -87,108 +93,9 @@ def _extract_tflite_graph_stats(tflite_path: Path) -> tuple[int, int, dict[str, 
     return op_count, add_count, dict(sorted(op_histogram.items()))
 
 
-def _collect_bn_layers(model: tf.keras.Model) -> list[tf.keras.layers.BatchNormalization]:
-    """
-    Collect BatchNormalization layers across TF/Keras versions.
-
-    Some environments expose `model.submodules`, others only provide
-    `_flatten_layers(...)`, and older stacks may require recursive traversal
-    through `layer.layers`.
-    """
-    bn_layers: list[tf.keras.layers.BatchNormalization] = []
-    seen_bn: set[int] = set()
-    seen_nodes: set[int] = set()
-
-    def _try_add(layer_obj: object) -> None:
-        if not isinstance(layer_obj, tf.keras.layers.BatchNormalization):
-            return
-        identity = id(layer_obj)
-        if identity in seen_bn:
-            return
-        seen_bn.add(identity)
-        bn_layers.append(layer_obj)
-
-    if hasattr(model, "submodules"):
-        for layer in getattr(model, "submodules"):
-            _try_add(layer)
-        if bn_layers:
-            return bn_layers
-
-    if hasattr(model, "_flatten_layers"):
-        try:
-            for layer in model._flatten_layers(include_self=False, recursive=True):
-                _try_add(layer)
-            if bn_layers:
-                return bn_layers
-        except TypeError:
-            # Signature differences across versions; fall through to recursion.
-            pass
-
-    queue: list[object] = [model]
-    while queue:
-        node = queue.pop(0)
-        node_id = id(node)
-        if node_id in seen_nodes:
-            continue
-        seen_nodes.add(node_id)
-        _try_add(node)
-        for child in getattr(node, "layers", []) or []:
-            queue.append(child)
-
-    return bn_layers
-
-
-def _iter_layers(model: tf.keras.Model) -> list[tf.keras.layers.Layer]:
-    """
-    Flatten model layers across TF/Keras versions.
-    """
-    layers: list[tf.keras.layers.Layer] = []
-    seen_nodes: set[int] = set()
-
-    if hasattr(model, "_flatten_layers"):
-        try:
-            for layer in model._flatten_layers(include_self=False, recursive=True):
-                if id(layer) in seen_nodes:
-                    continue
-                seen_nodes.add(id(layer))
-                layers.append(layer)
-            if layers:
-                return layers
-        except TypeError:
-            pass
-
-    queue: list[object] = [model]
-    while queue:
-        node = queue.pop(0)
-        node_id = id(node)
-        if node_id in seen_nodes:
-            continue
-        seen_nodes.add(node_id)
-        if isinstance(node, tf.keras.layers.Layer):
-            layers.append(node)
-        for child in getattr(node, "layers", []) or []:
-            queue.append(child)
-    return layers
-
-
-def _collect_non_bn_bias_layers(model: tf.keras.Model) -> list[tf.keras.layers.Layer]:
-    """
-    Collect layers with a trainable bias variable, excluding BatchNorm layers.
-    """
-    out: list[tf.keras.layers.Layer] = []
-    for layer in _iter_layers(model):
-        if isinstance(layer, tf.keras.layers.BatchNormalization):
-            continue
-        bias = getattr(layer, "bias", None)
-        if bias is None:
-            continue
-        out.append(layer)
-    return out
-
-
 def _perturb_bn_gamma_beta(model: tf.keras.Model, rng: np.random.Generator) -> int:
     touched = 0
-    for layer in _collect_bn_layers(model):
+    for layer in collect_bn_layers(model):
         if layer.gamma is not None:
             values = rng.uniform(0.7, 1.3, size=layer.gamma.shape).astype(np.float32)
             layer.gamma.assign(values)
@@ -201,7 +108,7 @@ def _perturb_bn_gamma_beta(model: tf.keras.Model, rng: np.random.Generator) -> i
 
 def _perturb_bn_moving_stats(model: tf.keras.Model, rng: np.random.Generator) -> int:
     touched = 0
-    for layer in _collect_bn_layers(model):
+    for layer in collect_bn_layers(model):
         if layer.moving_mean is not None:
             values = rng.uniform(-0.5, 0.5, size=layer.moving_mean.shape).astype(np.float32)
             layer.moving_mean.assign(values)
@@ -214,7 +121,7 @@ def _perturb_bn_moving_stats(model: tf.keras.Model, rng: np.random.Generator) ->
 
 def _perturb_non_bn_biases(model: tf.keras.Model, rng: np.random.Generator) -> int:
     touched = 0
-    for layer in _collect_non_bn_bias_layers(model):
+    for layer in collect_non_bn_bias_layers(model):
         bias = getattr(layer, "bias", None)
         if bias is None:
             continue
@@ -247,7 +154,7 @@ def _calibrate_bn_without_training(
             batch = capped[start : start + batch_size]
             _ = model(batch, training=True)
 
-    return len(_collect_bn_layers(model))
+    return len(collect_bn_layers(model))
 
 
 def _hist_delta(base_hist: dict[str, int], cur_hist: dict[str, int]) -> dict[str, int]:
@@ -410,8 +317,8 @@ def main() -> int:
             model = _build_fresh_model(hyperparams)
             mutated_layers_touched, notes = mutators[variant](model)
 
-        bn_layers_total = len(_collect_bn_layers(model))
-        non_bn_bias_layers_total = len(_collect_non_bn_bias_layers(model))
+        bn_layers_total = len(collect_bn_layers(model))
+        non_bn_bias_layers_total = len(collect_non_bn_bias_layers(model))
 
         for quant_mode in quant_modes:
             quantization = quant_mode == "int8"

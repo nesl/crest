@@ -247,7 +247,7 @@ class HILServer:
         # Compute the latency budget once so the downstream metrics/logging logic can reuse it.
         latency_budget_ms = (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000
 
-        # FIXME: This is bad. Just pass in the energy aware flag and disregard the parameters that only apply to energy-aware mode. The current approach is error-prone and leads to a combinatorial explosion of parameters in this method signature.
+        # TODO: This is bad. Just pass in the energy aware flag and disregard the parameters that only apply to energy-aware mode. The current approach is error-prone and leads to a combinatorial explosion of parameters in this method signature.
         # Collect RAM/flash/latency/arena metrics from the controller
         metrics = collect_metrics(
             hil_enabled=self.config.device.hil,

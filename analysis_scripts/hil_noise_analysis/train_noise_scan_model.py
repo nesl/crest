@@ -55,6 +55,20 @@ def _window_2d(values: np.ndarray, window_size: int, stride: int) -> np.ndarray:
     return values[idx]
 
 
+def _imu_to_vi_path(imu_path: Path) -> Path:
+    """
+    Convert an IMU file path (e.g. imu2.csv) to its paired GT path (vi2.csv).
+
+    Only the filename token is rewritten so parent directories containing
+    "imu" are left untouched.
+    """
+    imu_name = imu_path.name
+    gt_name = imu_name.replace("imu", "vi", 1)
+    if gt_name == imu_name:
+        raise ValueError(f"Unable to infer GT filename from IMU path: {imu_path}")
+    return imu_path.with_name(gt_name)
+
+
 def _load_split_numpy(config, type_flag: int) -> SplitData:
     """
     Numpy-only OxIOD loader used when tinyodom.data/pandas is unavailable.
@@ -83,7 +97,7 @@ def _load_split_numpy(config, type_flag: int) -> SplitData:
 
         for rel_path in rel_paths:
             imu_path = dataset_root / folder / rel_path
-            gt_path = Path(str(imu_path).replace("imu", "vi"))
+            gt_path = _imu_to_vi_path(imu_path)
             if not imu_path.exists():
                 raise FileNotFoundError(f"IMU file not found: {imu_path}")
             if not gt_path.exists():
@@ -132,32 +146,55 @@ def _load_split(config, type_flag: int) -> tuple[SplitData, str]:
     """
     Load a split, preferring tinyodom.data and falling back to numpy-only parsing.
     """
+    def _is_dependency_value_error(exc: ValueError) -> bool:
+        """
+        Return True for known import-time ABI/value errors from binary deps.
+
+        Examples include numpy/pandas binary incompatibility messages such as
+        "numpy.dtype size changed" and related API version mismatches.
+        """
+        message = str(exc).lower()
+        patterns = (
+            "numpy.dtype size changed",
+            "ufunc size changed",
+            "binary incompatibility",
+            "module compiled against api version",
+            "dtype size changed",
+        )
+        return any(pattern in message for pattern in patterns)
+
     try:
         from tinyodom.data import import_oxiod_dataset  # local import to avoid hard pandas dependency
-
-        split = import_oxiod_dataset(
-            type_flag=type_flag,
-            useMagnetometer=True,
-            useStepCounter=True,
-            AugmentationCopies=0,
-            dataset_folder=config.data.directory,
-            sub_folders=SUB_FOLDERS,
-            sampling_rate=config.data.sampling_rate_hz,
-            window_size=config.data.window_size,
-            stride=config.data.stride,
-            verbose=False,
-        )
-        return SplitData(inputs=split.inputs, x_vel=split.x_vel, y_vel=split.y_vel), "tinyodom.data"
-    except (ImportError, ModuleNotFoundError, OSError) as exc:
+    except (ImportError, OSError) as exc:
         # Expected dependency- or environment-related failures: fall back to numpy-only loader.
         print(
             "[WARN] tinyodom.data.import_oxiod_dataset unavailable or dependency-related error; "
             f"falling back to numpy loader (no pandas required): {exc}"
         )
         return _load_split_numpy(config=config, type_flag=type_flag), "numpy_fallback_no_pandas"
-    except Exception:
-        # Re-raise unexpected exceptions to avoid masking logic or schema bugs.
+    except ValueError as exc:
+        # Handle common binary-compatibility import failures (e.g., pandas/numpy ABI mismatch).
+        if _is_dependency_value_error(exc):
+            print(
+                "[WARN] tinyodom.data import hit dependency ABI mismatch; "
+                f"falling back to numpy loader (no pandas required): {exc}"
+            )
+            return _load_split_numpy(config=config, type_flag=type_flag), "numpy_fallback_no_pandas"
         raise
+
+    split = import_oxiod_dataset(
+        type_flag=type_flag,
+        useMagnetometer=True,
+        useStepCounter=True,
+        AugmentationCopies=0,
+        dataset_folder=config.data.directory,
+        sub_folders=SUB_FOLDERS,
+        sampling_rate=config.data.sampling_rate_hz,
+        window_size=config.data.window_size,
+        stride=config.data.stride,
+        verbose=False,
+    )
+    return SplitData(inputs=split.inputs, x_vel=split.x_vel, y_vel=split.y_vel), "tinyodom.data"
 
 
 def _git_commit(repo_root: Path) -> str | None:
