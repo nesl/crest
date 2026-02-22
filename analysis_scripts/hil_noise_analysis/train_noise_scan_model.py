@@ -148,9 +148,16 @@ def _load_split(config, type_flag: int) -> tuple[SplitData, str]:
             verbose=False,
         )
         return SplitData(inputs=split.inputs, x_vel=split.x_vel, y_vel=split.y_vel), "tinyodom.data"
-    except Exception as exc:
-        print(f"[WARN] Falling back to numpy loader (no pandas required): {exc}")
+    except (ImportError, ModuleNotFoundError, OSError) as exc:
+        # Expected dependency- or environment-related failures: fall back to numpy-only loader.
+        print(
+            "[WARN] tinyodom.data.import_oxiod_dataset unavailable or dependency-related error; "
+            f"falling back to numpy loader (no pandas required): {exc}"
+        )
         return _load_split_numpy(config=config, type_flag=type_flag), "numpy_fallback_no_pandas"
+    except Exception:
+        # Re-raise unexpected exceptions to avoid masking logic or schema bugs.
+        raise
 
 
 def _git_commit(repo_root: Path) -> str | None:
