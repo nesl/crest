@@ -734,6 +734,7 @@ def HIL_controller(
     idealArenaBytes = -1
     masterError = HIL_MASTER_PENDING
     last_success_metrics: Optional[Tuple[int, int, float, int, Optional[Dict[str, Optional[float]]]]] = None
+    had_retry_failures = False
 
     low_idx = -1
     high_idx = len(arena_sweep_list)
@@ -825,7 +826,10 @@ def HIL_controller(
         )
 
         if err_flag != HIL_ERROR_OK:
-            logger.warning(
+            # During arena search, latency/undersized failures are expected stepping stones.
+            # Keep these as INFO so users don't misread successful sweeps as hard failures.
+            log_fn = logger.info if err_flag in (HIL_ERROR_LATENCY, HIL_ERROR_UNDER_SIZED) else logger.warning
+            log_fn(
                 "HIL_controller failure reason: %s (err_flag=%d, arena=%d KiB, ram=%d bytes, flash=%d bytes, latency=%.3f s)",
                 describe_error_code(err_flag, prefer_master=False),
                 err_flag,
@@ -851,6 +855,7 @@ def HIL_controller(
             continue
         elif err_flag in (HIL_ERROR_LATENCY, HIL_ERROR_UNDER_SIZED):
             # Arena too small; advance to the next candidate.
+            had_retry_failures = True
             low_idx = max(low_idx, current_idx)
             candidate = min(current_idx + 1, (low_idx + high_idx) // 2)
             if retry_hint_bytes is not None:
@@ -918,6 +923,15 @@ def HIL_controller(
 
     if masterError == HIL_MASTER_PENDING:
         masterError = HIL_MASTER_SUCCESS if last_success_metrics else HIL_MASTER_ARENA_EXHAUSTED
+
+    if masterError == HIL_MASTER_SUCCESS and had_retry_failures:
+        logger.info(
+            "HIL_controller recovered after arena retries: arena_bytes=%d ram_bytes=%d flash_bytes=%d latency=%.3f s",
+            idealArenaBytes,
+            finRAM,
+            finFlash,
+            finLatency,
+        )
 
     if masterError != HIL_MASTER_SUCCESS:
         logger.warning(

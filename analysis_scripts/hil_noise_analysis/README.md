@@ -38,13 +38,20 @@ how input distributions affect latency and energy measurements.
     (`model_variant`, `input_mode`) in addition to the legacy input-mode summary.
   - Outputs to `analysis_scripts/hil_noise_analysis/analysis_output/` by default.
 
+- `op_transition_probe.py`
+  - Builds controlled model variants to probe when extra TFLite ops appear.
+  - Exports float/int8 TFLite artifacts per variant and records file size, total ops,
+    and ADD-op count.
+  - Writes a detailed CSV plus a compact text summary under
+    `op_transition_probe_output/` (or caller-provided output directory).
+
 ## Test sketch variants
 
-The energy-aware analysis sketches live under `sketches/analysis_sketches/`:
+Energy-aware input modes map to the following sketches:
 
-- `tinyodom_tcn_energy_uniform.ino` (uniform [0,5] inputs)
-- `tinyodom_tcn_energy_representative.ino` (synthetic inputs using dataset mean/std + clamping)
-- `tinyodom_tcn_energy_real_data.ino` (fixed real dataset windows)
+- `sketches/tinyodom_tcn_energy.ino` (uniform [0,5] inputs)
+- `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino` (synthetic inputs using dataset mean/std + clamping)
+- `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino` (fixed real dataset windows)
 
 The generated header lives alongside them:
 
@@ -54,10 +61,15 @@ The generated header lives alongside them:
 
 Set the following in `src/nas_config.yaml` to choose a variant when `energy_aware: true`:
 
-- `input_mode: "standard"` uses `sketches/tinyodom_tcn_energy.ino`
-- `input_mode: "uniform"` uses `sketches/analysis_sketches/tinyodom_tcn_energy_uniform.ino`
+- `input_mode: "uniform"` uses `sketches/tinyodom_tcn_energy.ino`
 - `input_mode: "representative"` uses `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino`
 - `input_mode: "real"` uses `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino`
+
+## Input Mode Definitions
+
+- `uniform`: fills the model input window with random values in `[0, 5]`.
+- `representative`: uses synthetic values shaped by OxIOD channel statistics (mean/std with clamping).
+- `real`: replays fixed real OxIOD windows embedded in `tinyodom_tcn_input_data.h`.
 
 ## Two-Machine Workflow (GPU Train + HIL Scan)
 
@@ -102,3 +114,31 @@ python analysis_scripts/hil_noise_analysis/hil_energy_noise_analysis.py --csv hi
   - `--artifact-prefix` (default: `noise_scan_50ep`)
   - `--export-tflite` (optional)
   - If pandas import fails with a GLIBCXX/libstdc++ mismatch, the script falls back automatically.
+
+## Key Finding: Op-Count Transition
+
+From the `op_transition_probe.py` experiments:
+
+- Fresh untrained models produce fewer exported ops than trained checkpoints.
+- BN-only perturbation closes part of the gap.
+- Non-BN-bias-only perturbation also closes part of the gap.
+- Perturbing both BN (gamma/beta/moving stats) and non-BN biases matches trained op counts.
+
+Observed op counts (`float` and `int8` showed the same progression):
+
+| Variant | Ops | ADD ops |
+|---|---:|---:|
+| `fresh_untrained` | 69 | 4 |
+| `bn_full_perturbed` | 75 | 10 |
+| `non_bn_bias_perturbed` | 75 | 10 |
+| `bn_full_plus_non_bn_bias_perturbed` | 81 | 16 |
+| `trained_checkpoint` | 81 | 16 |
+
+Detailed write-up:
+
+- `analysis_scripts/hil_noise_analysis/FINDINGS_bn_bias_op_transition.md`
+
+Raw summaries:
+
+- `analysis_scripts/hil_noise_analysis/op_transition_probe_output/op_transition_probe_summary.txt`
+- `analysis_scripts/hil_noise_analysis/op_transition_probe_output_bias_cmp/op_transition_probe_summary.txt`

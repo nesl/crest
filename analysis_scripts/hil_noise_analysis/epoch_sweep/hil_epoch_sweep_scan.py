@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import logging
 import math
 import statistics
 import sys
@@ -22,6 +23,14 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from analysis_scripts.hil_noise_analysis.noise_scan_model_spec import build_noise_scan_hyperparams
 from hil_server import HILServer, logger
 from tinyodom.model import DEFAULT_CONFIG_PATH
+
+
+def _configure_logging(verbose: bool) -> None:
+    level = logging.INFO if verbose else logging.WARNING
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s:%(name)s:%(message)s",
+    )
 
 
 def _parse_csv_list(raw: str, field_name: str) -> list[str]:
@@ -86,6 +95,55 @@ def _load_training_rows(training_csv: Path, selected_epochs: set[int] | None) ->
     if not rows:
         raise ValueError("No checkpoint rows selected from training CSV.")
     return rows
+
+
+def _resolve_checkpoint_path(raw_path: str, training_csv_dir: Path, checkpoint_root: Path | None) -> Path:
+    """
+    Resolve checkpoint paths across machines.
+
+    Resolution order:
+    1) Path as written in the CSV.
+    2) Relative to ``--checkpoint-root`` (if provided).
+    3) Filename inside ``--checkpoint-root`` (if provided).
+    4) Relative to training CSV directory.
+    5) Filename inside training CSV directory.
+    """
+    candidate_paths: list[Path] = []
+    raw = Path(raw_path)
+
+    if raw.is_absolute():
+        candidate_paths.append(raw)
+    else:
+        candidate_paths.append(Path.cwd() / raw)
+
+    if checkpoint_root is not None:
+        if raw.is_absolute():
+            candidate_paths.append(checkpoint_root / raw.name)
+        else:
+            candidate_paths.append(checkpoint_root / raw)
+            candidate_paths.append(checkpoint_root / raw.name)
+
+    if raw.is_absolute():
+        candidate_paths.append(training_csv_dir / raw.name)
+    else:
+        candidate_paths.append(training_csv_dir / raw)
+        candidate_paths.append(training_csv_dir / raw.name)
+
+    seen: set[Path] = set()
+    for candidate in candidate_paths:
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.exists():
+            return resolved
+
+    checked = "\n".join(f"- {path.expanduser().resolve()}" for path in candidate_paths)
+    raise FileNotFoundError(
+        "Checkpoint not found after path remap attempts.\n"
+        f"Original CSV path: {raw_path}\n"
+        f"Tried:\n{checked}"
+    )
 
 
 def _write_summary(summary_csv_path: Path, run_rows: list[dict[str, object]]) -> None:
@@ -172,6 +230,11 @@ def main() -> int:
     )
     parser.add_argument("--cooldown", type=float, default=0.0, help="Cooldown seconds between runs.")
     parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable INFO-level logging for sweep progress and HIL internals.",
+    )
+    parser.add_argument(
         "--energy-aware",
         action="store_true",
         help="Force energy-aware sketch selection even if config disables it.",
@@ -181,7 +244,13 @@ def main() -> int:
         default=None,
         help="Optional epoch filter list/range (e.g., 50,100-200,300).",
     )
+    parser.add_argument(
+        "--checkpoint-root",
+        default=None,
+        help="Optional directory used to remap checkpoint paths when CSV paths come from another machine.",
+    )
     args = parser.parse_args()
+    _configure_logging(args.verbose)
 
     if args.runs <= 0:
         raise ValueError("--runs must be > 0")
@@ -189,6 +258,7 @@ def main() -> int:
         raise ValueError("--cooldown must be >= 0")
 
     training_csv = Path(args.training_csv).resolve()
+    checkpoint_root = Path(args.checkpoint_root).resolve() if args.checkpoint_root else None
     selected_epochs = _parse_epoch_filter(args.epoch_filter)
     checkpoints = _load_training_rows(training_csv, selected_epochs)
     input_modes = _parse_csv_list(args.input_modes, "input modes")
@@ -219,9 +289,11 @@ def main() -> int:
         for checkpoint_row in checkpoints:
             epoch = int(checkpoint_row["epoch"])
             stage_type = str(checkpoint_row.get("stage_type", ""))
-            checkpoint_path = Path(str(checkpoint_row["checkpoint_path"])).resolve()
-            if not checkpoint_path.exists():
-                raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+            checkpoint_path = _resolve_checkpoint_path(
+                str(checkpoint_row["checkpoint_path"]),
+                training_csv.parent,
+                checkpoint_root,
+            )
 
             model_variant = f"trained_epoch_{epoch}"
             logger.info("Evaluating checkpoint epoch=%s stage_type=%s path=%s", epoch, stage_type, checkpoint_path)

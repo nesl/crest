@@ -34,6 +34,13 @@ from tinyodom.model import DEFAULT_CONFIG_PATH
 
 from noise_scan_model_spec import build_noise_scan_hyperparams
 
+SUPPORTED_UNTRAINED_VARIANTS = {
+    "untrained",
+    "approx_trained",
+    "representative",  # legacy alias
+    "bn_full_plus_non_bn_bias_perturbed",  # legacy alias
+}
+
 
 def _parse_csv_list(raw: str, field_name: str) -> list[str]:
     values = [value.strip().lower() for value in raw.split(",") if value.strip()]
@@ -44,6 +51,11 @@ def _parse_csv_list(raw: str, field_name: str) -> list[str]:
 
 def _is_trained_variant(model_variant: str) -> bool:
     return str(model_variant).strip().lower().startswith("trained")
+
+
+def _is_supported_variant(model_variant: str) -> bool:
+    variant = str(model_variant).strip().lower()
+    return variant in SUPPORTED_UNTRAINED_VARIANTS or _is_trained_variant(variant)
 
 
 def main() -> int:
@@ -69,7 +81,10 @@ def main() -> int:
     parser.add_argument(
         "--model-variants",
         default="trained_50ep,untrained",
-        help="Comma-separated model variants to scan (e.g. trained_50ep,untrained).",
+        help=(
+            "Comma-separated model variants to scan (e.g. trained_50ep,untrained,"
+            "approx_trained)."
+        ),
     )
     parser.add_argument(
         "--trained-checkpoint",
@@ -85,13 +100,13 @@ def main() -> int:
 
     input_modes = _parse_csv_list(args.input_modes, "input modes")
     model_variants = _parse_csv_list(args.model_variants, "model variants")
-    invalid_variants = [
-        variant for variant in model_variants if variant != "untrained" and not _is_trained_variant(variant)
-    ]
+    invalid_variants = [variant for variant in model_variants if not _is_supported_variant(variant)]
     if invalid_variants:
         parser.error(
             "Unsupported --model-variants entries: "
-            f"{', '.join(invalid_variants)}. Use 'untrained' or names that start with 'trained'."
+            f"{', '.join(invalid_variants)}. Use one of "
+            f"{', '.join(sorted(SUPPORTED_UNTRAINED_VARIANTS))}, "
+            "or names that start with 'trained'."
         )
 
     server = HILServer(config_path=Path(args.config))

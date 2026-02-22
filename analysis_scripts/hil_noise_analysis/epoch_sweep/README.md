@@ -19,6 +19,11 @@ This folder contains a two-step experiment flow:
   - Reads training CSV, runs HIL metrics per checkpoint, and writes per-run CSV.
   - Optionally writes checkpoint-level summary CSV.
 
+- `audit_fresh_untrained_tflite.py`
+  - Builds a fresh untrained fixed-architecture model and exports quantized TFLite.
+  - Extracts and prints op histogram stats (`op_count`, `ADD` count, per-op histogram).
+  - Appends a `fresh_untrained_audit` row to the epoch-sweep training stats CSV (unless disabled).
+
 ## Default Output Location
 
 - `analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/`
@@ -34,7 +39,8 @@ python analysis_scripts/hil_noise_analysis/epoch_sweep/train_epoch_sweep.py \
   --max-epochs 500 \
   --stage-size 50 \
   --patience 40 \
-  --min-delta 0.0
+  --min-delta 0.0 \
+  --verbose-fit
 ```
 
 ### GPU Training Run (Explicit Output Paths)
@@ -50,7 +56,8 @@ python analysis_scripts/hil_noise_analysis/epoch_sweep/train_epoch_sweep.py \
   --max-epochs 500 \
   --stage-size 50 \
   --patience 40 \
-  --min-delta 0.0
+  --min-delta 0.0 \
+  --verbose-fit
 ```
 
 Expected primary output:
@@ -79,6 +86,30 @@ python analysis_scripts/hil_noise_analysis/epoch_sweep/hil_epoch_sweep_scan.py \
   --cooldown 0
 ```
 
+Verbose logging:
+
+```bash
+python analysis_scripts/hil_noise_analysis/epoch_sweep/hil_epoch_sweep_scan.py \
+  --config src/nas_config.yaml \
+  --training-csv analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/epoch_sweep_training_stats.csv \
+  --runs 1 \
+  --input-modes uniform \
+  --verbose
+```
+
+Explicit output paths + checkpoint remap (useful when CSV paths came from another machine):
+
+```bash
+python analysis_scripts/hil_noise_analysis/epoch_sweep/hil_epoch_sweep_scan.py \
+  --config src/nas_config.yaml \
+  --training-csv analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/epoch_sweep_training_stats.csv \
+  --checkpoint-root analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts \
+  --csv-path analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/epoch_sweep_hil_metrics.csv \
+  --summary-csv-path analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/epoch_sweep_hil_summary.csv \
+  --runs 1 \
+  --input-modes uniform
+```
+
 Expected primary outputs:
 
 - `analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/epoch_sweep_hil_metrics.csv`
@@ -91,5 +122,9 @@ Expected primary outputs:
   - `--calibration-windows-override N` for quick smoke tests with smaller splits.
 
 - `hil_epoch_sweep_scan.py`
+  - `--csv-path` to override per-run output CSV path.
+  - `--summary-csv-path` to override grouped summary output CSV path.
+  - `--checkpoint-root DIR` to remap checkpoint paths when training CSV paths are from a different host.
   - `--epoch-filter "50,100-200"` to evaluate only selected checkpoints.
   - `--energy-aware` to force energy-aware sketch selection.
+  - `--verbose` to print INFO logs during checkpoint evaluation and HIL protocol steps.

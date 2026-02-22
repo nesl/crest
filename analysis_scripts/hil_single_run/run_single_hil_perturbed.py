@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
 """
-Run a single HIL controller pass and print the resulting metrics.
+Run exactly one perturbed-variant HIL pass and print the resulting metrics.
 
-This is a lightweight sanity check to confirm the repository layout,
-Arduino toolchain, and board communication are all working together.
-
-Examples
---------
-python analysis_scripts/hil_single_run/run_single_hil.py
-python analysis_scripts/hil_single_run/run_single_hil.py --input-mode uniform
-python analysis_scripts/hil_single_run/run_single_hil.py --output analysis_scripts/hil_single_run/last_run.json
+This script is opinionated for the perturbation experiment:
+- Forces energy-aware mode on.
+- Forces uniform input mode.
+- Forces model_variant='approx_trained'.
 """
 
 from __future__ import annotations
@@ -25,23 +21,13 @@ from addict import Dict
 
 sys.path.insert(0, os.path.abspath("src"))
 
-from hil_server import HILServer
+from hil_server import HILServer, PERTURBED_VARIANT_NAME
 from tinyodom.model import DEFAULT_CONFIG_PATH, build_tinyodom_model, count_flops
 
 
 def _build_hyperparams(server: HILServer) -> Dict:
     """
-    Construct a fixed hyperparameter set and annotate it with model FLOPs.
-
-    Parameters
-    ----------
-    server : HILServer
-        Active HIL server instance used to resolve window size and input dims.
-
-    Returns
-    -------
-    addict.Dict
-        Hyperparameter dictionary with an added ``flops`` attribute.
+    Construct the fixed TinyOdom hyperparameter set and annotate FLOPs.
     """
     hyperparams = Dict(
         nb_filters=10,
@@ -64,19 +50,14 @@ def main() -> int:
         level=logging.INFO,
         format="%(levelname)s:%(name)s:%(message)s",
     )
-    parser = argparse.ArgumentParser(description="Run one HIL controller pass and print metrics.")
+    parser = argparse.ArgumentParser(
+        description="Run one HIL pass with the BN+bias perturbed model variant."
+    )
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Path to config YAML.")
     parser.add_argument(
-        "--input-mode",
-        type=str.lower,
-        choices=["uniform", "representative", "real"],
-        default=None,
-        help="Override input_mode for this run (uniform/representative/real).",
-    )
-    parser.add_argument(
         "--output",
-        default=None,
-        help="Optional JSON output path to write the metrics.",
+        default="analysis_scripts/hil_single_run/last_run_perturbed.json",
+        help="JSON output path for the single-run metrics.",
     )
     parser.add_argument(
         "--harness-arm-pin",
@@ -113,27 +94,31 @@ def main() -> int:
         server.config.device.dut_arm_hold_ms = args.dut_arm_hold_ms
     if args.harness_stable_low_ms is not None:
         server.config.device.harness_stable_low_ms = args.harness_stable_low_ms
-    if args.input_mode:
-        server.set_input_mode(args.input_mode)
 
-    print("Effective harness wiring/timing:")
+    # Force this experiment's intended runtime path.
+    server.config.training.energy_aware = True
+    server.set_input_mode("uniform")
+
+    print("Effective run settings:")
+    print(f"  model_variant: {PERTURBED_VARIANT_NAME}")
+    print(f"  input_mode: {server.config.training.input_mode}")
+    print(f"  energy_aware: {bool(server.config.training.energy_aware)}")
     print(f"  harness_arm_pin: {server.config.device.harness_arm_pin}")
     print(f"  harness_trigger_pin: {server.config.device.harness_trigger_pin}")
     print(f"  dut_arm_hold_ms: {server.config.device.dut_arm_hold_ms}")
     print(f"  harness_stable_low_ms: {server.config.device.harness_stable_low_ms}")
 
     hyperparams = _build_hyperparams(server)
-    metrics = server.determine_metrics(hyperparams)
+    metrics = server.determine_metrics(hyperparams, model_variant=PERTURBED_VARIANT_NAME)
 
-    print("Single HIL metrics:")
+    print("Single perturbed HIL metrics:")
     for key, value in metrics.items():
         print(f"  {key}: {value}")
 
-    if args.output:
-        out_path = Path(args.output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(metrics, indent=2))
-        print(f"\nWrote metrics JSON: {out_path}")
+    out_path = Path(args.output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(metrics, indent=2))
+    print(f"\nWrote metrics JSON: {out_path}")
 
     return 0
 
