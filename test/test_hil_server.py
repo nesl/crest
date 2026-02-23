@@ -113,14 +113,14 @@ class DetermineMetricsTests(HILServerTestCase):
             hyperparams = Dict(flops=999, input_dim=3)
             server.determine_metrics(hyperparams)
 
-        # Verify that collect_metrics gets the right kwargs from hyperparams and config.
-        kwargs = collect_mock.call_args.kwargs
-        self.assertEqual(kwargs["flops"], 999)
-        self.assertEqual(kwargs["input_dim"], 3)
-        self.assertEqual(kwargs["device_name"], self.config.device.name)
-        self.assertEqual(kwargs["dirpath"], self.config.outputs.tcn_dir)
+        # Verify that collect_metrics gets a normalized request object.
+        request = collect_mock.call_args.args[0]
+        self.assertEqual(request.flops, 999)
+        self.assertEqual(request.input_dim, 3)
+        self.assertEqual(request.device_name, self.config.device.name)
+        self.assertEqual(request.dirpath, self.config.outputs.tcn_dir)
         self.assertAlmostEqual(
-            kwargs["latency_budget_ms"],
+            request.latency_budget_ms,
             (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000,
         )
 

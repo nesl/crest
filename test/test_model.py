@@ -20,8 +20,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from tinyodom.model import (
+    CollectMetricsRequest,
     DROP_RATE_CHOICES,
+    HarnessConfig,
     apply_combined_perturbation,
+    build_collect_metrics_request,
     collect_bn_layers,
     collect_non_bn_bias_layers,
     collect_metrics,
@@ -218,8 +221,9 @@ class CollectMetricsTests(unittest.TestCase):
             return (None, 4096, None, 2048, 0, None)
 
         with patch("tinyodom.model.HIL_controller", fake_controller):
-            metrics = collect_metrics(
+            request = CollectMetricsRequest(
                 hil_enabled=False,
+                energy_aware=False,
                 flops=10_000_000,
                 device_name="ARDUINO_NANO_33_BLE_SENSE",
                 window_size=128,
@@ -229,6 +233,7 @@ class CollectMetricsTests(unittest.TestCase):
                 serial_port=None,
                 latency_budget_ms=50.0,
             )
+            metrics = collect_metrics(request)
 
         self.assertEqual(metrics["ram_bytes"], -1)
         self.assertEqual(metrics["flash_bytes"], 4096)
@@ -247,8 +252,9 @@ class CollectMetricsTests(unittest.TestCase):
             return (1024, 8192, 25.0, 4096, 0, None)
 
         with patch("tinyodom.model.HIL_controller", fake_controller):
-            metrics = collect_metrics(
+            request = CollectMetricsRequest(
                 hil_enabled=True,
+                energy_aware=False,
                 flops=5_000_000,
                 device_name="ARDUINO_NANO_33_BLE_SENSE",
                 window_size=128,
@@ -258,10 +264,87 @@ class CollectMetricsTests(unittest.TestCase):
                 serial_port="ttyACM0",
                 latency_budget_ms=50000.0,
             )
+            metrics = collect_metrics(request)
 
         self.assertEqual(metrics["latency_ms"], 25000.0)
         self.assertEqual(metrics["latency_budget_ms"], 50000.0)
         self.assertEqual(metrics["error_label"], "HIL_MASTER_PENDING")
+
+
+class BuildCollectMetricsRequestTests(unittest.TestCase):
+    """Validate config/hyperparameter mapping into CollectMetricsRequest."""
+
+    def test_non_energy_aware_sets_harness_none(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+
+        self.assertIsNone(request.harness)
+        self.assertFalse(request.energy_aware)
+        self.assertEqual(request.flops, 123)
+        self.assertEqual(request.input_dim, 6)
+
+    def test_energy_aware_populates_harness(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=True, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=True,
+                name="ARDUINO_NANO_33_BLE_SENSE",
+                serial_port="ttyACM0",
+                harness_serial_port="ttyACM1",
+                harness_fqbn="arduino:mbed_nano:nano33ble",
+                harness_auto_flash="once",
+                harness_arm_pin=3,
+                harness_trigger_pin=2,
+                dut_arm_hold_ms=600,
+                harness_stable_low_ms=500,
+                harness_ready_timeout_s=5.0,
+                harness_arm_timeout_s=5.0,
+                harness_active_timeout_s=30.0,
+                harness_done_timeout_s=5.0,
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+
+        self.assertTrue(request.energy_aware)
+        self.assertIsInstance(request.harness, HarnessConfig)
+        self.assertEqual(request.harness.harness_serial_port, "ttyACM1")
+        self.assertEqual(request.harness.harness_arm_timeout_s, 5.0)
+
+    def test_missing_dut_ready_timeout_uses_default(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+
+        self.assertEqual(request.dut_ready_timeout_s, 5.0)
+
+    def test_energy_aware_missing_harness_serial_port_raises(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=True, latency_proxy_max_flops=20_000_000),
+            device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        with self.assertRaises(RuntimeError):
+            build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
 
 
 class LoadSettingsTests(unittest.TestCase):
@@ -415,14 +498,17 @@ class CollectMetricsIntegrationTests(unittest.TestCase):
             )
 
             metrics = collect_metrics(
-                hil_enabled=False,
-                flops=5_000_000,
-                device_name="ARDUINO_NANO_33_BLE_SENSE",
-                window_size=200,
-                input_dim=3,
-                dirpath=sketch_dir,
-                latency_proxy_max_flops=30_000_000,
-                serial_port=None,
+                CollectMetricsRequest(
+                    hil_enabled=False,
+                    energy_aware=False,
+                    flops=5_000_000,
+                    device_name="ARDUINO_NANO_33_BLE_SENSE",
+                    window_size=200,
+                    input_dim=3,
+                    dirpath=sketch_dir,
+                    latency_proxy_max_flops=30_000_000,
+                    serial_port=None,
+                )
             )
 
         self.assertGreaterEqual(metrics["flash_bytes"], 0)
