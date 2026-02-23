@@ -3,6 +3,7 @@ import itertools
 import logging
 import time
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -47,6 +48,95 @@ class TrialLike(Protocol):
 
     def set_user_attr(self, key: str, value: Any) -> None:
         ...
+
+
+@dataclass(frozen=True)
+class HarnessConfig:
+    """Energy-aware harness settings forwarded to ``HIL_controller``.
+
+    Parameters
+    ----------
+    harness_serial_port : str | None
+        Serial port for the INA228 harness.
+    harness_fqbn : str | None
+        FQBN used to compile/upload the harness sketch.
+    harness_auto_flash : str | None
+        Harness flashing policy (``once``, ``always``, ``never``).
+    harness_arm_pin : int | None
+        Harness arming GPIO pin.
+    harness_trigger_pin : int | None
+        Harness trigger GPIO pin.
+    dut_arm_hold_ms : int | None
+        Time to hold DUT arm low before trigger observation.
+    harness_stable_low_ms : int | None
+        Required stable-low arming duration.
+    harness_ready_timeout_s : float | None
+        Timeout waiting for ``HARNESS READY``.
+    harness_arm_timeout_s : float | None
+        Timeout waiting for a valid arm/trigger edge.
+    harness_active_timeout_s : float | None
+        Maximum active measurement window.
+    harness_done_timeout_s : float | None
+        Timeout waiting for ``DONE``.
+    """
+
+    harness_serial_port: str | None
+    harness_fqbn: str | None
+    harness_auto_flash: str | None
+    harness_arm_pin: int | None
+    harness_trigger_pin: int | None
+    dut_arm_hold_ms: int | None
+    harness_stable_low_ms: int | None
+    harness_ready_timeout_s: float | None
+    harness_arm_timeout_s: float | None
+    harness_active_timeout_s: float | None
+    harness_done_timeout_s: float | None
+
+
+@dataclass(frozen=True)
+class CollectMetricsRequest:
+    """Normalized request used by :func:`collect_metrics`.
+
+    Parameters
+    ----------
+    hil_enabled : bool
+        Whether to run HIL upload/measurement (vs compile-only proxy mode).
+    energy_aware : bool
+        Whether harness-assisted power measurement is enabled.
+    flops : float
+        Model FLOP estimate for trial bookkeeping.
+    device_name : str
+        Target hardware name.
+    window_size : int
+        Input window length compiled into firmware.
+    input_dim : int
+        Number of input channels compiled into firmware.
+    dirpath : pathlib.Path
+        Firmware project directory containing generated model artifacts.
+    latency_proxy_max_flops : float
+        Maximum FLOPs used by proxy latency normalization.
+    serial_port : str | None
+        DUT serial port used for upload/latency capture during HIL runs.
+    latency_budget_ms : float | None, optional
+        Target inference cadence in milliseconds for normalized latency checks.
+    dut_ready_timeout_s : float | None, optional
+        Timeout waiting for DUT ready handshake.
+    harness : HarnessConfig | None, optional
+        Harness settings for energy-aware runs. ``None`` for non-energy-aware runs.
+    """
+
+    hil_enabled: bool
+    energy_aware: bool
+    flops: float
+    device_name: str
+    window_size: int
+    input_dim: int
+    dirpath: Path
+    latency_proxy_max_flops: float
+    serial_port: str | None
+    latency_budget_ms: float | None = None
+    dut_ready_timeout_s: float | None = None
+    harness: HarnessConfig | None = None
 
 
 def set_error_code(metrics: dict, code: int) -> None:
@@ -377,120 +467,129 @@ def count_flops(model, input_shape):
         flops = tf.compat.v1.profiler.profile(graph, options=options)
     return flops.total_float_ops
 
-def collect_metrics(
-    hil_enabled: bool,
-    flops: float,
-    device_name: str,
-    window_size: int,
-    input_dim: int,
-    dirpath: Path,
-    latency_proxy_max_flops: float,
-    serial_port: str | None,
-    latency_budget_ms: float | None = None,
-    dut_ready_timeout_s: float | None = None,
-    harness_serial_port: str | None = None,
-    harness_fqbn: str | None = None,
-    harness_auto_flash: str | None = None,
-    harness_arm_pin: int | None = None,
-    harness_trigger_pin: int | None = None,
-    dut_arm_hold_ms: int | None = None,
-    harness_stable_low_ms: int | None = None,
-    harness_ready_timeout_s: float | None = None,
-    harness_arm_timeout_s: float | None = None,
-    harness_active_timeout_s: float | None = None,
-    harness_done_timeout_s: float | None = None,
-) -> dict:
-    """ Gather RAM/flash/latency metrics from the controller for both HIL and proxy runs.
+def build_collect_metrics_request(
+    config: Dict,
+    hyperparams: Dict,
+    latency_budget_ms: float,
+) -> CollectMetricsRequest:
+    """Build a :class:`CollectMetricsRequest` from full config and hyperparameters.
 
     Parameters
     ----------
-    hil_enabled : bool
-        Flag that indicates whether hardware-in-the-loop is active.
-    flops : float
-        FLOP count for the current architecture, used as a latency proxy when HIL is off.
-    device_name : str
-        Target hardware identifier (e.g., Arduino Nano BLE).
-    window_size : int
-        Inference window length used by the firmware.
-    input_dim : int
-        Number of channels per window.
-    dirpath : Path
-        Path to the directory containing compiled C output.
-    latency_proxy_max_flops : float
-        Maximum FLOPs for the latency proxy normalization.
-    serial_port : str or None
-        Serial port for HIL testing.
-    latency_budget_ms : float | None, optional
-        Upper-bound latency (in milliseconds) that defines the target cadence when
-        HIL measurements are available. Required if ``hil_enabled`` is True.
-    dut_ready_timeout_s : float | None, optional
-        Time to wait for DUT READY before sending START.
-    harness_serial_port : str or None, optional
-        Serial port for the INA228 harness (energy-aware HIL).
-    harness_fqbn : str or None, optional
-        FQBN for the harness board (Arduino CLI).
-    harness_auto_flash : str or None, optional
-        Harness flashing policy (once, always, never).
-    harness_arm_pin : int or None, optional
-        Harness/DUT arm pin number (active-low).
-    harness_trigger_pin : int or None, optional
-        Harness/DUT trigger pin number.
-    dut_arm_hold_ms : int or None, optional
-        Arm-low hold duration before DUT raises trigger.
-    harness_stable_low_ms : int or None, optional
-        Stable-low arming window required by harness.
-    harness_ready_timeout_s : float | None, optional
-        Timeout waiting for HARNESS READY.
-    harness_arm_timeout_s : float | None, optional
-        Harness-side arm timeout (seconds) while waiting for a valid D2 trigger
-        after the D3 active-low arming condition. This value is compiled into
-        the harness firmware as `TINYODOM_HARNESS_ARM_TIMEOUT_MS`; set to 0 to
-        disable the harness arm timeout.
-    harness_active_timeout_s : float | None, optional
-        Maximum time for an active measurement window.
-    harness_done_timeout_s : float | None, optional
-        Timeout waiting for DONE.
+    config : addict.Dict
+        Loaded runtime configuration.
+    hyperparams : addict.Dict
+        Trial/model hyperparameters containing at least ``flops`` and ``input_dim``.
+    latency_budget_ms : float
+        Per-inference latency budget in milliseconds, derived from stride cadence.
+
+    Returns
+    -------
+    CollectMetricsRequest
+        Normalized request payload for :func:`collect_metrics`.
+
+    Raises
+    ------
+    RuntimeError
+        If ``training.energy_aware`` is enabled but ``device.harness_serial_port``
+        is not configured.
+    """
+    energy_aware = bool(config.training.energy_aware)
+    harness = None
+    if energy_aware:
+        harness_serial_port = getattr(config.device, "harness_serial_port", None)
+        if not harness_serial_port:
+            raise RuntimeError(
+                "Set device.harness_serial_port when energy_aware is True so the harness can be used."
+            )
+        harness = HarnessConfig(
+            harness_serial_port=harness_serial_port,
+            harness_fqbn=getattr(config.device, "harness_fqbn", None),
+            harness_auto_flash=getattr(config.device, "harness_auto_flash", None),
+            harness_arm_pin=getattr(config.device, "harness_arm_pin", None),
+            harness_trigger_pin=getattr(config.device, "harness_trigger_pin", None),
+            dut_arm_hold_ms=getattr(config.device, "dut_arm_hold_ms", None),
+            harness_stable_low_ms=getattr(config.device, "harness_stable_low_ms", None),
+            harness_ready_timeout_s=getattr(config.device, "harness_ready_timeout_s", None),
+            harness_arm_timeout_s=getattr(config.device, "harness_arm_timeout_s", None),
+            harness_active_timeout_s=getattr(config.device, "harness_active_timeout_s", None),
+            harness_done_timeout_s=getattr(config.device, "harness_done_timeout_s", None),
+        )
+
+    return CollectMetricsRequest(
+        hil_enabled=bool(config.device.hil),
+        energy_aware=energy_aware,
+        flops=hyperparams.flops,
+        device_name=config.device.name,
+        window_size=config.data.window_size,
+        input_dim=hyperparams.input_dim,
+        dirpath=config.outputs.tcn_dir,
+        latency_proxy_max_flops=config.training.latency_proxy_max_flops,
+        serial_port=config.device.serial_port,
+        latency_budget_ms=latency_budget_ms,
+        dut_ready_timeout_s=getattr(config.device, "dut_ready_timeout_s", 5.0),
+        harness=harness,
+    )
+
+
+def collect_metrics(request: CollectMetricsRequest) -> dict:
+    """Gather RAM/flash/latency metrics from the controller for both HIL and proxy runs.
+
+    Parameters
+    ----------
+    request : CollectMetricsRequest
+        Normalized request containing all required/optional controller inputs.
 
     Returns
     -------
     dict
         RAM/flash/latency/arena metrics plus error codes shared across the trial.
+
+    Raises
+    ------
+    RuntimeError
+        If ``request.energy_aware`` is True but ``request.harness`` is missing.
     """
     # Prepare controller kwargs (ease of use and readability)
     controller_kwargs = {
-        "dirpath": dirpath,
-        "chosen_device": device_name,
-        "window_size": window_size,
-        "number_of_channels": input_dim,
+        "dirpath": request.dirpath,
+        "chosen_device": request.device_name,
+        "window_size": request.window_size,
+        "number_of_channels": request.input_dim,
     }
+
+    if request.energy_aware and request.harness is None:
+        raise RuntimeError(
+            "energy_aware=True requires harness configuration; do not run without harness."
+        )
     
-    if hil_enabled and serial_port is not None:
-        controller_kwargs["serial_port"] = serial_port
-    elif hil_enabled and serial_port is None:
+    if request.hil_enabled and request.serial_port is not None:
+        controller_kwargs["serial_port"] = request.serial_port
+    elif request.hil_enabled and request.serial_port is None:
         raise RuntimeError("Set serial_port before enabling HIL runs so uploads know which device to target.")
 
-    if hil_enabled and dut_ready_timeout_s is not None:
-        controller_kwargs["dut_ready_timeout_s"] = dut_ready_timeout_s
+    if request.hil_enabled and request.dut_ready_timeout_s is not None:
+        controller_kwargs["dut_ready_timeout_s"] = request.dut_ready_timeout_s
 
-    if hil_enabled and harness_serial_port is not None:
-        controller_kwargs["harness_serial_port"] = harness_serial_port
-        controller_kwargs["harness_fqbn"] = harness_fqbn
-        controller_kwargs["harness_auto_flash"] = harness_auto_flash
-        controller_kwargs["harness_arm_pin"] = harness_arm_pin
-        controller_kwargs["harness_trigger_pin"] = harness_trigger_pin
-        controller_kwargs["dut_arm_hold_ms"] = dut_arm_hold_ms
-        controller_kwargs["harness_stable_low_ms"] = harness_stable_low_ms
-        controller_kwargs["harness_ready_timeout_s"] = harness_ready_timeout_s
-        controller_kwargs["harness_arm_timeout_s"] = harness_arm_timeout_s
-        controller_kwargs["harness_active_timeout_s"] = harness_active_timeout_s
-        controller_kwargs["harness_done_timeout_s"] = harness_done_timeout_s
+    if request.hil_enabled and request.energy_aware and request.harness is not None:
+        controller_kwargs["harness_serial_port"] = request.harness.harness_serial_port
+        controller_kwargs["harness_fqbn"] = request.harness.harness_fqbn
+        controller_kwargs["harness_auto_flash"] = request.harness.harness_auto_flash
+        controller_kwargs["harness_arm_pin"] = request.harness.harness_arm_pin
+        controller_kwargs["harness_trigger_pin"] = request.harness.harness_trigger_pin
+        controller_kwargs["dut_arm_hold_ms"] = request.harness.dut_arm_hold_ms
+        controller_kwargs["harness_stable_low_ms"] = request.harness.harness_stable_low_ms
+        controller_kwargs["harness_ready_timeout_s"] = request.harness.harness_ready_timeout_s
+        controller_kwargs["harness_arm_timeout_s"] = request.harness.harness_arm_timeout_s
+        controller_kwargs["harness_active_timeout_s"] = request.harness.harness_active_timeout_s
+        controller_kwargs["harness_done_timeout_s"] = request.harness.harness_done_timeout_s
     
     # Run the HIL controller to get metrics. HIL_controller handles both HIL and proxy runs.
     logger.info(
         "collect_metrics: invoking HIL_controller (hil=%s, serial_port=%s, harness_port=%s)",
-        hil_enabled,
-        serial_port,
-        harness_serial_port,
+        request.hil_enabled,
+        request.serial_port,
+        request.harness.harness_serial_port if request.harness is not None else None,
     )
     (
         ram_bytes,
@@ -500,7 +599,7 @@ def collect_metrics(
         error_code,
         power_metrics,
     ) = HIL_controller(
-        run_hil=hil_enabled,
+        run_hil=request.hil_enabled,
         **controller_kwargs,
     )
     logger.info(
@@ -517,16 +616,16 @@ def collect_metrics(
 
     # Normalize latency so downstream scoring logic can remain scale-invariant.
     latency_budget_entry = -1.0
-    if hil_enabled:
-        if latency_budget_ms is None:
+    if request.hil_enabled:
+        if request.latency_budget_ms is None:
             raise ValueError(
                 "latency_budget_ms must be provided when hil_enabled is True so the"
                 " normalized latency penalty has consistent units."
             )
-        if latency_budget_ms <= 0:
+        if request.latency_budget_ms <= 0:
             raise ValueError("latency_budget_ms must be a positive value")
-        latency_budget_entry = latency_budget_ms
-    elif latency_proxy_max_flops <= 0:
+        latency_budget_entry = request.latency_budget_ms
+    elif request.latency_proxy_max_flops <= 0:
         raise ValueError("latency_proxy_max_flops must be a positive value")
 
     # Creates the metrics dict to return
@@ -537,10 +636,10 @@ def collect_metrics(
     metrics = {
         "ram_bytes": ram_bytes,
         "flash_bytes": flash_bytes,
-        "latency_ms": latency_ms if hil_enabled else -1,
+        "latency_ms": latency_ms if request.hil_enabled else -1,
         "latency_budget_ms": latency_budget_entry,
         "arena_bytes": arena_bytes,
-        "hil_enabled": hil_enabled,
+        "hil_enabled": request.hil_enabled,
         "inference_seq": int(normalized_power["sequence"]) if normalized_power["sequence"] >= 0 else -1,
         "energy_mj_per_inference": normalized_power["energy_mj_per_inference"],
         "avg_power_mw": normalized_power["avg_power_mw"],

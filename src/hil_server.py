@@ -25,6 +25,7 @@ from tinyodom.hardware import (
 from tinyodom.model import (
     DEFAULT_CONFIG_PATH,
     apply_combined_perturbation,
+    build_collect_metrics_request,
     build_tinyodom_model,
     collect_metrics,
     load_config,
@@ -247,77 +248,15 @@ class HILServer:
         # Compute the latency budget once so the downstream metrics/logging logic can reuse it.
         latency_budget_ms = (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000
 
-        # TODO: This is bad. Just pass in the energy aware flag and disregard the parameters that only apply to energy-aware mode. The current approach is error-prone and leads to a combinatorial explosion of parameters in this method signature.
-        # Collect RAM/flash/latency/arena metrics from the controller
-        metrics = collect_metrics(
-            hil_enabled=self.config.device.hil,
-            flops=hyperparams.flops,
-            device_name=self.config.device.name,
-            window_size=self.config.data.window_size,
-            input_dim=hyperparams.input_dim,
-            dirpath=self.config.outputs.tcn_dir,
-            latency_proxy_max_flops=self.config.training.latency_proxy_max_flops,
-            serial_port=self.config.device.serial_port,
+        request_metrics_args = build_collect_metrics_request(
+            config=self.config,
+            hyperparams=hyperparams,
             # Stride=20 at 100 Hz emits an inference roughly every 0.2s, so normalize
             # latency by the stride cadence rather than the full window length.
             latency_budget_ms=latency_budget_ms,
-            dut_ready_timeout_s=getattr(self.config.device, "dut_ready_timeout_s", 5.0),
-            harness_serial_port=(
-                self.config.device.harness_serial_port
-                if self.config.training.energy_aware
-                else None
-            ),
-            harness_fqbn=(
-                self.config.device.harness_fqbn
-                if self.config.training.energy_aware
-                else None
-            ),
-            harness_auto_flash=(
-                self.config.device.harness_auto_flash
-                if self.config.training.energy_aware
-                else None
-            ),
-            harness_arm_pin=(
-                self.config.device.harness_arm_pin
-                if self.config.training.energy_aware
-                else None
-            ),
-            harness_trigger_pin=(
-                self.config.device.harness_trigger_pin
-                if self.config.training.energy_aware
-                else None
-            ),
-            dut_arm_hold_ms=(
-                self.config.device.dut_arm_hold_ms
-                if self.config.training.energy_aware
-                else None
-            ),
-            harness_stable_low_ms=(
-                self.config.device.harness_stable_low_ms
-                if self.config.training.energy_aware
-                else None
-            ),
-            harness_ready_timeout_s=(
-                self.config.device.harness_ready_timeout_s
-                if self.config.training.energy_aware
-                else None
-            ),
-            harness_arm_timeout_s=(
-                self.config.device.harness_arm_timeout_s
-                if self.config.training.energy_aware
-                else None
-            ),
-            harness_active_timeout_s=(
-                self.config.device.harness_active_timeout_s
-                if self.config.training.energy_aware
-                else None
-            ),
-            harness_done_timeout_s=(
-                self.config.device.harness_done_timeout_s
-                if self.config.training.energy_aware
-                else None
-            ),
         )
+        metrics = collect_metrics(request_metrics_args)
+        
         if self.config.device.hil:
             metrics["latency_budget_ms"] = latency_budget_ms
 
