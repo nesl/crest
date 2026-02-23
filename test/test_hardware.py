@@ -58,13 +58,22 @@ from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
     CompileResult as ArduinoCompileResult,
     UploadResult as ArduinoUploadResult,
     MeasureResult as ArduinoMeasureResult,
+    _augment_upload_error,
     _classify_compile_failure,
     _collect_latency_seconds,
     _compute_retry_hint_bytes,
+    compile_sketch,
     measure_serial,
     _parse_memory_from_compile,
     _patch_sketch_constants,
     _replace_define,
+    upload_sketch,
+)
+from tinyodom.microcontrollers import (  # noqa: E402
+    arduino_ble33,
+    arduino_portenta_h7,
+    get_device,
+    list_device_specs,
 )
 
 
@@ -476,6 +485,192 @@ class CompileFailureClassificationTests(unittest.TestCase):
     def test_classify_detects_ram_overflow(self):
         result = _classify_compile_failure(RAM_OVERFLOW_STDERR)
         self.assertEqual(result, "ram")
+
+
+class PortentaOptionValidationTests(unittest.TestCase):
+    def test_missing_target_core_raises(self):
+        with self.assertRaises(ValueError):
+            arduino_portenta_h7.resolve_portenta_h7_options({})
+
+    def test_invalid_split_raises(self):
+        with self.assertRaises(ValueError):
+            arduino_portenta_h7.resolve_portenta_h7_options({"target_core": "cm7", "split": "bad_split"})
+
+    def test_cm4_100_0_rejected(self):
+        with self.assertRaises(ValueError):
+            arduino_portenta_h7.resolve_portenta_h7_options({"target_core": "cm4", "split": "100_0"})
+
+
+class ArduinoBoardContractShapeTests(unittest.TestCase):
+    def _assert_spec_complete(self, spec, *, expected_name: str, expected_fqbn: str):
+        self.assertEqual(spec.name, expected_name)
+        self.assertEqual(spec.fqbn, expected_fqbn)
+        self.assertEqual(spec.toolchain, "arduino-cli")
+        self.assertIsInstance(spec.arena_sizes_kb, list)
+        self.assertGreater(len(spec.arena_sizes_kb), 0)
+        self.assertGreater(spec.max_ram_bytes, 0)
+        self.assertGreater(spec.max_flash_bytes, 0)
+
+    def test_ble33_contract_symbols_and_spec(self):
+        required_symbols = (
+            "BOARD_NAME",
+            "BOARD_FQBN",
+            "BOARD_DEFAULT_SPEC",
+            "resolve_ble33_options",
+            "build_ble33_spec",
+            "ArduinoBLE33Device",
+        )
+        for symbol in required_symbols:
+            self.assertTrue(hasattr(arduino_ble33, symbol), f"missing symbol: {symbol}")
+        resolved_options = arduino_ble33.resolve_ble33_options({"ignored": "value"})
+        self.assertIsNone(resolved_options)
+        built_spec = arduino_ble33.build_ble33_spec(resolved_options)
+        self._assert_spec_complete(
+            built_spec,
+            expected_name=arduino_ble33.BOARD_NAME,
+            expected_fqbn=arduino_ble33.BOARD_FQBN,
+        )
+        self.assertEqual(built_spec, arduino_ble33.BOARD_DEFAULT_SPEC)
+
+    def test_portenta_contract_symbols_and_spec(self):
+        required_symbols = (
+            "BOARD_NAME",
+            "BOARD_FQBN",
+            "BOARD_DEFAULT_SPEC",
+            "PortentaH7BoardOptions",
+            "resolve_portenta_h7_options",
+            "build_portenta_h7_spec",
+            "ArduinoPortentaH7Device",
+        )
+        for symbol in required_symbols:
+            self.assertTrue(hasattr(arduino_portenta_h7, symbol), f"missing symbol: {symbol}")
+        resolved_options = arduino_portenta_h7.resolve_portenta_h7_options({"target_core": "cm7"})
+        built_spec = arduino_portenta_h7.build_portenta_h7_spec(options=resolved_options)
+        self._assert_spec_complete(
+            built_spec,
+            expected_name=arduino_portenta_h7.BOARD_NAME,
+            expected_fqbn=arduino_portenta_h7.BOARD_FQBN,
+        )
+        self._assert_spec_complete(
+            arduino_portenta_h7.BOARD_DEFAULT_SPEC,
+            expected_name=arduino_portenta_h7.BOARD_NAME,
+            expected_fqbn=arduino_portenta_h7.BOARD_FQBN,
+        )
+
+
+class ArduinoRegistryContractTests(unittest.TestCase):
+    def test_list_device_specs_includes_ble_and_portenta(self):
+        specs = list_device_specs()
+        self.assertIn("ARDUINO_NANO_33_BLE_SENSE", specs)
+        self.assertIn("PORTENTA_H7", specs)
+        self.assertEqual(
+            specs["ARDUINO_NANO_33_BLE_SENSE"]["fqbn"],
+            arduino_ble33.BOARD_FQBN,
+        )
+        self.assertEqual(
+            specs["PORTENTA_H7"]["fqbn"],
+            arduino_portenta_h7.BOARD_FQBN,
+        )
+
+    def test_get_device_constructs_portenta_with_options(self):
+        device = get_device(
+            "PORTENTA_H7",
+            device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
+        )
+        self.assertIsInstance(device, arduino_portenta_h7.ArduinoPortentaH7Device)
+        self.assertEqual(device.resolved_options.target_core, "cm7")
+        self.assertEqual(device.resolved_options.split, "75_25")
+        self.assertEqual(device.resolved_options.security, "none")
+
+
+class ArduinoCommandOptionTests(unittest.TestCase):
+    def test_compile_sketch_includes_board_options(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketch_dir = Path(tmpdir) / "tinyodom_tcn"
+            sketch_dir.mkdir()
+            compile_result = _FakeCompletedProcess(
+                returncode=0,
+                stdout=COMPILE_SAMPLE_OUTPUT,
+                stderr="",
+            )
+            with patch(
+                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                return_value=compile_result,
+            ) as mock_run:
+                result = compile_sketch(
+                    sketch_path=sketch_dir,
+                    fqbn="arduino:mbed_portenta:envie_m7",
+                    board_options={
+                        "target_core": "cm7",
+                        "split": "75_25",
+                        "security": "none",
+                    },
+                )
+
+        self.assertTrue(result.success)
+        command = mock_run.call_args.args[0]
+        self.assertIn("--board-options", command)
+        board_index = command.index("--board-options")
+        self.assertEqual(
+            command[board_index + 1],
+            "security=none,split=75_25,target_core=cm7",
+        )
+
+    def test_upload_sketch_includes_board_options(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketch_dir = Path(tmpdir) / "tinyodom_tcn"
+            sketch_dir.mkdir()
+            build_dir = sketch_dir / ".arduino-build" / "arduino_mbed_portenta_envie_m7"
+            build_dir.mkdir(parents=True, exist_ok=True)
+            upload_result = _FakeCompletedProcess(returncode=0, stdout="ok", stderr="")
+            with patch(
+                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                return_value=upload_result,
+            ) as mock_run:
+                result = upload_sketch(
+                    sketch_path=sketch_dir,
+                    fqbn="arduino:mbed_portenta:envie_m7",
+                    build_dir=build_dir,
+                    serial_port="/dev/ttyACM0",
+                    board_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+                )
+
+        self.assertTrue(result.success)
+        command = mock_run.call_args.args[0]
+        self.assertIn("--board-options", command)
+        board_index = command.index("--board-options")
+        self.assertEqual(
+            command[board_index + 1],
+            "security=none,split=50_50,target_core=cm4",
+        )
+
+    def test_compile_sketch_uses_elf_fallback_when_sketch_summary_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketch_dir = Path(tmpdir) / "tinyodom_tcn"
+            sketch_dir.mkdir()
+            compile_result = _FakeCompletedProcess(returncode=0, stdout="compile ok", stderr="")
+            with patch(
+                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                return_value=compile_result,
+            ), patch(
+                "tinyodom.microcontrollers.arduino_base._parse_memory_from_compile",
+                return_value=(None, None),
+            ), patch(
+                "tinyodom.microcontrollers.arduino_base._parse_memory_from_elf",
+                return_value=(123_456, 654_321),
+            ):
+                result = compile_sketch(
+                    sketch_path=sketch_dir,
+                    fqbn="arduino:mbed_portenta:envie_m7",
+                )
+
+        self.assertEqual(result.flash_bytes, 123_456)
+        self.assertEqual(result.ram_bytes, 654_321)
+
+    def test_upload_permission_error_appends_linux_guidance(self):
+        augmented = _augment_upload_error("dfu-util: LIBUSB_ERROR_ACCESS")
+        self.assertIn("udev", augmented)
+        self.assertIn("Linux", augmented)
 
 
 class SerialHelperTests(unittest.TestCase):

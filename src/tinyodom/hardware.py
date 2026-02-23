@@ -19,7 +19,7 @@ import subprocess
 import time
 import tempfile
 
-from .devices import ArduinoDevice, DeviceInterface, DEVICE_SPECS  # legacy catalog moved to devices.py (Phase 1 bridge)
+from .devices import DeviceInterface, DEVICE_SPECS  # legacy catalog moved to devices.py (Phase 1 bridge)
 from .errors import (
     HIL_ERROR_OK,
     HIL_ERROR_COMPILE,
@@ -37,6 +37,7 @@ from .errors import (
     HIL_MASTER_DEVICE_NOT_FOUND,
 )
 from .microcontrollers.arduino_base import normalize_power_metrics
+from .microcontrollers import get_device as get_microcontroller_device
 
 def _probe_xxd() -> Optional[str]:
     """Return the resolved xxd path when available."""
@@ -338,7 +339,10 @@ def _convert_to_cpp_model_xxd(
 # -----------------------------------------------------------------------------
 # Hardware metadata accessors
 # -----------------------------------------------------------------------------
-def return_hardware_specs(device_name: str) -> Tuple[int, int]:
+def return_hardware_specs(
+    device_name: str,
+    device_options: Optional[Dict[str, str]] = None,
+) -> Tuple[int, int]:
     """
     Retrieve RAM and flash limits for a supported device.
 
@@ -346,19 +350,28 @@ def return_hardware_specs(device_name: str) -> Tuple[int, int]:
     ----------
     device_name : str
         Identifier present in DEVICE_SPECS.
+    device_options : dict[str, str] | None, optional
+        Optional board-specific options used to resolve dynamic limits (for
+        example Portenta core split).
 
     Returns
     -------
     Tuple[int, int]
         Maximum RAM bytes and flash bytes allowed on the device.
     """
+    if device_options:
+        spec = get_microcontroller_device(
+            device_name,
+            device_options=device_options,
+        ).spec
+        return int(spec.max_ram_bytes), int(spec.max_flash_bytes)
     try:
         spec = DEVICE_SPECS[device_name]
     except KeyError as exc:
         raise ValueError(
             f"Unknown device '{device_name}'. Supported devices: {list(DEVICE_SPECS)}"
         ) from exc
-    return spec["max_ram"], spec["max_flash"]
+    return int(spec["max_ram"]), int(spec["max_flash"])
 
 
 def get_model_memory_usage(
@@ -437,7 +450,10 @@ def get_model_memory_usage(
     return bytes_size
 
 
-def arena_size_candidates(device_name: str) -> np.ndarray:
+def arena_size_candidates(
+    device_name: str,
+    device_options: Optional[Dict[str, str]] = None,
+) -> np.ndarray:
     """
     Return the tensor-arena sweep (in kilobytes) for a device.
 
@@ -445,19 +461,27 @@ def arena_size_candidates(device_name: str) -> np.ndarray:
     ----------
     device_name : str
         Identifier present in DEVICE_SPECS.
+    device_options : dict[str, str] | None, optional
+        Optional board-specific options used to resolve dynamic arena sweeps.
 
     Returns
     -------
     numpy.ndarray
         Candidate arena sizes expressed in KiB.
     """
+    if device_options:
+        spec = get_microcontroller_device(
+            device_name,
+            device_options=device_options,
+        ).spec
+        return np.array([int(value) for value in spec.arena_sizes_kb])
     try:
         spec = DEVICE_SPECS[device_name]
     except KeyError as exc:
         raise ValueError(
             f"Unknown device '{device_name}'. Supported devices: {list(DEVICE_SPECS)}"
         ) from exc
-    return spec["arena_sizes"]
+    return np.array(spec["arena_sizes"])
 
 
 # -----------------------------------------------------------------------------
@@ -517,6 +541,7 @@ def _pop_retry_hint_bytes() -> Optional[int]:
 def HIL_spec(
     dirpath: Union[str, Path] = 'tinyodom_tcn/',
     chosen_device: str = 'ARDUINO_NANO_33_BLE_SENSE',
+    device_options: Optional[Dict[str, str]] = None,
     arenaSizes: Optional[Sequence[int]] = None,
     idx: int = 0,
     window_size: int = 400,
@@ -552,6 +577,8 @@ def HIL_spec(
         Firmware project directory containing the TinyODOM sources.
     chosen_device : str, optional
         Hardware identifier that maps into DEVICE_SPECS.
+    device_options : dict[str, str] | None, optional
+        Optional board-specific options forwarded to the device factory.
     arenaSizes : Sequence[int], optional
         Custom arena sweep in KiB; defaults to the catalog entry.
     idx : int, optional
@@ -584,24 +611,20 @@ def HIL_spec(
     if device is not None:
         chosen_device = device.spec.name
     logger.info(
-        "HIL_spec: start attempt (requested_device=%s, resolved_device=%s, idx=%d, run_hil=%s)",
+        "HIL_spec: start attempt (requested_device=%s, resolved_device=%s, idx=%d, run_hil=%s, device_options=%s)",
         requested_device,
         chosen_device,
         idx,
         not compile_only,
+        device_options,
     )
-    if chosen_device not in DEVICE_SPECS:
-        raise ValueError(
-            f"Unsupported device '{chosen_device}'. Supported devices: {list(DEVICE_SPECS)}"
-        )
-
-    spec = DEVICE_SPECS[chosen_device]
     if device is None:
-        if spec['fqbn'] is None:
-            raise RuntimeError(
-                f"No Arduino FQBN defined for {chosen_device}. Use the legacy Mbed workflow."
-            )
-        device = ArduinoDevice(chosen_device, serial_port=serial_port)
+        device = get_microcontroller_device(
+            chosen_device,
+            serial_port=serial_port,
+            device_options=device_options,
+        )
+    spec = device.spec
 
     # Resolve the sketch path up-front so all subsequent operations use absolute paths.
     sketch_path = Path(dirpath).resolve()
@@ -609,7 +632,11 @@ def HIL_spec(
         raise FileNotFoundError(f"Sketch directory not found: {sketch_path}")
 
     # Mirror the original HIL sweep: choose a single arena candidate for this attempt.
-    arena_sweep_list = list(arenaSizes) if arenaSizes is not None else list(arena_size_candidates(chosen_device))
+    arena_sweep_list = (
+        list(arenaSizes)
+        if arenaSizes is not None
+        else [int(value) for value in spec.arena_sizes_kb]
+    )
     if not arena_sweep_list:
         raise ValueError(f"No arena sizes registered for {chosen_device}.")
     if idx < 0 or idx >= len(arena_sweep_list):
@@ -663,6 +690,7 @@ def HIL_spec(
 def HIL_controller(
     dirpath: Union[str, Path] = 'tinyodom_tcn/',
     chosen_device: str = 'ARDUINO_NANO_33_BLE_SENSE',
+    device_options: Optional[Dict[str, str]] = None,
     window_size: int = 400,
     number_of_channels: int = 6,
     serial_port: Optional[str] = None,
@@ -702,6 +730,8 @@ def HIL_controller(
         Firmware project directory containing TinyODOM sources.
     chosen_device : str, optional
         Hardware identifier that maps into DEVICE_SPECS.
+    device_options : dict[str, str] | None, optional
+        Optional board-specific options forwarded to the device factory.
     window_size : int, optional
         Sliding window length supplied to the firmware.
     number_of_channels : int, optional
@@ -716,8 +746,6 @@ def HIL_controller(
         Seconds to wait for DUT READY before sending START.
     device : DeviceInterface | None, optional
         Optional device implementation to use for compile/upload/measure.
-    compile_only : bool, optional
-        Skip flashing/measurement and return compile metrics only.
 
     Returns
     -------
@@ -725,9 +753,18 @@ def HIL_controller(
         Final RAM bytes, flash bytes, latency seconds, arena bytes, error code, and
         optional power telemetry captured from the winning firmware run.
     """
-    if device is not None:
-        chosen_device = device.spec.name
-    arena_sweep_list = list(arena_size_candidates(chosen_device))
+    if device is None:
+        device = get_microcontroller_device(
+            chosen_device,
+            serial_port=serial_port,
+            device_options=device_options,
+        )
+    chosen_device = device.spec.name
+    arena_sweep_list = list(
+        arena_size_candidates(chosen_device, device_options=device_options)
+    )
+    if not arena_sweep_list:
+        arena_sweep_list = [int(value) for value in device.spec.arena_sizes_kb]
     finRAM = -1
     finFlash = -1
     finLatency = -1.0
@@ -753,9 +790,6 @@ def HIL_controller(
     finPower_metrics: Optional[Dict[str, Optional[float]]] = None
 
     compile_only = not run_hil  # compile-only allows proxy runs to reuse compiler metrics
-    if device is None:
-        device = ArduinoDevice(chosen_device, serial_port=serial_port)
-
     while (
         masterError == HIL_MASTER_PENDING
         and low_idx + 1 < high_idx
@@ -794,6 +828,7 @@ def HIL_controller(
         ) = HIL_spec(
             dirpath=dirpath,
             chosen_device=chosen_device,
+            device_options=device_options,
             arenaSizes=arena_sweep_list,
             idx=current_idx,
             window_size=window_size,

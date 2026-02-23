@@ -123,6 +123,8 @@ class CollectMetricsRequest:
         Timeout waiting for DUT ready handshake.
     harness : HarnessConfig | None, optional
         Harness settings for energy-aware runs. ``None`` for non-energy-aware runs.
+    device_options : dict[str, Any] | None, optional
+        Optional board-specific options forwarded to the device factory.
     """
 
     hil_enabled: bool
@@ -137,6 +139,7 @@ class CollectMetricsRequest:
     latency_budget_ms: float | None = None
     dut_ready_timeout_s: float | None = None
     harness: HarnessConfig | None = None
+    device_options: dict[str, Any] | None = None
 
 
 def set_error_code(metrics: dict, code: int) -> None:
@@ -492,10 +495,12 @@ def build_collect_metrics_request(
     ------
     RuntimeError
         If ``training.energy_aware`` is enabled but ``device.harness_serial_port``
-        is not configured.
+        is not configured, or when ``device.name`` is ``PORTENTA_H7`` and
+        ``device.portenta.target_core`` is missing.
     """
     energy_aware = bool(config.training.energy_aware)
     harness = None
+    device_options: dict[str, Any] | None = None
     if energy_aware:
         harness_serial_port = getattr(config.device, "harness_serial_port", None)
         if not harness_serial_port:
@@ -516,6 +521,21 @@ def build_collect_metrics_request(
             harness_done_timeout_s=getattr(config.device, "harness_done_timeout_s", None),
         )
 
+    if str(config.device.name).strip().upper() == "PORTENTA_H7":
+        portenta_cfg = getattr(config.device, "portenta", None)
+        target_core = getattr(portenta_cfg, "target_core", None) if portenta_cfg is not None else None
+        split = getattr(portenta_cfg, "split", None) if portenta_cfg is not None else None
+        security = getattr(portenta_cfg, "security", None) if portenta_cfg is not None else None
+        if not target_core:
+            raise RuntimeError(
+                "Set device.portenta.target_core to 'cm7' or 'cm4' when device.name is PORTENTA_H7."
+            )
+        device_options = {"target_core": str(target_core)}
+        if split:
+            device_options["split"] = str(split)
+        if security:
+            device_options["security"] = str(security)
+
     return CollectMetricsRequest(
         hil_enabled=bool(config.device.hil),
         energy_aware=energy_aware,
@@ -529,6 +549,7 @@ def build_collect_metrics_request(
         latency_budget_ms=latency_budget_ms,
         dut_ready_timeout_s=getattr(config.device, "dut_ready_timeout_s", 5.0),
         harness=harness,
+        device_options=device_options,
     )
 
 
@@ -557,6 +578,8 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
         "window_size": request.window_size,
         "number_of_channels": request.input_dim,
     }
+    if request.device_options is not None:
+        controller_kwargs["device_options"] = request.device_options
 
     if request.energy_aware and request.harness is None:
         raise RuntimeError(

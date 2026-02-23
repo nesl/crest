@@ -1,12 +1,8 @@
 # Hardware / device configuration
 device:
-  name: PORTENTA_H7
+  name: ARDUINO_NANO_33_BLE_SENSE
   hil: true
   serial_port: "/dev/ttyACM0"
-  portenta:
-    target_core: "cm7"      # Required for PORTENTA_H7. Choose: cm7 or cm4.
-    split: "75_25"          # Optional. Defaults: cm7->75_25, cm4->50_50.
-    security: "none"        # Optional. Default is none.
   dut_ready_timeout_s: 14.5                    # Time to wait for DUT READY before sending START.
   harness_serial_port: "/dev/ttyACM1"          # Serial port for the harness board (INA228 reader).
   harness_fqbn: "arduino:mbed_nano:nano33ble"  # Arduino FQBN used to compile/upload the harness sketch.
@@ -48,9 +44,9 @@ training:
 outputs:
   models_dir: "models"
   tcn_dir: "tinyodom_tcn"
-  model_name: "TinyOdomEx_OxIOD_PORTENTA_H7_MO.tflite"
-  checkpoint_name: "TinyOdomEx_OxIOD_PORTENTA_H7_MO.keras"
-  log_file_name: "log_NAS_Oxiod_PORTENTA_H7_MO.csv"
+  model_name: "TinyOdomEx_OxIOD_ARDUINO_NANO_33_BLE_SENSE_MO.tflite"
+  checkpoint_name: "TinyOdomEx_OxIOD_ARDUINO_NANO_33_BLE_SENSE_MO.keras"
+  log_file_name: "log_NAS_Oxiod_ARDUINO_NANO_33_BLE_SENSE_MO.csv"
 
 network:
   host: "127.0.0.1"

@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 import numpy as np
 import logging
@@ -327,10 +327,7 @@ class DeviceInterface(ABC):
         """
 
 
-# NOTE: Legacy device catalog moved here for Phase 1 to keep hardware.py stable.
-# FIXME: Delete this once device-specific classes are fully implemented.
-# Keeping it here for posterity during the migration.
-DEVICE_SPECS = {
+_LEGACY_DEVICE_SPECS = {
     "NUCLEO_F746ZG": {
         "arena_sizes": np.array([10, 30, 50, 75, 100, 150, 175, 200, 250, 280, 280]),
         "max_ram": 300_000,
@@ -355,12 +352,6 @@ DEVICE_SPECS = {
         "max_flash": 400_000,
         "fqbn": None,
     },
-    "ARDUINO_NANO_33_BLE_SENSE": {
-        "arena_sizes": np.array([10, 25, 40, 70, 95, 120, 140, 160, 180, 200, 210]),
-        "max_ram": 215_000,
-        "max_flash": 800_000,
-        "fqbn": "arduino:mbed_nano:nano33ble",
-    },
     "ARDUINO_NANO_RP2040_CONNECT": {
         "arena_sizes": np.array([10, 25, 40, 70, 95, 120, 140, 150, 160, 180, 200, 210, 220]),
         "max_ram": 225_000,
@@ -370,8 +361,66 @@ DEVICE_SPECS = {
 }
 
 
+def _registry_device_specs() -> Dict[str, Dict[str, Any]]:
+    """Load default device specs from microcontroller registry classes.
+
+    Returns
+    -------
+    Dict[str, Dict[str, Any]]
+        Compatibility-style spec map keyed by device name.
+    """
+    try:
+        from .microcontrollers import list_device_specs
+    except Exception:
+        return {}
+
+    loaded_specs = list_device_specs()
+    normalized: Dict[str, Dict[str, Any]] = {}
+    for device_name, spec in loaded_specs.items():
+        normalized[device_name] = {
+            "arena_sizes": np.array([int(value) for value in spec.get("arena_sizes", [])]),
+            "max_ram": int(spec.get("max_ram", 0)),
+            "max_flash": int(spec.get("max_flash", 0)),
+            "fqbn": spec.get("fqbn"),
+        }
+    return normalized
+
+
+def _rebuild_device_specs() -> Dict[str, Dict[str, Any]]:
+    """Build compatibility DEVICE_SPECS from legacy + registry-backed metadata.
+
+    Returns
+    -------
+    Dict[str, Dict[str, Any]]
+        Merged compatibility map used by legacy call sites.
+    """
+    merged: Dict[str, Dict[str, Any]] = {}
+    for device_name, raw in _LEGACY_DEVICE_SPECS.items():
+        merged[device_name] = {
+            "arena_sizes": np.array(raw["arena_sizes"]),
+            "max_ram": int(raw["max_ram"]),
+            "max_flash": int(raw["max_flash"]),
+            "fqbn": raw.get("fqbn"),
+        }
+    merged.update(_registry_device_specs())
+    return merged
+
+
+# Initialize with legacy entries first; registry-backed entries are merged after
+# ArduinoDevice is defined to avoid import cycles.
+DEVICE_SPECS: Dict[str, Dict[str, Any]] = {
+    device_name: {
+        "arena_sizes": np.array(raw["arena_sizes"]),
+        "max_ram": int(raw["max_ram"]),
+        "max_flash": int(raw["max_flash"]),
+        "fqbn": raw.get("fqbn"),
+    }
+    for device_name, raw in _LEGACY_DEVICE_SPECS.items()
+}
+
+
 def get_device_spec(name: str) -> DeviceSpec:
-    """Return a DeviceSpec built from the legacy DEVICE_SPECS registry.
+    """Return a DeviceSpec built from the compatibility DEVICE_SPECS registry.
 
     Parameters
     ----------
@@ -383,6 +432,10 @@ def get_device_spec(name: str) -> DeviceSpec:
     DeviceSpec
         Normalized device specification.
     """
+    if name not in DEVICE_SPECS:
+        # Retry loading registry defaults in case callers imported this module
+        # before optional board modules became available.
+        DEVICE_SPECS.update(_registry_device_specs())
     if name not in DEVICE_SPECS:
         raise ValueError(f"Unknown device '{name}'. Supported devices: {list(DEVICE_SPECS)}")
     raw = DEVICE_SPECS[name]
@@ -414,17 +467,52 @@ class ArduinoDevice(DeviceInterface):
         device_name: str,
         *,
         serial_port: Optional[str] = None,
+        device_options: Optional[Mapping[str, object]] = None,
+        spec_override: Optional[DeviceSpec] = None,
     ) -> None:
+        """Initialize an Arduino-backed device wrapper.
+
+        Parameters
+        ----------
+        device_name : str
+            Logical device identifier.
+        serial_port : str | None, optional
+            Serial port used for upload and measurement.
+        device_options : Mapping[str, object] | None, optional
+            Optional board-option mapping forwarded to subclasses.
+        spec_override : DeviceSpec | None, optional
+            Explicit spec override used by board-specific wrappers.
+        """
         self._device_name = device_name
-        self._spec = get_device_spec(device_name)
+        self._device_options = dict(device_options or {})
+        self._spec = spec_override or get_device_spec(device_name)
         if self._spec.fqbn is None:
             raise ValueError(f"Device '{device_name}' has no Arduino FQBN.")
         self._serial_port = serial_port
+        self._board_options = self._resolve_board_options(self._device_options)
 
     @property
     def spec(self) -> DeviceSpec:
         """Return the device specification metadata."""
         return self._spec
+
+    def _resolve_board_options(
+        self, device_options: Optional[Mapping[str, object]]
+    ) -> Optional[Dict[str, str]]:
+        """Resolve board options consumed by Arduino CLI compile/upload calls.
+
+        Parameters
+        ----------
+        device_options : Mapping[str, object] | None
+            Raw board option mapping supplied by callers.
+
+        Returns
+        -------
+        Dict[str, str] | None
+            Normalized board options for Arduino CLI, or ``None`` when unused.
+        """
+        del device_options
+        return None
 
     def compile(
         self,
@@ -445,6 +533,7 @@ class ArduinoDevice(DeviceInterface):
             sketch_path=sketch_path,
             fqbn=self._spec.fqbn,
             build_defines=build_defines,
+            board_options=self._board_options,
         )
         return CompileResult(
             success=result.success,
@@ -474,6 +563,7 @@ class ArduinoDevice(DeviceInterface):
             fqbn=self._spec.fqbn,
             build_dir=build_dir,
             serial_port=use_serial_port,
+            board_options=self._board_options,
         )
         return UploadResult(success=result.success, log=result.log)
 
@@ -672,6 +762,9 @@ class ArduinoDevice(DeviceInterface):
 # Backward-compatible alias for the bridge class name.
 # FIXME: Remove once the migration completes.
 ArduinoLegacyDevice = ArduinoDevice
+
+# Merge registry-backed class specs now that ArduinoDevice is fully defined.
+DEVICE_SPECS.update(_registry_device_specs())
 
 
 __all__ = [

@@ -9,7 +9,7 @@ import time
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import serial
 
@@ -42,6 +42,7 @@ FLASH_USAGE_RE = re.compile(
 RAM_USAGE_RE = re.compile(
     r"Global variables use (\d+) bytes.*?Maximum is (\d+)", re.IGNORECASE | re.DOTALL
 )
+SIZE_SECTION_RE = re.compile(r"^\s*(\S+)\s+(\d+)\s+(0x[0-9a-fA-F]+|\d+)\s*$")
 FLASH_OVERFLOW_PATTERNS = [
     re.compile(r"section [`']?\.text[`']?\s+will not fit in region [`']?flash[`']?", re.IGNORECASE),
     re.compile(r"region [`']?flash[`']?\s+overflowed", re.IGNORECASE),
@@ -58,6 +59,42 @@ ARENA_TOO_SMALL_PATTERNS = [
 ]
 MISSING_BYTES_RE = re.compile(r"missing:\s*(\d+)", re.IGNORECASE)
 REQUESTED_BYTES_RE = re.compile(r"requested:\s*(\d+)", re.IGNORECASE)
+UPLOAD_PERMISSION_PATTERNS = [
+    re.compile(r"LIBUSB_ERROR_ACCESS", re.IGNORECASE),
+    re.compile(r"dfu-util:.*permission denied", re.IGNORECASE),
+]
+FLASH_SECTION_HINTS = (
+    ".text",
+    ".rodata",
+    ".itcm",
+    ".dtcm",
+    ".qspi",
+    ".vectors",
+    ".isr_vector",
+    ".init",
+    ".fini",
+    ".ctors",
+    ".dtors",
+    ".arm",
+)
+RAM_SECTION_HINTS = (
+    ".data",
+    ".bss",
+    ".noinit",
+    ".heap",
+    ".stack",
+    ".ram",
+    ".sram",
+    ".dtcmram",
+)
+FLASH_ADDR_RANGES = (
+    (0x08000000, 0x0FFFFFFF),  # STM32 internal flash / mapped flash regions
+    (0x90000000, 0x9FFFFFFF),  # external QSPI regions
+)
+RAM_ADDR_RANGES = (
+    (0x20000000, 0x3FFFFFFF),  # ARM SRAM / DTCM / AXI SRAM windows
+    (0x10000000, 0x1FFFFFFF),  # ARM TCM windows
+)
 
 
 @dataclass(frozen=True)
@@ -235,6 +272,223 @@ def _parse_memory_from_compile(output: str) -> Tuple[Optional[int], Optional[int
     return flash_bytes, ram_bytes
 
 
+def _format_board_options(board_options: Optional[Mapping[str, str]]) -> str:
+    """Convert board options map to Arduino CLI ``--board-options`` payload.
+
+    Parameters
+    ----------
+    board_options : Mapping[str, str] | None
+        Board option key/value pairs.
+
+    Returns
+    -------
+    str
+        Comma-separated ``key=value`` payload accepted by Arduino CLI.
+    """
+    if not board_options:
+        return ""
+    parts: List[str] = []
+    for key in sorted(board_options):
+        value = str(board_options[key]).strip()
+        if not value:
+            continue
+        parts.append(f"{key}={value}")
+    return ",".join(parts)
+
+
+def _find_compiled_elf(build_dir: Path) -> Optional[Path]:
+    """Locate the compiled ELF artifact within an Arduino build directory.
+
+    Parameters
+    ----------
+    build_dir : pathlib.Path
+        Arduino CLI build directory.
+
+    Returns
+    -------
+    pathlib.Path | None
+        Path to the preferred ELF file when present, otherwise ``None``.
+    """
+    candidates = sorted(build_dir.glob("*.elf"))
+    if not candidates:
+        candidates = sorted(build_dir.rglob("*.elf"))
+    if not candidates:
+        return None
+    # Prefer ino ELF artifacts when multiple files exist.
+    ino_candidates = [path for path in candidates if path.name.endswith(".ino.elf")]
+    return ino_candidates[0] if ino_candidates else candidates[0]
+
+
+def _resolve_arm_size_binary() -> Optional[str]:
+    """Resolve an ``arm-none-eabi-size`` binary for ELF section accounting.
+
+    Returns
+    -------
+    str | None
+        Resolved executable path, or ``None`` when unavailable.
+    """
+    env_bin = os.environ.get("ARM_NONE_EABI_SIZE_BIN")
+    if env_bin:
+        return env_bin
+    path_bin = shutil.which("arm-none-eabi-size")
+    if path_bin:
+        return path_bin
+
+    search_root = _PROJECT_ROOT / "tools" / "arduino-data" / "packages"
+    if not search_root.exists():
+        return None
+    candidates = list(search_root.rglob("arm-none-eabi-size"))
+    if os.name == "nt":
+        candidates.extend(search_root.rglob("arm-none-eabi-size.exe"))
+    if not candidates:
+        return None
+    return str(sorted(candidates)[-1])
+
+
+def _address_in_ranges(address: int, ranges: Sequence[Tuple[int, int]]) -> bool:
+    """Check whether an address falls inside any inclusive range.
+
+    Parameters
+    ----------
+    address : int
+        Address to classify.
+    ranges : Sequence[tuple[int, int]]
+        Inclusive ``(start, end)`` address windows.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``address`` is inside any provided range.
+    """
+    for start, end in ranges:
+        if start <= address <= end:
+            return True
+    return False
+
+
+def _is_flash_section(section_name: str, address: int) -> bool:
+    """Heuristically classify a linker section as flash-backed.
+
+    Parameters
+    ----------
+    section_name : str
+        Linker section name.
+    address : int
+        Section load address.
+
+    Returns
+    -------
+    bool
+        ``True`` when the section contributes to flash usage.
+    """
+    lowered = section_name.lower()
+    if lowered in (".data", ".ramfunc"):
+        return True
+    if any(hint in lowered for hint in FLASH_SECTION_HINTS):
+        return True
+    return _address_in_ranges(address, FLASH_ADDR_RANGES)
+
+
+def _is_ram_section(section_name: str, address: int) -> bool:
+    """Heuristically classify a linker section as runtime RAM usage.
+
+    Parameters
+    ----------
+    section_name : str
+        Linker section name.
+    address : int
+        Section runtime address.
+
+    Returns
+    -------
+    bool
+        ``True`` when the section contributes to RAM usage.
+    """
+    lowered = section_name.lower()
+    if any(hint in lowered for hint in RAM_SECTION_HINTS):
+        return True
+    return _address_in_ranges(address, RAM_ADDR_RANGES)
+
+
+def _parse_memory_from_elf(build_dir: Path) -> Tuple[Optional[int], Optional[int]]:
+    """Parse flash and RAM usage from ELF section sizes.
+
+    Parameters
+    ----------
+    build_dir : pathlib.Path
+        Arduino CLI build directory containing the compiled ELF.
+
+    Returns
+    -------
+    tuple[int | None, int | None]
+        ``(flash_bytes, ram_bytes)`` parsed from section accounting.
+
+    FIXME: Re-validate this accounting against full TinyODOM firmware on real
+    Portenta hardware and map custom linker sections explicitly.
+    """
+    size_bin = _resolve_arm_size_binary()
+    elf_path = _find_compiled_elf(build_dir)
+    if not size_bin or elf_path is None:
+        return None, None
+
+    proc = subprocess.run(
+        [size_bin, "-A", str(elf_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None, None
+
+    flash_total = 0
+    ram_total = 0
+    saw_section = False
+    for line in proc.stdout.splitlines():
+        match = SIZE_SECTION_RE.match(line)
+        if not match:
+            continue
+        section_name, size_text, addr_text = match.groups()
+        size_bytes = int(size_text)
+        if size_bytes <= 0:
+            continue
+        address = int(addr_text, 16) if addr_text.lower().startswith("0x") else int(addr_text)
+        if _is_flash_section(section_name, address):
+            flash_total += size_bytes
+        if _is_ram_section(section_name, address):
+            ram_total += size_bytes
+        saw_section = True
+
+    if not saw_section:
+        return None, None
+    return (flash_total if flash_total > 0 else None, ram_total if ram_total > 0 else None)
+
+
+def _augment_upload_error(log: str) -> str:
+    """Append actionable Linux DFU guidance to permission-related upload failures.
+
+    Parameters
+    ----------
+    log : str
+        Raw upload log text.
+
+    Returns
+    -------
+    str
+        Original or augmented log with Linux udev remediation steps.
+    """
+    for pattern in UPLOAD_PERMISSION_PATTERNS:
+        if pattern.search(log):
+            return (
+                f"{log}\n"
+                "Upload failed due to USB DFU permission access.\n"
+                "On Linux, install Portenta udev rules for USB IDs 2341:035b and 2341:045b, "
+                "reload rules (`sudo udevadm control --reload-rules && sudo udevadm trigger`), "
+                "then replug the board and retry.\n"
+                "macOS typically does not require this step."
+            )
+    return log
+
+
 def _classify_compile_failure(log_text: str) -> Optional[str]:
     """Determine whether output indicates a flash or RAM overflow.
 
@@ -294,6 +548,7 @@ def compile_sketch(
     sketch_path: Path,
     fqbn: str,
     build_defines: Optional[Dict[str, int]] = None,
+    board_options: Optional[Mapping[str, str]] = None,
 ) -> CompileResult:
     """Compile an Arduino sketch with the Arduino CLI.
 
@@ -303,6 +558,10 @@ def compile_sketch(
         Directory containing the Arduino sketch.
     fqbn : str
         Fully qualified board name.
+    build_defines : dict[str, int] | None, optional
+        Preprocessor defines forwarded to ``compiler.cpp.extra_flags``.
+    board_options : Mapping[str, str] | None, optional
+        Arduino board options forwarded via ``--board-options``.
 
     Returns
     -------
@@ -322,6 +581,9 @@ def compile_sketch(
         str(build_dir),
         str(sketch_path),
     ]
+    board_options_text = _format_board_options(board_options)
+    if board_options_text:
+        compile_cmd.extend(["--board-options", board_options_text])
     define_flags = _build_define_flags(build_defines)
     if define_flags:
         compile_cmd.extend(
@@ -335,6 +597,12 @@ def compile_sketch(
     )
     compile_log = f"{compile_proc.stdout}\n{compile_proc.stderr}"
     flash_bytes, ram_bytes = _parse_memory_from_compile(compile_log)
+    if compile_proc.returncode == 0 and (flash_bytes is None or ram_bytes is None):
+        elf_flash_bytes, elf_ram_bytes = _parse_memory_from_elf(build_dir)
+        if flash_bytes is None:
+            flash_bytes = elf_flash_bytes
+        if ram_bytes is None:
+            ram_bytes = elf_ram_bytes
     overflow_kind = _classify_compile_failure(compile_log)
     return CompileResult(
         success=compile_proc.returncode == 0,
@@ -397,6 +665,7 @@ def upload_sketch(
     fqbn: str,
     build_dir: Path,
     serial_port: str,
+    board_options: Optional[Mapping[str, str]] = None,
 ) -> UploadResult:
     """Upload a compiled Arduino sketch to a device.
 
@@ -410,6 +679,8 @@ def upload_sketch(
         Build cache directory containing the compiled binary.
     serial_port : str
         Serial port used for upload.
+    board_options : Mapping[str, str] | None, optional
+        Arduino board options forwarded via ``--board-options``.
 
     Returns
     -------
@@ -429,8 +700,11 @@ def upload_sketch(
         str(build_dir),
         str(sketch_path),
     ]
+    board_options_text = _format_board_options(board_options)
+    if board_options_text:
+        upload_cmd.extend(["--board-options", board_options_text])
     upload_proc = subprocess.run(upload_cmd, capture_output=True, text=True, check=False)
-    upload_log = f"{upload_proc.stdout}\n{upload_proc.stderr}"
+    upload_log = _augment_upload_error(f"{upload_proc.stdout}\n{upload_proc.stderr}")
     return UploadResult(success=upload_proc.returncode == 0, log=upload_log)
 
 

@@ -41,9 +41,10 @@ directories:
   user: "$ARDUINO_USER_DIR"
 EOF
 
-echo "Updating core index and installing arduino:mbed_nano ..."
+echo "Updating core index and installing Arduino mbed cores (nano + portenta) ..."
 "$BIN_DIR/arduino-cli" core update-index --config-file "$CONFIG_FILE"
 "$BIN_DIR/arduino-cli" core install arduino:mbed_nano --config-file "$CONFIG_FILE"
+"$BIN_DIR/arduino-cli" core install arduino:mbed_portenta --config-file "$CONFIG_FILE"
 echo "Installing required Arduino libraries ..."
 "$BIN_DIR/arduino-cli" lib install "Adafruit INA228 Library" --config-file "$CONFIG_FILE"
 

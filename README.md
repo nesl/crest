@@ -71,6 +71,26 @@ All firmware builds happen in a sandboxed `tools/` directory inside this repo so
    arduino-cli core install arduino:mbed_nano --config-file tools/arduino-cli.yaml
    ```
 
+6. **Adding another Arduino board?**  
+   See `src/tinyodom/microcontrollers/README.md` for the board authoring checklist and required integration points.
+
+7. **Linux-only: enable USB permissions for Portenta DFU uploads (udev).**  
+   Portenta uploads on Linux use `dfu-util`. If upload fails with `LIBUSB_ERROR_ACCESS`, add udev rules for Portenta USB IDs.  
+   ```bash
+   sudo tee /etc/udev/rules.d/49-portenta-h7.rules >/dev/null <<'EOF'
+   SUBSYSTEM=="usb", ATTR{idVendor}=="2341", ATTR{idProduct}=="025b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+   SUBSYSTEM=="usb", ATTR{idVendor}=="2341", ATTR{idProduct}=="035b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+   SUBSYSTEM=="usb", ATTR{idVendor}=="2341", ATTR{idProduct}=="045b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+   SUBSYSTEM=="usb", ATTR{idVendor}=="2341", ATTR{idProduct}=="055b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+   EOF
+
+   sudo udevadm control --reload-rules
+   sudo udevadm trigger
+   ```
+   Then unplug/replug the board (or reset into bootloader) before retrying upload.
+
+> **OS note:** This udev step is Linux-specific. macOS typically does not require it.
+
 > **Why this flow?** This setup allows us to run the needed modules without modifying `$HOME` or using `apt`. Keeping binaries + caches in `tools/` allows everything to be contained within the folder, and the Conda hooks ensure our pipelines (training, conversion, firmware compile) always see the same CLI without editing shell rc files.
 
 ## Quick Checklist
