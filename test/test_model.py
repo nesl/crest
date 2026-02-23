@@ -270,6 +270,76 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["latency_budget_ms"], 50000.0)
         self.assertEqual(metrics["error_label"], "HIL_MASTER_PENDING")
 
+    def test_energy_aware_harness_fields_forwarded_to_controller(self) -> None:
+        """Energy-aware requests should forward harness settings to HIL_controller."""
+
+        harness = HarnessConfig(
+            harness_serial_port="ttyACM1",
+            harness_fqbn="arduino:mbed_nano:nano33ble",
+            harness_auto_flash="once",
+            harness_arm_pin=3,
+            harness_trigger_pin=2,
+            dut_arm_hold_ms=600,
+            harness_stable_low_ms=500,
+            harness_ready_timeout_s=5.0,
+            harness_arm_timeout_s=0.0,
+            harness_active_timeout_s=12.0,
+            harness_done_timeout_s=3.6,
+        )
+
+        def fake_controller(run_hil: bool, **kwargs):
+            self.assertTrue(run_hil)
+            self.assertEqual(kwargs["harness_serial_port"], "ttyACM1")
+            self.assertEqual(kwargs["harness_fqbn"], "arduino:mbed_nano:nano33ble")
+            self.assertEqual(kwargs["harness_auto_flash"], "once")
+            self.assertEqual(kwargs["harness_arm_pin"], 3)
+            self.assertEqual(kwargs["harness_trigger_pin"], 2)
+            self.assertEqual(kwargs["dut_arm_hold_ms"], 600)
+            self.assertEqual(kwargs["harness_stable_low_ms"], 500)
+            self.assertEqual(kwargs["harness_ready_timeout_s"], 5.0)
+            self.assertEqual(kwargs["harness_arm_timeout_s"], 0.0)
+            self.assertEqual(kwargs["harness_active_timeout_s"], 12.0)
+            self.assertEqual(kwargs["harness_done_timeout_s"], 3.6)
+            return (1024, 8192, 0.025, 4096, 0, None)
+
+        with patch("tinyodom.model.HIL_controller", fake_controller):
+            request = CollectMetricsRequest(
+                hil_enabled=True,
+                energy_aware=True,
+                flops=5_000_000,
+                device_name="ARDUINO_NANO_33_BLE_SENSE",
+                window_size=128,
+                input_dim=6,
+                dirpath=Path("tinyodom_tcn"),
+                latency_proxy_max_flops=20_000_000,
+                serial_port="ttyACM0",
+                latency_budget_ms=200.0,
+                dut_ready_timeout_s=5.0,
+                harness=harness,
+            )
+            metrics = collect_metrics(request)
+
+        self.assertEqual(metrics["error_code"], 0)
+        self.assertEqual(metrics["latency_budget_ms"], 200.0)
+
+    def test_energy_aware_without_harness_raises(self) -> None:
+        request = CollectMetricsRequest(
+            hil_enabled=True,
+            energy_aware=True,
+            flops=5_000_000,
+            device_name="ARDUINO_NANO_33_BLE_SENSE",
+            window_size=128,
+            input_dim=6,
+            dirpath=Path("tinyodom_tcn"),
+            latency_proxy_max_flops=20_000_000,
+            serial_port="ttyACM0",
+            latency_budget_ms=50000.0,
+            harness=None,
+        )
+
+        with self.assertRaises(RuntimeError):
+            collect_metrics(request)
+
 
 class BuildCollectMetricsRequestTests(unittest.TestCase):
     """Validate config/hyperparameter mapping into CollectMetricsRequest."""
@@ -467,6 +537,28 @@ class LoadSettingsTests(unittest.TestCase):
         """Nonexistent config paths should raise FileNotFoundError."""
         with self.assertRaises(FileNotFoundError):
             load_config(config_path=Path("does_not_exist.yaml"))
+
+    def test_load_settings_energy_aware_requires_harness_serial_port(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 5",
+                        "  energy_aware: true",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaises(RuntimeError):
+                load_config(config_path=cfg)
 
 
 @unittest.skipUnless(_cli_exists(), "Arduino CLI not installed")

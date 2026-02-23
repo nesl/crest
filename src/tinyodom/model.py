@@ -544,6 +544,11 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
     -------
     dict
         RAM/flash/latency/arena metrics plus error codes shared across the trial.
+
+    Raises
+    ------
+    RuntimeError
+        If ``request.energy_aware`` is True but ``request.harness`` is missing.
     """
     # Prepare controller kwargs (ease of use and readability)
     controller_kwargs = {
@@ -552,6 +557,11 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
         "window_size": request.window_size,
         "number_of_channels": request.input_dim,
     }
+
+    if request.energy_aware and request.harness is None:
+        raise RuntimeError(
+            "energy_aware=True requires harness configuration; do not run without harness."
+        )
     
     if request.hil_enabled and request.serial_port is not None:
         controller_kwargs["serial_port"] = request.serial_port
