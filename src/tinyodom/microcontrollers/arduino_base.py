@@ -455,9 +455,11 @@ def _augment_upload_error(log: str) -> str:
         if pattern.search(log):
             return (
                 f"{log}\n"
-                "Upload failed due to USB DFU permission access.\n"
-                "On Linux, install Portenta udev rules for USB IDs 2341:035b and 2341:045b, "
-                "reload rules (`sudo udevadm control --reload-rules && sudo udevadm trigger`), "
+                "Upload failed due to insufficient USB DFU permissions.\n"
+                "On Linux, install the appropriate Portenta udev rules for the board's DFU "
+                "USB IDs as documented in this project's README (Portenta DFU/udev section), "
+                "reload the rules "
+                "(`sudo udevadm control --reload-rules && sudo udevadm trigger`), "
                 "then replug the board and retry.\n"
                 "macOS typically does not require this step."
             )
