@@ -62,9 +62,12 @@ from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
     _classify_compile_failure,
     _collect_latency_seconds,
     _compute_retry_hint_bytes,
+    _resolve_build_dir,
     compile_sketch,
+    measure_harness_only_open_session,
     measure_serial,
     _parse_memory_from_compile,
+    _parse_memory_from_size_recipe,
     _patch_sketch_constants,
     _replace_define,
     upload_sketch,
@@ -582,8 +585,60 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertEqual(device.resolved_options.split, "75_25")
         self.assertEqual(device.resolved_options.security, "none")
 
+    def test_portenta_runtime_mode_resolution(self):
+        cm7 = get_device(
+            "PORTENTA_H7",
+            device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
+        )
+        cm4 = get_device(
+            "PORTENTA_H7",
+            device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+        )
+
+        self.assertEqual(cm7.runtime_measure_mode(), "direct_serial")
+        self.assertEqual(cm7.runtime_mode_build_defines(), {})
+        self.assertEqual(cm4.runtime_measure_mode(), "harness_only")
+        self.assertEqual(cm4.runtime_mode_build_defines()["TINYODOM_AUTOSTART"], 1)
+        self.assertEqual(cm4.runtime_mode_build_defines()["TINYODOM_SKIP_SERIAL_WAIT"], 1)
+
+    def test_portenta_cm4_prepare_for_runtime_bootstraps_cm7_helper(self):
+        cm4 = get_device(
+            "PORTENTA_H7",
+            device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+        )
+        with patch.object(cm4, "_ensure_cm7_boot_helper") as helper_mock:
+            cm4.prepare_for_runtime(runtime_mode="harness_only", serial_port="/dev/ttyACM0")
+        helper_mock.assert_called_once_with(serial_port="/dev/ttyACM0")
+
+    def test_portenta_cm7_prepare_for_runtime_skips_bootstrap(self):
+        cm7 = get_device(
+            "PORTENTA_H7",
+            device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
+        )
+        with patch.object(cm7, "_ensure_cm7_boot_helper") as helper_mock:
+            cm7.prepare_for_runtime(runtime_mode="direct_serial", serial_port="/dev/ttyACM0")
+        helper_mock.assert_not_called()
+
 
 class ArduinoCommandOptionTests(unittest.TestCase):
+    def test_resolve_build_dir_hash_includes_board_options(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketch_dir = Path(tmpdir) / "tinyodom_tcn"
+            sketch_dir.mkdir()
+            cm7_build_dir = _resolve_build_dir(
+                sketch_dir,
+                "arduino:mbed_portenta:envie_m7",
+                {"TINYODOM_AUTOSTART": 1},
+                board_options={"target_core": "cm7", "split": "75_25", "security": "none"},
+            )
+            cm4_build_dir = _resolve_build_dir(
+                sketch_dir,
+                "arduino:mbed_portenta:envie_m7",
+                {"TINYODOM_AUTOSTART": 1},
+                board_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+            )
+        self.assertNotEqual(cm7_build_dir, cm4_build_dir)
+
     def test_compile_sketch_includes_board_options(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
@@ -666,6 +721,80 @@ class ArduinoCommandOptionTests(unittest.TestCase):
 
         self.assertEqual(result.flash_bytes, 123_456)
         self.assertEqual(result.ram_bytes, 654_321)
+
+    def test_parse_memory_from_size_recipe_uses_platform_regexes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            build_dir = Path(tmpdir) / "build"
+            build_dir.mkdir(parents=True)
+            platform_dir = Path(tmpdir) / "platform"
+            platform_dir.mkdir(parents=True)
+            (platform_dir / "platform.txt").write_text(
+                "\n".join(
+                    [
+                        'recipe.size.regex=^(?:\\.data|\\.text|\\.rodata)\\S*?\\s+([0-9]+).*',
+                        "recipe.size.regex.data=^(?:\\.data|\\.bss)\\s+([0-9]+).*",
+                    ]
+                )
+            )
+            (build_dir / "build.options.json").write_text(
+                (
+                    '{'
+                    f'"hardwareFolders":"{platform_dir},{platform_dir}",'
+                    '"fqbn":"arduino:mbed_portenta:envie_m7"'
+                    "}"
+                )
+            )
+            elf_path = build_dir / "sketch.ino.elf"
+            elf_path.write_bytes(b"ELF")
+            size_stdout = (
+                "section              size        addr\n"
+                ".text              149680   134479872\n"
+                ".data                6184   603979776\n"
+                ".bss                57120   603985984\n"
+                ".heap              459936   604043104\n"
+                ".lwip_sec          278528   805306368\n"
+            )
+            with patch(
+                "tinyodom.microcontrollers.arduino_base._resolve_arm_size_binary",
+                return_value="/usr/bin/arm-none-eabi-size",
+            ), patch(
+                "tinyodom.microcontrollers.arduino_base._find_compiled_elf",
+                return_value=elf_path,
+            ), patch(
+                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                return_value=_FakeCompletedProcess(returncode=0, stdout=size_stdout, stderr=""),
+            ):
+                flash_bytes, ram_bytes = _parse_memory_from_size_recipe(build_dir)
+
+        self.assertEqual(flash_bytes, 155_864)
+        self.assertEqual(ram_bytes, 63_304)
+
+    def test_compile_sketch_prefers_size_recipe_before_elf_fallback(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketch_dir = Path(tmpdir) / "tinyodom_tcn"
+            sketch_dir.mkdir()
+            compile_result = _FakeCompletedProcess(returncode=0, stdout="compile ok", stderr="")
+            with patch(
+                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                return_value=compile_result,
+            ), patch(
+                "tinyodom.microcontrollers.arduino_base._parse_memory_from_compile",
+                return_value=(None, None),
+            ), patch(
+                "tinyodom.microcontrollers.arduino_base._parse_memory_from_size_recipe",
+                return_value=(155_864, 63_304),
+            ), patch(
+                "tinyodom.microcontrollers.arduino_base._parse_memory_from_elf",
+                return_value=(999_999, 888_888),
+            ) as elf_fallback:
+                result = compile_sketch(
+                    sketch_path=sketch_dir,
+                    fqbn="arduino:mbed_portenta:envie_m7",
+                )
+
+        self.assertEqual(result.flash_bytes, 155_864)
+        self.assertEqual(result.ram_bytes, 63_304)
+        elf_fallback.assert_not_called()
 
     def test_upload_permission_error_appends_linux_guidance(self):
         augmented = _augment_upload_error("dfu-util: LIBUSB_ERROR_ACCESS")
@@ -996,6 +1125,201 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
         self.assertAlmostEqual(result.latency_s, 0.125)
         self.assertIsNone(result.power_metrics)
+
+    def test_measure_harness_only_open_session_uses_harness_latency(self):
+        session = hil_protocol.HarnessSessionResult(
+            harness_log=[
+                "runs: 1",
+                "harness timer output: 0.250000",
+                "energy output (mJ): 10.0",
+                "avg power output (mW): 40.0",
+                "DONE",
+            ],
+            harness_ready=True,
+            harness_done=True,
+            runs_harness=1,
+            error=None,
+        )
+        with patch(
+            "tinyodom.microcontrollers.arduino_base.hil_protocol.wait_for_harness_done",
+            return_value=session,
+        ):
+            result = measure_harness_only_open_session(harness=object())
+
+        self.assertAlmostEqual(result.latency_s, 0.25)
+        self.assertIsNotNone(result.power_metrics)
+        assert result.power_metrics is not None
+        self.assertAlmostEqual(result.power_metrics["harness_latency_s"], 0.25)
+        self.assertAlmostEqual(result.power_metrics["energy_mj_per_inference"], 10.0)
+
+    def test_measure_harness_only_open_session_timeout_sets_error(self):
+        session = hil_protocol.HarnessSessionResult(
+            harness_log=[
+                "runs: 1",
+                "harness timer output: 0.250000",
+                "energy output (mJ): 10.0",
+            ],
+            harness_ready=True,
+            harness_done=False,
+            runs_harness=1,
+            error="harness_done_timeout",
+        )
+        with patch(
+            "tinyodom.microcontrollers.arduino_base.hil_protocol.wait_for_harness_done",
+            return_value=session,
+        ):
+            result = measure_harness_only_open_session(harness=object())
+
+        self.assertIsNone(result.latency_s)
+        self.assertTrue(result.serial_log[0].startswith("HARNESS_ERROR: "))
+        self.assertIsNotNone(result.power_metrics)
+
+
+class HarnessOnlyOrderingTests(unittest.TestCase):
+    def test_harness_only_opens_harness_before_upload(self):
+        device = get_device(
+            "PORTENTA_H7",
+            serial_port="/dev/ttyACM0",
+            device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+        )
+        compile_result = ArduinoCompileResult(
+            success=True,
+            log="ok",
+            flash_bytes=123,
+            ram_bytes=456,
+            overflow_kind=None,
+            build_dir=Path("/tmp/fake_build"),
+        )
+        upload_result = ArduinoUploadResult(success=True, log="ok")
+        measure_result = ArduinoMeasureResult(
+            latency_s=0.123,
+            arena_error_line=None,
+            serial_log=["HARNESS: DONE"],
+            power_metrics={"harness_latency_s": 0.123},
+        )
+        prime_result = hil_protocol.HarnessSessionResult(
+            harness_log=["HARNESS READY"],
+            harness_ready=True,
+            harness_done=False,
+            runs_harness=None,
+            error=None,
+        )
+        events: list[str] = []
+
+        class _DummyHarness:
+            def __init__(self, *_args, **_kwargs) -> None:
+                events.append("serial_open")
+
+            def __enter__(self):
+                events.append("serial_enter")
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                events.append("serial_exit")
+                return False
+
+        def _upload_side_effect(*args, **kwargs):
+            del args, kwargs
+            events.append("upload")
+            return upload_result
+
+        with patch.object(device, "compile", return_value=compile_result), patch(
+            "tinyodom.devices.arduino_base.ensure_harness_firmware",
+            side_effect=lambda **_kwargs: events.append("ensure_harness"),
+        ), patch.object(
+            device,
+            "prepare_for_runtime",
+            side_effect=lambda **_kwargs: events.append("prepare_runtime"),
+        ), patch("tinyodom.devices.serial.Serial", side_effect=_DummyHarness), patch(
+            "tinyodom.devices.hil_protocol.prime_harness_session",
+            side_effect=lambda **_kwargs: (events.append("prime"), prime_result)[1],
+        ), patch.object(device, "upload", side_effect=_upload_side_effect), patch(
+            "tinyodom.devices.arduino_base.measure_harness_only_open_session",
+            side_effect=lambda **_kwargs: (events.append("measure"), measure_result)[1],
+        ):
+            result = device.evaluate(
+                dirpath=Path("/tmp"),
+                arena_kb=32,
+                window_size=128,
+                num_channels=6,
+                serial_port="/dev/ttyACM0",
+                run_hil=True,
+                harness_serial_port="/dev/ttyACM1",
+            )
+
+        self.assertEqual(result.error_code, HIL_ERROR_OK)
+        self.assertLess(events.index("prepare_runtime"), events.index("serial_open"))
+        self.assertLess(events.index("serial_open"), events.index("upload"))
+        self.assertLess(events.index("prime"), events.index("upload"))
+
+    def test_harness_only_missing_diagnostics_maps_to_latency_error(self):
+        # Portenta CM4 harness-only runs do not have reliable host DUT serial
+        # diagnostics, so timeout-like misses map to HIL_ERROR_LATENCY.
+        device = get_device(
+            "PORTENTA_H7",
+            serial_port="/dev/ttyACM0",
+            device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+        )
+        compile_result = ArduinoCompileResult(
+            success=True,
+            log="ok",
+            flash_bytes=123,
+            ram_bytes=456,
+            overflow_kind=None,
+            build_dir=Path("/tmp/fake_build"),
+        )
+        upload_result = ArduinoUploadResult(success=True, log="ok")
+        measure_result = ArduinoMeasureResult(
+            latency_s=None,
+            arena_error_line=None,
+            serial_log=["HARNESS_ERROR: harness_done_timeout"],
+            power_metrics=None,
+        )
+        prime_result = hil_protocol.HarnessSessionResult(
+            harness_log=["HARNESS READY"],
+            harness_ready=True,
+            harness_done=False,
+            runs_harness=None,
+            error=None,
+        )
+
+        class _DummyHarness:
+            def __init__(self, *_args, **_kwargs) -> None:
+                return None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch.object(device, "compile", return_value=compile_result), patch(
+            "tinyodom.devices.arduino_base.ensure_harness_firmware",
+            return_value=True,
+        ), patch.object(
+            device,
+            "prepare_for_runtime",
+            return_value=None,
+        ), patch("tinyodom.devices.serial.Serial", side_effect=_DummyHarness), patch(
+            "tinyodom.devices.hil_protocol.prime_harness_session",
+            return_value=prime_result,
+        ), patch.object(device, "upload", return_value=upload_result), patch(
+            "tinyodom.devices.arduino_base.measure_harness_only_open_session",
+            return_value=measure_result,
+        ):
+            result = device.evaluate(
+                dirpath=Path("/tmp"),
+                arena_kb=32,
+                window_size=128,
+                num_channels=6,
+                serial_port="/dev/ttyACM0",
+                run_hil=True,
+                harness_serial_port="/dev/ttyACM1",
+            )
+
+        self.assertEqual(result.error_code, HIL_ERROR_LATENCY)
+        self.assertEqual(result.latency_s, -1.0)
+        self.assertIsNone(result.retry_hint_bytes)
 
 
 class DeviceTimeoutPassThroughTests(unittest.TestCase):

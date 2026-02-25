@@ -3,10 +3,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, Literal, Mapping, Optional, Sequence
 
 import numpy as np
 import logging
+import serial
 
 from .errors import (
     HIL_ERROR_OK,
@@ -17,9 +18,11 @@ from .errors import (
     HIL_ERROR_RAM_OVERFLOW,
     HIL_ERROR_UPLOAD,
 )
+from . import hil_protocol
 from .microcontrollers import arduino_base
 
 logger = logging.getLogger(__name__)
+RuntimeMeasureMode = Literal["direct_serial", "harness_only"]
 
 
 @dataclass(frozen=True)
@@ -149,6 +152,18 @@ class MeasureResult:
 
 class DeviceInterface(ABC):
     """Contract for device-specific compile/upload/measure workflows."""
+
+    def runtime_measure_mode(self) -> RuntimeMeasureMode:
+        """Return runtime measurement mode for this device profile."""
+        return "direct_serial"
+
+    def runtime_mode_build_defines(self) -> Dict[str, int]:
+        """Return additional compile-time defines for the runtime mode."""
+        return {}
+
+    def prepare_for_runtime(self, *, runtime_mode: RuntimeMeasureMode, serial_port: str) -> None:
+        """Run optional board-specific setup before upload/measurement."""
+        del runtime_mode, serial_port
 
     @property
     @abstractmethod
@@ -496,6 +511,18 @@ class ArduinoDevice(DeviceInterface):
         """Return the device specification metadata."""
         return self._spec
 
+    def runtime_measure_mode(self) -> RuntimeMeasureMode:
+        """Return runtime measurement mode for this board wrapper."""
+        return "direct_serial"
+
+    def runtime_mode_build_defines(self) -> Dict[str, int]:
+        """Return additional compile-time defines for runtime behavior."""
+        return {}
+
+    def prepare_for_runtime(self, *, runtime_mode: RuntimeMeasureMode, serial_port: str) -> None:
+        """Run optional board-specific setup before upload/measurement."""
+        del runtime_mode, serial_port
+
     def _resolve_board_options(
         self, device_options: Optional[Mapping[str, object]]
     ) -> Optional[Dict[str, str]]:
@@ -647,6 +674,7 @@ class ArduinoDevice(DeviceInterface):
         """Run a compile/upload/measure loop using the Arduino toolchain."""
         sketch_path = Path(dirpath).resolve()
         arena_bytes = arena_kb * 1024
+        runtime_mode = self.runtime_measure_mode()
         build_defines = {
             "TINYODOM_HARNESS_ARM_PIN": 3 if harness_arm_pin is None else int(harness_arm_pin),
             "TINYODOM_HARNESS_TRIGGER_PIN": 2 if harness_trigger_pin is None else int(harness_trigger_pin),
@@ -655,6 +683,7 @@ class ArduinoDevice(DeviceInterface):
             if harness_stable_low_ms is None
             else int(harness_stable_low_ms),
         }
+        build_defines.update(self.runtime_mode_build_defines())
         compile_result = self.compile(
             sketch_path=sketch_path,
             arena_kb=arena_kb,
@@ -699,41 +728,152 @@ class ArduinoDevice(DeviceInterface):
                 error_code=HIL_ERROR_OK,
             )
 
-        if serial_port is None and self._serial_port is None:
-            raise ValueError("serial_port must be provided when running HIL measurements.")
+        use_serial_port = self._serial_port if serial_port is None else serial_port
+        if use_serial_port is None:
+            raise ValueError("serial_port must be provided when running HIL uploads.")
+        self.prepare_for_runtime(runtime_mode=runtime_mode, serial_port=use_serial_port)
 
-        upload_result = self.upload(
-            sketch_path=sketch_path,
-            build_dir=compile_result.build_dir,
-            serial_port=serial_port,
-        )
-        if not upload_result.success:
-            return DeviceMetrics(
-                ram_bytes=compile_result.ram_bytes or -1,
-                flash_bytes=compile_result.flash_bytes or -1,
-                latency_s=-1.0,
-                arena_bytes=arena_bytes,
-                error_code=HIL_ERROR_UPLOAD,
+        _default = lambda value, fallback: fallback if value is None else value
+        measure_result: MeasureResult
+        if runtime_mode == "harness_only":
+            use_harness_port = harness_serial_port
+            if not use_harness_port:
+                raise ValueError(
+                    "harness_serial_port must be provided for harness_only runtime measurement."
+                )
+            harness_fqbn_value = _default(harness_fqbn, "arduino:mbed_nano:nano33ble")
+            harness_auto_flash_value = _default(harness_auto_flash, "once")
+            harness_ready_timeout = float(_default(harness_ready_timeout_s, 5.0))
+            harness_arm_timeout = float(_default(harness_arm_timeout_s, 5.0))
+            harness_active_timeout = float(_default(harness_active_timeout_s, 30.0))
+            harness_done_timeout = float(_default(harness_done_timeout_s, 5.0))
+            harness_build_defines = {
+                "TINYODOM_HARNESS_ARM_PIN": int(_default(harness_arm_pin, 3)),
+                "TINYODOM_HARNESS_TRIGGER_PIN": int(_default(harness_trigger_pin, 2)),
+                "TINYODOM_DUT_ARM_HOLD_MS": int(_default(dut_arm_hold_ms, 600)),
+                "TINYODOM_HARNESS_STABLE_LOW_MS": int(_default(harness_stable_low_ms, 500)),
+                "TINYODOM_HARNESS_ARM_TIMEOUT_MS": max(
+                    0, int(round(harness_arm_timeout * 1000.0))
+                ),
+                "TINYODOM_HARNESS_ACTIVE_TIMEOUT_MS": max(
+                    0, int(round(harness_active_timeout * 1000.0))
+                ),
+            }
+            try:
+                arduino_base.ensure_harness_firmware(
+                    harness_serial_port=use_harness_port,
+                    harness_fqbn=harness_fqbn_value,
+                    harness_auto_flash=harness_auto_flash_value,
+                    build_defines=harness_build_defines,
+                )
+                logger.info(
+                    "ArduinoDevice.evaluate[harness_only]: opening harness session before DUT upload "
+                    "(harness=%s, dut=%s)",
+                    use_harness_port,
+                    use_serial_port,
+                )
+                with serial.Serial(use_harness_port, baudrate=baud_rate, timeout=0.1) as harness:
+                    prime_result = hil_protocol.prime_harness_session(
+                        harness=harness,
+                        harness_ready_timeout_s=harness_ready_timeout,
+                        harness_log=[],
+                        flush_input=True,
+                    )
+                    if not prime_result.harness_ready:
+                        logger.warning(
+                            "Harness session was not ready before DUT upload (error=%s).",
+                            prime_result.error,
+                        )
+                        measure_result = MeasureResult(
+                            latency_s=None,
+                            arena_error_line=None,
+                            serial_log=[f"HARNESS_ERROR: {prime_result.error}"]
+                            + [f"HARNESS: {line}" for line in prime_result.harness_log],
+                            power_metrics=None,
+                        )
+                    else:
+                        logger.info(
+                            "ArduinoDevice.evaluate[harness_only]: uploading DUT while harness session is open."
+                        )
+                        upload_result = self.upload(
+                            sketch_path=sketch_path,
+                            build_dir=compile_result.build_dir,
+                            serial_port=use_serial_port,
+                        )
+                        if not upload_result.success:
+                            return DeviceMetrics(
+                                ram_bytes=compile_result.ram_bytes or -1,
+                                flash_bytes=compile_result.flash_bytes or -1,
+                                latency_s=-1.0,
+                                arena_bytes=arena_bytes,
+                                error_code=HIL_ERROR_UPLOAD,
+                            )
+                        logger.info(
+                            "ArduinoDevice.evaluate[harness_only]: DUT upload complete, waiting for harness DONE."
+                        )
+                        # In Portenta CM4 harness-only runs, host DUT Serial is
+                        # not a reliable diagnostics channel, so runtime error
+                        # typing depends on harness-visible signals only.
+                        measure_result = arduino_base.measure_harness_only_open_session(
+                            harness=harness,
+                            harness_active_timeout_s=harness_active_timeout,
+                            harness_done_timeout_s=harness_done_timeout,
+                            harness_log=prime_result.harness_log,
+                        )
+            except serial.SerialException as exc:
+                logger.warning("Harness serial session failed: %s", exc)
+                measure_result = MeasureResult(
+                    latency_s=None,
+                    arena_error_line=None,
+                    serial_log=[f"HARNESS_ERROR: {exc}"],
+                    power_metrics=None,
+                )
+            except RuntimeError as exc:
+                logger.warning("Harness preparation failed: %s", exc)
+                measure_result = MeasureResult(
+                    latency_s=None,
+                    arena_error_line=None,
+                    serial_log=[f"HARNESS_ERROR: {exc}"],
+                    power_metrics=None,
+                )
+        else:
+            upload_result = self.upload(
+                sketch_path=sketch_path,
+                build_dir=compile_result.build_dir,
+                serial_port=use_serial_port,
             )
+            if not upload_result.success:
+                return DeviceMetrics(
+                    ram_bytes=compile_result.ram_bytes or -1,
+                    flash_bytes=compile_result.flash_bytes or -1,
+                    latency_s=-1.0,
+                    arena_bytes=arena_bytes,
+                    error_code=HIL_ERROR_UPLOAD,
+                )
 
-        measure_result = self.measure(
-            serial_port=serial_port,
-            baud_rate=baud_rate,
-            serial_timeout_s=serial_timeout_s,
-            dut_ready_timeout_s=dut_ready_timeout_s,
-            harness_serial_port=harness_serial_port,
-            harness_fqbn=harness_fqbn,
-            harness_auto_flash=harness_auto_flash,
-            harness_arm_pin=harness_arm_pin,
-            harness_trigger_pin=harness_trigger_pin,
-            dut_arm_hold_ms=dut_arm_hold_ms,
-            harness_stable_low_ms=harness_stable_low_ms,
-            harness_ready_timeout_s=harness_ready_timeout_s,
-            harness_arm_timeout_s=harness_arm_timeout_s,
-            harness_active_timeout_s=harness_active_timeout_s,
-            harness_done_timeout_s=harness_done_timeout_s,
-        )
+            measure_result = self.measure(
+                serial_port=use_serial_port,
+                baud_rate=baud_rate,
+                serial_timeout_s=serial_timeout_s,
+                dut_ready_timeout_s=dut_ready_timeout_s,
+                harness_serial_port=harness_serial_port,
+                harness_fqbn=harness_fqbn,
+                harness_auto_flash=harness_auto_flash,
+                harness_arm_pin=harness_arm_pin,
+                harness_trigger_pin=harness_trigger_pin,
+                dut_arm_hold_ms=dut_arm_hold_ms,
+                harness_stable_low_ms=harness_stable_low_ms,
+                harness_ready_timeout_s=harness_ready_timeout_s,
+                harness_arm_timeout_s=harness_arm_timeout_s,
+                harness_active_timeout_s=harness_active_timeout_s,
+                harness_done_timeout_s=harness_done_timeout_s,
+            )
         if measure_result.latency_s is None:
+            if runtime_mode == "harness_only" and measure_result.arena_error_line is None:
+                logger.warning(
+                    "Harness-only runtime timeout without DUT arena diagnostics; "
+                    "classifying as HIL_ERROR_LATENCY."
+                )
             retry_hint = arduino_base._compute_retry_hint_bytes(
                 arena_bytes, measure_result.arena_error_line
             )
@@ -768,6 +908,7 @@ DEVICE_SPECS.update(_registry_device_specs())
 
 
 __all__ = [
+    "RuntimeMeasureMode",
     "DeviceSpec",
     "DeviceMetrics",
     "CompileResult",

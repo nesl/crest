@@ -28,6 +28,7 @@ from .hardware import (
     describe_error_code,
     normalize_power_metrics,
 )
+from .microcontrollers import get_device as get_microcontroller_device
 from .data import OxIODSplitData
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "nas_config.yaml"
@@ -498,34 +499,21 @@ def build_collect_metrics_request(
         is not configured, or when ``device.name`` is ``PORTENTA_H7`` and
         ``device.portenta.target_core`` is missing.
     """
+    def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
+        getter = getattr(container, "get", None)
+        if callable(getter):
+            return getter(key, default)
+        return getattr(container, key, default)
+
     energy_aware = bool(config.training.energy_aware)
     harness = None
     device_options: dict[str, Any] | None = None
-    if energy_aware:
-        harness_serial_port = getattr(config.device, "harness_serial_port", None)
-        if not harness_serial_port:
-            raise RuntimeError(
-                "Set device.harness_serial_port when energy_aware is True so the harness can be used."
-            )
-        harness = HarnessConfig(
-            harness_serial_port=harness_serial_port,
-            harness_fqbn=getattr(config.device, "harness_fqbn", None),
-            harness_auto_flash=getattr(config.device, "harness_auto_flash", None),
-            harness_arm_pin=getattr(config.device, "harness_arm_pin", None),
-            harness_trigger_pin=getattr(config.device, "harness_trigger_pin", None),
-            dut_arm_hold_ms=getattr(config.device, "dut_arm_hold_ms", None),
-            harness_stable_low_ms=getattr(config.device, "harness_stable_low_ms", None),
-            harness_ready_timeout_s=getattr(config.device, "harness_ready_timeout_s", None),
-            harness_arm_timeout_s=getattr(config.device, "harness_arm_timeout_s", None),
-            harness_active_timeout_s=getattr(config.device, "harness_active_timeout_s", None),
-            harness_done_timeout_s=getattr(config.device, "harness_done_timeout_s", None),
-        )
 
     if str(config.device.name).strip().upper() == "PORTENTA_H7":
-        portenta_cfg = getattr(config.device, "portenta", None)
-        target_core = getattr(portenta_cfg, "target_core", None) if portenta_cfg is not None else None
-        split = getattr(portenta_cfg, "split", None) if portenta_cfg is not None else None
-        security = getattr(portenta_cfg, "security", None) if portenta_cfg is not None else None
+        portenta_cfg = _cfg_get(config.device, "portenta", None)
+        target_core = _cfg_get(portenta_cfg, "target_core", None) if portenta_cfg is not None else None
+        split = _cfg_get(portenta_cfg, "split", None) if portenta_cfg is not None else None
+        security = _cfg_get(portenta_cfg, "security", None) if portenta_cfg is not None else None
         if not target_core:
             raise RuntimeError(
                 "Set device.portenta.target_core to 'cm7' or 'cm4' when device.name is PORTENTA_H7."
@@ -535,6 +523,45 @@ def build_collect_metrics_request(
             device_options["split"] = str(split)
         if security:
             device_options["security"] = str(security)
+
+    runtime_mode = "direct_serial"
+    if bool(config.device.hil):
+        try:
+            runtime_device = get_microcontroller_device(
+                str(config.device.name),
+                serial_port=_cfg_get(config.device, "serial_port", None),
+                device_options=device_options,
+            )
+        except ValueError:
+            runtime_device = None
+        if runtime_device is not None:
+            runtime_mode_fn = getattr(runtime_device, "runtime_measure_mode", None)
+            if callable(runtime_mode_fn):
+                runtime_mode = str(runtime_mode_fn())
+
+    if energy_aware or runtime_mode == "harness_only":
+        harness_serial_port = _cfg_get(config.device, "harness_serial_port", None)
+        if not harness_serial_port:
+            raise RuntimeError(
+                "Set device.harness_serial_port when runtime measurement requires the harness."
+            )
+        harness = HarnessConfig(
+            harness_serial_port=harness_serial_port,
+            harness_fqbn=_cfg_get(config.device, "harness_fqbn", None),
+            harness_auto_flash=_cfg_get(config.device, "harness_auto_flash", None),
+            harness_arm_pin=_cfg_get(config.device, "harness_arm_pin", None),
+            harness_trigger_pin=_cfg_get(config.device, "harness_trigger_pin", None),
+            dut_arm_hold_ms=_cfg_get(config.device, "dut_arm_hold_ms", None),
+            harness_stable_low_ms=_cfg_get(config.device, "harness_stable_low_ms", None),
+            harness_ready_timeout_s=_cfg_get(config.device, "harness_ready_timeout_s", None),
+            harness_arm_timeout_s=_cfg_get(config.device, "harness_arm_timeout_s", None),
+            harness_active_timeout_s=_cfg_get(config.device, "harness_active_timeout_s", None),
+            harness_done_timeout_s=_cfg_get(config.device, "harness_done_timeout_s", None),
+        )
+
+    dut_ready_timeout = _cfg_get(config.device, "dut_ready_timeout_s", 5.0)
+    if dut_ready_timeout is None:
+        dut_ready_timeout = 5.0
 
     return CollectMetricsRequest(
         hil_enabled=bool(config.device.hil),
@@ -547,7 +574,7 @@ def build_collect_metrics_request(
         latency_proxy_max_flops=config.training.latency_proxy_max_flops,
         serial_port=config.device.serial_port,
         latency_budget_ms=latency_budget_ms,
-        dut_ready_timeout_s=getattr(config.device, "dut_ready_timeout_s", 5.0),
+        dut_ready_timeout_s=float(dut_ready_timeout),
         harness=harness,
         device_options=device_options,
     )
@@ -569,7 +596,7 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
     Raises
     ------
     RuntimeError
-        If ``request.energy_aware`` is True but ``request.harness`` is missing.
+        If runtime measurement requires a harness but ``request.harness`` is missing.
     """
     # Prepare controller kwargs (ease of use and readability)
     controller_kwargs = {
@@ -581,20 +608,45 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
     if request.device_options is not None:
         controller_kwargs["device_options"] = request.device_options
 
+    runtime_mode = "direct_serial"
+    if request.hil_enabled:
+        try:
+            runtime_device = get_microcontroller_device(
+                str(request.device_name),
+                serial_port=request.serial_port,
+                device_options=request.device_options,
+            )
+        except ValueError:
+            runtime_device = None
+        if runtime_device is not None:
+            runtime_mode_fn = getattr(runtime_device, "runtime_measure_mode", None)
+            if callable(runtime_mode_fn):
+                runtime_mode = str(runtime_mode_fn())
+
     if request.energy_aware and request.harness is None:
         raise RuntimeError(
             "energy_aware=True requires harness configuration; do not run without harness."
+        )
+    if request.hil_enabled and runtime_mode == "harness_only" and request.harness is None:
+        raise RuntimeError(
+            "Runtime mode requires harness configuration. Set device.harness_serial_port."
         )
     
     if request.hil_enabled and request.serial_port is not None:
         controller_kwargs["serial_port"] = request.serial_port
     elif request.hil_enabled and request.serial_port is None:
-        raise RuntimeError("Set serial_port before enabling HIL runs so uploads know which device to target.")
+        raise RuntimeError(
+            "Set serial_port before enabling HIL runs so uploads know which DUT to target."
+        )
 
     if request.hil_enabled and request.dut_ready_timeout_s is not None:
         controller_kwargs["dut_ready_timeout_s"] = request.dut_ready_timeout_s
 
-    if request.hil_enabled and request.energy_aware and request.harness is not None:
+    if (
+        request.hil_enabled
+        and request.harness is not None
+        and (request.energy_aware or runtime_mode == "harness_only")
+    ):
         controller_kwargs["harness_serial_port"] = request.harness.harness_serial_port
         controller_kwargs["harness_fqbn"] = request.harness.harness_fqbn
         controller_kwargs["harness_auto_flash"] = request.harness.harness_auto_flash

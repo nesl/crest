@@ -33,6 +33,15 @@ class HandshakeResult:
     error: Optional[str] = None
 
 
+@dataclass
+class HarnessSessionResult:
+    harness_log: List[str]
+    harness_ready: bool
+    harness_done: bool
+    runs_harness: Optional[int]
+    error: Optional[str] = None
+
+
 def _decode_line(raw: bytes) -> str:
     """Decode a raw serial line into UTF-8 text.
 
@@ -290,6 +299,113 @@ def _parse_runs(lines: List[str]) -> Optional[int]:
     return None
 
 
+def _total_harness_done_timeout(
+    *,
+    harness_active_timeout_s: float,
+    harness_done_timeout_s: float,
+) -> float:
+    if harness_active_timeout_s <= 0 or harness_done_timeout_s <= 0:
+        return 0.0
+    return max(0.0, harness_active_timeout_s) + max(0.0, harness_done_timeout_s)
+
+
+def prime_harness_session(
+    *,
+    harness: serial.Serial,
+    harness_ready_timeout_s: float,
+    harness_log: Optional[List[str]] = None,
+    flush_input: bool = True,
+) -> HarnessSessionResult:
+    """Prime an already-open harness serial session.
+
+    Parameters
+    ----------
+    harness : serial.Serial
+        Open harness serial connection.
+    harness_ready_timeout_s : float
+        Timeout waiting for ``HARNESS READY`` after sending ``PING``.
+    harness_log : list[str] | None, optional
+        Existing log buffer to append to.
+    flush_input : bool, optional
+        When True, clear buffered input before sending ``PING``.
+
+    Returns
+    -------
+    HarnessSessionResult
+        Session status and captured harness log.
+    """
+    log = harness_log if harness_log is not None else []
+    if flush_input:
+        _flush_input(harness)
+    logger.info("hil_protocol: sending PING to harness (open session)")
+    _send_line(harness, CMD_PING)
+    harness_ready = _wait_for_token(
+        harness,
+        HARNESS_READY,
+        harness_ready_timeout_s,
+        log,
+        stage="HARNESS READY",
+    )
+    if not harness_ready:
+        return HarnessSessionResult(
+            harness_log=log,
+            harness_ready=False,
+            harness_done=False,
+            runs_harness=None,
+            error="harness_ready_timeout",
+        )
+    return HarnessSessionResult(
+        harness_log=log,
+        harness_ready=True,
+        harness_done=False,
+        runs_harness=None,
+        error=None,
+    )
+
+
+def wait_for_harness_done(
+    *,
+    harness: serial.Serial,
+    harness_active_timeout_s: float,
+    harness_done_timeout_s: float,
+    harness_log: Optional[List[str]] = None,
+) -> HarnessSessionResult:
+    """Read an open harness session until ``DONE`` is observed or timeout hits.
+
+    Parameters
+    ----------
+    harness : serial.Serial
+        Open harness serial connection.
+    harness_active_timeout_s : float
+        Maximum expected active measurement window.
+    harness_done_timeout_s : float
+        Additional timeout waiting for ``DONE`` after active phase.
+    harness_log : list[str] | None, optional
+        Existing log buffer to append to.
+
+    Returns
+    -------
+    HarnessSessionResult
+        Completion state and parsed run count.
+    """
+    log = harness_log if harness_log is not None else []
+    total_harness_timeout = _total_harness_done_timeout(
+        harness_active_timeout_s=harness_active_timeout_s,
+        harness_done_timeout_s=harness_done_timeout_s,
+    )
+    timeout_label = "infinite" if total_harness_timeout <= 0 else f"{total_harness_timeout:.1f}s"
+    logger.info("hil_protocol: waiting for HARNESS DONE (timeout=%s)", timeout_label)
+    harness_done = _read_until_done(harness, total_harness_timeout, log)
+    runs_harness = _parse_runs(log)
+    return HarnessSessionResult(
+        harness_log=log,
+        harness_ready=True,
+        harness_done=harness_done,
+        runs_harness=runs_harness,
+        error=None if harness_done else "harness_done_timeout",
+    )
+
+
 def run_dut_only(
     *,
     dut_port: str,
@@ -439,12 +555,10 @@ def run_handshake(
 
         # DONE waiting starts only after DUT timer output is observed, so this
         # budget is intentionally scoped to harness completion after that point.
-        if harness_active_timeout_s <= 0 or harness_done_timeout_s <= 0:
-            total_harness_timeout = 0.0
-        else:
-            total_harness_timeout = max(0.0, harness_active_timeout_s) + max(
-                0.0, harness_done_timeout_s
-            )
+        total_harness_timeout = _total_harness_done_timeout(
+            harness_active_timeout_s=harness_active_timeout_s,
+            harness_done_timeout_s=harness_done_timeout_s,
+        )
         timeout_label = (
             "infinite"
             if total_harness_timeout <= 0

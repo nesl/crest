@@ -186,11 +186,46 @@ class InitializationTests(HILServerTestCase):
 class SketchVariantTests(unittest.TestCase):
     """Validate sketch variant selection and input-mode behaviors."""
 
-    def _build_server(self, sketches_dir: Path, tcn_dir: Path, energy_aware: bool, input_mode: str) -> HILServer:
+    def _build_server(
+        self,
+        sketches_dir: Path,
+        tcn_dir: Path,
+        energy_aware: bool,
+        input_mode: str,
+        *,
+        device_name: str = "ARDUINO_NANO_33_BLE_SENSE",
+        target_core: str | None = None,
+    ) -> HILServer:
+        """Build a lightweight ``HILServer`` double for sketch-selection tests.
+
+        Parameters
+        ----------
+        sketches_dir : Path
+            Root sketches directory used by the selector under test.
+        tcn_dir : Path
+            Active output sketch directory.
+        energy_aware : bool
+            Whether energy-aware sketch variants should be selected.
+        input_mode : str
+            Requested input mode (uniform/representative/real).
+        device_name : str, optional
+            Device profile used to route uniform sketch variants.
+        target_core : str | None, optional
+            Optional Portenta target core (``cm7``/``cm4``).
+
+        Returns
+        -------
+        HILServer
+            Server instance with just enough config for variant sync tests.
+        """
         server = HILServer.__new__(HILServer)
+        portenta_cfg = (
+            SimpleNamespace(target_core=target_core) if target_core is not None else SimpleNamespace()
+        )
         server.config = SimpleNamespace(
             training=SimpleNamespace(energy_aware=energy_aware, input_mode=input_mode),
             outputs=SimpleNamespace(tcn_dir=tcn_dir),
+            device=SimpleNamespace(name=device_name, portenta=portenta_cfg),
         )
         server.sketch_variants_dir = sketches_dir
         server.active_sketch_path = None
@@ -204,13 +239,51 @@ class SketchVariantTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform")
+            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform_shared")
             server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server._sync_sketch_variant()
 
             self.assertTrue(out_path.exists())
-            self.assertIn("uniform", out_path.read_text())
+            self.assertIn("uniform_shared", out_path.read_text())
+
+    def test_selects_uniform_energy_sketch_for_portenta_cm7(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform_shared_cm7")
+            server = self._build_server(
+                sketches,
+                tcn_dir,
+                energy_aware=True,
+                input_mode="uniform",
+                device_name="PORTENTA_H7",
+                target_core="cm7",
+            )
+
+            out_path = server._sync_sketch_variant()
+
+            self.assertTrue(out_path.exists())
+            self.assertIn("uniform_shared_cm7", out_path.read_text())
+
+    def test_selects_uniform_no_energy_sketch_for_portenta_cm4(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            self._write_sketch(sketches / "tinyodom_tcn_no_energy.ino", "no_energy_shared_cm4")
+            server = self._build_server(
+                sketches,
+                tcn_dir,
+                energy_aware=False,
+                input_mode="uniform",
+                device_name="PORTENTA_H7",
+                target_core="cm4",
+            )
+
+            out_path = server._sync_sketch_variant()
+
+            self.assertTrue(out_path.exists())
+            self.assertIn("no_energy_shared_cm4", out_path.read_text())
 
     def test_selects_representative_variant_and_copies_header(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -270,23 +343,39 @@ class SketchVariantTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 server._sync_sketch_variant()
 
+    def test_portenta_uniform_requires_target_core(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            server = self._build_server(
+                sketches,
+                tcn_dir,
+                energy_aware=True,
+                input_mode="uniform",
+                device_name="PORTENTA_H7",
+                target_core=None,
+            )
+
+            with self.assertRaises(ValueError):
+                server._sync_sketch_variant()
+
     def test_energy_aware_false_uses_no_energy_sketch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_no_energy.ino", "no_energy")
+            self._write_sketch(sketches / "tinyodom_tcn_no_energy.ino", "no_energy_shared")
             server = self._build_server(sketches, tcn_dir, energy_aware=False, input_mode="uniform")
 
             out_path = server._sync_sketch_variant()
 
             self.assertTrue(out_path.exists())
-            self.assertIn("no_energy", out_path.read_text())
+            self.assertIn("no_energy_shared", out_path.read_text())
 
     def test_set_input_mode_updates_config_and_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform")
+            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform_shared")
             server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server.set_input_mode("uniform")

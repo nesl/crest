@@ -121,9 +121,15 @@ Before running long NAS jobs, skim and adjust `src/nas_config.yaml`:
    - `nas_multiobjective`: enable/disable multi-objective NAS (accuracy + latency/energy).
    - `energy_aware`: toggle whether energy (instead of latency) is used as the secondary objective/penalty; leave `false` if you do not have INA228 energy hardware attached.
    - `input_mode`: choose Arduino-side inference input source.
-     - `uniform`: random values in `[0, 5]` using `sketches/tinyodom_tcn_energy.ino`.
+     - `uniform`: random values in `[0, 5]` using shared uniform sketches (`sketches/tinyodom_tcn_energy.ino` when `energy_aware=true`, `sketches/tinyodom_tcn_no_energy.ino` when `energy_aware=false`).
      - `representative`: synthetic OxIOD-shaped values using `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino`.
      - `real`: fixed real OxIOD windows using `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino`.
+   - Runtime behavior for specific targets/cores is adjusted via compile-time
+     defines from the Python device layer (for example Portenta CM4 autostart
+     and serial-wait skip), while keeping shared uniform sketch sources.
+   - Portenta CM4 note: runtime telemetry is harness-based (`harness_only`), and
+     TinyODOM may upload a CM7 boot-helper sketch first to bring up CM4 before
+     uploading the DUT sketch.
 - **Outputs and network (`outputs.*`, `network.*`)**
    - `models_dir`, `tcn_dir`: where Optuna DBs, metrics, and TFLite/C++ artifacts are written.
    - `host`, `port`: must match the HIL server and SSH tunnel; defaults (`127.0.0.1:6001`) usually work as-is.

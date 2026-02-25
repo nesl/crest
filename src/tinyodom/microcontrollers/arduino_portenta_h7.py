@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+import shutil
 from dataclasses import dataclass
 from typing import Mapping, Optional
 
-from ..devices import ArduinoDevice, DeviceSpec
+from ..devices import ArduinoDevice, DeviceSpec, RuntimeMeasureMode
+from . import arduino_base
 
 BOARD_NAME = "PORTENTA_H7"
 BOARD_FQBN = "arduino:mbed_portenta:envie_m7"
@@ -15,6 +19,14 @@ VALID_SPLITS = {"50_50", "75_25", "100_0"}
 # pass through future/board-package variants without code changes.
 VALID_SECURITY = {"none", "default", "secure"}
 DEFAULT_SPLIT_BY_CORE = {"cm7": "75_25", "cm4": "50_50"}
+CM4_AUTOSTART_DELAY_MS = 2001
+CM7_BOOT_HELPER_SKETCH = (
+    Path(__file__).resolve().parents[3]
+    / "sketches"
+    / "boot_m4_helper"
+)
+_CM4_BOOT_HELPER_SIGNATURES: dict[str, str] = {}
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -291,3 +303,98 @@ class ArduinoPortentaH7Device(ArduinoDevice):
         """
         del device_options
         return self._resolved_options.to_board_options()
+
+    def runtime_measure_mode(self) -> RuntimeMeasureMode:
+        """Return runtime measurement mode for the selected target core."""
+        if self._resolved_options.target_core == "cm4":
+            # CM4 runtime telemetry is measured by the external harness because
+            # host-visible USB CDC Serial is not reliable for this target core.
+            return "harness_only"
+        return "direct_serial"
+
+    def runtime_mode_build_defines(self) -> dict[str, int]:
+        """Return compile-time runtime defines for CM4 autostart mode."""
+        if self._resolved_options.target_core != "cm4":
+            return {}
+        return {
+            "TINYODOM_AUTOSTART": 1,
+            "TINYODOM_AUTOSTART_DELAY_MS": CM4_AUTOSTART_DELAY_MS,
+            "TINYODOM_SKIP_SERIAL_WAIT": 1,
+        }
+
+    def _cm7_boot_helper_board_options(self) -> dict[str, str]:
+        """Return board options for CM7 boot-assist sketch upload."""
+        return {
+            "target_core": "cm7",
+            "split": self._resolved_options.split,
+            "security": self._resolved_options.security,
+        }
+
+    def _ensure_cm7_boot_helper(self, *, serial_port: str) -> None:
+        """Ensure a CM7 helper sketch is running so M4 can boot reliably."""
+        helper_signature = ",".join(
+            f"{key}={value}" for key, value in sorted(self._cm7_boot_helper_board_options().items())
+        )
+        if _CM4_BOOT_HELPER_SIGNATURES.get(serial_port) == helper_signature:
+            return
+        if not CM7_BOOT_HELPER_SKETCH.exists():
+            raise RuntimeError(f"Missing Portenta CM7 boot helper sketch: {CM7_BOOT_HELPER_SKETCH}")
+
+        logger.info(
+            "Portenta CM4 runtime: uploading CM7 boot helper (port=%s, options=%s)",
+            serial_port,
+            helper_signature,
+        )
+        compile_result = arduino_base.compile_sketch(
+            sketch_path=CM7_BOOT_HELPER_SKETCH,
+            fqbn=BOARD_FQBN,
+            board_options=self._cm7_boot_helper_board_options(),
+        )
+        if not compile_result.success or compile_result.build_dir is None:
+            raise RuntimeError(
+                "Failed to compile Portenta CM7 boot helper sketch.\n"
+                f"{compile_result.log.strip()}"
+            )
+        upload_result = arduino_base.upload_sketch(
+            sketch_path=CM7_BOOT_HELPER_SKETCH,
+            fqbn=BOARD_FQBN,
+            build_dir=compile_result.build_dir,
+            serial_port=serial_port,
+            board_options=self._cm7_boot_helper_board_options(),
+        )
+        if not upload_result.success:
+            logger.warning(
+                "Portenta CM4 runtime: CM7 boot helper upload failed once; retrying with clean rebuild."
+            )
+            shutil.rmtree(compile_result.build_dir, ignore_errors=True)
+            retry_compile = arduino_base.compile_sketch(
+                sketch_path=CM7_BOOT_HELPER_SKETCH,
+                fqbn=BOARD_FQBN,
+                board_options=self._cm7_boot_helper_board_options(),
+            )
+            if not retry_compile.success or retry_compile.build_dir is None:
+                raise RuntimeError(
+                    "Failed to compile Portenta CM7 boot helper sketch during retry.\n"
+                    f"{retry_compile.log.strip()}"
+                )
+            retry_upload = arduino_base.upload_sketch(
+                sketch_path=CM7_BOOT_HELPER_SKETCH,
+                fqbn=BOARD_FQBN,
+                build_dir=retry_compile.build_dir,
+                serial_port=serial_port,
+                board_options=self._cm7_boot_helper_board_options(),
+            )
+            if not retry_upload.success:
+                raise RuntimeError(
+                    "Failed to upload Portenta CM7 boot helper sketch.\n"
+                    f"{retry_upload.log.strip()}"
+                )
+        _CM4_BOOT_HELPER_SIGNATURES[serial_port] = helper_signature
+
+    def prepare_for_runtime(self, *, runtime_mode: RuntimeMeasureMode, serial_port: str) -> None:
+        """Prepare dual-core runtime prerequisites before DUT upload."""
+        if runtime_mode == "harness_only" and self._resolved_options.target_core == "cm4":
+            logger.info(
+                "Portenta CM4 runtime uses harness-only telemetry; DUT Serial diagnostics are limited on host USB."
+            )
+            self._ensure_cm7_boot_helper(serial_port=serial_port)

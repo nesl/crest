@@ -21,6 +21,30 @@ Use this guide when the board:
 5. `src/nas_config.yaml` and/or board-specific config files
 6. Tests in `test/test_hardware.py` and `test/test_model.py`
 
+## DUT Sketch Layout
+
+Runtime sketch selection in `HILServer._sync_sketch_variant` uses this layout:
+
+1. Non-analysis uniform variants are shared across boards:
+   - `sketches/tinyodom_tcn_energy.ino`
+   - `sketches/tinyodom_tcn_no_energy.ino`
+2. Analysis variants remain shared and are not split in this phase:
+   - `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino`
+   - `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino`
+   - `sketches/analysis_sketches/tinyodom_tcn_input_data.h`
+3. Shared headers are still copied from `sketches/common/`.
+4. Board/core behavior is selected in Python device wrappers and compile-time
+   defines (for example Portenta CM4 autostart), not by duplicating uniform
+   sketch sources.
+
+CM4-specific controls in shared uniform sketches:
+
+1. `TINYODOM_SKIP_SERIAL_WAIT`: skip `while (!Serial)` when host USB serial is
+   unavailable/restricted on a runtime target core.
+2. `TINYODOM_AUTOSTART`: bypass READY/START handshake for harness-only flows.
+3. `TINYODOM_AUTOSTART_DELAY_MS`: delay inference start so upload/reset/harness
+   preparation can settle before GPIO trigger timing begins.
+
 ## Board Module Contract
 
 Create `src/tinyodom/microcontrollers/arduino_<board>.py` with this shape.
@@ -139,12 +163,42 @@ If the board needs a new Arduino core package:
 
 ## Memory Parsing Notes
 
-`arduino_base.compile_sketch(...)` currently parses memory in two ways:
+`arduino_base.compile_sketch(...)` parses memory in three stages:
 
 1. Primary: Arduino CLI `Sketch uses ...` output.
-2. Fallback: ELF section accounting via `arm-none-eabi-size -A`.
+2. First fallback: board-defined `platform.txt` size regexes (`recipe.size.regex` and `recipe.size.regex.data`) over `arm-none-eabi-size -A` output.
+3. Last fallback: heuristic ELF section accounting.
 
-For new boards, validate at least one compile run and confirm RAM/flash values are non-sentinel.
+Why stage 2 exists:
+
+1. Some boards (for example Portenta H7 in some option combinations) may not print summary lines.
+2. `platform.txt` regexes are the board package's own source of truth for Arduino-style semantics.
+3. This avoids counting linker-reserved sections such as `.heap`, `.stack`, or board-reserved regions (for example `.lwip_sec`) as "used RAM".
+
+Why not hardcode per-board `if/else` parsing:
+
+1. Board package updates can change section layout and limits without touching TinyODOM.
+2. Different boards can share the same parsing contract through `platform.txt`.
+3. New boards (for example GIGA R1) should work without writing board-specific memory logic when package metadata is valid.
+
+If a board does not print `Sketch uses ...`:
+
+1. Inspect resolved properties:
+   - `arduino-cli compile --show-properties --fqbn <fqbn> <sketch>`
+2. Confirm these properties exist:
+   - `recipe.size.pattern`
+   - `recipe.size.regex`
+   - `recipe.size.regex.data`
+3. Confirm board limits are resolved:
+   - `upload.maximum_size`
+   - `upload.maximum_data_size`
+4. If `upload.maximum_size` is missing but available in `boards.txt` menu entries for the selected options, inject it:
+   - `--build-property upload.maximum_size=<value>`
+5. Re-run compile and verify either:
+   - CLI prints summary lines, or
+   - stage-2 regex fallback returns values matching Arduino semantics.
+
+For new boards, validate at least one compile run and ensure stage-1 or stage-2 values are present and non-sentinel.
 
 ## Upload Error Notes
 
@@ -174,3 +228,25 @@ Before opening a PR:
 3. Confirm serial port defaults in config are correct.
 4. Confirm harness pins if energy-aware mode is enabled.
 5. Confirm generated output filenames reflect the board name in config.
+
+## Portenta CM4 Runtime Diagnostics Limitation
+
+For `PORTENTA_H7` runs with `target_core=cm4`, TinyODOM uses `harness_only` runtime measurement.
+
+CM4 boot prerequisite:
+
+1. TinyODOM uploads a CM7 boot-helper sketch before the CM4 DUT upload.
+2. Boot-helper sketch path: `sketches/boot_m4_helper/boot_m4_helper.ino`.
+3. This helper is used to start the CM4 runtime path reliably on Portenta dual-core runs.
+4. `serial_port` remains required because it is the upload path for both the helper and CM4 DUT sketch.
+
+Current limitation (Arduino `mbed_portenta` core):
+
+1. The CM4 variant does not expose host USB CDC `Serial` on the primary ACM port used by TinyODOM uploads.
+2. Harness telemetry is therefore the authoritative runtime source for latency and energy in CM4 mode.
+3. Arena/runtime error lines emitted by DUT `Serial` are not reliably visible from the host in this setup.
+
+Practical implication:
+
+1. A CM4 runtime arena allocation failure can surface as a generic latency timeout (`HIL_ERROR_LATENCY`) rather than `HIL_ERROR_UNDER_SIZED`.
+2. Deterministic CM4 runtime-fault classification requires a separate fault channel (for example dedicated GPIO signaling) and is out of scope for this pass.
