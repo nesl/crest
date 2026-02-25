@@ -260,11 +260,32 @@ def _resolve_platform_txt_path(build_dir: Path) -> Optional[Path]:
         metadata = json.loads(options_path.read_text())
     except (OSError, ValueError):
         return None
-    hardware_folders = str(metadata.get("hardwareFolders", "")).split(",")
+    raw_hardware_folders = metadata.get("hardwareFolders", "")
+    hardware_folders: List[str] = []
+    # Arduino CLI typically encodes hardwareFolders as a JSON array, but some
+    # environments may provide a comma-separated string. Support both forms and
+    # ignore empty entries so we never probe "./platform.txt" accidentally.
+    if isinstance(raw_hardware_folders, list):
+        for entry in raw_hardware_folders:
+            if not isinstance(entry, str):
+                continue
+            cleaned = entry.strip()
+            if cleaned:
+                hardware_folders.append(cleaned)
+    elif isinstance(raw_hardware_folders, str):
+        for part in raw_hardware_folders.split(","):
+            cleaned = part.strip()
+            if cleaned:
+                hardware_folders.append(cleaned)
+    else:
+        # Fallback: coerce to string and split on commas as a best-effort.
+        for part in str(raw_hardware_folders).split(","):
+            cleaned = part.strip()
+            if cleaned:
+                hardware_folders.append(cleaned)
+
     for folder in hardware_folders:
-        folder_path = Path(folder.strip())
-        if not folder_path:
-            continue
+        folder_path = Path(folder)
         platform_txt = folder_path / "platform.txt"
         if platform_txt.exists():
             return platform_txt

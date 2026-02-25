@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -63,6 +64,7 @@ from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
     _collect_latency_seconds,
     _compute_retry_hint_bytes,
     _resolve_build_dir,
+    _resolve_platform_txt_path,
     compile_sketch,
     measure_harness_only_open_session,
     measure_serial,
@@ -611,12 +613,26 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertEqual(device.resolved_options.split, "75_25")
         self.assertEqual(device.resolved_options.security, "none")
 
+    def test_get_device_normalizes_registry_name_case_and_whitespace(self):
+        device = get_device(
+            "  portenta_h7  ",
+            device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
+        )
+        self.assertIsInstance(device, arduino_portenta_h7.ArduinoPortentaH7Device)
+
     def test_get_device_non_arduino_legacy_entry_raises_actionable_error(self):
         with self.assertRaises(ValueError) as context:
             get_device("ARCH_MAX")
         message = str(context.exception)
         self.assertIn("no registered backend", message)
         self.assertIn("DeviceInterface", message)
+
+    def test_get_device_normalizes_legacy_name_in_actionable_error(self):
+        with self.assertRaises(ValueError) as context:
+            get_device("  arch_max  ")
+        message = str(context.exception)
+        self.assertIn("Device 'ARCH_MAX'", message)
+        self.assertIn("no registered backend", message)
 
     def test_portenta_runtime_mode_resolution(self):
         cm7 = get_device(
@@ -801,6 +817,55 @@ class ArduinoCommandOptionTests(unittest.TestCase):
 
         self.assertEqual(flash_bytes, 155_864)
         self.assertEqual(ram_bytes, 63_304)
+
+    def test_resolve_platform_txt_path_supports_hardware_folders_list(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            build_dir = Path(tmpdir) / "build"
+            build_dir.mkdir(parents=True)
+            platform_dir = Path(tmpdir) / "platform"
+            platform_dir.mkdir(parents=True)
+            expected = platform_dir / "platform.txt"
+            expected.write_text("recipe.size.regex=^.*$")
+            (build_dir / "build.options.json").write_text(
+                json.dumps(
+                    {
+                        "hardwareFolders": [str(platform_dir)],
+                        "fqbn": "arduino:mbed_portenta:envie_m7",
+                    }
+                )
+            )
+
+            resolved = _resolve_platform_txt_path(build_dir)
+
+        self.assertEqual(resolved, expected)
+
+    def test_resolve_platform_txt_path_skips_empty_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            build_dir = root / "build"
+            build_dir.mkdir(parents=True)
+            # If empty entries are not filtered, Path("") probes CWD/platform.txt.
+            (root / "platform.txt").write_text("recipe.size.regex=^bad$")
+            platform_dir = root / "platform"
+            platform_dir.mkdir(parents=True)
+            expected = platform_dir / "platform.txt"
+            expected.write_text("recipe.size.regex=^good$")
+            (build_dir / "build.options.json").write_text(
+                json.dumps(
+                    {
+                        "hardwareFolders": ["", "   ", str(platform_dir)],
+                        "fqbn": "arduino:mbed_portenta:envie_m7",
+                    }
+                )
+            )
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                resolved = _resolve_platform_txt_path(build_dir)
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(resolved, expected)
 
     def test_compile_sketch_uses_size_recipe_when_summary_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:

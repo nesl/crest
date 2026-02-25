@@ -88,9 +88,10 @@ def get_device(
     Any
         Device wrapper implementing the ``DeviceInterface`` contract.
     """
+    normalized_name = name.strip().upper()
     entries = _registry_entries()
-    if name in entries:
-        module_path, class_name, _spec_symbol = entries[name]
+    if normalized_name in entries:
+        module_path, class_name, _spec_symbol = entries[normalized_name]
         device_cls = _load_symbol(module_path, class_name)
         return device_cls(
             serial_port=serial_port,
@@ -102,7 +103,7 @@ def get_device(
 
     try:
         return ArduinoDevice(
-            name,
+            normalized_name,
             serial_port=serial_port,
             device_options=device_options,
         )
@@ -111,7 +112,7 @@ def get_device(
         # instruct callers to register a dedicated backend implementation.
         if "has no Arduino FQBN" in str(exc):
             raise ValueError(
-                f"Device '{name}' has no registered backend in tinyodom.microcontrollers "
+                f"Device '{normalized_name}' has no registered backend in tinyodom.microcontrollers "
                 "and no Arduino FQBN fallback. Register a DeviceInterface-backed "
                 "microcontroller class for this board."
             ) from exc

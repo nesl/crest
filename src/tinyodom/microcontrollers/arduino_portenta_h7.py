@@ -19,6 +19,8 @@ VALID_SPLITS = {"50_50", "75_25", "100_0"}
 # pass through future/board-package variants without code changes.
 VALID_SECURITY = {"none", "default", "secure"}
 DEFAULT_SPLIT_BY_CORE = {"cm7": "75_25", "cm4": "50_50"}
+# Intentionally 2001ms (not 2000) so CM4 autostart begins strictly after the
+# 2s reset/USB-enumeration settling window used by host-side runtime setup.
 CM4_AUTOSTART_DELAY_MS = 2001
 CM7_BOOT_HELPER_SKETCH = (
     Path(__file__).resolve().parents[3]
