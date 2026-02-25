@@ -699,7 +699,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
             "security=none,split=50_50,target_core=cm4",
         )
 
-    def test_compile_sketch_uses_elf_fallback_when_sketch_summary_missing(self):
+    def test_compile_sketch_leaves_memory_unknown_without_summary_or_recipe(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
             sketch_dir.mkdir()
@@ -711,16 +711,16 @@ class ArduinoCommandOptionTests(unittest.TestCase):
                 "tinyodom.microcontrollers.arduino_base._parse_memory_from_compile",
                 return_value=(None, None),
             ), patch(
-                "tinyodom.microcontrollers.arduino_base._parse_memory_from_elf",
-                return_value=(123_456, 654_321),
+                "tinyodom.microcontrollers.arduino_base._parse_memory_from_size_recipe",
+                return_value=(None, None),
             ):
                 result = compile_sketch(
                     sketch_path=sketch_dir,
                     fqbn="arduino:mbed_portenta:envie_m7",
                 )
 
-        self.assertEqual(result.flash_bytes, 123_456)
-        self.assertEqual(result.ram_bytes, 654_321)
+        self.assertIsNone(result.flash_bytes)
+        self.assertIsNone(result.ram_bytes)
 
     def test_parse_memory_from_size_recipe_uses_platform_regexes(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -769,7 +769,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertEqual(flash_bytes, 155_864)
         self.assertEqual(ram_bytes, 63_304)
 
-    def test_compile_sketch_prefers_size_recipe_before_elf_fallback(self):
+    def test_compile_sketch_uses_size_recipe_when_summary_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
             sketch_dir.mkdir()
@@ -783,10 +783,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
             ), patch(
                 "tinyodom.microcontrollers.arduino_base._parse_memory_from_size_recipe",
                 return_value=(155_864, 63_304),
-            ), patch(
-                "tinyodom.microcontrollers.arduino_base._parse_memory_from_elf",
-                return_value=(999_999, 888_888),
-            ) as elf_fallback:
+            ):
                 result = compile_sketch(
                     sketch_path=sketch_dir,
                     fqbn="arduino:mbed_portenta:envie_m7",
@@ -794,7 +791,6 @@ class ArduinoCommandOptionTests(unittest.TestCase):
 
         self.assertEqual(result.flash_bytes, 155_864)
         self.assertEqual(result.ram_bytes, 63_304)
-        elf_fallback.assert_not_called()
 
     def test_upload_permission_error_appends_linux_guidance(self):
         augmented = _augment_upload_error("dfu-util: LIBUSB_ERROR_ACCESS")
@@ -1321,6 +1317,103 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
         self.assertEqual(result.latency_s, -1.0)
         self.assertIsNone(result.retry_hint_bytes)
 
+    def test_harness_only_not_ready_maps_to_upload_error(self):
+        device = get_device(
+            "PORTENTA_H7",
+            serial_port="/dev/ttyACM0",
+            device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+        )
+        compile_result = ArduinoCompileResult(
+            success=True,
+            log="ok",
+            flash_bytes=123,
+            ram_bytes=456,
+            overflow_kind=None,
+            build_dir=Path("/tmp/fake_build"),
+        )
+        prime_result = hil_protocol.HarnessSessionResult(
+            harness_log=["noise"],
+            harness_ready=False,
+            harness_done=False,
+            runs_harness=None,
+            error="harness_ready_timeout",
+        )
+
+        class _DummyHarness:
+            def __init__(self, *_args, **_kwargs) -> None:
+                return None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch.object(device, "compile", return_value=compile_result), patch(
+            "tinyodom.devices.arduino_base.ensure_harness_firmware",
+            return_value=True,
+        ), patch.object(
+            device,
+            "prepare_for_runtime",
+            return_value=None,
+        ), patch("tinyodom.devices.serial.Serial", side_effect=_DummyHarness), patch(
+            "tinyodom.devices.hil_protocol.prime_harness_session",
+            return_value=prime_result,
+        ), patch.object(device, "upload") as upload_mock:
+            result = device.evaluate(
+                dirpath=Path("/tmp"),
+                arena_kb=32,
+                window_size=128,
+                num_channels=6,
+                serial_port="/dev/ttyACM0",
+                run_hil=True,
+                harness_serial_port="/dev/ttyACM1",
+            )
+
+        self.assertEqual(result.error_code, HIL_ERROR_UPLOAD)
+        self.assertEqual(result.latency_s, -1.0)
+        upload_mock.assert_not_called()
+
+    def test_harness_only_prepare_failure_maps_to_upload_error(self):
+        device = get_device(
+            "PORTENTA_H7",
+            serial_port="/dev/ttyACM0",
+            device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+        )
+        compile_result = ArduinoCompileResult(
+            success=True,
+            log="ok",
+            flash_bytes=123,
+            ram_bytes=456,
+            overflow_kind=None,
+            build_dir=Path("/tmp/fake_build"),
+        )
+
+        with patch.object(device, "compile", return_value=compile_result), patch(
+            "tinyodom.devices.arduino_base.ensure_harness_firmware",
+            side_effect=RuntimeError("Harness compile failed."),
+        ), patch.object(
+            device,
+            "prepare_for_runtime",
+            return_value=None,
+        ), patch("tinyodom.devices.serial.Serial") as serial_mock, patch.object(
+            device, "upload"
+        ) as upload_mock:
+            result = device.evaluate(
+                dirpath=Path("/tmp"),
+                arena_kb=32,
+                window_size=128,
+                num_channels=6,
+                serial_port="/dev/ttyACM0",
+                run_hil=True,
+                harness_serial_port="/dev/ttyACM1",
+            )
+
+        self.assertEqual(result.error_code, HIL_ERROR_UPLOAD)
+        self.assertEqual(result.latency_s, -1.0)
+        serial_mock.assert_not_called()
+        upload_mock.assert_not_called()
+
 
 class DeviceTimeoutPassThroughTests(unittest.TestCase):
     def test_arduino_device_measure_preserves_zero_timeouts(self):
@@ -1509,21 +1602,32 @@ class HILSpecErrorTests(unittest.TestCase):
 
 
 class HILControllerTests(unittest.TestCase):
+    @staticmethod
+    def _controller_device(arena_sizes_kb: np.ndarray, *, name: str = "ARDUINO_NANO_33_BLE_SENSE"):
+        class _Spec:
+            def __init__(self, spec_name: str, arenas: np.ndarray) -> None:
+                self.name = spec_name
+                self.arena_sizes_kb = [int(v) for v in arenas]
+
+        class _Device:
+            def __init__(self, spec_name: str, arenas: np.ndarray) -> None:
+                self.spec = _Spec(spec_name, arenas)
+
+        return _Device(name, arena_sizes_kb)
+
     def test_hil_controller_success_on_first_candidate(self):
         # Successful compile-only pass should short-circuit the sweep and surface metrics.
         arena_candidates = np.array([10, 20])
+        device = self._controller_device(arena_candidates)
         hil_return = (64000, 128000, 0.25, 10 * 1024, HIL_ERROR_OK, None)
-        with patch(
-            "tinyodom.hardware.arena_size_candidates",
-            return_value=arena_candidates,
-        ), patch(
-            "tinyodom.hardware.HIL_spec",
+        with patch("tinyodom.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
                 dirpath="unused",
                 chosen_device="ARDUINO_NANO_33_BLE_SENSE",
                 run_hil=False,
+                device=device,
             )
         self.assertEqual(mock_spec.call_count, 1)
         self.assertEqual(ram, 64000)
@@ -1536,23 +1640,21 @@ class HILControllerTests(unittest.TestCase):
     def test_hil_controller_exhausts_candidates(self):
         # Exhausting the sweep without success should return masterError=2 and sentinel metrics.
         arena_candidates = np.array([10, 20])
+        device = self._controller_device(arena_candidates)
 
         def hil_side_effect(**_kwargs):
             idx = _kwargs["idx"]
             arena = arena_candidates[idx] * 1024
             return (50000, 100000, -1.0, arena, HIL_ERROR_LATENCY, None)
 
-        with patch(
-            "tinyodom.hardware.arena_size_candidates",
-            return_value=arena_candidates,
-        ), patch(
-            "tinyodom.hardware.HIL_spec",
+        with patch("tinyodom.hardware.HIL_spec",
             side_effect=hil_side_effect,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
                 dirpath="unused",
                 chosen_device="ARDUINO_NANO_33_BLE_SENSE",
                 run_hil=False,
+                device=device,
             )
         self.assertEqual(mock_spec.call_count, len(arena_candidates))
         self.assertEqual(
@@ -1563,18 +1665,16 @@ class HILControllerTests(unittest.TestCase):
     def test_hil_controller_non_arena_failure(self):
         # Non-arena errors should bubble up immediately with masterError=3 and captured metrics.
         arena_candidates = np.array([10, 20])
+        device = self._controller_device(arena_candidates)
         hil_return = (72000, 160000, -1.0, 10 * 1024, HIL_ERROR_COMPILE, None)
-        with patch(
-            "tinyodom.hardware.arena_size_candidates",
-            return_value=arena_candidates,
-        ), patch(
-            "tinyodom.hardware.HIL_spec",
+        with patch("tinyodom.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
                 dirpath="unused",
                 chosen_device="ARDUINO_NANO_33_BLE_SENSE",
                 run_hil=False,
+                device=device,
             )
         self.assertEqual(mock_spec.call_count, 1)
         self.assertEqual(
@@ -1585,18 +1685,16 @@ class HILControllerTests(unittest.TestCase):
     def test_hil_controller_reports_flash_overflow(self):
         # Linker overflow should surface a dedicated master error for pruning.
         arena_candidates = np.array([10])
+        device = self._controller_device(arena_candidates)
         hil_return = (-1, -1, -1.0, 10 * 1024, HIL_ERROR_FLASH_OVERFLOW, None)
-        with patch(
-            "tinyodom.hardware.arena_size_candidates",
-            return_value=arena_candidates,
-        ), patch(
-            "tinyodom.hardware.HIL_spec",
+        with patch("tinyodom.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
                 dirpath="unused",
                 chosen_device="ARDUINO_NANO_33_BLE_SENSE",
                 run_hil=False,
+                device=device,
             )
         self.assertEqual(mock_spec.call_count, 1)
         self.assertEqual(
@@ -1607,18 +1705,16 @@ class HILControllerTests(unittest.TestCase):
     def test_hil_controller_reports_device_not_found(self):
         # Upload failures should set the dedicated master error so orchestration can stop early.
         arena_candidates = np.array([10])
+        device = self._controller_device(arena_candidates)
         hil_return = (64000, 128000, -1.0, 10 * 1024, HIL_ERROR_UPLOAD, None)
-        with patch(
-            "tinyodom.hardware.arena_size_candidates",
-            return_value=arena_candidates,
-        ), patch(
-            "tinyodom.hardware.HIL_spec",
+        with patch("tinyodom.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
                 dirpath="unused",
                 chosen_device="ARDUINO_NANO_33_BLE_SENSE",
                 run_hil=False,
+                device=device,
             )
         self.assertEqual(mock_spec.call_count, 1)
         self.assertEqual(
@@ -1629,6 +1725,7 @@ class HILControllerTests(unittest.TestCase):
     def test_hil_controller_prefers_smallest_successful_arena(self):
         # Success at a mid-point arena should trigger a retry with the next smaller candidate.
         arena_candidates = np.array([10, 20, 40, 80])
+        device = self._controller_device(arena_candidates)
         call_log: list[int] = []
 
         def hil_side_effect(**kwargs):
@@ -1641,17 +1738,14 @@ class HILControllerTests(unittest.TestCase):
             self.assertEqual(idx, 0)
             return (-1, -1, -1.0, arena, HIL_ERROR_UNDER_SIZED, None)
 
-        with patch(
-            "tinyodom.hardware.arena_size_candidates",
-            return_value=arena_candidates,
-        ), patch(
-            "tinyodom.hardware.HIL_spec",
+        with patch("tinyodom.hardware.HIL_spec",
             side_effect=hil_side_effect,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
                 dirpath="unused",
                 chosen_device="ARDUINO_NANO_33_BLE_SENSE",
                 run_hil=False,
+                device=device,
             )
         self.assertEqual(mock_spec.call_count, 2)
         self.assertListEqual(call_log, [1, 0])
@@ -1663,18 +1757,16 @@ class HILControllerTests(unittest.TestCase):
     def test_hil_controller_reports_master_ram_overflow_at_smallest(self):
         # RAM overflow at the smallest arena should surface a dedicated master error for retries.
         arena_candidates = np.array([10])
+        device = self._controller_device(arena_candidates)
         hil_return = (-1, -1, -1.0, 10 * 1024, HIL_ERROR_RAM_OVERFLOW, None)
-        with patch(
-            "tinyodom.hardware.arena_size_candidates",
-            return_value=arena_candidates,
-        ), patch(
-            "tinyodom.hardware.HIL_spec",
+        with patch("tinyodom.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
                 dirpath="unused",
                 chosen_device="ARDUINO_NANO_33_BLE_SENSE",
                 run_hil=False,
+                device=device,
             )
         self.assertEqual(mock_spec.call_count, 1)
         self.assertEqual(master_error, HIL_MASTER_RAM_OVERFLOW)
@@ -1683,6 +1775,7 @@ class HILControllerTests(unittest.TestCase):
     def test_hil_controller_retains_success_after_smaller_failure(self):
         # A smaller arena failure after a success should still return the best-known success metrics.
         arena_candidates = np.array([10, 20, 40])
+        device = self._controller_device(arena_candidates)
         call_order: list[int] = []
 
         def hil_side_effect(**kwargs):
@@ -1695,17 +1788,14 @@ class HILControllerTests(unittest.TestCase):
             self.assertEqual(idx, 0)
             return (-1, -1, -1.0, arena, HIL_ERROR_RAM_OVERFLOW, None)
 
-        with patch(
-            "tinyodom.hardware.arena_size_candidates",
-            return_value=arena_candidates,
-        ), patch(
-            "tinyodom.hardware.HIL_spec",
+        with patch("tinyodom.hardware.HIL_spec",
             side_effect=hil_side_effect,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
                 dirpath="unused",
                 chosen_device="ARDUINO_NANO_33_BLE_SENSE",
                 run_hil=False,
+                device=device,
             )
         self.assertEqual(mock_spec.call_count, 2)
         self.assertListEqual(call_order, [1, 0])
@@ -1718,6 +1808,7 @@ class HILControllerTests(unittest.TestCase):
         # Retry hints should allow the controller to skip intermediate arenas when logs provide guidance.
         _store_retry_hint_bytes(None)
         arena_candidates = np.array([10, 20, 40, 80])
+        device = self._controller_device(arena_candidates)
         call_sequence: list[int] = []
 
         def hil_side_effect(**kwargs):
@@ -1734,23 +1825,54 @@ class HILControllerTests(unittest.TestCase):
             self.assertEqual(idx, 2)
             return (-1, -1, -1.0, arena, HIL_ERROR_UNDER_SIZED, None)
 
-        with patch(
-            "tinyodom.hardware.arena_size_candidates",
-            return_value=arena_candidates,
-        ), patch(
-            "tinyodom.hardware.HIL_spec",
+        with patch("tinyodom.hardware.HIL_spec",
             side_effect=hil_side_effect,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
                 dirpath="unused",
                 chosen_device="ARDUINO_NANO_33_BLE_SENSE",
                 run_hil=False,
+                device=device,
             )
 
         self.assertEqual(call_sequence[:2], [1, 3])
         self.assertEqual(call_sequence[-1], 2)
         self.assertEqual(master_error, HIL_MASTER_SUCCESS)
         self.assertEqual(arena_bytes, 80 * 1024)
+        self.assertEqual((ram, flash), (61000, 120000))
+        self.assertAlmostEqual(latency, 0.2)
+
+    def test_hil_controller_uses_injected_device_spec_not_catalog(self):
+        arena_candidates = np.array([11, 33, 77])
+        device = self._controller_device(arena_candidates, name="PORTENTA_H7")
+        observed_indices: list[int] = []
+
+        def hil_side_effect(**kwargs):
+            idx = kwargs["idx"]
+            observed_indices.append(idx)
+            arena = arena_candidates[idx] * 1024
+            if idx == 1:
+                return (61000, 120000, 0.2, arena, HIL_ERROR_OK, None)
+            return (-1, -1, -1.0, arena, HIL_ERROR_UNDER_SIZED, None)
+
+        with patch(
+            "tinyodom.hardware.arena_size_candidates",
+            side_effect=AssertionError("arena_size_candidates should not be used for injected devices"),
+        ), patch(
+            "tinyodom.hardware.HIL_spec",
+            side_effect=hil_side_effect,
+        ):
+            ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
+                dirpath="unused",
+                chosen_device="PORTENTA_H7",
+                device_options=None,
+                run_hil=False,
+                device=device,
+            )
+
+        self.assertEqual(master_error, HIL_MASTER_SUCCESS)
+        self.assertEqual(observed_indices[0], 1)
+        self.assertEqual(arena_bytes, 33 * 1024)
         self.assertEqual((ram, flash), (61000, 120000))
         self.assertAlmostEqual(latency, 0.2)
 

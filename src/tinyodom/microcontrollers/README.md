@@ -163,11 +163,10 @@ If the board needs a new Arduino core package:
 
 ## Memory Parsing Notes
 
-`arduino_base.compile_sketch(...)` parses memory in three stages:
+`arduino_base.compile_sketch(...)` parses memory in two stages:
 
 1. Primary: Arduino CLI `Sketch uses ...` output.
 2. First fallback: board-defined `platform.txt` size regexes (`recipe.size.regex` and `recipe.size.regex.data`) over `arm-none-eabi-size -A` output.
-3. Last fallback: heuristic ELF section accounting.
 
 Why stage 2 exists:
 

@@ -760,11 +760,8 @@ def HIL_controller(
             device_options=device_options,
         )
     chosen_device = device.spec.name
-    arena_sweep_list = list(
-        arena_size_candidates(chosen_device, device_options=device_options)
-    )
-    if not arena_sweep_list:
-        arena_sweep_list = [int(value) for value in device.spec.arena_sizes_kb]
+    # When a device object exists, its resolved spec is the source of truth.
+    arena_sweep_list = [int(value) for value in device.spec.arena_sizes_kb]
     finRAM = -1
     finFlash = -1
     finLatency = -1.0

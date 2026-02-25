@@ -784,12 +784,12 @@ class ArduinoDevice(DeviceInterface):
                             "Harness session was not ready before DUT upload (error=%s).",
                             prime_result.error,
                         )
-                        measure_result = MeasureResult(
-                            latency_s=None,
-                            arena_error_line=None,
-                            serial_log=[f"HARNESS_ERROR: {prime_result.error}"]
-                            + [f"HARNESS: {line}" for line in prime_result.harness_log],
-                            power_metrics=None,
+                        return DeviceMetrics(
+                            ram_bytes=compile_result.ram_bytes or -1,
+                            flash_bytes=compile_result.flash_bytes or -1,
+                            latency_s=-1.0,
+                            arena_bytes=arena_bytes,
+                            error_code=HIL_ERROR_UPLOAD,
                         )
                     else:
                         logger.info(
@@ -822,19 +822,21 @@ class ArduinoDevice(DeviceInterface):
                         )
             except serial.SerialException as exc:
                 logger.warning("Harness serial session failed: %s", exc)
-                measure_result = MeasureResult(
-                    latency_s=None,
-                    arena_error_line=None,
-                    serial_log=[f"HARNESS_ERROR: {exc}"],
-                    power_metrics=None,
+                return DeviceMetrics(
+                    ram_bytes=compile_result.ram_bytes or -1,
+                    flash_bytes=compile_result.flash_bytes or -1,
+                    latency_s=-1.0,
+                    arena_bytes=arena_bytes,
+                    error_code=HIL_ERROR_UPLOAD,
                 )
             except RuntimeError as exc:
                 logger.warning("Harness preparation failed: %s", exc)
-                measure_result = MeasureResult(
-                    latency_s=None,
-                    arena_error_line=None,
-                    serial_log=[f"HARNESS_ERROR: {exc}"],
-                    power_metrics=None,
+                return DeviceMetrics(
+                    ram_bytes=compile_result.ram_bytes or -1,
+                    flash_bytes=compile_result.flash_bytes or -1,
+                    latency_s=-1.0,
+                    arena_bytes=arena_bytes,
+                    error_code=HIL_ERROR_UPLOAD,
                 )
         else:
             upload_result = self.upload(

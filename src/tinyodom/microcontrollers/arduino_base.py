@@ -43,7 +43,6 @@ FLASH_USAGE_RE = re.compile(
 RAM_USAGE_RE = re.compile(
     r"Global variables use (\d+) bytes.*?Maximum is (\d+)", re.IGNORECASE | re.DOTALL
 )
-SIZE_SECTION_RE = re.compile(r"^\s*(\S+)\s+(\d+)\s+(0x[0-9a-fA-F]+|\d+)\s*$")
 FLASH_OVERFLOW_PATTERNS = [
     re.compile(r"section [`']?\.text[`']?\s+will not fit in region [`']?flash[`']?", re.IGNORECASE),
     re.compile(r"region [`']?flash[`']?\s+overflowed", re.IGNORECASE),
@@ -64,38 +63,6 @@ UPLOAD_PERMISSION_PATTERNS = [
     re.compile(r"LIBUSB_ERROR_ACCESS", re.IGNORECASE),
     re.compile(r"dfu-util:.*permission denied", re.IGNORECASE),
 ]
-FLASH_SECTION_HINTS = (
-    ".text",
-    ".rodata",
-    ".itcm",
-    ".dtcm",
-    ".qspi",
-    ".vectors",
-    ".isr_vector",
-    ".init",
-    ".fini",
-    ".ctors",
-    ".dtors",
-    ".arm",
-)
-RAM_SECTION_HINTS = (
-    ".data",
-    ".bss",
-    ".noinit",
-    ".heap",
-    ".stack",
-    ".ram",
-    ".sram",
-    ".dtcmram",
-)
-FLASH_ADDR_RANGES = (
-    (0x08000000, 0x0FFFFFFF),  # STM32 internal flash / mapped flash regions
-    (0x90000000, 0x9FFFFFFF),  # external QSPI regions
-)
-RAM_ADDR_RANGES = (
-    (0x20000000, 0x3FFFFFFF),  # ARM SRAM / DTCM / AXI SRAM windows
-    (0x10000000, 0x1FFFFFFF),  # ARM TCM windows
-)
 
 
 @dataclass(frozen=True)
@@ -471,124 +438,6 @@ def _resolve_arm_size_binary() -> Optional[str]:
     return str(sorted(candidates)[-1])
 
 
-def _address_in_ranges(address: int, ranges: Sequence[Tuple[int, int]]) -> bool:
-    """Check whether an address falls inside any inclusive range.
-
-    Parameters
-    ----------
-    address : int
-        Address to classify.
-    ranges : Sequence[tuple[int, int]]
-        Inclusive ``(start, end)`` address windows.
-
-    Returns
-    -------
-    bool
-        ``True`` when ``address`` is inside any provided range.
-    """
-    for start, end in ranges:
-        if start <= address <= end:
-            return True
-    return False
-
-
-def _is_flash_section(section_name: str, address: int) -> bool:
-    """Heuristically classify a linker section as flash-backed.
-
-    Parameters
-    ----------
-    section_name : str
-        Linker section name.
-    address : int
-        Section load address.
-
-    Returns
-    -------
-    bool
-        ``True`` when the section contributes to flash usage.
-    """
-    lowered = section_name.lower()
-    if lowered in (".data", ".ramfunc"):
-        return True
-    if any(hint in lowered for hint in FLASH_SECTION_HINTS):
-        return True
-    return _address_in_ranges(address, FLASH_ADDR_RANGES)
-
-
-def _is_ram_section(section_name: str, address: int) -> bool:
-    """Heuristically classify a linker section as runtime RAM usage.
-
-    Parameters
-    ----------
-    section_name : str
-        Linker section name.
-    address : int
-        Section runtime address.
-
-    Returns
-    -------
-    bool
-        ``True`` when the section contributes to RAM usage.
-    """
-    lowered = section_name.lower()
-    if any(hint in lowered for hint in RAM_SECTION_HINTS):
-        return True
-    return _address_in_ranges(address, RAM_ADDR_RANGES)
-
-
-def _parse_memory_from_elf(build_dir: Path) -> Tuple[Optional[int], Optional[int]]:
-    """Parse flash and RAM usage from ELF section sizes.
-
-    Parameters
-    ----------
-    build_dir : pathlib.Path
-        Arduino CLI build directory containing the compiled ELF.
-
-    Returns
-    -------
-    tuple[int | None, int | None]
-        ``(flash_bytes, ram_bytes)`` parsed from section accounting.
-
-    FIXME: Re-validate this accounting against full TinyODOM firmware on real
-    Portenta hardware and map custom linker sections explicitly.
-    """
-    size_bin = _resolve_arm_size_binary()
-    elf_path = _find_compiled_elf(build_dir)
-    if not size_bin or elf_path is None:
-        return None, None
-
-    proc = subprocess.run(
-        [size_bin, "-A", str(elf_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return None, None
-
-    flash_total = 0
-    ram_total = 0
-    saw_section = False
-    for line in proc.stdout.splitlines():
-        match = SIZE_SECTION_RE.match(line)
-        if not match:
-            continue
-        section_name, size_text, addr_text = match.groups()
-        size_bytes = int(size_text)
-        if size_bytes <= 0:
-            continue
-        address = int(addr_text, 16) if addr_text.lower().startswith("0x") else int(addr_text)
-        if _is_flash_section(section_name, address):
-            flash_total += size_bytes
-        if _is_ram_section(section_name, address):
-            ram_total += size_bytes
-        saw_section = True
-
-    if not saw_section:
-        return None, None
-    return (flash_total if flash_total > 0 else None, ram_total if ram_total > 0 else None)
-
-
 def _augment_upload_error(log: str) -> str:
     """Append actionable Linux DFU guidance to permission-related upload failures.
 
@@ -737,12 +586,6 @@ def compile_sketch(
             flash_bytes = recipe_flash_bytes
         if ram_bytes is None:
             ram_bytes = recipe_ram_bytes
-    if compile_proc.returncode == 0 and (flash_bytes is None or ram_bytes is None):
-        elf_flash_bytes, elf_ram_bytes = _parse_memory_from_elf(build_dir)
-        if flash_bytes is None:
-            flash_bytes = elf_flash_bytes
-        if ram_bytes is None:
-            ram_bytes = elf_ram_bytes
     overflow_kind = _classify_compile_failure(compile_log)
     return CompileResult(
         success=compile_proc.returncode == 0,
