@@ -288,6 +288,10 @@ class SpecHelperTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             return_hardware_specs("NOT_A_BOARD")
 
+    def test_return_hardware_specs_portenta_requires_device_options(self):
+        with self.assertRaises(ValueError):
+            return_hardware_specs("PORTENTA_H7")
+
     def test_arena_size_candidates_happy_path(self):
         # Validates that arena sweeps are exposed as numpy arrays for downstream sweeps.
         arena = arena_size_candidates("ARDUINO_NANO_33_BLE_SENSE")
@@ -298,6 +302,10 @@ class SpecHelperTests(unittest.TestCase):
         # Confirms invalid device names raise to highlight typos early.
         with self.assertRaises(ValueError):
             arena_size_candidates("UNKNOWN_DEVICE")
+
+    def test_arena_size_candidates_portenta_requires_device_options(self):
+        with self.assertRaises(ValueError):
+            arena_size_candidates("PORTENTA_H7")
 
     def test_get_model_memory_usage_quantized_smaller(self):
         # Verifies the quantized flag reduces the byte estimate, preventing regressive sizing.
@@ -318,10 +326,15 @@ class DeviceCatalogTests(unittest.TestCase):
     def test_catalog_devices_are_accessible(self):
         # Ensures every catalog entry returns the exact limits defined in DEVICE_SPECS.
         for name, spec in DEVICE_SPECS.items():
-            ram, flash = return_hardware_specs(name)
+            options = (
+                {"target_core": "cm7", "split": "75_25", "security": "none"}
+                if name == "PORTENTA_H7"
+                else None
+            )
+            ram, flash = return_hardware_specs(name, device_options=options)
             self.assertEqual(ram, spec["max_ram"])
             self.assertEqual(flash, spec["max_flash"])
-            arena = arena_size_candidates(name)
+            arena = arena_size_candidates(name, device_options=options)
             self.assertTrue(np.array_equal(arena, spec["arena_sizes"]))
             self.assertGreater(len(arena), 0)
 

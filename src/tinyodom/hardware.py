@@ -359,6 +359,12 @@ def return_hardware_specs(
     Tuple[int, int]
         Maximum RAM bytes and flash bytes allowed on the device.
     """
+    normalized_name = str(device_name).strip().upper()
+    if normalized_name == "PORTENTA_H7" and not device_options:
+        raise ValueError(
+            "PORTENTA_H7 requires device_options with at least target_core "
+            "(for example {'target_core': 'cm7'})."
+        )
     if device_options:
         spec = get_microcontroller_device(
             device_name,
@@ -469,6 +475,12 @@ def arena_size_candidates(
     numpy.ndarray
         Candidate arena sizes expressed in KiB.
     """
+    normalized_name = str(device_name).strip().upper()
+    if normalized_name == "PORTENTA_H7" and not device_options:
+        raise ValueError(
+            "PORTENTA_H7 requires device_options with at least target_core "
+            "(for example {'target_core': 'cm7'})."
+        )
     if device_options:
         spec = get_microcontroller_device(
             device_name,
