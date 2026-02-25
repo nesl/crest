@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -9,7 +10,7 @@ import time
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import serial
 
@@ -58,6 +59,10 @@ ARENA_TOO_SMALL_PATTERNS = [
 ]
 MISSING_BYTES_RE = re.compile(r"missing:\s*(\d+)", re.IGNORECASE)
 REQUESTED_BYTES_RE = re.compile(r"requested:\s*(\d+)", re.IGNORECASE)
+UPLOAD_PERMISSION_PATTERNS = [
+    re.compile(r"LIBUSB_ERROR_ACCESS", re.IGNORECASE),
+    re.compile(r"dfu-util:.*permission denied", re.IGNORECASE),
+]
 
 
 @dataclass(frozen=True)
@@ -235,6 +240,258 @@ def _parse_memory_from_compile(output: str) -> Tuple[Optional[int], Optional[int
     return flash_bytes, ram_bytes
 
 
+def _resolve_platform_txt_path(build_dir: Path) -> Optional[Path]:
+    """Resolve the active platform.txt from Arduino build metadata.
+
+    Parameters
+    ----------
+    build_dir : pathlib.Path
+        Arduino CLI build directory.
+
+    Returns
+    -------
+    pathlib.Path | None
+        Path to ``platform.txt`` when discoverable, else ``None``.
+    """
+    options_path = build_dir / "build.options.json"
+    if not options_path.exists():
+        return None
+    try:
+        metadata = json.loads(options_path.read_text())
+    except (OSError, ValueError):
+        return None
+    raw_hardware_folders = metadata.get("hardwareFolders", "")
+    hardware_folders: List[str] = []
+    # Arduino CLI typically encodes hardwareFolders as a JSON array, but some
+    # environments may provide a comma-separated string. Support both forms and
+    # ignore empty entries so we never probe "./platform.txt" accidentally.
+    if isinstance(raw_hardware_folders, list):
+        for entry in raw_hardware_folders:
+            if not isinstance(entry, str):
+                continue
+            cleaned = entry.strip()
+            if cleaned:
+                hardware_folders.append(cleaned)
+    elif isinstance(raw_hardware_folders, str):
+        for part in raw_hardware_folders.split(","):
+            cleaned = part.strip()
+            if cleaned:
+                hardware_folders.append(cleaned)
+    else:
+        # Fallback: coerce to string and split on commas as a best-effort.
+        for part in str(raw_hardware_folders).split(","):
+            cleaned = part.strip()
+            if cleaned:
+                hardware_folders.append(cleaned)
+
+    for folder in hardware_folders:
+        folder_path = Path(folder)
+        platform_txt = folder_path / "platform.txt"
+        if platform_txt.exists():
+            return platform_txt
+    return None
+
+
+def _load_platform_properties(platform_txt: Path) -> Dict[str, str]:
+    """Parse ``platform.txt`` key/value entries.
+
+    Parameters
+    ----------
+    platform_txt : pathlib.Path
+        Platform configuration file.
+
+    Returns
+    -------
+    dict[str, str]
+        Parsed property map.
+    """
+    properties: Dict[str, str] = {}
+    for raw_line in platform_txt.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        properties[key.strip()] = value.strip()
+    return properties
+
+
+def _sum_size_regex_matches(output: str, pattern_text: Optional[str]) -> Optional[int]:
+    """Sum section sizes matched by a platform ``recipe.size.regex`` pattern."""
+    if not pattern_text:
+        return None
+    try:
+        pattern = re.compile(pattern_text, re.MULTILINE)
+    except re.error:
+        return None
+    if pattern.groups < 1:
+        return None
+
+    total = 0
+    matched = False
+    for match in pattern.finditer(output):
+        try:
+            raw_size = match.group(1)
+        except IndexError:
+            return None
+        try:
+            total += int(raw_size)
+            matched = True
+        except (TypeError, ValueError):
+            continue
+    if not matched:
+        return None
+    return total
+
+
+def _parse_memory_from_size_recipe(build_dir: Path) -> Tuple[Optional[int], Optional[int]]:
+    """Parse memory usage using board-defined ``platform.txt`` size regexes.
+
+    This mirrors Arduino's classic ``recipe.size.regex`` semantics used to
+    produce ``Sketch uses ...`` and ``Global variables use ...`` lines.
+
+    Parameters
+    ----------
+    build_dir : pathlib.Path
+        Arduino CLI build directory containing ``build.options.json`` and ELF.
+
+    Returns
+    -------
+    tuple[int | None, int | None]
+        ``(flash_bytes, ram_bytes)`` when regex parsing succeeds.
+    """
+    platform_txt = _resolve_platform_txt_path(build_dir)
+    if platform_txt is None:
+        return None, None
+    try:
+        properties = _load_platform_properties(platform_txt)
+    except OSError:
+        return None, None
+
+    flash_regex = properties.get("recipe.size.regex")
+    ram_regex = properties.get("recipe.size.regex.data")
+    if not flash_regex and not ram_regex:
+        return None, None
+
+    size_bin = _resolve_arm_size_binary()
+    elf_path = _find_compiled_elf(build_dir)
+    if not size_bin or elf_path is None:
+        return None, None
+
+    proc = subprocess.run(
+        [size_bin, "-A", str(elf_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None, None
+
+    flash_total = _sum_size_regex_matches(proc.stdout, flash_regex)
+    ram_total = _sum_size_regex_matches(proc.stdout, ram_regex)
+    return flash_total, ram_total
+
+
+def _format_board_options(board_options: Optional[Mapping[str, str]]) -> str:
+    """Convert board options map to Arduino CLI ``--board-options`` payload.
+
+    Parameters
+    ----------
+    board_options : Mapping[str, str] | None
+        Board option key/value pairs.
+
+    Returns
+    -------
+    str
+        Comma-separated ``key=value`` payload accepted by Arduino CLI.
+    """
+    if not board_options:
+        return ""
+    parts: List[str] = []
+    for key in sorted(board_options):
+        value = str(board_options[key]).strip()
+        if not value:
+            continue
+        parts.append(f"{key}={value}")
+    return ",".join(parts)
+
+
+def _find_compiled_elf(build_dir: Path) -> Optional[Path]:
+    """Locate the compiled ELF artifact within an Arduino build directory.
+
+    Parameters
+    ----------
+    build_dir : pathlib.Path
+        Arduino CLI build directory.
+
+    Returns
+    -------
+    pathlib.Path | None
+        Path to the preferred ELF file when present, otherwise ``None``.
+    """
+    candidates = sorted(build_dir.glob("*.elf"))
+    if not candidates:
+        candidates = sorted(build_dir.rglob("*.elf"))
+    if not candidates:
+        return None
+    # Prefer ino ELF artifacts when multiple files exist.
+    ino_candidates = [path for path in candidates if path.name.endswith(".ino.elf")]
+    return ino_candidates[0] if ino_candidates else candidates[0]
+
+
+def _resolve_arm_size_binary() -> Optional[str]:
+    """Resolve an ``arm-none-eabi-size`` binary for ELF section accounting.
+
+    Returns
+    -------
+    str | None
+        Resolved executable path, or ``None`` when unavailable.
+    """
+    env_bin = os.environ.get("ARM_NONE_EABI_SIZE_BIN")
+    if env_bin:
+        return env_bin
+    path_bin = shutil.which("arm-none-eabi-size")
+    if path_bin:
+        return path_bin
+
+    search_root = _PROJECT_ROOT / "tools" / "arduino-data" / "packages"
+    if not search_root.exists():
+        return None
+    candidates = list(search_root.rglob("arm-none-eabi-size"))
+    if os.name == "nt":
+        candidates.extend(search_root.rglob("arm-none-eabi-size.exe"))
+    if not candidates:
+        return None
+    return str(sorted(candidates)[-1])
+
+
+def _augment_upload_error(log: str) -> str:
+    """Append actionable Linux DFU guidance to permission-related upload failures.
+
+    Parameters
+    ----------
+    log : str
+        Raw upload log text.
+
+    Returns
+    -------
+    str
+        Original or augmented log with Linux udev remediation steps.
+    """
+    for pattern in UPLOAD_PERMISSION_PATTERNS:
+        if pattern.search(log):
+            return (
+                f"{log}\n"
+                "Upload failed due to insufficient USB DFU permissions.\n"
+                "On Linux, install the appropriate Portenta udev rules for the board's DFU "
+                "USB IDs as documented in this project's README (Portenta DFU/udev section), "
+                "reload the rules "
+                "(`sudo udevadm control --reload-rules && sudo udevadm trigger`), "
+                "then replug the board and retry.\n"
+                "macOS typically does not require this step."
+            )
+    return log
+
+
 def _classify_compile_failure(log_text: str) -> Optional[str]:
     """Determine whether output indicates a flash or RAM overflow.
 
@@ -263,6 +520,7 @@ def _resolve_build_dir(
     sketch_path: Path,
     fqbn: str,
     build_defines: Optional[Dict[str, int]] = None,
+    board_options: Optional[Mapping[str, str]] = None,
 ) -> Path:
     """Return the Arduino build cache directory for a sketch/FQBN/define set.
 
@@ -273,9 +531,11 @@ def _resolve_build_dir(
     build_cache_root = sketch_path / ".arduino-build"
     fqbn_key = fqbn.replace(":", "_")
     define_flags = _build_define_flags(build_defines)
-    if not define_flags:
+    board_options_text = _format_board_options(board_options)
+    hash_input = "|".join(part for part in (define_flags, board_options_text) if part)
+    if not hash_input:
         return build_cache_root / fqbn_key
-    defines_hash = hashlib.sha1(define_flags.encode("utf-8")).hexdigest()[:12]
+    defines_hash = hashlib.sha1(hash_input.encode("utf-8")).hexdigest()[:12]
     return build_cache_root / f"{fqbn_key}_{defines_hash}"
 
 
@@ -294,6 +554,7 @@ def compile_sketch(
     sketch_path: Path,
     fqbn: str,
     build_defines: Optional[Dict[str, int]] = None,
+    board_options: Optional[Mapping[str, str]] = None,
 ) -> CompileResult:
     """Compile an Arduino sketch with the Arduino CLI.
 
@@ -303,13 +564,22 @@ def compile_sketch(
         Directory containing the Arduino sketch.
     fqbn : str
         Fully qualified board name.
+    build_defines : dict[str, int] | None, optional
+        Preprocessor defines forwarded to ``compiler.cpp.extra_flags``.
+    board_options : Mapping[str, str] | None, optional
+        Arduino board options forwarded via ``--board-options``.
 
     Returns
     -------
     CompileResult
         Parsed compile results including RAM/flash usage and overflow status.
     """
-    build_dir = _resolve_build_dir(sketch_path, fqbn, build_defines)
+    build_dir = _resolve_build_dir(
+        sketch_path,
+        fqbn,
+        build_defines,
+        board_options=board_options,
+    )
     build_dir.mkdir(parents=True, exist_ok=True)
     compile_cmd = [
         ARDUINO_CLI_BIN,
@@ -322,6 +592,9 @@ def compile_sketch(
         str(build_dir),
         str(sketch_path),
     ]
+    board_options_text = _format_board_options(board_options)
+    if board_options_text:
+        compile_cmd.extend(["--board-options", board_options_text])
     define_flags = _build_define_flags(build_defines)
     if define_flags:
         compile_cmd.extend(
@@ -335,6 +608,12 @@ def compile_sketch(
     )
     compile_log = f"{compile_proc.stdout}\n{compile_proc.stderr}"
     flash_bytes, ram_bytes = _parse_memory_from_compile(compile_log)
+    if compile_proc.returncode == 0 and (flash_bytes is None or ram_bytes is None):
+        recipe_flash_bytes, recipe_ram_bytes = _parse_memory_from_size_recipe(build_dir)
+        if flash_bytes is None:
+            flash_bytes = recipe_flash_bytes
+        if ram_bytes is None:
+            ram_bytes = recipe_ram_bytes
     overflow_kind = _classify_compile_failure(compile_log)
     return CompileResult(
         success=compile_proc.returncode == 0,
@@ -397,6 +676,7 @@ def upload_sketch(
     fqbn: str,
     build_dir: Path,
     serial_port: str,
+    board_options: Optional[Mapping[str, str]] = None,
 ) -> UploadResult:
     """Upload a compiled Arduino sketch to a device.
 
@@ -410,6 +690,8 @@ def upload_sketch(
         Build cache directory containing the compiled binary.
     serial_port : str
         Serial port used for upload.
+    board_options : Mapping[str, str] | None, optional
+        Arduino board options forwarded via ``--board-options``.
 
     Returns
     -------
@@ -429,9 +711,74 @@ def upload_sketch(
         str(build_dir),
         str(sketch_path),
     ]
+    board_options_text = _format_board_options(board_options)
+    if board_options_text:
+        upload_cmd.extend(["--board-options", board_options_text])
     upload_proc = subprocess.run(upload_cmd, capture_output=True, text=True, check=False)
-    upload_log = f"{upload_proc.stdout}\n{upload_proc.stderr}"
+    upload_log = _augment_upload_error(f"{upload_proc.stdout}\n{upload_proc.stderr}")
     return UploadResult(success=upload_proc.returncode == 0, log=upload_log)
+
+
+def ensure_harness_firmware(
+    *,
+    harness_serial_port: str,
+    harness_fqbn: str = "arduino:mbed_nano:nano33ble",
+    harness_auto_flash: str = "once",
+    build_defines: Optional[Dict[str, int]] = None,
+    force: bool = False,
+) -> bool:
+    """Compile/upload harness firmware when required by flash policy.
+
+    Parameters
+    ----------
+    harness_serial_port : str
+        Serial port for the harness board.
+    harness_fqbn : str, optional
+        Harness board FQBN.
+    harness_auto_flash : str, optional
+        Flash policy (``once``, ``always``, ``never``).
+    build_defines : dict[str, int] | None, optional
+        Compile-time defines forwarded to harness build.
+    force : bool, optional
+        Ignore ``once`` cache and force a reflash.
+
+    Returns
+    -------
+    bool
+        ``True`` when a flash was performed, otherwise ``False``.
+    """
+    harness_auto_flash = (harness_auto_flash or "once").lower()
+    define_flags = _build_define_flags(build_defines)
+    flashed_signature = f"{harness_fqbn}|{define_flags}"
+    if harness_auto_flash == "never":
+        return False
+    if harness_auto_flash == "once" and not force:
+        if _HARNESS_FLASHED_SIGNATURES.get(harness_serial_port, "") == flashed_signature:
+            return False
+
+    logger.info(
+        "ensure_harness_firmware: compiling/uploading harness (port=%s, force=%s)",
+        harness_serial_port,
+        force,
+    )
+    compile_result = compile_harness_sketch(
+        fqbn=harness_fqbn,
+        build_defines=build_defines,
+    )
+    if not compile_result.success or compile_result.build_dir is None:
+        raise RuntimeError("Harness compile failed.")
+    upload_result = upload_harness_sketch(
+        sketch_path=None,
+        fqbn=harness_fqbn,
+        build_dir=compile_result.build_dir,
+        serial_port=harness_serial_port,
+    )
+    if not upload_result.success:
+        raise RuntimeError("Harness upload failed.")
+
+    _HARNESS_FLASHED_SIGNATURES[harness_serial_port] = flashed_signature
+    time.sleep(0.5)
+    return True
 
 
 # regex patterns for parsing power metrics from serial log.
@@ -677,7 +1024,6 @@ def measure_serial(
             serial_log=dut_log,
             power_metrics=power_metrics,
         )
-    harness_auto_flash = (harness_auto_flash or "once").lower()
     harness_arm_timeout_ms = max(0, int(round(float(harness_arm_timeout_s) * 1000.0)))
     harness_active_timeout_ms = max(0, int(round(float(harness_active_timeout_s) * 1000.0)))
 
@@ -689,37 +1035,15 @@ def measure_serial(
         "TINYODOM_HARNESS_ARM_TIMEOUT_MS": harness_arm_timeout_ms,
         "TINYODOM_HARNESS_ACTIVE_TIMEOUT_MS": harness_active_timeout_ms,
     }
-    define_flags = _build_define_flags(build_defines)
-    flashed_signature = f"{harness_fqbn}|{define_flags}"
 
     def _flash_harness(force: bool = False) -> bool:
-        if harness_auto_flash == "never":
-            return False
-        if harness_auto_flash == "once" and not force:
-            if _HARNESS_FLASHED_SIGNATURES.get(harness_serial_port, "") == flashed_signature:
-                return False
-        logger.info(
-            "measure_serial: compiling/uploading harness (port=%s, force=%s)",
-            harness_serial_port,
-            force,
-        )
-        compile_result = compile_harness_sketch(
-            fqbn=harness_fqbn,
+        return ensure_harness_firmware(
+            harness_serial_port=harness_serial_port,
+            harness_fqbn=harness_fqbn,
+            harness_auto_flash=harness_auto_flash,
             build_defines=build_defines,
+            force=force,
         )
-        if not compile_result.success or compile_result.build_dir is None:
-            raise RuntimeError("Harness compile failed.")
-        upload_result = upload_harness_sketch(
-            sketch_path=None,
-            fqbn=harness_fqbn,
-            build_dir=compile_result.build_dir,
-            serial_port=harness_serial_port,
-        )
-        if not upload_result.success:
-            raise RuntimeError("Harness upload failed.")
-        _HARNESS_FLASHED_SIGNATURES[harness_serial_port] = flashed_signature
-        time.sleep(0.5)
-        return True
 
     def _run_handshake() -> hil_protocol.HandshakeResult:
         logger.info(
@@ -818,6 +1142,57 @@ def measure_serial(
         )
 
 
+def measure_harness_only_open_session(
+    *,
+    harness: serial.Serial,
+    harness_active_timeout_s: float = 30.0,
+    harness_done_timeout_s: float = 5.0,
+    harness_log: Optional[list[str]] = None,
+) -> MeasureResult:
+    """Collect metrics from an already-open harness session.
+
+    Parameters
+    ----------
+    harness : serial.Serial
+        Open harness serial connection that remained active through DUT upload.
+    harness_active_timeout_s : float, optional
+        Active-window timeout used to bound DONE wait.
+    harness_done_timeout_s : float, optional
+        Additional DONE timeout after active window.
+    harness_log : list[str] | None, optional
+        Existing harness log lines captured before this call.
+
+    Returns
+    -------
+    MeasureResult
+        Parsed latency/power from harness output only.
+    """
+    log = list(harness_log or [])
+    session_result = hil_protocol.wait_for_harness_done(
+        harness=harness,
+        harness_active_timeout_s=harness_active_timeout_s,
+        harness_done_timeout_s=harness_done_timeout_s,
+        harness_log=log,
+    )
+    log = session_result.harness_log
+    power_metrics = _parse_power_metrics(log)
+    latency_s: Optional[float] = None
+    if power_metrics is not None:
+        harness_latency = power_metrics.get("harness_latency_s")
+        if harness_latency is not None and harness_latency >= 0.0:
+            latency_s = float(harness_latency)
+
+    serial_log = [f"HARNESS: {line}" for line in log]
+    if session_result.error is not None:
+        serial_log.insert(0, f"HARNESS_ERROR: {session_result.error}")
+    return MeasureResult(
+        latency_s=latency_s if session_result.harness_done else None,
+        arena_error_line=None,
+        serial_log=serial_log,
+        power_metrics=power_metrics,
+    )
+
+
 __all__ = [
     "ARDUINO_CLI_BIN",
     "ARDUINO_CLI_CONFIG",
@@ -837,6 +1212,8 @@ __all__ = [
     "_replace_define",
     "compile_harness_sketch",
     "compile_sketch",
+    "ensure_harness_firmware",
+    "measure_harness_only_open_session",
     "measure_serial",
     "normalize_power_metrics",
     "upload_harness_sketch",

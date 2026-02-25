@@ -246,6 +246,47 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(result, 0.3)
         self.mock_log.assert_called_once()
 
+    def test_objective_portenta_forwards_device_options_to_hardware_specs(self) -> None:
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+        }
+        self.client.config.device.name = "PORTENTA_H7"
+        self.client.config.device.portenta = SimpleNamespace(
+            target_core="cm4",
+            split="50_50",
+            security="none",
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        self.client.objective(trial)
+
+        self.mock_hw_specs.assert_called_once()
+        _, kwargs = self.mock_hw_specs.call_args
+        self.assertEqual(kwargs["device_options"]["target_core"], "cm4")
+        self.assertEqual(kwargs["device_options"]["split"], "50_50")
+        self.assertEqual(kwargs["device_options"]["security"], "none")
+
+    def test_objective_portenta_requires_target_core_for_hardware_limits(self) -> None:
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+        }
+        self.client.config.device.name = "PORTENTA_H7"
+        self.client.config.device.portenta = SimpleNamespace()
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        with self.assertRaises(RuntimeError):
+            self.client.objective(trial)
+
 
 class SmokeTestTests(unittest.TestCase):
     """Ensure the convenience smoke_test helper toggles config safely."""

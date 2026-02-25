@@ -30,6 +30,24 @@
 #define TINYODOM_TENSOR_ARENA_BYTES (25 * 1024)
 #endif
 
+// Optional runtime controls for targets that cannot rely on host serial
+// handshakes (for example Portenta CM4 harness-only runs).
+#ifndef TINYODOM_AUTOSTART
+#define TINYODOM_AUTOSTART 0
+#endif
+
+// Delay before inference when autostart is enabled. This gives upload/reset
+// and harness setup enough time to settle before the measurement pulse.
+#ifndef TINYODOM_AUTOSTART_DELAY_MS
+#define TINYODOM_AUTOSTART_DELAY_MS 0
+#endif
+
+// Skip waiting on `while (!Serial)` for targets where host USB CDC may be
+// unavailable/restricted at runtime, avoiding setup-time stalls.
+#ifndef TINYODOM_SKIP_SERIAL_WAIT
+#define TINYODOM_SKIP_SERIAL_WAIT 0
+#endif
+
 namespace {
 
 // Mirror TinyODOM deployment parameters (can be patched by hardware_utils).
@@ -98,9 +116,11 @@ void setup() {
   // Set up serial so the latency prints can be collected by the host.
   Serial.begin(115200);
   Serial.setTimeout(kSerialTimeoutMs);
+#if !TINYODOM_SKIP_SERIAL_WAIT
   while (!Serial && millis() < 2000) {
     delay(10);
   }
+#endif
 
   delay(1000);  // Wait for serial to settle.
 
@@ -146,11 +166,18 @@ void setup() {
   input = interpreter->input(0);
   FillInputTensor();
 
-  // Handshake with the host before starting inference.
+  // If autostart is enabled, run without START handshake (used by harness-only
+  // runtime flows). Otherwise use the standard host READY/START protocol.
+#if TINYODOM_AUTOSTART
+  if (TINYODOM_AUTOSTART_DELAY_MS > 0) {
+    delay(TINYODOM_AUTOSTART_DELAY_MS);
+  }
+#else
   Serial.println(TINYODOM_DUT_READY);
   while (!WaitForStartCommand(kStartCommandTimeoutMs)) {
     Serial.println(TINYODOM_DUT_READY);
   }
+#endif
 
   // Run several inferences back-to-back and average their latency (single timer span).
   const int kRuns = TINYODOM_INFERENCE_RUNS;

@@ -182,6 +182,74 @@ class NASModelClient:
 
         self.study_name = "default_study"
 
+    @staticmethod
+    def _cfg_get(container, key: str, default=None):
+        """Read a config field from dict-like or namespace-like containers.
+
+        Parameters
+        ----------
+        container : object
+            Configuration container supporting either ``get(key, default)`` or
+            attribute access.
+        key : str
+            Field name to retrieve.
+        default : object, optional
+            Value returned when ``key`` is not present.
+
+        Returns
+        -------
+        object
+            Retrieved field value or ``default`` when unavailable.
+        """
+        getter = getattr(container, "get", None)
+        if callable(getter):
+            return getter(key, default)
+        return getattr(container, key, default)
+
+    def _hardware_limit_device_options(self) -> dict[str, str] | None:
+        """Build board options required to resolve dynamic hardware limits.
+
+        Parameters
+        ----------
+        None
+            Reads device settings from ``self.config``.
+
+        Returns
+        -------
+        dict[str, str] | None
+            Portenta board options for dynamic limit resolution, or ``None``
+            for boards with static limits.
+
+        Raises
+        ------
+        RuntimeError
+            If ``device.name`` is ``PORTENTA_H7`` and
+            ``device.portenta.target_core`` is missing.
+        """
+        device_name = str(self._cfg_get(self.config.device, "name", "")).strip().upper()
+        if device_name != "PORTENTA_H7":
+            return None
+
+        portenta_cfg = self._cfg_get(self.config.device, "portenta", None)
+        target_core = (
+            self._cfg_get(portenta_cfg, "target_core", None)
+            if portenta_cfg is not None
+            else None
+        )
+        split = self._cfg_get(portenta_cfg, "split", None) if portenta_cfg is not None else None
+        security = self._cfg_get(portenta_cfg, "security", None) if portenta_cfg is not None else None
+        if not target_core:
+            raise RuntimeError(
+                "Set device.portenta.target_core to 'cm7' or 'cm4' when device.name is PORTENTA_H7."
+            )
+
+        options = {"target_core": str(target_core)}
+        if split:
+            options["split"] = str(split)
+        if security:
+            options["security"] = str(security)
+        return options
+
     def _probe_hil_endpoint(self, timeout_s: float = 5.0) -> None:
         """Fail fast if the HIL REP socket is unreachable."""
         host = self.config.network.host
@@ -322,7 +390,10 @@ class NASModelClient:
         metrics = self._hil_request(hyperparams)
 
         # Gets the hardware *estimated* specifications for the target device
-        max_ram, max_flash = return_hardware_specs(self.config.device.name)
+        max_ram, max_flash = return_hardware_specs(
+            self.config.device.name,
+            device_options=self._hardware_limit_device_options(),
+        )
 
         rmse_vel_x = float("inf")
         rmse_vel_y = float("inf")

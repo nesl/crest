@@ -340,6 +340,93 @@ class CollectMetricsTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             collect_metrics(request)
 
+    def test_collect_metrics_forwards_device_options(self) -> None:
+        def fake_controller(run_hil: bool, **kwargs):
+            self.assertFalse(run_hil)
+            self.assertEqual(kwargs["device_options"]["target_core"], "cm7")
+            self.assertEqual(kwargs["device_options"]["split"], "75_25")
+            return (1024, 2048, None, 4096, 0, None)
+
+        with patch("tinyodom.model.HIL_controller", fake_controller):
+            request = CollectMetricsRequest(
+                hil_enabled=False,
+                energy_aware=False,
+                flops=10_000_000,
+                device_name="PORTENTA_H7",
+                window_size=128,
+                input_dim=6,
+                dirpath=Path("tinyodom_tcn"),
+                latency_proxy_max_flops=20_000_000,
+                serial_port=None,
+                latency_budget_ms=50.0,
+                device_options={"target_core": "cm7", "split": "75_25"},
+            )
+            metrics = collect_metrics(request)
+
+        self.assertEqual(metrics["error_code"], 0)
+
+    def test_collect_metrics_portenta_cm4_runtime_requires_harness(self) -> None:
+        request = CollectMetricsRequest(
+            hil_enabled=True,
+            energy_aware=False,
+            flops=5_000_000,
+            device_name="PORTENTA_H7",
+            window_size=128,
+            input_dim=6,
+            dirpath=Path("tinyodom_tcn"),
+            latency_proxy_max_flops=20_000_000,
+            serial_port="ttyACM0",
+            latency_budget_ms=200.0,
+            device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+        )
+
+        with patch("tinyodom.model.HIL_controller") as controller_mock:
+            with self.assertRaises(RuntimeError) as context:
+                collect_metrics(request)
+
+        self.assertIn("harness", str(context.exception).lower())
+        controller_mock.assert_not_called()
+
+    def test_collect_metrics_portenta_cm4_non_energy_forwards_harness(self) -> None:
+        harness = HarnessConfig(
+            harness_serial_port="ttyACM1",
+            harness_fqbn="arduino:mbed_nano:nano33ble",
+            harness_auto_flash="once",
+            harness_arm_pin=3,
+            harness_trigger_pin=2,
+            dut_arm_hold_ms=600,
+            harness_stable_low_ms=500,
+            harness_ready_timeout_s=5.0,
+            harness_arm_timeout_s=0.0,
+            harness_active_timeout_s=12.0,
+            harness_done_timeout_s=3.6,
+        )
+
+        def fake_controller(run_hil: bool, **kwargs):
+            self.assertTrue(run_hil)
+            self.assertEqual(kwargs["harness_serial_port"], "ttyACM1")
+            self.assertEqual(kwargs["harness_done_timeout_s"], 3.6)
+            return (1024, 2048, 0.01, 4096, 0, None)
+
+        with patch("tinyodom.model.HIL_controller", fake_controller):
+            request = CollectMetricsRequest(
+                hil_enabled=True,
+                energy_aware=False,
+                flops=5_000_000,
+                device_name="PORTENTA_H7",
+                window_size=128,
+                input_dim=6,
+                dirpath=Path("tinyodom_tcn"),
+                latency_proxy_max_flops=20_000_000,
+                serial_port="ttyACM0",
+                latency_budget_ms=200.0,
+                harness=harness,
+                device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+            )
+            metrics = collect_metrics(request)
+
+        self.assertEqual(metrics["error_code"], 0)
+
 
 class BuildCollectMetricsRequestTests(unittest.TestCase):
     """Validate config/hyperparameter mapping into CollectMetricsRequest."""
@@ -415,6 +502,116 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+
+    def test_portenta_cm4_runtime_missing_harness_serial_port_raises(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=True,
+                name="PORTENTA_H7",
+                serial_port="ttyACM0",
+                portenta=Dict(target_core="cm4", split="50_50", security="none"),
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        with self.assertRaises(RuntimeError):
+            build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+
+    def test_portenta_requires_target_core(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(hil=True, name="PORTENTA_H7", serial_port="ttyACM0", portenta=Dict()),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        with self.assertRaises(RuntimeError):
+            build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+
+    def test_portenta_options_are_forwarded(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=False,
+                name="PORTENTA_H7",
+                serial_port="ttyACM0",
+                portenta=Dict(target_core="cm4", split="50_50", security="none"),
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+
+        self.assertEqual(request.device_options["target_core"], "cm4")
+        self.assertEqual(request.device_options["split"], "50_50")
+        self.assertEqual(request.device_options["security"], "none")
+
+    def test_portenta_cm4_runtime_populates_harness_even_without_energy_aware(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=True,
+                name="PORTENTA_H7",
+                serial_port="ttyACM0",
+                harness_serial_port="ttyACM1",
+                harness_fqbn="arduino:mbed_nano:nano33ble",
+                harness_auto_flash="once",
+                harness_arm_pin=3,
+                harness_trigger_pin=2,
+                dut_arm_hold_ms=600,
+                harness_stable_low_ms=500,
+                harness_ready_timeout_s=5.0,
+                harness_arm_timeout_s=5.0,
+                harness_active_timeout_s=30.0,
+                harness_done_timeout_s=5.0,
+                portenta=Dict(target_core="cm4", split="50_50", security="none"),
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+
+        self.assertIsNotNone(request.harness)
+        self.assertEqual(request.harness.harness_serial_port, "ttyACM1")
+
+    def test_device_name_is_normalized_before_request_build(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=False,
+                name="portenta_h7",
+                portenta=Dict(target_core="cm7", split="75_25", security="none"),
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+
+        self.assertEqual(request.device_name, "PORTENTA_H7")
+        self.assertEqual(request.device_options["target_core"], "cm7")
+
+    def test_proxy_mode_allows_missing_serial_port(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(hil=False, name="ARDUINO_NANO_33_BLE_SENSE"),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+
+        self.assertIsNone(request.serial_port)
 
 
 class LoadSettingsTests(unittest.TestCase):

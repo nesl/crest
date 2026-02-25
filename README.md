@@ -71,6 +71,26 @@ All firmware builds happen in a sandboxed `tools/` directory inside this repo so
    arduino-cli core install arduino:mbed_nano --config-file tools/arduino-cli.yaml
    ```
 
+6. **Adding another Arduino board?**  
+   See `src/tinyodom/microcontrollers/README.md` for the board authoring checklist and required integration points.
+
+7. **Linux-only: enable USB permissions for Portenta DFU uploads (udev).**  
+   Portenta uploads on Linux use `dfu-util`. If upload fails with `LIBUSB_ERROR_ACCESS`, add udev rules for Portenta USB IDs.  
+   ```bash
+   sudo tee /etc/udev/rules.d/49-portenta-h7.rules >/dev/null <<'EOF'
+   SUBSYSTEM=="usb", ATTR{idVendor}=="2341", ATTR{idProduct}=="025b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+   SUBSYSTEM=="usb", ATTR{idVendor}=="2341", ATTR{idProduct}=="035b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+   SUBSYSTEM=="usb", ATTR{idVendor}=="2341", ATTR{idProduct}=="045b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+   SUBSYSTEM=="usb", ATTR{idVendor}=="2341", ATTR{idProduct}=="055b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+   EOF
+
+   sudo udevadm control --reload-rules
+   sudo udevadm trigger
+   ```
+   Then unplug/replug the board (or reset into bootloader) before retrying upload.
+
+> **OS note:** This udev step is Linux-specific. macOS typically does not require it.
+
 > **Why this flow?** This setup allows us to run the needed modules without modifying `$HOME` or using `apt`. Keeping binaries + caches in `tools/` allows everything to be contained within the folder, and the Conda hooks ensure our pipelines (training, conversion, firmware compile) always see the same CLI without editing shell rc files.
 
 ## Quick Checklist
@@ -101,9 +121,15 @@ Before running long NAS jobs, skim and adjust `src/nas_config.yaml`:
    - `nas_multiobjective`: enable/disable multi-objective NAS (accuracy + latency/energy).
    - `energy_aware`: toggle whether energy (instead of latency) is used as the secondary objective/penalty; leave `false` if you do not have INA228 energy hardware attached.
    - `input_mode`: choose Arduino-side inference input source.
-     - `uniform`: random values in `[0, 5]` using `sketches/tinyodom_tcn_energy.ino`.
+     - `uniform`: random values in `[0, 5]` using shared uniform sketches (`sketches/tinyodom_tcn_energy.ino` when `energy_aware=true`, `sketches/tinyodom_tcn_no_energy.ino` when `energy_aware=false`).
      - `representative`: synthetic OxIOD-shaped values using `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino`.
      - `real`: fixed real OxIOD windows using `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino`.
+   - Runtime behavior for specific targets/cores is adjusted via compile-time
+     defines from the Python device layer (for example Portenta CM4 autostart
+     and serial-wait skip), while keeping shared uniform sketch sources.
+   - Portenta CM4 note: runtime telemetry is harness-based (`harness_only`), and
+     TinyODOM may upload a CM7 boot-helper sketch first to bring up CM4 before
+     uploading the DUT sketch.
 - **Outputs and network (`outputs.*`, `network.*`)**
    - `models_dir`, `tcn_dir`: where Optuna DBs, metrics, and TFLite/C++ artifacts are written.
    - `host`, `port`: must match the HIL server and SSH tunnel; defaults (`127.0.0.1:6001`) usually work as-is.

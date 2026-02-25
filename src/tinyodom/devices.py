@@ -3,10 +3,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Literal, Mapping, Optional, Sequence
 
 import numpy as np
 import logging
+import serial
 
 from .errors import (
     HIL_ERROR_OK,
@@ -17,9 +18,11 @@ from .errors import (
     HIL_ERROR_RAM_OVERFLOW,
     HIL_ERROR_UPLOAD,
 )
+from . import hil_protocol
 from .microcontrollers import arduino_base
 
 logger = logging.getLogger(__name__)
+RuntimeMeasureMode = Literal["direct_serial", "harness_only"]
 
 
 @dataclass(frozen=True)
@@ -149,6 +152,18 @@ class MeasureResult:
 
 class DeviceInterface(ABC):
     """Contract for device-specific compile/upload/measure workflows."""
+
+    def runtime_measure_mode(self) -> RuntimeMeasureMode:
+        """Return runtime measurement mode for this device profile."""
+        return "direct_serial"
+
+    def runtime_mode_build_defines(self) -> Dict[str, int]:
+        """Return additional compile-time defines for the runtime mode."""
+        return {}
+
+    def prepare_for_runtime(self, *, runtime_mode: RuntimeMeasureMode, serial_port: str) -> None:
+        """Run optional board-specific setup before upload/measurement."""
+        del runtime_mode, serial_port
 
     @property
     @abstractmethod
@@ -327,10 +342,7 @@ class DeviceInterface(ABC):
         """
 
 
-# NOTE: Legacy device catalog moved here for Phase 1 to keep hardware.py stable.
-# FIXME: Delete this once device-specific classes are fully implemented.
-# Keeping it here for posterity during the migration.
-DEVICE_SPECS = {
+_LEGACY_DEVICE_SPECS = {
     "NUCLEO_F746ZG": {
         "arena_sizes": np.array([10, 30, 50, 75, 100, 150, 175, 200, 250, 280, 280]),
         "max_ram": 300_000,
@@ -355,12 +367,6 @@ DEVICE_SPECS = {
         "max_flash": 400_000,
         "fqbn": None,
     },
-    "ARDUINO_NANO_33_BLE_SENSE": {
-        "arena_sizes": np.array([10, 25, 40, 70, 95, 120, 140, 160, 180, 200, 210]),
-        "max_ram": 215_000,
-        "max_flash": 800_000,
-        "fqbn": "arduino:mbed_nano:nano33ble",
-    },
     "ARDUINO_NANO_RP2040_CONNECT": {
         "arena_sizes": np.array([10, 25, 40, 70, 95, 120, 140, 150, 160, 180, 200, 210, 220]),
         "max_ram": 225_000,
@@ -370,8 +376,66 @@ DEVICE_SPECS = {
 }
 
 
+def _registry_device_specs() -> Dict[str, Dict[str, Any]]:
+    """Load default device specs from microcontroller registry classes.
+
+    Returns
+    -------
+    Dict[str, Dict[str, Any]]
+        Compatibility-style spec map keyed by device name.
+    """
+    try:
+        from .microcontrollers import list_device_specs
+    except Exception:
+        return {}
+
+    loaded_specs = list_device_specs()
+    normalized: Dict[str, Dict[str, Any]] = {}
+    for device_name, spec in loaded_specs.items():
+        normalized[device_name] = {
+            "arena_sizes": np.array([int(value) for value in spec.get("arena_sizes", [])]),
+            "max_ram": int(spec.get("max_ram", 0)),
+            "max_flash": int(spec.get("max_flash", 0)),
+            "fqbn": spec.get("fqbn"),
+        }
+    return normalized
+
+
+def _rebuild_device_specs() -> Dict[str, Dict[str, Any]]:
+    """Build compatibility DEVICE_SPECS from legacy + registry-backed metadata.
+
+    Returns
+    -------
+    Dict[str, Dict[str, Any]]
+        Merged compatibility map used by legacy call sites.
+    """
+    merged: Dict[str, Dict[str, Any]] = {}
+    for device_name, raw in _LEGACY_DEVICE_SPECS.items():
+        merged[device_name] = {
+            "arena_sizes": np.array(raw["arena_sizes"]),
+            "max_ram": int(raw["max_ram"]),
+            "max_flash": int(raw["max_flash"]),
+            "fqbn": raw.get("fqbn"),
+        }
+    merged.update(_registry_device_specs())
+    return merged
+
+
+# Initialize with legacy entries first; registry-backed entries are merged after
+# ArduinoDevice is defined to avoid import cycles.
+DEVICE_SPECS: Dict[str, Dict[str, Any]] = {
+    device_name: {
+        "arena_sizes": np.array(raw["arena_sizes"]),
+        "max_ram": int(raw["max_ram"]),
+        "max_flash": int(raw["max_flash"]),
+        "fqbn": raw.get("fqbn"),
+    }
+    for device_name, raw in _LEGACY_DEVICE_SPECS.items()
+}
+
+
 def get_device_spec(name: str) -> DeviceSpec:
-    """Return a DeviceSpec built from the legacy DEVICE_SPECS registry.
+    """Return a DeviceSpec built from the compatibility DEVICE_SPECS registry.
 
     Parameters
     ----------
@@ -383,6 +447,10 @@ def get_device_spec(name: str) -> DeviceSpec:
     DeviceSpec
         Normalized device specification.
     """
+    if name not in DEVICE_SPECS:
+        # Retry loading registry defaults in case callers imported this module
+        # before optional board modules became available.
+        DEVICE_SPECS.update(_registry_device_specs())
     if name not in DEVICE_SPECS:
         raise ValueError(f"Unknown device '{name}'. Supported devices: {list(DEVICE_SPECS)}")
     raw = DEVICE_SPECS[name]
@@ -414,17 +482,64 @@ class ArduinoDevice(DeviceInterface):
         device_name: str,
         *,
         serial_port: Optional[str] = None,
+        device_options: Optional[Mapping[str, object]] = None,
+        spec_override: Optional[DeviceSpec] = None,
     ) -> None:
+        """Initialize an Arduino-backed device wrapper.
+
+        Parameters
+        ----------
+        device_name : str
+            Logical device identifier.
+        serial_port : str | None, optional
+            Serial port used for upload and measurement.
+        device_options : Mapping[str, object] | None, optional
+            Optional board-option mapping forwarded to subclasses.
+        spec_override : DeviceSpec | None, optional
+            Explicit spec override used by board-specific wrappers.
+        """
         self._device_name = device_name
-        self._spec = get_device_spec(device_name)
+        self._device_options = dict(device_options or {})
+        self._spec = spec_override or get_device_spec(device_name)
         if self._spec.fqbn is None:
             raise ValueError(f"Device '{device_name}' has no Arduino FQBN.")
         self._serial_port = serial_port
+        self._board_options = self._resolve_board_options(self._device_options)
 
     @property
     def spec(self) -> DeviceSpec:
         """Return the device specification metadata."""
         return self._spec
+
+    def runtime_measure_mode(self) -> RuntimeMeasureMode:
+        """Return runtime measurement mode for this board wrapper."""
+        return "direct_serial"
+
+    def runtime_mode_build_defines(self) -> Dict[str, int]:
+        """Return additional compile-time defines for runtime behavior."""
+        return {}
+
+    def prepare_for_runtime(self, *, runtime_mode: RuntimeMeasureMode, serial_port: str) -> None:
+        """Run optional board-specific setup before upload/measurement."""
+        del runtime_mode, serial_port
+
+    def _resolve_board_options(
+        self, device_options: Optional[Mapping[str, object]]
+    ) -> Optional[Dict[str, str]]:
+        """Resolve board options consumed by Arduino CLI compile/upload calls.
+
+        Parameters
+        ----------
+        device_options : Mapping[str, object] | None
+            Raw board option mapping supplied by callers.
+
+        Returns
+        -------
+        Dict[str, str] | None
+            Normalized board options for Arduino CLI, or ``None`` when unused.
+        """
+        del device_options
+        return None
 
     def compile(
         self,
@@ -445,6 +560,7 @@ class ArduinoDevice(DeviceInterface):
             sketch_path=sketch_path,
             fqbn=self._spec.fqbn,
             build_defines=build_defines,
+            board_options=self._board_options,
         )
         return CompileResult(
             success=result.success,
@@ -474,6 +590,7 @@ class ArduinoDevice(DeviceInterface):
             fqbn=self._spec.fqbn,
             build_dir=build_dir,
             serial_port=use_serial_port,
+            board_options=self._board_options,
         )
         return UploadResult(success=result.success, log=result.log)
 
@@ -557,6 +674,7 @@ class ArduinoDevice(DeviceInterface):
         """Run a compile/upload/measure loop using the Arduino toolchain."""
         sketch_path = Path(dirpath).resolve()
         arena_bytes = arena_kb * 1024
+        runtime_mode = self.runtime_measure_mode()
         build_defines = {
             "TINYODOM_HARNESS_ARM_PIN": 3 if harness_arm_pin is None else int(harness_arm_pin),
             "TINYODOM_HARNESS_TRIGGER_PIN": 2 if harness_trigger_pin is None else int(harness_trigger_pin),
@@ -565,6 +683,7 @@ class ArduinoDevice(DeviceInterface):
             if harness_stable_low_ms is None
             else int(harness_stable_low_ms),
         }
+        build_defines.update(self.runtime_mode_build_defines())
         compile_result = self.compile(
             sketch_path=sketch_path,
             arena_kb=arena_kb,
@@ -609,15 +728,14 @@ class ArduinoDevice(DeviceInterface):
                 error_code=HIL_ERROR_OK,
             )
 
-        if serial_port is None and self._serial_port is None:
-            raise ValueError("serial_port must be provided when running HIL measurements.")
+        use_serial_port = self._serial_port if serial_port is None else serial_port
+        if use_serial_port is None:
+            raise ValueError("serial_port must be provided when running HIL uploads.")
 
-        upload_result = self.upload(
-            sketch_path=sketch_path,
-            build_dir=compile_result.build_dir,
-            serial_port=serial_port,
-        )
-        if not upload_result.success:
+        _default = lambda value, fallback: fallback if value is None else value
+        measure_result: MeasureResult
+
+        def _upload_error_metrics() -> DeviceMetrics:
             return DeviceMetrics(
                 ram_bytes=compile_result.ram_bytes or -1,
                 flash_bytes=compile_result.flash_bytes or -1,
@@ -626,24 +744,123 @@ class ArduinoDevice(DeviceInterface):
                 error_code=HIL_ERROR_UPLOAD,
             )
 
-        measure_result = self.measure(
-            serial_port=serial_port,
-            baud_rate=baud_rate,
-            serial_timeout_s=serial_timeout_s,
-            dut_ready_timeout_s=dut_ready_timeout_s,
-            harness_serial_port=harness_serial_port,
-            harness_fqbn=harness_fqbn,
-            harness_auto_flash=harness_auto_flash,
-            harness_arm_pin=harness_arm_pin,
-            harness_trigger_pin=harness_trigger_pin,
-            dut_arm_hold_ms=dut_arm_hold_ms,
-            harness_stable_low_ms=harness_stable_low_ms,
-            harness_ready_timeout_s=harness_ready_timeout_s,
-            harness_arm_timeout_s=harness_arm_timeout_s,
-            harness_active_timeout_s=harness_active_timeout_s,
-            harness_done_timeout_s=harness_done_timeout_s,
-        )
+        if runtime_mode == "harness_only":
+            use_harness_port = harness_serial_port
+            if not use_harness_port:
+                raise ValueError(
+                    "harness_serial_port must be provided for harness_only runtime measurement."
+                )
+            harness_fqbn_value = _default(harness_fqbn, "arduino:mbed_nano:nano33ble")
+            harness_auto_flash_value = _default(harness_auto_flash, "once")
+            harness_ready_timeout = float(_default(harness_ready_timeout_s, 5.0))
+            harness_arm_timeout = float(_default(harness_arm_timeout_s, 5.0))
+            harness_active_timeout = float(_default(harness_active_timeout_s, 30.0))
+            harness_done_timeout = float(_default(harness_done_timeout_s, 5.0))
+            harness_build_defines = {
+                "TINYODOM_HARNESS_ARM_PIN": int(_default(harness_arm_pin, 3)),
+                "TINYODOM_HARNESS_TRIGGER_PIN": int(_default(harness_trigger_pin, 2)),
+                "TINYODOM_DUT_ARM_HOLD_MS": int(_default(dut_arm_hold_ms, 600)),
+                "TINYODOM_HARNESS_STABLE_LOW_MS": int(_default(harness_stable_low_ms, 500)),
+                "TINYODOM_HARNESS_ARM_TIMEOUT_MS": max(
+                    0, int(round(harness_arm_timeout * 1000.0))
+                ),
+                "TINYODOM_HARNESS_ACTIVE_TIMEOUT_MS": max(
+                    0, int(round(harness_active_timeout * 1000.0))
+                ),
+            }
+            try:
+                self.prepare_for_runtime(runtime_mode=runtime_mode, serial_port=use_serial_port)
+                arduino_base.ensure_harness_firmware(
+                    harness_serial_port=use_harness_port,
+                    harness_fqbn=harness_fqbn_value,
+                    harness_auto_flash=harness_auto_flash_value,
+                    build_defines=harness_build_defines,
+                )
+                logger.info(
+                    "ArduinoDevice.evaluate[harness_only]: opening harness session before DUT upload "
+                    "(harness=%s, dut=%s)",
+                    use_harness_port,
+                    use_serial_port,
+                )
+                with serial.Serial(use_harness_port, baudrate=baud_rate, timeout=0.1) as harness:
+                    prime_result = hil_protocol.prime_harness_session(
+                        harness=harness,
+                        harness_ready_timeout_s=harness_ready_timeout,
+                        harness_log=[],
+                        flush_input=True,
+                    )
+                    if not prime_result.harness_ready:
+                        logger.warning(
+                            "Harness session was not ready before DUT upload (error=%s).",
+                            prime_result.error,
+                        )
+                        return _upload_error_metrics()
+                    else:
+                        logger.info(
+                            "ArduinoDevice.evaluate[harness_only]: uploading DUT while harness session is open."
+                        )
+                        upload_result = self.upload(
+                            sketch_path=sketch_path,
+                            build_dir=compile_result.build_dir,
+                            serial_port=use_serial_port,
+                        )
+                        if not upload_result.success:
+                            return _upload_error_metrics()
+                        logger.info(
+                            "ArduinoDevice.evaluate[harness_only]: DUT upload complete, waiting for harness DONE."
+                        )
+                        # In Portenta CM4 harness-only runs, host DUT Serial is
+                        # not a reliable diagnostics channel, so runtime error
+                        # typing depends on harness-visible signals only.
+                        measure_result = arduino_base.measure_harness_only_open_session(
+                            harness=harness,
+                            harness_active_timeout_s=harness_active_timeout,
+                            harness_done_timeout_s=harness_done_timeout,
+                            harness_log=prime_result.harness_log,
+                        )
+            except serial.SerialException as exc:
+                logger.warning("Harness serial session failed: %s", exc)
+                return _upload_error_metrics()
+            except RuntimeError as exc:
+                logger.warning("Runtime preparation failed: %s", exc)
+                return _upload_error_metrics()
+        else:
+            try:
+                self.prepare_for_runtime(runtime_mode=runtime_mode, serial_port=use_serial_port)
+            except RuntimeError as exc:
+                logger.warning("Runtime preparation failed: %s", exc)
+                return _upload_error_metrics()
+            upload_result = self.upload(
+                sketch_path=sketch_path,
+                build_dir=compile_result.build_dir,
+                serial_port=use_serial_port,
+            )
+            if not upload_result.success:
+                return _upload_error_metrics()
+
+            measure_result = self.measure(
+                serial_port=use_serial_port,
+                baud_rate=baud_rate,
+                serial_timeout_s=serial_timeout_s,
+                dut_ready_timeout_s=dut_ready_timeout_s,
+                harness_serial_port=harness_serial_port,
+                harness_fqbn=harness_fqbn,
+                harness_auto_flash=harness_auto_flash,
+                harness_arm_pin=harness_arm_pin,
+                harness_trigger_pin=harness_trigger_pin,
+                dut_arm_hold_ms=dut_arm_hold_ms,
+                harness_stable_low_ms=harness_stable_low_ms,
+                harness_ready_timeout_s=harness_ready_timeout_s,
+                harness_arm_timeout_s=harness_arm_timeout_s,
+                harness_active_timeout_s=harness_active_timeout_s,
+                harness_done_timeout_s=harness_done_timeout_s,
+            )
         if measure_result.latency_s is None:
+            if runtime_mode == "harness_only" and measure_result.arena_error_line is None:
+                logger.warning(
+                    "Harness-only runtime timeout without DUT arena diagnostics; "
+                    "classifying as HIL_ERROR_LATENCY."
+                )
             retry_hint = arduino_base._compute_retry_hint_bytes(
                 arena_bytes, measure_result.arena_error_line
             )
@@ -673,8 +890,12 @@ class ArduinoDevice(DeviceInterface):
 # FIXME: Remove once the migration completes.
 ArduinoLegacyDevice = ArduinoDevice
 
+# Merge registry-backed class specs now that ArduinoDevice is fully defined.
+DEVICE_SPECS.update(_registry_device_specs())
+
 
 __all__ = [
+    "RuntimeMeasureMode",
     "DeviceSpec",
     "DeviceMetrics",
     "CompileResult",

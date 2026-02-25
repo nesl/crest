@@ -267,8 +267,12 @@ class HILServer:
         """
         Copy the selected Arduino sketch variant into the active build directory.
 
-        Selection depends on ``training.energy_aware`` and
-        ``training.input_mode`` in the loaded config.
+        Selection depends on ``device.name``, optional Portenta
+        ``device.portenta.target_core``, ``training.energy_aware``, and
+        ``training.input_mode`` in the loaded config. Uniform sketches use the
+        shared root ``sketches/tinyodom_tcn_*.ino`` assets, while
+        representative/real analysis variants continue to use
+        ``sketches/analysis_sketches``.
 
         Returns
         -------
@@ -282,14 +286,57 @@ class HILServer:
         FileNotFoundError
             If a required variant sketch or input header is missing.
         """
+        def _normalize_target_core(raw_value: object) -> str:
+            """Normalize and validate a Portenta target-core token.
+
+            Parameters
+            ----------
+            raw_value : object
+                Raw target-core setting from config.
+
+            Returns
+            -------
+            str
+                Lower-cased target core token (``cm7`` or ``cm4``).
+
+            Raises
+            ------
+            ValueError
+                If the provided value is missing or unsupported.
+            """
+            normalized = str(raw_value).strip().lower() if raw_value is not None else ""
+            if normalized not in {"cm7", "cm4"}:
+                raise ValueError(
+                    "Set device.portenta.target_core to 'cm7' or 'cm4' when device.name is PORTENTA_H7."
+                )
+            return normalized
+
+        def _resolve_uniform_variant_dir() -> Path:
+            """Resolve the folder containing shared uniform sketches.
+
+            Returns
+            -------
+            Path
+                Directory containing ``tinyodom_tcn_energy.ino`` and
+                ``tinyodom_tcn_no_energy.ino`` shared across device profiles.
+            """
+            device_name = str(getattr(self.config.device, "name", "")).strip().upper()
+            if device_name == "PORTENTA_H7":
+                portenta_cfg = getattr(self.config.device, "portenta", None)
+                _normalize_target_core(
+                    getattr(portenta_cfg, "target_core", None) if portenta_cfg is not None else None
+                )
+                # Validation only: uniform sketch source is shared.
+            # Uniform variants are shared for all boards.
+            return self.sketch_variants_dir
 
         if not bool(self.config.training.energy_aware):
-            variant_dir = self.sketch_variants_dir
+            variant_dir = _resolve_uniform_variant_dir()
             variant_name = "tinyodom_tcn_no_energy.ino"
         else:
             input_mode = str(getattr(self.config.training, "input_mode", "uniform")).lower()
             variants = {
-                "uniform": ("tinyodom_tcn_energy.ino", self.sketch_variants_dir),
+                "uniform": ("tinyodom_tcn_energy.ino", _resolve_uniform_variant_dir()),
                 "representative": (
                     "tinyodom_tcn_energy_representative.ino",
                     self.sketch_variants_dir / "analysis_sketches",
@@ -314,6 +361,10 @@ class HILServer:
         common_source = self.sketch_variants_dir / "common"
         if common_source.exists():
             shutil.copytree(common_source, sketch_dir / "common", dirs_exist_ok=True)
+        # Allow board-specific overrides while keeping shared-copy behavior.
+        variant_common_source = variant_dir / "common"
+        if variant_common_source.exists() and variant_common_source != common_source:
+            shutil.copytree(variant_common_source, sketch_dir / "common", dirs_exist_ok=True)
 
         needs_header = variant_name in {
             "tinyodom_tcn_energy_representative.ino",
