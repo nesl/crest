@@ -302,11 +302,16 @@ def _sum_size_regex_matches(output: str, pattern_text: Optional[str]) -> Optiona
         pattern = re.compile(pattern_text, re.MULTILINE)
     except re.error:
         return None
+    if pattern.groups < 1:
+        return None
 
     total = 0
     matched = False
     for match in pattern.finditer(output):
-        raw_size = match.group(1)
+        try:
+            raw_size = match.group(1)
+        except IndexError:
+            return None
         try:
             total += int(raw_size)
             matched = True

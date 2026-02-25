@@ -582,6 +582,37 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertIsNotNone(request.harness)
         self.assertEqual(request.harness.harness_serial_port, "ttyACM1")
 
+    def test_device_name_is_normalized_before_request_build(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=False,
+                name="portenta_h7",
+                portenta=Dict(target_core="cm7", split="75_25", security="none"),
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+
+        self.assertEqual(request.device_name, "PORTENTA_H7")
+        self.assertEqual(request.device_options["target_core"], "cm7")
+
+    def test_proxy_mode_allows_missing_serial_port(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(hil=False, name="ARDUINO_NANO_33_BLE_SENSE"),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+
+        self.assertIsNone(request.serial_port)
+
 
 class LoadSettingsTests(unittest.TestCase):
     """Verify the NAS configuration loader derives paths and validates input."""

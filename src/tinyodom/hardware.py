@@ -367,15 +367,15 @@ def return_hardware_specs(
         )
     if device_options:
         spec = get_microcontroller_device(
-            device_name,
+            normalized_name,
             device_options=device_options,
         ).spec
         return int(spec.max_ram_bytes), int(spec.max_flash_bytes)
     try:
-        spec = DEVICE_SPECS[device_name]
+        spec = DEVICE_SPECS[normalized_name]
     except KeyError as exc:
         raise ValueError(
-            f"Unknown device '{device_name}'. Supported devices: {list(DEVICE_SPECS)}"
+            f"Unknown device '{normalized_name}'. Supported devices: {list(DEVICE_SPECS)}"
         ) from exc
     return int(spec["max_ram"]), int(spec["max_flash"])
 
@@ -483,15 +483,15 @@ def arena_size_candidates(
         )
     if device_options:
         spec = get_microcontroller_device(
-            device_name,
+            normalized_name,
             device_options=device_options,
         ).spec
         return np.array([int(value) for value in spec.arena_sizes_kb])
     try:
-        spec = DEVICE_SPECS[device_name]
+        spec = DEVICE_SPECS[normalized_name]
     except KeyError as exc:
         raise ValueError(
-            f"Unknown device '{device_name}'. Supported devices: {list(DEVICE_SPECS)}"
+            f"Unknown device '{normalized_name}'. Supported devices: {list(DEVICE_SPECS)}"
         ) from exc
     return np.array(spec["arena_sizes"])
 

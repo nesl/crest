@@ -70,6 +70,7 @@ from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
     _parse_memory_from_size_recipe,
     _patch_sketch_constants,
     _replace_define,
+    _sum_size_regex_matches,
     upload_sketch,
 )
 from tinyodom.microcontrollers import (  # noqa: E402
@@ -292,6 +293,12 @@ class SpecHelperTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             return_hardware_specs("PORTENTA_H7")
 
+    def test_return_hardware_specs_portenta_case_insensitive(self):
+        options = {"target_core": "cm7", "split": "75_25", "security": "none"}
+        upper_ram, upper_flash = return_hardware_specs("PORTENTA_H7", device_options=options)
+        lower_ram, lower_flash = return_hardware_specs("portenta_h7", device_options=options)
+        self.assertEqual((lower_ram, lower_flash), (upper_ram, upper_flash))
+
     def test_arena_size_candidates_happy_path(self):
         # Validates that arena sweeps are exposed as numpy arrays for downstream sweeps.
         arena = arena_size_candidates("ARDUINO_NANO_33_BLE_SENSE")
@@ -306,6 +313,12 @@ class SpecHelperTests(unittest.TestCase):
     def test_arena_size_candidates_portenta_requires_device_options(self):
         with self.assertRaises(ValueError):
             arena_size_candidates("PORTENTA_H7")
+
+    def test_arena_size_candidates_portenta_case_insensitive(self):
+        options = {"target_core": "cm7", "split": "75_25", "security": "none"}
+        upper = arena_size_candidates("PORTENTA_H7", device_options=options)
+        lower = arena_size_candidates("portenta_h7", device_options=options)
+        self.assertTrue(np.array_equal(lower, upper))
 
     def test_get_model_memory_usage_quantized_smaller(self):
         # Verifies the quantized flag reduces the byte estimate, preventing regressive sizing.
@@ -598,6 +611,13 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertEqual(device.resolved_options.split, "75_25")
         self.assertEqual(device.resolved_options.security, "none")
 
+    def test_get_device_non_arduino_legacy_entry_raises_actionable_error(self):
+        with self.assertRaises(ValueError) as context:
+            get_device("ARCH_MAX")
+        message = str(context.exception)
+        self.assertIn("no registered backend", message)
+        self.assertIn("DeviceInterface", message)
+
     def test_portenta_runtime_mode_resolution(self):
         cm7 = get_device(
             "PORTENTA_H7",
@@ -804,6 +824,11 @@ class ArduinoCommandOptionTests(unittest.TestCase):
 
         self.assertEqual(result.flash_bytes, 155_864)
         self.assertEqual(result.ram_bytes, 63_304)
+
+    def test_sum_size_regex_matches_without_capture_group_returns_none(self):
+        output = ".text 149680 134479872\n.data 6184 603979776\n"
+        total = _sum_size_regex_matches(output, r"^(?:\\.text|\\.data)\\s+\\d+.*")
+        self.assertIsNone(total)
 
     def test_upload_permission_error_appends_linux_guidance(self):
         augmented = _augment_upload_error("dfu-util: LIBUSB_ERROR_ACCESS")
@@ -1424,6 +1449,46 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
 
         self.assertEqual(result.error_code, HIL_ERROR_UPLOAD)
         self.assertEqual(result.latency_s, -1.0)
+        serial_mock.assert_not_called()
+        upload_mock.assert_not_called()
+
+    def test_harness_only_prepare_for_runtime_runtimeerror_maps_to_upload_error(self):
+        device = get_device(
+            "PORTENTA_H7",
+            serial_port="/dev/ttyACM0",
+            device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+        )
+        compile_result = ArduinoCompileResult(
+            success=True,
+            log="ok",
+            flash_bytes=123,
+            ram_bytes=456,
+            overflow_kind=None,
+            build_dir=Path("/tmp/fake_build"),
+        )
+
+        with patch.object(device, "compile", return_value=compile_result), patch.object(
+            device,
+            "prepare_for_runtime",
+            side_effect=RuntimeError("CM7 boot helper failed."),
+        ), patch(
+            "tinyodom.devices.arduino_base.ensure_harness_firmware"
+        ) as ensure_mock, patch("tinyodom.devices.serial.Serial") as serial_mock, patch.object(
+            device, "upload"
+        ) as upload_mock:
+            result = device.evaluate(
+                dirpath=Path("/tmp"),
+                arena_kb=32,
+                window_size=128,
+                num_channels=6,
+                serial_port="/dev/ttyACM0",
+                run_hil=True,
+                harness_serial_port="/dev/ttyACM1",
+            )
+
+        self.assertEqual(result.error_code, HIL_ERROR_UPLOAD)
+        self.assertEqual(result.latency_s, -1.0)
+        ensure_mock.assert_not_called()
         serial_mock.assert_not_called()
         upload_mock.assert_not_called()
 

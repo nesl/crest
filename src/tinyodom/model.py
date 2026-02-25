@@ -508,8 +508,9 @@ def build_collect_metrics_request(
     energy_aware = bool(config.training.energy_aware)
     harness = None
     device_options: dict[str, Any] | None = None
+    normalized_device_name = str(config.device.name).strip().upper()
 
-    if str(config.device.name).strip().upper() == "PORTENTA_H7":
+    if normalized_device_name == "PORTENTA_H7":
         portenta_cfg = _cfg_get(config.device, "portenta", None)
         target_core = _cfg_get(portenta_cfg, "target_core", None) if portenta_cfg is not None else None
         split = _cfg_get(portenta_cfg, "split", None) if portenta_cfg is not None else None
@@ -528,7 +529,7 @@ def build_collect_metrics_request(
     if bool(config.device.hil):
         try:
             runtime_device = get_microcontroller_device(
-                str(config.device.name),
+                normalized_device_name,
                 serial_port=_cfg_get(config.device, "serial_port", None),
                 device_options=device_options,
             )
@@ -567,12 +568,12 @@ def build_collect_metrics_request(
         hil_enabled=bool(config.device.hil),
         energy_aware=energy_aware,
         flops=hyperparams.flops,
-        device_name=config.device.name,
+        device_name=normalized_device_name,
         window_size=config.data.window_size,
         input_dim=hyperparams.input_dim,
         dirpath=config.outputs.tcn_dir,
         latency_proxy_max_flops=config.training.latency_proxy_max_flops,
-        serial_port=config.device.serial_port,
+        serial_port=_cfg_get(config.device, "serial_port", None),
         latency_budget_ms=latency_budget_ms,
         dut_ready_timeout_s=float(dut_ready_timeout),
         harness=harness,

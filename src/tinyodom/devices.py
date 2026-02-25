@@ -731,10 +731,19 @@ class ArduinoDevice(DeviceInterface):
         use_serial_port = self._serial_port if serial_port is None else serial_port
         if use_serial_port is None:
             raise ValueError("serial_port must be provided when running HIL uploads.")
-        self.prepare_for_runtime(runtime_mode=runtime_mode, serial_port=use_serial_port)
 
         _default = lambda value, fallback: fallback if value is None else value
         measure_result: MeasureResult
+
+        def _upload_error_metrics() -> DeviceMetrics:
+            return DeviceMetrics(
+                ram_bytes=compile_result.ram_bytes or -1,
+                flash_bytes=compile_result.flash_bytes or -1,
+                latency_s=-1.0,
+                arena_bytes=arena_bytes,
+                error_code=HIL_ERROR_UPLOAD,
+            )
+
         if runtime_mode == "harness_only":
             use_harness_port = harness_serial_port
             if not use_harness_port:
@@ -760,6 +769,7 @@ class ArduinoDevice(DeviceInterface):
                 ),
             }
             try:
+                self.prepare_for_runtime(runtime_mode=runtime_mode, serial_port=use_serial_port)
                 arduino_base.ensure_harness_firmware(
                     harness_serial_port=use_harness_port,
                     harness_fqbn=harness_fqbn_value,
@@ -784,13 +794,7 @@ class ArduinoDevice(DeviceInterface):
                             "Harness session was not ready before DUT upload (error=%s).",
                             prime_result.error,
                         )
-                        return DeviceMetrics(
-                            ram_bytes=compile_result.ram_bytes or -1,
-                            flash_bytes=compile_result.flash_bytes or -1,
-                            latency_s=-1.0,
-                            arena_bytes=arena_bytes,
-                            error_code=HIL_ERROR_UPLOAD,
-                        )
+                        return _upload_error_metrics()
                     else:
                         logger.info(
                             "ArduinoDevice.evaluate[harness_only]: uploading DUT while harness session is open."
@@ -801,13 +805,7 @@ class ArduinoDevice(DeviceInterface):
                             serial_port=use_serial_port,
                         )
                         if not upload_result.success:
-                            return DeviceMetrics(
-                                ram_bytes=compile_result.ram_bytes or -1,
-                                flash_bytes=compile_result.flash_bytes or -1,
-                                latency_s=-1.0,
-                                arena_bytes=arena_bytes,
-                                error_code=HIL_ERROR_UPLOAD,
-                            )
+                            return _upload_error_metrics()
                         logger.info(
                             "ArduinoDevice.evaluate[harness_only]: DUT upload complete, waiting for harness DONE."
                         )
@@ -822,36 +820,23 @@ class ArduinoDevice(DeviceInterface):
                         )
             except serial.SerialException as exc:
                 logger.warning("Harness serial session failed: %s", exc)
-                return DeviceMetrics(
-                    ram_bytes=compile_result.ram_bytes or -1,
-                    flash_bytes=compile_result.flash_bytes or -1,
-                    latency_s=-1.0,
-                    arena_bytes=arena_bytes,
-                    error_code=HIL_ERROR_UPLOAD,
-                )
+                return _upload_error_metrics()
             except RuntimeError as exc:
-                logger.warning("Harness preparation failed: %s", exc)
-                return DeviceMetrics(
-                    ram_bytes=compile_result.ram_bytes or -1,
-                    flash_bytes=compile_result.flash_bytes or -1,
-                    latency_s=-1.0,
-                    arena_bytes=arena_bytes,
-                    error_code=HIL_ERROR_UPLOAD,
-                )
+                logger.warning("Runtime preparation failed: %s", exc)
+                return _upload_error_metrics()
         else:
+            try:
+                self.prepare_for_runtime(runtime_mode=runtime_mode, serial_port=use_serial_port)
+            except RuntimeError as exc:
+                logger.warning("Runtime preparation failed: %s", exc)
+                return _upload_error_metrics()
             upload_result = self.upload(
                 sketch_path=sketch_path,
                 build_dir=compile_result.build_dir,
                 serial_port=use_serial_port,
             )
             if not upload_result.success:
-                return DeviceMetrics(
-                    ram_bytes=compile_result.ram_bytes or -1,
-                    flash_bytes=compile_result.flash_bytes or -1,
-                    latency_s=-1.0,
-                    arena_bytes=arena_bytes,
-                    error_code=HIL_ERROR_UPLOAD,
-                )
+                return _upload_error_metrics()
 
             measure_result = self.measure(
                 serial_port=use_serial_port,

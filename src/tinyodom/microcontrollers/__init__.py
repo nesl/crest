@@ -100,11 +100,22 @@ def get_device(
     # Fallback keeps compatibility with legacy dictionary-only board entries.
     from ..devices import ArduinoDevice
 
-    return ArduinoDevice(
-        name,
-        serial_port=serial_port,
-        device_options=device_options,
-    )
+    try:
+        return ArduinoDevice(
+            name,
+            serial_port=serial_port,
+            device_options=device_options,
+        )
+    except ValueError as exc:
+        # Legacy catalog entries without FQBN are not Arduino-backed and should
+        # instruct callers to register a dedicated backend implementation.
+        if "has no Arduino FQBN" in str(exc):
+            raise ValueError(
+                f"Device '{name}' has no registered backend in tinyodom.microcontrollers "
+                "and no Arduino FQBN fallback. Register a DeviceInterface-backed "
+                "microcontroller class for this board."
+            ) from exc
+        raise
 
 
 def __getattr__(name: str) -> Any:
