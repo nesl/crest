@@ -512,8 +512,14 @@ def _run_attempt(
         )
     except Exception as exc:
         logging.error("Harness flash/compile failed: %s", exc)
-        attempt["error_code"] = 2
-        attempt["error_label"] = ERROR_LABELS[2]
+        # Distinguish likely compile vs upload failures based on exception message.
+        msg = str(exc).lower()
+        if any(keyword in msg for keyword in ("compile", "compilation", "build")):
+            attempt["error_code"] = 1
+            attempt["error_label"] = ERROR_LABELS[1]
+        else:
+            attempt["error_code"] = 2
+            attempt["error_label"] = ERROR_LABELS[2]
         return attempt
 
     dut_defines = _build_dut_defines(settings, device.runtime_mode_build_defines())
