@@ -4,6 +4,9 @@ This folder provides a minimal, single-pass HIL sanity check. It builds a
 fixed TinyODOM model, runs the HIL controller once, and prints the returned
 metrics (latency/energy/RAM/flash/etc.).
 
+When the active DUT sketch emits clock telemetry, the returned metrics can also
+include `clock_hz` and `dwt_cycles_per_inference`.
+
 ## Usage
 
 ```bash

@@ -200,7 +200,7 @@ def _portenta_h7_arena_candidates(max_ram_bytes: int) -> list[int]:
         Arena sweep candidates expressed in KiB.
     """
     upper_kb = max(32, int((max_ram_bytes * 0.75) // 1024))
-    baseline = [32, 64, 96, 128, 160, 192, 224, 256, 320, 384, 448, 512, 640, 768]
+    baseline = [25, 32, 64, 96, 128, 160, 192, 224, 256, 320, 384, 448, 512, 640, 768]
     candidates = [value for value in baseline if value <= upper_kb]
     if not candidates:
         candidates = [32]

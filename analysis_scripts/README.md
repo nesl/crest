@@ -4,7 +4,29 @@ This folder collects small, self-contained utilities for HIL experiments and
 hardware checks. It is intentionally separate from the core training/runtime
 code so you can run diagnostics without touching the main workflow.
 
+Recent Portenta H7 analysis packages in this folder rely on shared DUT clock
+telemetry emitted by `sketches/common/tinyodom_clock_telemetry.h`. When the
+target core exposes a DWT cycle counter, the DUT can now report:
+
+- `clock_hz`
+- `dwt_cycles_per_inference`
+
 ## Folders
+
+- `cadenced_portenta_h7/`
+  - Runs Portenta H7 perturbed-model experiments for:
+    - back-to-back (10 consecutive windows)
+    - cadenced (one window every latency budget with idle sleep)
+  - Produces JSON + CSV summaries across `cm7` and `cm4`.
+  - See `analysis_scripts/cadenced_portenta_h7/README.md`.
+
+- `portenta_baseline_load/`
+  - Synthetic baseline timing/energy test for Portenta H7 using harness
+    telemetry.
+  - Compares `heavy` (busy-loop 10 x 200 ms) vs `sleep` (`delay(200)` for
+    10 iterations) across `cm7` and `cm4`.
+  - Produces JSON + CSV summaries.
+  - See `analysis_scripts/portenta_baseline_load/README.md`.
 
 - `hil_noise_analysis/`
   - Scripts for running multi-mode HIL noise scans, exporting representative
@@ -18,6 +40,20 @@ code so you can run diagnostics without touching the main workflow.
 - `hil_single_run/`
   - Runs a single HIL controller pass and prints the metrics.
   - Useful as a quick “does the board/toolchain still work?” sanity check.
+  - Surfaces clock telemetry fields too when the underlying DUT sketch reports
+    them.
+
+- `arena_latency_curve/`
+  - Runs fixed-arena HIL sweeps and records latency/energy per arena size.
+  - Produces attempt CSV, aggregated JSON, and a dual-axis latency+energy PNG.
+  - Supports BLE and Portenta H7 (`cm7` / `cm4`).
+  - See `analysis_scripts/arena_latency_curve/README.md`.
+
+- `clock_tick_latency/`
+  - Runs repeated perturbed-model Portenta H7 HIL attempts and exports
+    `latency_ms` + `ticks_per_inference`.
+  - Produces attempt CSV, aggregates JSON, and latency-vs-ticks scatter PNG.
+  - See `analysis_scripts/clock_tick_latency/README.md`.
 
 ## Running the INA228 check
 
