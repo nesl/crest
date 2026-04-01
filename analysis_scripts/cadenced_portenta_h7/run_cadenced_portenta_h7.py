@@ -38,6 +38,7 @@ PHASE_CADENCED = "cadenced"
 VALID_PHASES = (PHASE_BACK_TO_BACK, PHASE_CADENCED)
 VALID_CORES = ("cm7", "cm4")
 MODEL_VARIANT_NAME = "approx_trained"
+MASTER_SUCCESS_CODE = 1
 
 PHASE_SKETCH_FILENAMES = {
     PHASE_BACK_TO_BACK: "tinyodom_tcn_energy_back_to_back.ino",
@@ -334,14 +335,22 @@ def _build_attempt_record(
 
 
 def _valid_metric_values(attempts: Iterable[Dict[str, Any]], key: str) -> list[float]:
-    """Collect valid non-negative finite values for one metric key."""
+    """Collect valid non-negative finite values from successful attempts only."""
 
     values: list[float] = []
     for attempt in attempts:
+        if not _is_successful_attempt(attempt):
+            continue
         value = _safe_float(attempt.get(key, -1.0))
         if value >= 0.0:
             values.append(value)
     return values
+
+
+def _is_successful_attempt(attempt: Dict[str, Any]) -> bool:
+    """Return True when an attempt completed with the master success code."""
+
+    return int(_safe_float(attempt.get("error_code", -1))) == MASTER_SUCCESS_CODE
 
 
 def _summarize_group(core: str, phase: str, attempts: list[Dict[str, Any]], latency_budget_ms: float) -> Dict[str, Any]:
@@ -368,12 +377,13 @@ def _summarize_group(core: str, phase: str, attempts: list[Dict[str, Any]], late
         "core": core,
         "phase": phase,
         "attempt_count": len(attempts),
-        "success_count": sum(1 for attempt in attempts if int(attempt.get("error_code", -1)) == 0),
-        "failure_count": sum(1 for attempt in attempts if int(attempt.get("error_code", -1)) != 0),
+        "success_count": sum(1 for attempt in attempts if _is_successful_attempt(attempt)),
+        "failure_count": sum(1 for attempt in attempts if not _is_successful_attempt(attempt)),
         "over_budget_count": sum(
             1
             for attempt in attempts
-            if _safe_float(attempt.get("latency_ms", -1.0)) > latency_budget_ms
+            if _is_successful_attempt(attempt)
+            and _safe_float(attempt.get("latency_ms", -1.0)) > latency_budget_ms
         ),
     }
 
