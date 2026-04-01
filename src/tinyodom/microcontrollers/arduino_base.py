@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -884,18 +885,29 @@ def _merge_power_metrics(
     primary: Optional[Dict[str, Optional[float]]],
     secondary: Optional[Dict[str, Optional[float]]],
 ) -> Optional[Dict[str, Optional[float]]]:
-    """Merge two metric dictionaries, preferring populated primary values."""
+    """Merge two metric dictionaries, preferring valid primary values."""
     if primary is None and secondary is None:
         return None
     merged: Dict[str, Optional[float]] = {}
     for key in POWER_FIELD_SPECS:
         primary_value = None if primary is None else primary.get(key)
+        secondary_value = None if secondary is None else secondary.get(key)
+        if _is_available_power_metric_value(primary_value):
+            merged[key] = primary_value
+            continue
+        if _is_available_power_metric_value(secondary_value):
+            merged[key] = secondary_value
+            continue
         if primary_value is not None:
             merged[key] = primary_value
             continue
-        secondary_value = None if secondary is None else secondary.get(key)
         merged[key] = secondary_value
     return merged
+
+
+def _is_available_power_metric_value(value: Optional[float]) -> bool:
+    """Return True when a parsed metric is present and not a sentinel."""
+    return value is not None and math.isfinite(value) and value >= 0.0
 
 
 def normalize_power_metrics(

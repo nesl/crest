@@ -64,6 +64,9 @@ model
 
 # Firmware
 tinyodom_tcn
+sketches/harness/common/tinyodom_hil_config.h
+sketches/harness/common/tinyodom_power.h
+sketches/harness/common/tinyodom_clock_telemetry.h
 
 # Tools
 tools/arduino-data/

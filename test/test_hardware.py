@@ -63,6 +63,7 @@ from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
     _classify_compile_failure,
     _collect_latency_seconds,
     _compute_retry_hint_bytes,
+    _merge_power_metrics,
     _resolve_build_dir,
     _resolve_platform_txt_path,
     compile_sketch,
@@ -1111,6 +1112,40 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertAlmostEqual(normalized["harness_latency_s"], 0.2)
         self.assertEqual(normalized["clock_hz"], -1.0)
         self.assertEqual(normalized["dwt_cycles_per_inference"], -1.0)
+
+    def test_merge_power_metrics_uses_secondary_when_primary_has_sentinel(self):
+        merged = _merge_power_metrics(
+            primary={
+                "harness_latency_s": 0.25,
+                "clock_hz": -1.0,
+                "dwt_cycles_per_inference": -1.0,
+            },
+            secondary={
+                "clock_hz": 480000000.0,
+                "dwt_cycles_per_inference": 123456.0,
+            },
+        )
+        self.assertIsNotNone(merged)
+        assert merged is not None
+        self.assertAlmostEqual(merged["harness_latency_s"], 0.25)
+        self.assertAlmostEqual(merged["clock_hz"], 480000000.0)
+        self.assertAlmostEqual(merged["dwt_cycles_per_inference"], 123456.0)
+
+    def test_merge_power_metrics_keeps_valid_primary_values(self):
+        merged = _merge_power_metrics(
+            primary={
+                "clock_hz": 400000000.0,
+                "dwt_cycles_per_inference": 111111.0,
+            },
+            secondary={
+                "clock_hz": 480000000.0,
+                "dwt_cycles_per_inference": 123456.0,
+            },
+        )
+        self.assertIsNotNone(merged)
+        assert merged is not None
+        self.assertAlmostEqual(merged["clock_hz"], 400000000.0)
+        self.assertAlmostEqual(merged["dwt_cycles_per_inference"], 111111.0)
 
     def test_measure_serial_discards_energy_without_dut_timer(self):
         handshake_result = hil_protocol.HandshakeResult(

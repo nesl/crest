@@ -212,7 +212,7 @@ void setup() {
         (static_cast<float>(total_latency_us) / runs_completed) / 1000000.0f;
     const float clock_hz = tinyodom_clock::ReadClockHz();
     const float dwt_cycles_per_inference = tinyodom_clock::ComputeCyclesPerInference(
-        start_cycles, end_cycles, runs_completed);
+        start_cycles, end_cycles, runs_completed, total_latency_us, clock_hz);
     ++inference_seq;
     // Emit run count + telemetry for host parsing.
     Serial.print("runs: ");
