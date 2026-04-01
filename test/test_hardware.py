@@ -63,6 +63,7 @@ from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
     _classify_compile_failure,
     _collect_latency_seconds,
     _compute_retry_hint_bytes,
+    _merge_power_metrics,
     _resolve_build_dir,
     _resolve_platform_txt_path,
     compile_sketch,
@@ -70,10 +71,12 @@ from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
     measure_serial,
     _parse_memory_from_compile,
     _parse_memory_from_size_recipe,
+    _parse_power_metrics,
     _patch_sketch_constants,
     _replace_define,
     _sum_size_regex_matches,
     upload_sketch,
+    normalize_power_metrics,
 )
 from tinyodom.microcontrollers import (  # noqa: E402
     arduino_ble33,
@@ -1092,6 +1095,58 @@ class ProtocolHandshakeTests(unittest.TestCase):
 
 
 class HarnessMetricSelectionTests(unittest.TestCase):
+    def test_parse_power_metrics_reads_clock_and_dwt_tags(self):
+        parsed = _parse_power_metrics(
+            [
+                "clock hz output: 480000000",
+                "dwt cycles per inference output: 122345.5",
+            ]
+        )
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertAlmostEqual(parsed["clock_hz"], 480000000.0)
+        self.assertAlmostEqual(parsed["dwt_cycles_per_inference"], 122345.5)
+
+    def test_normalize_power_metrics_defaults_clock_and_dwt(self):
+        normalized = normalize_power_metrics({"harness_latency_s": 0.2})
+        self.assertAlmostEqual(normalized["harness_latency_s"], 0.2)
+        self.assertEqual(normalized["clock_hz"], -1.0)
+        self.assertEqual(normalized["dwt_cycles_per_inference"], -1.0)
+
+    def test_merge_power_metrics_uses_secondary_when_primary_has_sentinel(self):
+        merged = _merge_power_metrics(
+            primary={
+                "harness_latency_s": 0.25,
+                "clock_hz": -1.0,
+                "dwt_cycles_per_inference": -1.0,
+            },
+            secondary={
+                "clock_hz": 480000000.0,
+                "dwt_cycles_per_inference": 123456.0,
+            },
+        )
+        self.assertIsNotNone(merged)
+        assert merged is not None
+        self.assertAlmostEqual(merged["harness_latency_s"], 0.25)
+        self.assertAlmostEqual(merged["clock_hz"], 480000000.0)
+        self.assertAlmostEqual(merged["dwt_cycles_per_inference"], 123456.0)
+
+    def test_merge_power_metrics_keeps_valid_primary_values(self):
+        merged = _merge_power_metrics(
+            primary={
+                "clock_hz": 400000000.0,
+                "dwt_cycles_per_inference": 111111.0,
+            },
+            secondary={
+                "clock_hz": 480000000.0,
+                "dwt_cycles_per_inference": 123456.0,
+            },
+        )
+        self.assertIsNotNone(merged)
+        assert merged is not None
+        self.assertAlmostEqual(merged["clock_hz"], 400000000.0)
+        self.assertAlmostEqual(merged["dwt_cycles_per_inference"], 111111.0)
+
     def test_measure_serial_discards_energy_without_dut_timer(self):
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 10"],
@@ -1224,6 +1279,61 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
         self.assertAlmostEqual(result.latency_s, 0.125)
         self.assertIsNone(result.power_metrics)
+
+    def test_measure_serial_merges_dut_clock_with_harness_energy(self):
+        handshake_result = hil_protocol.HandshakeResult(
+            dut_log=[
+                "runs: 10",
+                "clock hz output: 480000000",
+                "dwt cycles per inference output: 123456",
+                "timer output: 0.250000",
+            ],
+            harness_log=[
+                "runs: 10",
+                "energy output (mJ): 10.0",
+                "avg power output (mW): 40.0",
+                "harness timer output: 0.250000",
+                "DONE",
+            ],
+            dut_timer_found=True,
+            harness_done=True,
+            runs_dut=10,
+            runs_harness=10,
+            error=None,
+        )
+        compile_result = ArduinoCompileResult(
+            success=True,
+            log="ok",
+            flash_bytes=None,
+            ram_bytes=None,
+            overflow_kind=None,
+            build_dir=Path("/tmp"),
+        )
+        upload_result = ArduinoUploadResult(success=True, log="ok")
+
+        with patch(
+            "tinyodom.microcontrollers.arduino_base.compile_harness_sketch",
+            return_value=compile_result,
+        ), patch(
+            "tinyodom.microcontrollers.arduino_base.upload_harness_sketch",
+            return_value=upload_result,
+        ), patch(
+            "tinyodom.hil_protocol.run_handshake",
+            return_value=handshake_result,
+        ):
+            result = measure_serial(
+                serial_port="/dev/dut",
+                baud_rate=115200,
+                serial_timeout_s=1.0,
+                harness_serial_port="/dev/harness",
+                harness_auto_flash="always",
+            )
+
+        self.assertIsNotNone(result.power_metrics)
+        assert result.power_metrics is not None
+        self.assertAlmostEqual(result.power_metrics["clock_hz"], 480000000.0)
+        self.assertAlmostEqual(result.power_metrics["dwt_cycles_per_inference"], 123456.0)
+        self.assertAlmostEqual(result.power_metrics["energy_mj_per_inference"], 10.0)
 
     def test_measure_harness_only_open_session_uses_harness_latency(self):
         session = hil_protocol.HarnessSessionResult(

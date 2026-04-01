@@ -33,6 +33,10 @@ Runtime sketch selection in `HILServer._sync_sketch_variant` uses this layout:
    - `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino`
    - `sketches/analysis_sketches/tinyodom_tcn_input_data.h`
 3. Shared headers are still copied from `sketches/common/`.
+   - Current shared headers include:
+     - `tinyodom_hil_config.h`
+     - `tinyodom_power.h`
+     - `tinyodom_clock_telemetry.h`
 4. Board/core behavior is selected in Python device wrappers and compile-time
    defines (for example Portenta CM4 autostart), not by duplicating uniform
    sketch sources.
@@ -231,6 +235,14 @@ Before opening a PR:
 ## Portenta CM4 Runtime Diagnostics Limitation
 
 For `PORTENTA_H7` runs with `target_core=cm4`, TinyODOM uses `harness_only` runtime measurement.
+
+Telemetry note:
+
+1. Harness metrics remain the source of truth for energy and harness latency.
+2. DUT-side clock telemetry such as `clock_hz` and `dwt_cycles_per_inference`
+   may still be merged in when present.
+3. CM4 workflows should still be documented and interpreted as harness-led
+   runtime measurement in this repo.
 
 CM4 boot prerequisite:
 

@@ -31,7 +31,8 @@
    ```  
    This pulls CUDA 12.4+ compatible binaries plus matching NCCL/cuDNN wheels recommended by the TensorFlow team.
 
-> **Tip:** If you are CPU-only you don't need to do this as it the non-cuda version is automaticaly installed by the conda environment.
+> **Tip:** If you are CPU-only you don't need to do this because the non-CUDA
+> version is automatically installed by the Conda environment.
 
 ## Dataset Preparation (OxIOD)
 
@@ -56,7 +57,7 @@ All firmware builds happen in a sandboxed `tools/` directory inside this repo so
    This script:
    - Downloads the Arduino CLI binary into `tools/bin` without requiring root.  
    - Generates `tools/arduino-cli.yaml` and points `directories.data/downloads/user` to `tools/arduino-*` so cores, caches, and libraries stay inside the repo.  
-   - Copies the hook templates from `env_setup/` into `$CONDA_PREFIX/etc/conda/{activate.d,deactivate.d}/arduino.sh`, ensuring every future `conda activate tinyodom-ex` automatically sets `PATH`, `ARDUINO_DIRECTORIES_*`, and `ARDUINO_CONFIG_FILE`.
+   - Copies the hook templates from `env_setup/` into `$CONDA_PREFIX/etc/conda/{activate.d,deactivate.d}/arduino.sh`, ensuring every future `conda activate tinyodomex` automatically sets `PATH`, `ARDUINO_DIRECTORIES_*`, and `ARDUINO_CONFIG_FILE`.
 3. **Reactivate the environment** so the new hooks run:  
    ```bash
    conda deactivate
@@ -190,3 +191,7 @@ Artifacts are organized under `models/`:
 - `models/<study_name>/train_history.json` and `*_loss.png` – training curves.
 - `models/<study_name>/summary.json` – summary bundle with best params and key metrics.
 - TFLite and `.keras` checkpoints are written under `tinyodom_tcn/` and `models/` as configured in `src/nas_config.yaml`.
+
+Additional one-off hardware analysis runners live under
+`analysis_scripts/`. Start with `analysis_scripts/README.md` for the current
+Portenta H7 cadence, baseline-load, arena-sweep, and clock-tick workflows.

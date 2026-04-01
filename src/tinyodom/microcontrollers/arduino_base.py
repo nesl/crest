@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -33,7 +34,11 @@ logger = logging.getLogger(__name__)
 
 _HARNESS_SKETCH_DIR = _PROJECT_ROOT / "sketches" / "harness"
 _SHARED_COMMON_DIR = _PROJECT_ROOT / "sketches" / "common"
-_SHARED_HEADER_NAMES = ("tinyodom_hil_config.h", "tinyodom_power.h")
+_SHARED_HEADER_NAMES = (
+    "tinyodom_hil_config.h",
+    "tinyodom_power.h",
+    "tinyodom_clock_telemetry.h",
+)
 _HARNESS_FLASHED_SIGNATURES: Dict[str, str] = {}
 
 
@@ -812,6 +817,17 @@ POWER_FIELD_SPECS: Dict[str, Tuple[str, re.Pattern[str]]] = {
         "float",
         re.compile(rf"^harness timer output.*?:\s*{_FLOAT_CAPTURE}$", re.IGNORECASE),
     ),
+    "clock_hz": (
+        "float",
+        re.compile(rf"^clock hz output.*?:\s*{_FLOAT_CAPTURE}$", re.IGNORECASE),
+    ),
+    "dwt_cycles_per_inference": (
+        "float",
+        re.compile(
+            rf"^dwt cycles per inference output.*?:\s*{_FLOAT_CAPTURE}$",
+            re.IGNORECASE,
+        ),
+    ),
 }
 
 POWER_METRIC_DEFAULTS: Dict[str, float] = {
@@ -822,6 +838,8 @@ POWER_METRIC_DEFAULTS: Dict[str, float] = {
     "bus_voltage_v": -1.0,
     "idle_power_mw": -1.0,
     "harness_latency_s": -1.0,
+    "clock_hz": -1.0,
+    "dwt_cycles_per_inference": -1.0,
 }
 
 
@@ -860,6 +878,36 @@ def _parse_power_metrics(lines: Sequence[str]) -> Optional[Dict[str, Optional[fl
             except (TypeError, ValueError):
                 candidates[key] = None
     return candidates if matched else None
+
+
+def _merge_power_metrics(
+    *,
+    primary: Optional[Dict[str, Optional[float]]],
+    secondary: Optional[Dict[str, Optional[float]]],
+) -> Optional[Dict[str, Optional[float]]]:
+    """Merge two metric dictionaries, preferring valid primary values."""
+    if primary is None and secondary is None:
+        return None
+    merged: Dict[str, Optional[float]] = {}
+    for key in POWER_FIELD_SPECS:
+        primary_value = None if primary is None else primary.get(key)
+        secondary_value = None if secondary is None else secondary.get(key)
+        if _is_available_power_metric_value(primary_value):
+            merged[key] = primary_value
+            continue
+        if _is_available_power_metric_value(secondary_value):
+            merged[key] = secondary_value
+            continue
+        if primary_value is not None:
+            merged[key] = primary_value
+            continue
+        merged[key] = secondary_value
+    return merged
+
+
+def _is_available_power_metric_value(value: Optional[float]) -> bool:
+    """Return True when a parsed metric is present and not a sentinel."""
+    return value is not None and math.isfinite(value) and value >= 0.0
 
 
 def normalize_power_metrics(
@@ -1087,28 +1135,37 @@ def measure_serial(
                 latency_s=latency_s,
                 arena_error_line=arena_error_line,
                 serial_log=serial_log,
-                power_metrics=None,
+                power_metrics=_parse_power_metrics(dut_log),
             )
 
         latency_s, arena_error_line = _parse_latency_from_log(result.dut_log)
         serial_log = [f"DUT: {line}" for line in result.dut_log] + [
             f"HARNESS: {line}" for line in result.harness_log
         ]
+        dut_power_metrics = _parse_power_metrics(result.dut_log)
+        harness_power_metrics = _parse_power_metrics(result.harness_log)
         power_metrics = None
         if not result.dut_timer_found or latency_s is None:
             logger.warning("DUT timer output missing; ignoring harness energy metrics.")
+            power_metrics = dut_power_metrics
         elif not result.harness_done:
             logger.warning("Harness did not report DONE; ignoring energy metrics.")
+            power_metrics = dut_power_metrics
         elif result.runs_dut is None or result.runs_harness is None:
             logger.warning("Missing DUT/harness run count; ignoring energy metrics.")
+            power_metrics = dut_power_metrics
         elif result.runs_dut != result.runs_harness:
             logger.warning(
                 "Harness run-count mismatch (dut=%s harness=%s)",
                 result.runs_dut,
                 result.runs_harness,
             )
+            power_metrics = dut_power_metrics
         else:
-            power_metrics = _parse_power_metrics(result.harness_log)
+            power_metrics = _merge_power_metrics(
+                primary=harness_power_metrics,
+                secondary=dut_power_metrics,
+            )
         return MeasureResult(
             latency_s=latency_s,
             arena_error_line=arena_error_line,
@@ -1138,7 +1195,7 @@ def measure_serial(
             latency_s=latency_s,
             arena_error_line=arena_error_line,
             serial_log=serial_log,
-            power_metrics=None,
+            power_metrics=_parse_power_metrics(dut_log),
         )
 
 
