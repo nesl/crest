@@ -55,6 +55,15 @@ target core exposes a DWT cycle counter, the DUT can now report:
   - Produces attempt CSV, aggregates JSON, and latency-vs-ticks scatter PNG.
   - See `analysis_scripts/clock_tick_latency/README.md`.
 
+- `stm32_blink_example_project/`
+  - Working STM32N6 CubeIDE blink package for `NUCLEO-N657X0-Q`.
+  - Started from a fresh STM32CubeIDE project and was then adapted from the
+    STM32CubeN6 Template FSBL sources.
+  - Now serves as the first STM32-oriented stepping stone toward a future
+    TinyODOM backend, with both GUI bring-up notes and a researched CLI path.
+  - See `analysis_scripts/stm32_blink_example_project/README.md` and
+    `memory_stm.md`.
+
 ## Running the INA228 check
 
 These commands assume you have run `./setup_arduino.sh` and that your board is
