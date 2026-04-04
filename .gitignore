@@ -108,5 +108,8 @@ analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/De
 !analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Debug/Startup/subdir.mk
 analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/**/st-link_gdbserver_log.txt
 
+memory_stm.md
+
 uv.lock
 .axon
+analysis_scripts/stm32_blink_example_project/IDE_SETUP_CHECKLIST.md

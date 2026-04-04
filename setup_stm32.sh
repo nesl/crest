@@ -32,6 +32,9 @@ After installation, ensure these commands are available on PATH before rerunning
   ST-LINK_gdbserver
   arm-none-eabi-gdb
   STM32_Programmer_CLI
+  arm-none-eabi-gcc
+  arm-none-eabi-size
+  arm-none-eabi-objdump
 EOF
   exit 1
 }
@@ -40,11 +43,18 @@ validate_clt_tools() {
   GDBSERVER_BIN="$(command -v ST-LINK_gdbserver || true)"
   GDB_BIN="$(command -v arm-none-eabi-gdb || true)"
   CUBEPROG_CLI_BIN="$(command -v STM32_Programmer_CLI || true)"
+  local gcc_bin size_bin objdump_bin
+  gcc_bin="$(command -v arm-none-eabi-gcc || true)"
+  size_bin="$(command -v arm-none-eabi-size || true)"
+  objdump_bin="$(command -v arm-none-eabi-objdump || true)"
 
-  if [[ -z "$GDBSERVER_BIN" || -z "$GDB_BIN" || -z "$CUBEPROG_CLI_BIN" ]]; then
+  if [[ -z "$GDBSERVER_BIN" || -z "$GDB_BIN" || -z "$CUBEPROG_CLI_BIN" || -z "$gcc_bin" || -z "$size_bin" || -z "$objdump_bin" ]]; then
     [[ -z "$GDBSERVER_BIN" ]] && echo "Missing command on PATH: ST-LINK_gdbserver" >&2
     [[ -z "$GDB_BIN" ]] && echo "Missing command on PATH: arm-none-eabi-gdb" >&2
     [[ -z "$CUBEPROG_CLI_BIN" ]] && echo "Missing command on PATH: STM32_Programmer_CLI" >&2
+    [[ -z "$gcc_bin" ]] && echo "Missing command on PATH: arm-none-eabi-gcc" >&2
+    [[ -z "$size_bin" ]] && echo "Missing command on PATH: arm-none-eabi-size" >&2
+    [[ -z "$objdump_bin" ]] && echo "Missing command on PATH: arm-none-eabi-objdump" >&2
     print_clt_guidance_and_exit
   fi
 
