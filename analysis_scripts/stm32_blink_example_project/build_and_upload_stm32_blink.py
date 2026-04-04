@@ -387,6 +387,7 @@ def _gdb_commands(gdb_port: int, run_after_load: bool) -> list[str]:
         "set confirm off",
         f"target remote localhost:{gdb_port}",
         "load",
+        "monitor reset",
     ]
     if run_after_load:
         commands.extend(

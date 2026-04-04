@@ -61,8 +61,7 @@ target core exposes a DWT cycle counter, the DUT can now report:
     STM32CubeN6 Template FSBL sources.
   - Now serves as the first STM32-oriented stepping stone toward a future
     TinyODOM backend, with both GUI bring-up notes and a researched CLI path.
-  - See `analysis_scripts/stm32_blink_example_project/README.md` and
-    `memory_stm.md`.
+  - See `analysis_scripts/stm32_blink_example_project/README.md`.
 
 ## Running the INA228 check
 

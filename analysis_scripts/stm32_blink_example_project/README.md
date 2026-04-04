@@ -98,4 +98,5 @@ tools/stm32/STM32CubeN6
 
 ## Related Notes
 
-Longer bring-up notes and earlier debugging history are in `memory_stm.md`.
+The tracked setup, wrapper usage, and first-run notes for this STM32 blink
+example are documented in this README.
