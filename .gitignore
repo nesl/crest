@@ -73,6 +73,7 @@ tools/arduino-data/
 tools/arduino-downloads/
 tools/arduino-cli.yaml
 tools/bin/
+tools/stm32/
 tools/arduino-user/libraries/Adafruit_BusIO/
 tools/arduino-user/libraries/Adafruit_INA228_Library/
 
@@ -93,8 +94,18 @@ analysis_scripts/portenta_baseline_load/.staged_sketch/
 
 # STM32CubeIDE STM32N6 example project
 analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/.settings/
-analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Debug/
 analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Release/
+analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Debug/*
+!analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Debug/makefile
+!analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Debug/sources.mk
+!analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Debug/objects.mk
+!analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Debug/objects.list
+!analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Debug/Src/
+analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Debug/Src/*
+!analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Debug/Src/subdir.mk
+!analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Debug/Startup/
+analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Debug/Startup/*
+!analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/Debug/Startup/subdir.mk
 analysis_scripts/stm32_blink_example_project/stm32_blink_example_project/FSBL/**/st-link_gdbserver_log.txt
 
 uv.lock

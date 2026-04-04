@@ -1,4 +1,4 @@
-.PHONY: help install test start-gpu start-hil smoke env-create arduino-setup prepare-dataset clean
+.PHONY: help install test start-gpu start-hil smoke env-create arduino-setup stm32-setup prepare-dataset clean
 
 PYTHON ?= python
 ENV ?= tinyodomex
@@ -13,6 +13,7 @@ help:
 	@echo "  smoke          Run a short NAS smoke test (override ARGS)"
 	@echo "  env-create     Create conda env from environment.yml"
 	@echo "  arduino-setup  Run Arduino CLI bootstrapper"
+	@echo "  stm32-setup    Validate STM32CubeCLT paths and bootstrap STM32CubeN6 firmware"
 	@echo "  prepare-dataset  Prepare OxIOD dataset (override OXIOD_ZIP=/path/to/OxIOD.zip)"
 	@echo "  clean          Remove Python cache/build artifacts"
 
@@ -36,6 +37,9 @@ env-create:
 
 arduino-setup:
 	bash ./setup_arduino.sh
+
+stm32-setup:
+	bash ./setup_stm32.sh
 
 prepare-dataset:
 	$(PYTHON) data/dataset_download_and_splits/prepare_oxiod.py --zip-path $(OXIOD_ZIP)

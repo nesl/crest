@@ -108,7 +108,7 @@ int main(void)
 
   /* USER CODE END 2 */
 // set led toggle delay:
-  uint32_t led_delay = 50;
+  uint32_t led_delay = 500;
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)

@@ -22,6 +22,7 @@ import argparse
 import logging
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,9 +31,6 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_PROJECT_ROOT = SCRIPT_DIR / "stm32_blink_example_project" / "FSBL"
-DEFAULT_GDBSERVER = Path("/home/joe/st/stm32cubeclt_1.21.0/STLink-gdb-server/bin/ST-LINK_gdbserver")
-DEFAULT_GDB = Path("/home/joe/st/stm32cubeclt_1.21.0/GNU-tools-for-STM32/bin/arm-none-eabi-gdb")
-DEFAULT_CUBEPROG_BIN = Path("/home/joe/st/stm32cubeclt_1.21.0/STM32CubeProgrammer/bin")
 DEFAULT_GDB_PORT = 61234
 DEFAULT_APID = int(os.environ.get("STM32_APID", "1"))
 SERVER_READY_TIMEOUT_S = 15.0
@@ -45,6 +43,24 @@ LOGGER = logging.getLogger(__name__)
 
 class WorkflowError(RuntimeError):
     """Raised when the build/upload workflow cannot proceed."""
+
+
+def _which_path(name: str) -> Path | None:
+    """Return a Path for an executable found on PATH."""
+
+    value = shutil.which(name)
+    if value is None:
+        return None
+    return Path(value)
+
+
+def _default_cubeprog_bin() -> Path | None:
+    """Infer the STM32CubeProgrammer bin directory from STM32_Programmer_CLI."""
+
+    cli = _which_path("STM32_Programmer_CLI")
+    if cli is None:
+        return None
+    return cli.parent
 
 
 def _configure_logging(verbose: bool) -> None:
@@ -96,20 +112,20 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--gdbserver",
         type=Path,
-        default=Path(os.environ.get("STM32_GDBSERVER", DEFAULT_GDBSERVER)),
-        help="Path to ST-LINK_gdbserver.",
+        default=_which_path("ST-LINK_gdbserver"),
+        help="Path to ST-LINK_gdbserver (defaults to PATH lookup).",
     )
     parser.add_argument(
         "--gdb",
         type=Path,
-        default=Path(os.environ.get("STM32_GDB", DEFAULT_GDB)),
-        help="Path to arm-none-eabi-gdb.",
+        default=_which_path("arm-none-eabi-gdb"),
+        help="Path to arm-none-eabi-gdb (defaults to PATH lookup).",
     )
     parser.add_argument(
         "--cubeprog-bin",
         type=Path,
-        default=Path(os.environ.get("STM32_CUBEPROG_BIN", DEFAULT_CUBEPROG_BIN)),
-        help="Path to the STM32CubeProgrammer bin directory.",
+        default=_default_cubeprog_bin(),
+        help="Path to the STM32CubeProgrammer bin directory (defaults to PATH lookup via STM32_Programmer_CLI).",
     )
     parser.add_argument(
         "--gdb-port",
@@ -309,6 +325,17 @@ def _validate_paths(
     return debug_dir, debug_dir / "stm32_blink_example_project_FSBL.elf"
 
 
+def _resolve_required_tool_path(path: Path | None, label: str, hint: str) -> Path:
+    """Resolve a required STM32 tool path and provide a setup hint on failure."""
+
+    if path is None:
+        raise WorkflowError(
+            f"{label} was not provided.\n"
+            f"Install STM32CubeCLT and ensure `{hint}` is on PATH, or pass the matching CLI flag."
+        )
+    return path.resolve()
+
+
 def _build_project(project_root: Path, jobs: int, clean: bool, verbose: bool) -> None:
     """Run the generated make build for the FSBL project.
 
@@ -500,11 +527,18 @@ def main() -> int:
     _configure_logging(args.verbose)
 
     project_root = args.project_root.resolve()
+    gdbserver = _resolve_required_tool_path(args.gdbserver, "ST-LINK_gdbserver", "ST-LINK_gdbserver")
+    gdb = _resolve_required_tool_path(args.gdb, "arm-none-eabi-gdb", "arm-none-eabi-gdb")
+    cubeprog_bin = _resolve_required_tool_path(
+        args.cubeprog_bin,
+        "STM32CubeProgrammer bin directory",
+        "STM32_Programmer_CLI",
+    )
     _, elf_path = _validate_paths(
         project_root=project_root,
-        gdbserver=args.gdbserver.resolve(),
-        gdb=args.gdb.resolve(),
-        cubeprog_bin=args.cubeprog_bin.resolve(),
+        gdbserver=gdbserver,
+        gdb=gdb,
+        cubeprog_bin=cubeprog_bin,
     )
 
     if not args.no_build:
@@ -522,8 +556,8 @@ def main() -> int:
     server_log: tempfile._TemporaryFileWrapper[str] | None = None
     try:
         server_proc, server_log = _start_gdb_server(
-            gdbserver=args.gdbserver.resolve(),
-            cubeprog_bin=args.cubeprog_bin.resolve(),
+            gdbserver=gdbserver,
+            cubeprog_bin=cubeprog_bin,
             gdb_port=args.gdb_port,
             apid=args.apid,
             verbose=args.verbose,
@@ -541,7 +575,7 @@ def main() -> int:
 
         LOGGER.info("Loading %s to target memory", elf_path.name)
         _run_gdb_load(
-            gdb=args.gdb.resolve(),
+            gdb=gdb,
             elf_path=elf_path,
             gdb_port=args.gdb_port,
             run_after_load=not args.no_run,
