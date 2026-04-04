@@ -94,6 +94,29 @@ All firmware builds happen in a sandboxed `tools/` directory inside this repo so
 
 > **Why this flow?** This setup allows us to run the needed modules without modifying `$HOME` or using `apt`. Keeping binaries + caches in `tools/` allows everything to be contained within the folder, and the Conda hooks ensure our pipelines (training, conversion, firmware compile) always see the same CLI without editing shell rc files.
 
+## STM32CubeCLT & STM32 N6 Firmware
+
+The STM32 example uses a split setup:
+
+- `STM32CubeCLT` stays installed outside the repo and is not downloaded into `tools/`
+- the STM32 N6 firmware package is cloned into `tools/stm32/STM32CubeN6`
+- the supported firmware baseline is pinned to `v1.3.0`
+
+First-time STM32 setup:
+
+1. Install `STM32CubeCLT` manually from ST:
+   `https://www.st.com/en/development-tools/stm32cubeclt.html`
+2. Ensure the CLT tools are on your shell `PATH`. The STM32 bootstrap expects:
+   - `ST-LINK_gdbserver`
+   - `arm-none-eabi-gdb`
+   - `STM32_Programmer_CLI`
+3. Run the bootstrapper:
+   ```bash
+   make stm32-setup
+   ```
+
+After that, the STM32 wrapper uses those same CLT tools from `PATH`.
+
 ## Quick Checklist
 - [ ] Clone with submodules: `git clone --recurse-submodules <url>`
 - [ ] `conda env create -f environment.yml -n tinyodomex`
@@ -102,6 +125,7 @@ All firmware builds happen in a sandboxed `tools/` directory inside this repo so
 - [ ] (GPU) `pip install tensorflow[and-cuda]==2.20.0`
 - [ ] Download OxIOD and run `make prepare-dataset` (or `make prepare-dataset OXIOD_ZIP=/path/to/OxIOD.zip`)
 - [ ] (Alt) `make arduino-setup` then `conda deactivate && conda activate tinyodomex`
+- [ ] (STM32) install STM32CubeCLT, ensure its tools are on `PATH`, then run `make stm32-setup`
 - [ ] `arduino-cli --config-file tools/arduino-cli.yaml version`
 - [ ] Start HIL server on the device host: `python src/hil_server.py`
 - [ ] SSH to the GPU box with reverse tunnel: `ssh -R "6001:127.0.0.1:6001" <gpu_server>`
