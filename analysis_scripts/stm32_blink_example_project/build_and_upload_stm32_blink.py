@@ -60,7 +60,7 @@ def _default_cubeprog_bin() -> Path | None:
     cli = _which_path("STM32_Programmer_CLI")
     if cli is None:
         return None
-    return cli.parent
+    return cli.resolve().parent
 
 
 def _configure_logging(verbose: bool) -> None:

@@ -43,6 +43,7 @@ validate_clt_tools() {
   GDBSERVER_BIN="$(command -v ST-LINK_gdbserver || true)"
   GDB_BIN="$(command -v arm-none-eabi-gdb || true)"
   CUBEPROG_CLI_BIN="$(command -v STM32_Programmer_CLI || true)"
+  local resolved_cubeprog_cli
   local gcc_bin size_bin objdump_bin
   gcc_bin="$(command -v arm-none-eabi-gcc || true)"
   size_bin="$(command -v arm-none-eabi-size || true)"
@@ -58,7 +59,8 @@ validate_clt_tools() {
     print_clt_guidance_and_exit
   fi
 
-  CUBEPROG_BIN_DIR="$(cd "$(dirname "$CUBEPROG_CLI_BIN")" && pwd)"
+  resolved_cubeprog_cli="$(readlink -f "$CUBEPROG_CLI_BIN" 2>/dev/null || printf '%s' "$CUBEPROG_CLI_BIN")"
+  CUBEPROG_BIN_DIR="$(cd "$(dirname "$resolved_cubeprog_cli")" && pwd)"
 }
 
 ensure_clean_git_checkout() {
