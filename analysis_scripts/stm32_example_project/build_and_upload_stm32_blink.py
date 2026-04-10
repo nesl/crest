@@ -38,6 +38,7 @@ SERVER_POLL_INTERVAL_S = 0.1
 SERVER_SETTLE_DELAY_S = 0.5
 DEFAULT_LOG_LEVEL = "1"
 DEFAULT_REFRESH_DELAY_S = "15"
+GDB_JUMP_TIMEOUT_S = 5.0
 LOGGER = logging.getLogger(__name__)
 
 
@@ -366,7 +367,41 @@ def _build_project(project_root: Path, jobs: int, clean: bool, verbose: bool) ->
     )
 
 
-def _gdb_commands(gdb_port: int, run_after_load: bool) -> list[str]:
+def _get_elf_entry_point(elf_path: Path, gdb: Path) -> int:
+    """Return the entry point address of an ELF image.
+
+    Parameters
+    ----------
+    elf_path : Path
+        Path to the ELF image.
+    gdb : Path
+        Path to ``arm-none-eabi-gdb`` (used to query ELF metadata).
+
+    Returns
+    -------
+    int
+        The entry point address.
+
+    Raises
+    ------
+    WorkflowError
+        Raised when the entry point cannot be determined.
+    """
+
+    proc = subprocess.run(
+        [str(gdb), "--quiet", "--batch", "-ex", "info files", str(elf_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for line in proc.stdout.splitlines():
+        if "Entry point" in line:
+            addr_str = line.split(":")[-1].strip()
+            return int(addr_str, 16)
+    raise WorkflowError(f"Could not determine ELF entry point from: {elf_path}")
+
+
+def _gdb_commands(gdb_port: int, run_after_load: bool, entry_point: int | None = None) -> list[str]:
     """Build the batch GDB command list.
 
     Parameters
@@ -375,6 +410,9 @@ def _gdb_commands(gdb_port: int, run_after_load: bool) -> list[str]:
         TCP port exposed by the GDB server.
     run_after_load : bool
         When ``True``, resume execution after ``load``.
+    entry_point : int | None
+        ELF entry point address used with ``jump`` when resuming. Required
+        when ``run_after_load`` is ``True``.
 
     Returns
     -------
@@ -382,21 +420,31 @@ def _gdb_commands(gdb_port: int, run_after_load: bool) -> list[str]:
         Ordered GDB commands for batch execution.
     """
 
+    # Halt before load so the write lands cleanly in AXISRAM2.
+    # A second halt is needed because the ST-LINK GDB server leaves the
+    # target in a running state after ``load`` completes.
+    # We then use ``jump`` to set PC and resume atomically.  ``jump`` blocks
+    # GDB indefinitely (no breakpoint), so the caller enforces a timeout and
+    # kills GDB; the target keeps running because the GDB server is started
+    # with ``-k`` (keep-on-disconnect).
+    #
+    # We deliberately avoid ``monitor reset`` here.  On STM32N6 in
+    # development boot mode, a system reset causes the chip to re-enter the
+    # boot ROM rather than the code we just loaded into AXISRAM2, so the
+    # firmware never executes.
     commands = [
         "set pagination off",
         "set confirm off",
         f"target remote localhost:{gdb_port}",
+        "monitor halt",
         "load",
-        "monitor reset",
+        "monitor halt",
     ]
-    if run_after_load:
-        commands.extend(
-            [
-                "continue&",
-                "detach",
-            ]
-        )
-    commands.append("quit")
+    if run_after_load and entry_point is not None:
+        commands.append(f"jump *{hex(entry_point)}")
+        # GDB blocks here; caller handles via timeout kill.
+    else:
+        commands.append("quit")
     return commands
 
 
@@ -424,11 +472,30 @@ def _run_gdb_load(
         When ``True``, log subprocess commands before execution.
     """
 
+    entry_point: int | None = None
+    if run_after_load:
+        entry_point = _get_elf_entry_point(elf_path, gdb)
+        LOGGER.debug("ELF entry point: %s", hex(entry_point))
+
     argv = [str(gdb), "--quiet", "--batch"]
-    for command in _gdb_commands(gdb_port, run_after_load):
+    for command in _gdb_commands(gdb_port, run_after_load, entry_point):
         argv.extend(["-ex", command])
     argv.append(str(elf_path))
-    _run_command(argv, verbose=verbose)
+
+    if run_after_load:
+        # ``jump`` causes GDB to block waiting for a halt event that never
+        # comes (no breakpoints).  Kill GDB after a short timeout; the
+        # target stays running because ST-LINK_gdbserver uses ``-k``.
+        if verbose:
+            _print_command(argv)
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            proc.wait(timeout=GDB_JUMP_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+    else:
+        _run_command(argv, verbose=verbose)
 
 
 def _start_gdb_server(
