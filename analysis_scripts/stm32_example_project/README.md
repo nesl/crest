@@ -100,7 +100,9 @@ What the smoke test does:
 - Loads the toy AI ELF through the existing `ST-LINK_gdbserver` +
   `arm-none-eabi-gdb` RAM/debug-load flow
 - Prints every received serial line to the terminal in real time
-- Waits up to 30 seconds for all three Phase 0 tokens:
+- Waits for `DUT READY`, then sends `START` to exercise the TinyODOM-style DUT
+  handshake
+- Waits up to 30 seconds for the legacy Phase 0 continuity tokens:
   - `STM32_AI_INIT=OK`
   - `STM32_AI_RUN=OK`
   - `STM32_AI_LATENCY_CYCLES=<value>`
@@ -120,6 +122,114 @@ python analysis_scripts/stm32_example_project/smoke_test_stm32_toy_ai.py --seria
 ```
 
 Phase 0 is considered complete when this script exits with status 0.
+
+## Running The STM32 HIL Metrics Runner
+
+The package also includes a standalone STM32 HIL runner that coordinates:
+
+- the safe STM32 RAM/debug-load flow
+- a fresh TinyODOM TFLite rebuild on each run using the perturbed `approx_trained` path
+- ST Edge AI source generation + staging into the STM32 toy project
+- selectable toy weight storage (`embedded` or `external_flash`, see below)
+- the existing Arduino harness firmware on `D2`/`D3`
+- the Nucleo GPIO mapping validated on hardware: `D2 -> PD0` trigger, `D3 -> PE9` active-low arm
+- parsing of harness energy telemetry and DUT clock/cycle telemetry
+- emission of a compact metrics JSON plus a diagnostic sidecar
+
+Default command:
+
+```bash
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py
+```
+
+Useful flags:
+
+```bash
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --clean
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --config src/nas_config.yaml
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --dut-port /dev/ttyACM0 --harness-port /dev/ttyACM1
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --output analysis_scripts/stm32_example_project/last_metrics.json
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --latency-budget-ms 200.0
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --reuse-staged-model --no-build
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash --weights-flash-address 0x71000000
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash --weights-memory-pool analysis_scripts/stm32_example_project/nucleo_mypool.json
+```
+
+To capture an external-flash run under a distinct output name:
+
+```bash
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py \
+  --clean \
+  --weight-storage-mode external_flash \
+  --output analysis_scripts/stm32_example_project/stm32_toy_ai_metrics_ext_flash.json
+```
+
+### Weight Storage Modes
+
+**`embedded` (default)**
+
+ST Edge AI generates the model weights as C arrays that are compiled directly
+into the ELF. When GDB debug-loads the ELF into RAM, weights travel with it.
+The firmware accesses weights from RAM at runtime — no separate programming
+step is needed and no external hardware is involved beyond the ST-LINK.
+
+This is the faster iteration path. Use it when you want to validate inference
+end-to-end without caring about where weights physically live on a shipped
+device.
+
+**`external_flash`**
+
+ST Edge AI generates a separate raw binary blob instead of C arrays. Before
+the GDB load, the runner programs that blob into the Nucleo's external NOR
+flash (MX25UM51245G) at a fixed base address (default `0x71000000`) using
+`STM32_Programmer_CLI` with the appropriate external loader (`.stldr`). The
+firmware ELF is then debug-loaded into RAM as usual. At runtime the firmware
+reads weights directly out of NOR flash rather than RAM.
+
+This is the path that more closely matches a real deployment, where model
+weights are typically too large for internal flash and live in external
+storage. It adds a `STM32_Programmer_CLI` round-trip before each run and
+requires the correct external loader to be present either on PATH or passed
+explicitly via `--weights-external-loader`.
+
+The difference shows up in the output JSON:
+
+| Field | `embedded` | `external_flash` |
+|---|---|---|
+| `weights_flash_bytes` | `0` | size of the programmed blob |
+| `flash_bytes` | ELF text + data only | ELF text + data + blob size |
+| `weights_programmed` | `false` | `true` if programming succeeded |
+| `weights_flash_address` | `null` | e.g. `"0x71000000"` |
+
+Notes:
+
+- By default, each run rebuilds the perturbed TinyODOM TFLite model, regenerates STM32 network sources, and then rebuilds the Cube project.
+- `--no-build` is only valid together with `--reuse-staged-model`, because otherwise the staged sources would change underneath a stale ELF.
+- In `external_flash` mode the runner reads `<stage_output_root>/staging_manifest.json`, programs the generated weights blob into Nucleo external flash, and only then starts the usual `ST-LINK_gdbserver` + `arm-none-eabi-gdb` RAM/debug-load.
+- The default external weight address is intentionally `0x71000000` for the toy flow.
+
+Main JSON fields:
+
+- `ram_bytes`, `flash_bytes`, `elf_flash_bytes`, `weights_flash_bytes`, `arena_bytes`
+- `weight_storage_mode`, `weights_flash_address`, `weights_programmed`
+- `latency_ms`, `latency_budget_ms`, `harness_latency_ms`, `dwt_cycles_per_inference`
+- `energy_mj_per_inference`, `avg_power_mw`, `avg_current_ma`
+- `bus_voltage_v`, `idle_power_mw`
+- `hil_enabled`, `error_code`, `error_label`
+
+Size semantics:
+
+- `elf_flash_bytes = ELF text + data`
+- `weights_flash_bytes = 0` in `embedded` mode, otherwise the generated weights blob size
+- `flash_bytes = elf_flash_bytes + weights_flash_bytes`
+
+The runner also writes a sidecar diagnostics JSON next to the main output with:
+
+- raw `arm-none-eabi-size` columns
+- linker-reserved heap/stack
+- parsed DUT clock/cycle telemetry
+- DUT and harness line logs for debugging
 
 ## Running The Phase 0 Probe
 
@@ -142,13 +252,24 @@ does not load firmware, and does not program flash.
 ## Project Layout
 
 - `build_and_upload_stm32_blink.py`
-  - CLI wrapper for build + debug-load
+  - CLI wrapper for build + debug-load of the blink project
+- `smoke_test_stm32_toy_ai.py`
+  - end-to-end smoke test: build, load, and confirm UART tokens from the toy AI firmware
+- `run_stm32_toy_ai_hil.py`
+  - full HIL runner: stages a fresh perturbed TinyODOM model, builds the toy AI project,
+    optionally programs external weights, runs the Arduino harness, and emits metrics JSON
 - `run_stedgeai_phase0_probe.py`
   - host-only ST Edge AI probe for the STM32N6 CPU-first Phase 0 work
+- `generate_and_stage_stm32_toy_ai.py`
+  - toy STM32 source staging with `embedded` vs `external_flash` weight placement and a fixed-path staging manifest
 - `stm32_blink_example_project/FSBL/`
-  - the real working STM32CubeIDE FSBL subproject
+  - original blink STM32CubeIDE FSBL subproject
 - `stm32_blink_example_project/FSBL/Debug/`
-  - committed generated make metadata required by the wrapper
+  - committed generated make metadata required by the blink wrapper
+- `stm32_toy_ai_project/FSBL/`
+  - toy AI STM32CubeIDE FSBL subproject; receives ST Edge AI generated sources and is built by the HIL runner
+- `stm32_toy_ai_project/FSBL/Debug/`
+  - committed generated make metadata required by the HIL runner
 
 The FSBL project now expects the STM32CubeN6 firmware headers at:
 
@@ -162,4 +283,3 @@ tools/stm32/STM32CubeN6
   - `BOOT1 = 2-3`
   - `BOOT0` does not matter for this debug flow
 - Start with the debug-load flow, not the external-flash boot flow
-

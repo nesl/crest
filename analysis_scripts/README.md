@@ -56,12 +56,12 @@ target core exposes a DWT cycle counter, the DUT can now report:
   - See `analysis_scripts/clock_tick_latency/README.md`.
 
 - `stm32_example_project/`
-  - Working STM32N6 CubeIDE blink package for `NUCLEO-N657X0-Q`.
-  - Started from a fresh STM32CubeIDE project and was then adapted from the
-    STM32CubeN6 Template FSBL sources.
-  - Now serves as the first STM32-oriented stepping stone toward a future
-    TinyODOM backend, with both GUI bring-up notes and a researched CLI path.
-  - Also includes the host-only ST Edge AI Phase 0 probe.
+  - STM32N6 HIL package for `NUCLEO-N657X0-Q`.
+  - Contains the blink bring-up project, the toy AI FSBL project, and the full
+    HIL runner (`run_stm32_toy_ai_hil.py`) that stages a perturbed TinyODOM
+    model, builds the firmware, optionally programs weights to external NOR
+    flash, and collects energy + latency metrics via the Arduino harness.
+  - Also includes the host-only ST Edge AI Phase 0 probe and a smoke-test script.
   - See `analysis_scripts/stm32_example_project/README.md`.
 
 ## Running the INA228 check

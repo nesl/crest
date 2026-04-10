@@ -2,25 +2,29 @@
 """
 Generate and stage the STM32N6 toy AI network sources.
 
-This script runs the Phase 0 safe generation path:
+Default behavior rebuilds the TinyODOM ``approx_trained`` / perturbed TFLite
+model using the same hyperparameters as
+``analysis_scripts/hil_single_run/run_single_hil_perturbed.py``, then runs:
 
     stedgeai generate --c-api legacy
 
-It then stages the generated network sources directly into the copied toy
-project so the existing committed make metadata can build them without a
-CubeIDE regeneration step.
+and stages the generated STM32 sources into the toy FSBL project.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MODEL = REPO_ROOT / "models" / "TinyOdomEx_OxIOD_PORTENTA_H7.tflite"
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from addict import Dict
+
 DEFAULT_PROJECT_ROOT = (
     REPO_ROOT
     / "analysis_scripts"
@@ -28,7 +32,18 @@ DEFAULT_PROJECT_ROOT = (
     / "stm32_toy_ai_project"
     / "FSBL"
 )
+DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "nas_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("/tmp/tinyodom_stm32_toy_generate")
+DEFAULT_TFLITE_NAME = "TinyOdomEx_OxIOD_PORTENTA_H7_approx_trained.tflite"
+PERTURBED_VARIANT_NAME = "approx_trained"
+OXIOD_SUB_FOLDERS = [
+    "handbag/",
+    "handheld/",
+    "pocket/",
+    "running/",
+    "slow_walking/",
+    "trolley/",
+]
 EXPECTED_OUTPUTS = [
     "network.c",
     "network.h",
@@ -38,6 +53,16 @@ EXPECTED_OUTPUTS = [
     "network_data_params.c",
     "network_data_params.h",
 ]
+WEIGHTS_BLOB_NAME = "network_data.bin"
+DEFAULT_WEIGHT_STORAGE_MODE = "embedded"
+DEFAULT_WEIGHTS_FLASH_ADDRESS = "0x71000000"
+DEFAULT_WEIGHTS_MEMORY_POOL = (
+    REPO_ROOT
+    / "analysis_scripts"
+    / "stm32_example_project"
+    / "nucleo_mypool.json"
+)
+STAGING_MANIFEST_NAME = "staging_manifest.json"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -45,10 +70,16 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Generate and stage the STM32N6 toy AI network sources."
     )
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="TinyODOM config YAML used to rebuild the perturbed model.",
+    )
+    parser.add_argument(
         "--model",
         type=Path,
-        default=DEFAULT_MODEL,
-        help="Path to the representative TinyODOM .tflite model.",
+        default=None,
+        help="Optional prebuilt .tflite path. When omitted, rebuild the perturbed TinyODOM model.",
     )
     parser.add_argument(
         "--project-root",
@@ -60,17 +91,194 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-root",
         type=Path,
         default=DEFAULT_OUTPUT_ROOT,
-        help="Temporary generation root used for ST Edge AI outputs.",
+        help="Temporary generation root used for TinyODOM and ST Edge AI outputs.",
     )
     parser.add_argument(
         "--clean",
         action="store_true",
         help="Delete the temporary output root before generation.",
     )
+    parser.add_argument(
+        "--weight-storage-mode",
+        choices=["embedded", "external_flash"],
+        default=DEFAULT_WEIGHT_STORAGE_MODE,
+        help="Where generated weights should live for the toy STM32 flow.",
+    )
+    parser.add_argument(
+        "--weights-flash-address",
+        default=DEFAULT_WEIGHTS_FLASH_ADDRESS,
+        help="Absolute external flash address used in external_flash mode.",
+    )
+    parser.add_argument(
+        "--weights-memory-pool",
+        type=Path,
+        default=DEFAULT_WEIGHTS_MEMORY_POOL,
+        help="Memory-pool JSON used in external_flash mode.",
+    )
+    parser.add_argument(
+        "--weights-external-loader",
+        type=Path,
+        default=None,
+        help="Optional STM32CubeProgrammer external loader override recorded in the manifest for handoff/debugging.",
+    )
     return parser
 
 
-def _run_generate(model_path: Path, output_root: Path) -> Path:
+def _build_hyperparams(*, window_size: int, input_dim: int) -> Dict:
+    """Build the fixed perturbed-model hyperparameter bundle.
+
+    Parameters
+    ----------
+    window_size : int
+        Input window length compiled into the TinyODOM model.
+    input_dim : int
+        Number of input channels present in the training data.
+
+    Returns
+    -------
+    Dict
+        Hyperparameter mapping matching the perturbed TinyODOM HIL scripts,
+        annotated with a ``flops`` estimate.
+    """
+    from tinyodom.model import build_tinyodom_model, count_flops
+
+    hyperparams = Dict(
+        nb_filters=10,
+        kernel_size=12,
+        dilations=[1, 4, 8, 64],
+        dropout_rate=0.0,
+        use_skip_connections=False,
+        norm_flag=True,
+        batch_size=256,
+        timesteps=window_size,
+        input_dim=input_dim,
+    )
+    model = build_tinyodom_model(hyperparams)
+    hyperparams.flops = count_flops(model, (hyperparams.timesteps, hyperparams.input_dim))
+    return hyperparams
+
+
+def _load_training_data(config: Dict):
+    """Load the calibration/training windows used for TFLite export.
+
+    Parameters
+    ----------
+    config : Dict
+        TinyODOM configuration loaded from YAML.
+
+    Returns
+    -------
+    Any
+        OxIOD training split structure returned by ``import_oxiod_dataset``.
+    """
+    from tinyodom.data import import_oxiod_dataset
+
+    return import_oxiod_dataset(
+        type_flag=2,
+        useMagnetometer=True,
+        useStepCounter=True,
+        AugmentationCopies=0,
+        dataset_folder=config.data.directory,
+        sub_folders=OXIOD_SUB_FOLDERS,
+        sampling_rate=config.data.sampling_rate_hz,
+        window_size=config.data.window_size,
+        stride=config.data.stride,
+        verbose=False,
+        max_windows=config.data.calibration_windows,
+    )
+
+
+def _export_perturbed_tflite(config_path: Path, output_root: Path) -> tuple[Path, Dict]:
+    """Rebuild the perturbed TinyODOM TFLite artifact.
+
+    Parameters
+    ----------
+    config_path : Path
+        Path to the TinyODOM YAML configuration file.
+    output_root : Path
+        Temporary root used for exported model artifacts.
+
+    Returns
+    -------
+    tuple[Path, Dict]
+        Path to the generated TFLite file and metadata describing the
+        perturbed model variant and resolved hyperparameters.
+    """
+    from tensorflow.keras import optimizers
+
+    from tinyodom.hardware import convert_to_tflite_model
+    from tinyodom.model import (
+        apply_combined_perturbation,
+        build_tinyodom_model,
+        load_config,
+    )
+
+    config = load_config(config_path)
+    training_data = _load_training_data(config)
+
+    hyperparams = _build_hyperparams(
+        window_size=int(config.data.window_size),
+        input_dim=int(training_data.inputs.shape[2]),
+    )
+    model = build_tinyodom_model(hyperparams)
+    bn_touched, bias_touched = apply_combined_perturbation(model=model, seed=1337)
+    model.compile(loss={"velx": "mse", "vely": "mse"}, optimizer=optimizers.Adam())
+
+    model_dir = output_root / "model"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    tflite_path = model_dir / DEFAULT_TFLITE_NAME
+    convert_to_tflite_model(
+        model=model,
+        training_data=training_data.inputs,
+        quantization=bool(config.training.quantization),
+        output_name=tflite_path,
+    )
+
+    metadata = Dict(
+        model_variant=PERTURBED_VARIANT_NAME,
+        input_mode="uniform",
+        energy_aware=True,
+        quantization=bool(config.training.quantization),
+        bn_layers_touched=int(bn_touched),
+        non_bn_bias_layers_touched=int(bias_touched),
+        hyperparams={
+            "nb_filters": int(hyperparams.nb_filters),
+            "kernel_size": int(hyperparams.kernel_size),
+            "dilations": [int(value) for value in hyperparams.dilations],
+            "dropout_rate": float(hyperparams.dropout_rate),
+            "use_skip_connections": bool(hyperparams.use_skip_connections),
+            "norm_flag": bool(hyperparams.norm_flag),
+            "batch_size": int(hyperparams.batch_size),
+            "timesteps": int(hyperparams.timesteps),
+            "input_dim": int(hyperparams.input_dim),
+            "flops": float(hyperparams.flops),
+        },
+    )
+    return tflite_path, metadata
+
+
+def _run_generate(
+    model_path: Path,
+    output_root: Path,
+    *,
+    weight_storage_mode: str,
+    weights_flash_address: str,
+    weights_memory_pool: Path,
+) -> Path:
+    """Run ST Edge AI code generation for one TFLite model.
+
+    Parameters
+    ----------
+    model_path : Path
+        Path to the input TFLite model.
+    output_root : Path
+        Root directory used for the ST Edge AI workspace and outputs.
+
+    Returns
+    -------
+    Path
+        Directory containing the generated STM32 network sources.
+    """
     out_dir = output_root / "out"
     ws_dir = output_root / "ws"
     cmd = [
@@ -84,24 +292,100 @@ def _run_generate(model_path: Path, output_root: Path) -> Path:
         "stm32n6",
         "--c-api",
         "legacy",
-        "--quiet",
-        "--workspace",
-        str(ws_dir),
-        "--output",
-        str(out_dir),
     ]
+    if weight_storage_mode == "external_flash":
+        cmd.extend(
+            [
+                "--binary",
+                "--address",
+                weights_flash_address,
+                "--memory-pool",
+                str(weights_memory_pool),
+            ]
+        )
+    cmd.extend(
+        [
+            "--quiet",
+            "--workspace",
+            str(ws_dir),
+            "--output",
+            str(out_dir),
+        ]
+    )
     subprocess.run(cmd, cwd=REPO_ROOT, check=True)
     return out_dir
 
 
-def _verify_outputs(out_dir: Path) -> None:
+def _verify_outputs(out_dir: Path, *, weight_storage_mode: str) -> Path | None:
+    """Validate that ST Edge AI emitted the expected network files.
+
+    Parameters
+    ----------
+    out_dir : Path
+        Generation output directory to inspect.
+
+    Returns
+    -------
+    None
+
+    Returns
+    -------
+    Path | None
+        Path to the weights blob in ``external_flash`` mode, otherwise ``None``.
+    """
     missing = [name for name in EXPECTED_OUTPUTS if not (out_dir / name).is_file()]
     if missing:
         missing_text = ", ".join(missing)
         raise RuntimeError(f"Missing generated outputs: {missing_text}")
+    if weight_storage_mode != "external_flash":
+        return None
+    weights_blob_path = out_dir / WEIGHTS_BLOB_NAME
+    if not weights_blob_path.is_file():
+        raise RuntimeError(f"Missing generated weights blob: {weights_blob_path}")
+    return weights_blob_path
+
+
+def _write_manifest(
+    output_root: Path,
+    *,
+    weight_storage_mode: str,
+    generated_output_dir: Path,
+    weights_blob_path: Path | None,
+    weights_flash_address: str | None,
+    weights_external_loader: Path | None,
+) -> Path:
+    """Persist the fixed-path staging manifest for downstream tooling."""
+
+    manifest = {
+        "weight_storage_mode": weight_storage_mode,
+        "generated_output_dir": str(generated_output_dir),
+        "weights_blob_path": str(weights_blob_path) if weights_blob_path is not None else None,
+        "weights_blob_size": weights_blob_path.stat().st_size if weights_blob_path is not None else None,
+        "weights_flash_address": weights_flash_address,
+        "weights_external_loader": (
+            str(weights_external_loader.resolve()) if weights_external_loader is not None else None
+        ),
+    }
+    manifest_path = output_root / STAGING_MANIFEST_NAME
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return manifest_path
 
 
 def _stage_outputs(out_dir: Path, project_root: Path) -> list[Path]:
+    """Copy generated STM32 network sources into the toy FSBL project.
+
+    Parameters
+    ----------
+    out_dir : Path
+        Directory containing generated ST Edge AI source/header files.
+    project_root : Path
+        STM32 FSBL project root that receives the staged files.
+
+    Returns
+    -------
+    list[Path]
+        Destination paths written under the STM32 project.
+    """
     staged: list[Path] = []
     src_dir = project_root / "Src"
     inc_dir = project_root / "Inc"
@@ -120,27 +404,70 @@ def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
 
-    model_path = args.model.resolve()
+    config_path = args.config.resolve()
+    model_override = args.model.resolve() if args.model is not None else None
     project_root = args.project_root.resolve()
     output_root = args.output_root.resolve()
+    weights_memory_pool = args.weights_memory_pool.resolve()
+    weights_external_loader = (
+        args.weights_external_loader.resolve() if args.weights_external_loader is not None else None
+    )
 
-    if not model_path.is_file():
-        parser.error(f"Model not found: {model_path}")
+    if not config_path.is_file():
+        parser.error(f"Config not found: {config_path}")
+    if model_override is not None and not model_override.is_file():
+        parser.error(f"Model not found: {model_override}")
     if not project_root.is_dir():
         parser.error(f"Project root not found: {project_root}")
+    if args.weight_storage_mode == "external_flash" and not weights_memory_pool.is_file():
+        parser.error(f"Weights memory-pool JSON not found: {weights_memory_pool}")
+    if weights_external_loader is not None and not weights_external_loader.is_file():
+        parser.error(f"Weights external loader not found: {weights_external_loader}")
 
     if args.clean and output_root.exists():
         shutil.rmtree(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
 
-    out_dir = _run_generate(model_path, output_root)
-    _verify_outputs(out_dir)
+    metadata = Dict()
+    if model_override is not None:
+        model_path = model_override
+        metadata.model_variant = "external_tflite"
+        metadata.input_mode = "unknown"
+        metadata.energy_aware = None
+        metadata.quantization = None
+    else:
+        model_path, metadata = _export_perturbed_tflite(config_path, output_root)
+
+    out_dir = _run_generate(
+        model_path,
+        output_root,
+        weight_storage_mode=args.weight_storage_mode,
+        weights_flash_address=args.weights_flash_address,
+        weights_memory_pool=weights_memory_pool,
+    )
+    weights_blob_path = _verify_outputs(out_dir, weight_storage_mode=args.weight_storage_mode)
     staged = _stage_outputs(out_dir, project_root)
+    manifest_path = _write_manifest(
+        output_root,
+        weight_storage_mode=args.weight_storage_mode,
+        generated_output_dir=out_dir,
+        weights_blob_path=weights_blob_path,
+        weights_flash_address=(
+            args.weights_flash_address if args.weight_storage_mode == "external_flash" else None
+        ),
+        weights_external_loader=weights_external_loader,
+    )
 
     print("STM32 toy AI staging complete.")
+    print(f"Config: {config_path}")
     print(f"Model: {model_path}")
+    print(f"Model variant: {metadata.model_variant}")
+    print(f"Weight storage mode: {args.weight_storage_mode}")
     print(f"Workspace: {output_root / 'ws'}")
     print(f"Outputs: {out_dir}")
+    print(f"Manifest: {manifest_path}")
+    if weights_blob_path is not None:
+        print(f"Weights blob: {weights_blob_path} ({weights_blob_path.stat().st_size} bytes)")
     print("Staged files:")
     for path in staged:
         print(f"  - {path}")

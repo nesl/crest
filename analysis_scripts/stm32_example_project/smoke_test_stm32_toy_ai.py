@@ -158,8 +158,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _serial_reader(
-    port: str,
-    baud: int,
+    ser: serial.Serial,
     line_queue: "queue.Queue[str | None]",
     stop_event: threading.Event,
 ) -> None:
@@ -172,12 +171,11 @@ def _serial_reader(
     an unexpected reader death.
     """
     try:
-        with serial.Serial(port, baud, timeout=0.2) as ser:
-            while not stop_event.is_set():
-                raw = ser.readline()
-                if raw:
-                    line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
-                    line_queue.put(line)
+        while not stop_event.is_set():
+            raw = ser.readline()
+            if raw:
+                line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                line_queue.put(line)
     except serial.SerialException as exc:
         LOGGER.error("Serial error: %s", exc)
     finally:
@@ -271,64 +269,69 @@ def main() -> int:
     # firmware starts printing immediately after the jump-to-entry-point, so
     # any reader that opens the port after the load risks missing the first
     # line or two.
-    line_queue: queue.Queue[str | None] = queue.Queue()
-    stop_event = threading.Event()
-    reader_thread = threading.Thread(
-        target=_serial_reader,
-        args=(args.port, args.baud, line_queue, stop_event),
-        daemon=True,
-    )
     LOGGER.info("Opening serial port %s at %d baud", args.port, args.baud)
-    reader_thread.start()
-
     try:
-        _load_and_run(
-            project_root=project_root,
-            gdbserver=gdbserver,
-            gdb=gdb,
-            cubeprog_bin=cubeprog_bin,
-            gdb_port=args.gdb_port,
-            apid=args.apid,
-            server_ready_timeout=args.server_ready_timeout,
-            verbose=args.verbose,
-            elf_path=elf_path,
-        )
-    except WorkflowError as exc:
-        LOGGER.error("%s", exc)
-        stop_event.set()
+        with serial.Serial(args.port, args.baud, timeout=0.2) as ser:
+            line_queue = queue.Queue()
+            stop_event = threading.Event()
+            reader_thread = threading.Thread(
+                target=_serial_reader,
+                args=(ser, line_queue, stop_event),
+                daemon=True,
+            )
+            reader_thread.start()
+
+            try:
+                _load_and_run(
+                    project_root=project_root,
+                    gdbserver=gdbserver,
+                    gdb=gdb,
+                    cubeprog_bin=cubeprog_bin,
+                    gdb_port=args.gdb_port,
+                    apid=args.apid,
+                    server_ready_timeout=args.server_ready_timeout,
+                    verbose=args.verbose,
+                    elf_path=elf_path,
+                )
+            except WorkflowError as exc:
+                LOGGER.error("%s", exc)
+                stop_event.set()
+                reader_thread.join(timeout=2.0)
+                return 1
+
+            remaining_tokens = list(PHASE0_TOKENS)
+            deadline = time.monotonic() + args.serial_timeout
+            latency_line: str | None = None
+            start_sent = False
+
+            print(f"\n--- serial capture ({args.port} @ {args.baud}) ---")
+            while remaining_tokens and time.monotonic() < deadline:
+                timeout_left = deadline - time.monotonic()
+                try:
+                    line = line_queue.get(timeout=min(timeout_left, 0.5))
+                except queue.Empty:
+                    continue
+                if line is None:
+                    LOGGER.error("Serial reader thread exited unexpectedly.")
+                    break
+                print(line)
+                if line == "DUT READY" and not start_sent:
+                    ser.write(b"START\n")
+                    ser.flush()
+                    start_sent = True
+                    LOGGER.info("Sent START to DUT.")
+                for token in list(remaining_tokens):
+                    if line.startswith(token):
+                        remaining_tokens.remove(token)
+                        if token == "STM32_AI_LATENCY_CYCLES=":
+                            latency_line = line
+            print("--- end serial capture ---\n")
+
+            stop_event.set()
+            reader_thread.join(timeout=2.0)
+    except serial.SerialException as exc:
+        LOGGER.error("Failed to open serial port %s: %s", args.port, exc)
         return 1
-
-    # Drain the queue until all three tokens are seen or the timeout expires.
-    # We keep a mutable copy of PHASE0_TOKENS and remove each one as it
-    # arrives, so the loop exits as soon as the last token is confirmed rather
-    # than running all the way to the deadline.
-    remaining_tokens = list(PHASE0_TOKENS)
-    deadline = time.monotonic() + args.serial_timeout
-    latency_line: str | None = None
-
-    print(f"\n--- serial capture ({args.port} @ {args.baud}) ---")
-    while remaining_tokens and time.monotonic() < deadline:
-        timeout_left = deadline - time.monotonic()
-        try:
-            # Short sub-timeout so we re-check the deadline frequently
-            # even when the board is silent.
-            line = line_queue.get(timeout=min(timeout_left, 0.5))
-        except queue.Empty:
-            continue
-        if line is None:
-            # Sentinel: the reader thread died (serial error or port closed).
-            LOGGER.error("Serial reader thread exited unexpectedly.")
-            break
-        print(line)
-        for token in list(remaining_tokens):
-            if line.startswith(token):
-                remaining_tokens.remove(token)
-                if token == "STM32_AI_LATENCY_CYCLES=":
-                    latency_line = line
-    print("--- end serial capture ---\n")
-
-    stop_event.set()
-    reader_thread.join(timeout=2.0)
 
     if remaining_tokens:
         LOGGER.error("Phase 0 FAIL — missing tokens: %s", remaining_tokens)

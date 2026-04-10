@@ -133,3 +133,4 @@ stm32_phase0_cpu_first_findings.md
 stedgeai_stm32n6_reference.md
 phase0_cm55_handoff.md
 analysis_scripts/stm32_example_project/IDE_SETUP_CHECKLIST.md
+addict.py

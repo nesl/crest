@@ -22,6 +22,7 @@
 #include "stm32n6xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "stm32n6xx_nucleo_xspi.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -214,5 +215,15 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /* USER CODE BEGIN 1 */
+
+void XSPI1_IRQHandler(void)
+{
+  HAL_XSPI_IRQHandler(&hxspi_nor[0]);
+}
+
+void XSPI2_IRQHandler(void)
+{
+  HAL_XSPI_IRQHandler(&hxspi_nor[0]);
+}
 
 /* USER CODE END 1 */
