@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    network.c
   * @author  AST Embedded Analytics Research Platform
-  * @date    2026-04-10T17:04:33-0700
+  * @date    2026-04-10T17:09:46-0700
   * @brief   AI Tool Automatic Code Generator for Embedded NN computing
   ******************************************************************************
   * @attention
@@ -35,14 +35,14 @@
 #define AI_NET_OBJ_INSTANCE g_network
  
 #undef AI_NETWORK_MODEL_SIGNATURE
-#define AI_NETWORK_MODEL_SIGNATURE     "0xb54b600cb33c7ae385ee4d61bcaaa2ea"
+#define AI_NETWORK_MODEL_SIGNATURE     "0x78a3f2a0e1d9da60ba027b2ccecf28c7"
 
 #ifndef AI_TOOLS_REVISION_ID
 #define AI_TOOLS_REVISION_ID     ""
 #endif
 
 #undef AI_TOOLS_DATE_TIME
-#define AI_TOOLS_DATE_TIME   "2026-04-10T17:04:33-0700"
+#define AI_TOOLS_DATE_TIME   "2026-04-10T17:09:46-0700"
 
 #undef AI_TOOLS_COMPILE_TIME
 #define AI_TOOLS_COMPILE_TIME    __DATE__ " " __TIME__
@@ -546,266 +546,266 @@ AI_ARRAY_OBJ_DECLARE(
 AI_INTQ_INFO_LIST_OBJ_DECLARE(conv2d_12_0_0_eltwise_15_conversion_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.3453378677368164f),
-    AI_PACK_INTQ_ZP(-14)))
+    AI_PACK_INTQ_SCALE(0.6241007447242737f),
+    AI_PACK_INTQ_ZP(17)))
 
 /* Int quant #1 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(conv2d_21_0_0_eltwise_24_conversion_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.4485960602760315f),
+    AI_PACK_INTQ_SCALE(0.5914782881736755f),
     AI_PACK_INTQ_ZP(1)))
 
 /* Int quant #2 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(conv2d_2_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.16829203069210052f),
+    AI_PACK_INTQ_SCALE(0.19473381340503693f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #3 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(conv2d_2_weights_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 10,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.0013059900375083089f, 0.0026507049333304167f, 0.002034851349890232f, 0.0013997816713526845f, 0.003439664840698242f, 0.0015041108708828688f, 0.004473851062357426f, 0.0037028235383331776f, 0.0016394986305385828f, 0.0017591211944818497f),
+    AI_PACK_INTQ_SCALE(0.001273058238439262f, 0.002601376734673977f, 0.001980958506464958f, 0.0014051254838705063f, 0.0034075307194143534f, 0.00140810024458915f, 0.004498284310102463f, 0.004013171885162592f, 0.001684620976448059f, 0.0018319395603612065f),
     AI_PACK_INTQ_ZP(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
 
 /* Int quant #4 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(conv2d_31_0_0_eltwise_34_conversion_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.7524482011795044f),
-    AI_PACK_INTQ_ZP(3)))
+    AI_PACK_INTQ_SCALE(0.7879496216773987f),
+    AI_PACK_INTQ_ZP(-9)))
 
 /* Int quant #5 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(conv2d_40_0_0_eltwise_43_conversion_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.5848303437232971f),
-    AI_PACK_INTQ_ZP(-42)))
+    AI_PACK_INTQ_SCALE(1.646423101425171f),
+    AI_PACK_INTQ_ZP(-20)))
 
 /* Int quant #6 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(conv2d_50_0_0_eltwise_53_conversion_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.7339815497398376f),
-    AI_PACK_INTQ_ZP(24)))
+    AI_PACK_INTQ_SCALE(1.023350715637207f),
+    AI_PACK_INTQ_ZP(15)))
 
 /* Int quant #7 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(conv2d_59_0_0_eltwise_62_conversion_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.25079774856567383f),
-    AI_PACK_INTQ_ZP(-23)))
+    AI_PACK_INTQ_SCALE(0.47829556465148926f),
+    AI_PACK_INTQ_ZP(11)))
 
 /* Int quant #8 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(conv2d_6_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.16718968749046326f),
+    AI_PACK_INTQ_SCALE(0.2458980530500412f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #9 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(conv2d_6_weights_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 10,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.0014292900450527668f, 0.002911581890657544f, 0.001510379370301962f, 0.0035994211211800575f, 0.0021563947666436434f, 0.0016105460235849023f, 0.002007309114560485f, 0.003538525430485606f, 0.0020217651035636663f, 0.0016888428945094347f),
+    AI_PACK_INTQ_SCALE(0.0013459218898788095f, 0.0028252291958779097f, 0.0014035250060260296f, 0.0035399666521698236f, 0.002164382254704833f, 0.0015912132803350687f, 0.0019225523574277759f, 0.0034929795656353235f, 0.001768777845427394f, 0.0016902793431654572f),
     AI_PACK_INTQ_ZP(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
 
 /* Int quant #10 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_15_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.5490375757217407f),
-    AI_PACK_INTQ_ZP(-7)))
+    AI_PACK_INTQ_SCALE(0.911280632019043f),
+    AI_PACK_INTQ_ZP(39)))
 
 /* Int quant #11 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_16_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.5490375757217407f),
-    AI_PACK_INTQ_ZP(-7)))
+    AI_PACK_INTQ_SCALE(0.911280632019043f),
+    AI_PACK_INTQ_ZP(39)))
 
 /* Int quant #12 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_17_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.28764283657073975f),
+    AI_PACK_INTQ_SCALE(0.31335046887397766f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #13 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_24_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.5161874294281006f),
-    AI_PACK_INTQ_ZP(-16)))
+    AI_PACK_INTQ_SCALE(0.6597864627838135f),
+    AI_PACK_INTQ_ZP(14)))
 
 /* Int quant #14 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_25_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.4462977945804596f),
-    AI_PACK_INTQ_ZP(-38)))
+    AI_PACK_INTQ_SCALE(0.6388782262802124f),
+    AI_PACK_INTQ_ZP(18)))
 
 /* Int quant #15 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_26_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.33160215616226196f),
+    AI_PACK_INTQ_SCALE(0.4022384285926819f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #16 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_27_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.33160215616226196f),
+    AI_PACK_INTQ_SCALE(0.4022384285926819f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #17 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_34_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(1.0393774509429932f),
-    AI_PACK_INTQ_ZP(17)))
+    AI_PACK_INTQ_SCALE(0.851586103439331f),
+    AI_PACK_INTQ_ZP(-18)))
 
 /* Int quant #18 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_35_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(1.0393774509429932f),
-    AI_PACK_INTQ_ZP(17)))
+    AI_PACK_INTQ_SCALE(0.8127252459526062f),
+    AI_PACK_INTQ_ZP(-25)))
 
 /* Int quant #19 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_36_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.44609540700912476f),
+    AI_PACK_INTQ_SCALE(0.482704758644104f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #20 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_43_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.5846975445747375f),
-    AI_PACK_INTQ_ZP(-42)))
+    AI_PACK_INTQ_SCALE(1.646183967590332f),
+    AI_PACK_INTQ_ZP(-20)))
 
 /* Int quant #21 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_44_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.5705699920654297f),
-    AI_PACK_INTQ_ZP(-41)))
+    AI_PACK_INTQ_SCALE(1.5341055393218994f),
+    AI_PACK_INTQ_ZP(-13)))
 
 /* Int quant #22 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_45_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.5949224829673767f),
+    AI_PACK_INTQ_SCALE(0.8498539924621582f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #23 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_46_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.5949224829673767f),
+    AI_PACK_INTQ_SCALE(0.8498539924621582f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #24 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_53_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.8925851583480835f),
-    AI_PACK_INTQ_ZP(20)))
+    AI_PACK_INTQ_SCALE(0.8825322389602661f),
+    AI_PACK_INTQ_ZP(-2)))
 
 /* Int quant #25 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_54_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.8925851583480835f),
-    AI_PACK_INTQ_ZP(20)))
+    AI_PACK_INTQ_SCALE(0.8443087339401245f),
+    AI_PACK_INTQ_ZP(3)))
 
 /* Int quant #26 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_55_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.3734912574291229f),
+    AI_PACK_INTQ_SCALE(0.4098038673400879f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #27 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_62_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.34789788722991943f),
-    AI_PACK_INTQ_ZP(-36)))
+    AI_PACK_INTQ_SCALE(0.5193098187446594f),
+    AI_PACK_INTQ_ZP(35)))
 
 /* Int quant #28 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_63_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.34789788722991943f),
-    AI_PACK_INTQ_ZP(-36)))
+    AI_PACK_INTQ_SCALE(0.5193098187446594f),
+    AI_PACK_INTQ_ZP(35)))
 
 /* Int quant #29 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_64_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.5949224829673767f),
+    AI_PACK_INTQ_SCALE(0.9337127208709717f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #30 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_65_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.5949224829673767f),
+    AI_PACK_INTQ_SCALE(0.9337127208709717f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #31 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(eltwise_8_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.16708539426326752f),
+    AI_PACK_INTQ_SCALE(0.2774549126625061f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #32 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(gemm_78_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(1.0897748470306396f),
-    AI_PACK_INTQ_ZP(-26)))
+    AI_PACK_INTQ_SCALE(1.1193608045578003f),
+    AI_PACK_INTQ_ZP(-39)))
 
 /* Int quant #33 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(gemm_78_weights_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 32,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.0022302435245364904f, 0.002752808155491948f, 0.002862494671717286f, 0.003005246166139841f, 0.0017778747715055943f, 0.0028211036697030067f, 0.0031084006186574697f, 0.003025991143658757f, 0.0025243498384952545f, 0.0030059802811592817f, 0.0022116433829069138f, 0.002263372065499425f, 0.002969428664073348f, 0.0024692651350051165f, 0.00316911144182086f, 0.0030568260699510574f, 0.002391219139099121f, 0.0030789172742515802f, 0.002712763613089919f, 0.002647093264386058f, 0.002535435603931546f, 0.003089720383286476f, 0.0019342420855537057f, 0.002270730910822749f, 0.0027655409649014473f, 0.003119985107332468f, 0.00203269487246871f, 0.0024129566736519337f, 0.002979505807161331f, 0.0029402810614556074f, 0.0024410828482359648f, 0.002160115400329232f),
+    AI_PACK_INTQ_SCALE(0.0028594385366886854f, 0.0030595415737479925f, 0.0012568169040605426f, 0.003123420523479581f, 0.002891730982810259f, 0.0027853099163621664f, 0.0021530259400606155f, 0.0019562887027859688f, 0.0019694797229021788f, 0.0023245590273290873f, 0.002009536838158965f, 0.0015084173064678907f, 0.0025361236184835434f, 0.003015281865373254f, 0.0026049872394651175f, 0.002575106453150511f, 0.002222218783572316f, 0.0027028671465814114f, 0.0027380778919905424f, 0.002825412666425109f, 0.0026031972374767065f, 0.0030132115352898836f, 0.0027532943058758974f, 0.0027995724231004715f, 0.002832962665706873f, 0.003168648574501276f, 0.002199191600084305f, 0.0022628435399383307f, 0.0026350824628025293f, 0.0030095642432570457f, 0.0021892269141972065f, 0.0024220640771090984f),
     AI_PACK_INTQ_ZP(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
 
 /* Int quant #34 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(gemm_79_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.059049490839242935f),
-    AI_PACK_INTQ_ZP(119)))
+    AI_PACK_INTQ_SCALE(0.2925170958042145f),
+    AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #35 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(gemm_79_weights_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.003314228495582938f),
+    AI_PACK_INTQ_SCALE(0.003312082262709737f),
     AI_PACK_INTQ_ZP(0)))
 
 /* Int quant #36 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(gemm_80_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.23351480066776276f),
-    AI_PACK_INTQ_ZP(-128)))
+    AI_PACK_INTQ_SCALE(0.5256767272949219f),
+    AI_PACK_INTQ_ZP(127)))
 
 /* Int quant #37 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(gemm_80_weights_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.0033142298925668f),
+    AI_PACK_INTQ_SCALE(0.0032094670459628105f),
     AI_PACK_INTQ_ZP(0)))
 
 /* Int quant #38 */
@@ -819,56 +819,56 @@ AI_INTQ_INFO_LIST_OBJ_DECLARE(pad_0_output_array_intq, AI_STATIC_CONST,
 AI_INTQ_INFO_LIST_OBJ_DECLARE(pad_18_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.28764283657073975f),
+    AI_PACK_INTQ_SCALE(0.31335046887397766f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #40 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(pad_28_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.33160215616226196f),
+    AI_PACK_INTQ_SCALE(0.4022384285926819f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #41 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(pad_37_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.44609540700912476f),
+    AI_PACK_INTQ_SCALE(0.482704758644104f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #42 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(pad_47_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.5949224829673767f),
+    AI_PACK_INTQ_SCALE(0.8498539924621582f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #43 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(pad_4_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.16829203069210052f),
+    AI_PACK_INTQ_SCALE(0.19473381340503693f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #44 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(pad_56_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.3734912574291229f),
+    AI_PACK_INTQ_SCALE(0.4098038673400879f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #45 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(pad_9_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.16708539426326752f),
+    AI_PACK_INTQ_SCALE(0.2774549126625061f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #46 */
 AI_INTQ_INFO_LIST_OBJ_DECLARE(pool_72_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.5949224829673767f),
+    AI_PACK_INTQ_SCALE(0.9337127208709717f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #47 */
@@ -882,7 +882,7 @@ AI_INTQ_INFO_LIST_OBJ_DECLARE(serving_default_keras_tensor_160_output_array_intq
 AI_INTQ_INFO_LIST_OBJ_DECLARE(slice_66_gather_0_output_array_intq, AI_STATIC_CONST,
   AI_BUFFER_META_FLAG_SCALE_FLOAT|AI_BUFFER_META_FLAG_ZEROPOINT_S8, 1,
   AI_PACK_INTQ_INFO(
-    AI_PACK_INTQ_SCALE(0.5949224829673767f),
+    AI_PACK_INTQ_SCALE(0.9337127208709717f),
     AI_PACK_INTQ_ZP(-128)))
 
 /* Int quant #49 */
@@ -2787,11 +2787,11 @@ AI_NETWORK_OBJ_DECLARE(
     AI_BUFFER_SHAPE_INIT(AI_SHAPE_BCWH, 4, 1, 31900, 1, 1),
     31900, NULL, NULL),
   AI_BUFFER_INIT(AI_FLAG_NONE,  AI_BUFFER_FORMAT_U8,
-    AI_BUFFER_SHAPE_INIT(AI_SHAPE_BCWH, 4, 1, 38200, 1, 1),
-    38200, NULL, NULL),
+    AI_BUFFER_SHAPE_INIT(AI_SHAPE_BCWH, 4, 1, 47792, 1, 1),
+    47792, NULL, NULL),
   AI_TENSOR_LIST_IO_OBJ_INIT(AI_FLAG_NONE, AI_NETWORK_IN_NUM, &serving_default_keras_tensor_160_output),
   AI_TENSOR_LIST_IO_OBJ_INIT(AI_FLAG_NONE, AI_NETWORK_OUT_NUM, &gemm_80_output, &gemm_79_output),
-  &pad_0_layer, 0x2cdc004b, NULL)
+  &pad_0_layer, 0x3064833d, NULL)
 
 #else
 
@@ -2806,12 +2806,12 @@ AI_NETWORK_OBJ_DECLARE(
   AI_BUFFER_ARRAY_OBJ_INIT_STATIC(
   	AI_FLAG_NONE, 1,
     AI_BUFFER_INIT(AI_FLAG_NONE,  AI_BUFFER_FORMAT_U8,
-      AI_BUFFER_SHAPE_INIT(AI_SHAPE_BCWH, 4, 1, 38200, 1, 1),
-      38200, NULL, NULL)
+      AI_BUFFER_SHAPE_INIT(AI_SHAPE_BCWH, 4, 1, 47792, 1, 1),
+      47792, NULL, NULL)
   ),
   AI_TENSOR_LIST_IO_OBJ_INIT(AI_FLAG_NONE, AI_NETWORK_IN_NUM, &serving_default_keras_tensor_160_output),
   AI_TENSOR_LIST_IO_OBJ_INIT(AI_FLAG_NONE, AI_NETWORK_OUT_NUM, &gemm_80_output, &gemm_79_output),
-  &pad_0_layer, 0x2cdc004b, NULL)
+  &pad_0_layer, 0x3064833d, NULL)
 
 #endif	/*(AI_TOOLS_API_VERSION < AI_TOOLS_API_VERSION_1_5)*/
 
@@ -2827,128 +2827,128 @@ ai_bool network_configure_activations(
   if (ai_platform_get_activations_map(g_network_activations_map, 1, params)) {
     /* Updating activations (byte) offsets */
     
-    serving_default_keras_tensor_160_output_array.data = AI_PTR(g_network_activations_map[0] + 32088);
-    serving_default_keras_tensor_160_output_array.data_start = AI_PTR(g_network_activations_map[0] + 32088);
-    pad_0_output_array.data = AI_PTR(g_network_activations_map[0] + 34088);
-    pad_0_output_array.data_start = AI_PTR(g_network_activations_map[0] + 34088);
-    conv2d_2_scratch0_array.data = AI_PTR(g_network_activations_map[0] + 36200);
-    conv2d_2_scratch0_array.data_start = AI_PTR(g_network_activations_map[0] + 36200);
-    conv2d_2_output_array.data = AI_PTR(g_network_activations_map[0] + 30088);
-    conv2d_2_output_array.data_start = AI_PTR(g_network_activations_map[0] + 30088);
-    pad_4_output_array.data = AI_PTR(g_network_activations_map[0] + 29976);
-    pad_4_output_array.data_start = AI_PTR(g_network_activations_map[0] + 29976);
-    conv2d_6_scratch0_array.data = AI_PTR(g_network_activations_map[0] + 36200);
-    conv2d_6_scratch0_array.data_start = AI_PTR(g_network_activations_map[0] + 36200);
-    conv2d_6_output_array.data = AI_PTR(g_network_activations_map[0] + 34200);
-    conv2d_6_output_array.data_start = AI_PTR(g_network_activations_map[0] + 34200);
-    eltwise_8_output_array.data = AI_PTR(g_network_activations_map[0] + 34200);
-    eltwise_8_output_array.data_start = AI_PTR(g_network_activations_map[0] + 34200);
-    pad_9_output_array.data = AI_PTR(g_network_activations_map[0] + 31760);
-    pad_9_output_array.data_start = AI_PTR(g_network_activations_map[0] + 31760);
-    pad_9_0_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 24440);
-    pad_9_0_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 24440);
-    conv2d_12_output_array.data = AI_PTR(g_network_activations_map[0] + 24400);
-    conv2d_12_output_array.data_start = AI_PTR(g_network_activations_map[0] + 24400);
-    conv2d_12_0_0_eltwise_15_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 24400);
-    conv2d_12_0_0_eltwise_15_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 24400);
-    eltwise_15_output_array.data = AI_PTR(g_network_activations_map[0] + 24400);
-    eltwise_15_output_array.data_start = AI_PTR(g_network_activations_map[0] + 24400);
-    eltwise_16_output_array.data = AI_PTR(g_network_activations_map[0] + 26400);
-    eltwise_16_output_array.data_start = AI_PTR(g_network_activations_map[0] + 26400);
-    eltwise_17_output_array.data = AI_PTR(g_network_activations_map[0] + 24400);
-    eltwise_17_output_array.data_start = AI_PTR(g_network_activations_map[0] + 24400);
-    pad_18_output_array.data = AI_PTR(g_network_activations_map[0] + 31760);
-    pad_18_output_array.data_start = AI_PTR(g_network_activations_map[0] + 31760);
-    pad_18_0_0_conv2d_21_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 24440);
-    pad_18_0_0_conv2d_21_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 24440);
-    conv2d_21_output_array.data = AI_PTR(g_network_activations_map[0] + 24400);
-    conv2d_21_output_array.data_start = AI_PTR(g_network_activations_map[0] + 24400);
-    conv2d_21_0_0_eltwise_24_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 24400);
-    conv2d_21_0_0_eltwise_24_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 24400);
-    eltwise_24_output_array.data = AI_PTR(g_network_activations_map[0] + 26400);
-    eltwise_24_output_array.data_start = AI_PTR(g_network_activations_map[0] + 26400);
-    eltwise_25_output_array.data = AI_PTR(g_network_activations_map[0] + 32200);
-    eltwise_25_output_array.data_start = AI_PTR(g_network_activations_map[0] + 32200);
-    eltwise_26_output_array.data = AI_PTR(g_network_activations_map[0] + 24400);
-    eltwise_26_output_array.data_start = AI_PTR(g_network_activations_map[0] + 24400);
-    eltwise_27_output_array.data = AI_PTR(g_network_activations_map[0] + 34200);
-    eltwise_27_output_array.data_start = AI_PTR(g_network_activations_map[0] + 34200);
-    pad_28_output_array.data = AI_PTR(g_network_activations_map[0] + 31320);
-    pad_28_output_array.data_start = AI_PTR(g_network_activations_map[0] + 31320);
-    pad_28_0_0_conv2d_31_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 22680);
-    pad_28_0_0_conv2d_31_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 22680);
-    conv2d_31_output_array.data = AI_PTR(g_network_activations_map[0] + 22640);
-    conv2d_31_output_array.data_start = AI_PTR(g_network_activations_map[0] + 22640);
-    conv2d_31_0_0_eltwise_34_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 30640);
-    conv2d_31_0_0_eltwise_34_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 30640);
-    eltwise_34_output_array.data = AI_PTR(g_network_activations_map[0] + 22640);
-    eltwise_34_output_array.data_start = AI_PTR(g_network_activations_map[0] + 22640);
-    eltwise_35_output_array.data = AI_PTR(g_network_activations_map[0] + 24640);
-    eltwise_35_output_array.data_start = AI_PTR(g_network_activations_map[0] + 24640);
-    eltwise_36_output_array.data = AI_PTR(g_network_activations_map[0] + 22640);
-    eltwise_36_output_array.data_start = AI_PTR(g_network_activations_map[0] + 22640);
-    pad_37_output_array.data = AI_PTR(g_network_activations_map[0] + 31320);
-    pad_37_output_array.data_start = AI_PTR(g_network_activations_map[0] + 31320);
-    pad_37_0_0_conv2d_40_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 22680);
-    pad_37_0_0_conv2d_40_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 22680);
-    conv2d_40_output_array.data = AI_PTR(g_network_activations_map[0] + 22640);
-    conv2d_40_output_array.data_start = AI_PTR(g_network_activations_map[0] + 22640);
-    conv2d_40_0_0_eltwise_43_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 30640);
-    conv2d_40_0_0_eltwise_43_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 30640);
-    eltwise_43_output_array.data = AI_PTR(g_network_activations_map[0] + 28640);
-    eltwise_43_output_array.data_start = AI_PTR(g_network_activations_map[0] + 28640);
-    eltwise_44_output_array.data = AI_PTR(g_network_activations_map[0] + 28640);
-    eltwise_44_output_array.data_start = AI_PTR(g_network_activations_map[0] + 28640);
-    eltwise_45_output_array.data = AI_PTR(g_network_activations_map[0] + 26640);
-    eltwise_45_output_array.data_start = AI_PTR(g_network_activations_map[0] + 26640);
-    eltwise_46_output_array.data = AI_PTR(g_network_activations_map[0] + 36200);
-    eltwise_46_output_array.data_start = AI_PTR(g_network_activations_map[0] + 36200);
-    pad_47_output_array.data = AI_PTR(g_network_activations_map[0] + 27160);
-    pad_47_output_array.data_start = AI_PTR(g_network_activations_map[0] + 27160);
-    pad_47_0_0_conv2d_50_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 40);
-    pad_47_0_0_conv2d_50_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 40);
-    conv2d_50_output_array.data = AI_PTR(g_network_activations_map[0] + 0);
-    conv2d_50_output_array.data_start = AI_PTR(g_network_activations_map[0] + 0);
-    conv2d_50_0_0_eltwise_53_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 8000);
-    conv2d_50_0_0_eltwise_53_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 8000);
-    eltwise_53_output_array.data = AI_PTR(g_network_activations_map[0] + 0);
-    eltwise_53_output_array.data_start = AI_PTR(g_network_activations_map[0] + 0);
-    eltwise_54_output_array.data = AI_PTR(g_network_activations_map[0] + 2000);
-    eltwise_54_output_array.data_start = AI_PTR(g_network_activations_map[0] + 2000);
-    eltwise_55_output_array.data = AI_PTR(g_network_activations_map[0] + 0);
-    eltwise_55_output_array.data_start = AI_PTR(g_network_activations_map[0] + 0);
-    pad_56_output_array.data = AI_PTR(g_network_activations_map[0] + 27160);
-    pad_56_output_array.data_start = AI_PTR(g_network_activations_map[0] + 27160);
-    pad_56_0_0_conv2d_59_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 40);
-    pad_56_0_0_conv2d_59_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 40);
-    conv2d_59_output_array.data = AI_PTR(g_network_activations_map[0] + 0);
-    conv2d_59_output_array.data_start = AI_PTR(g_network_activations_map[0] + 0);
-    conv2d_59_0_0_eltwise_62_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 8000);
-    conv2d_59_0_0_eltwise_62_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 8000);
-    eltwise_62_output_array.data = AI_PTR(g_network_activations_map[0] + 0);
-    eltwise_62_output_array.data_start = AI_PTR(g_network_activations_map[0] + 0);
-    eltwise_63_output_array.data = AI_PTR(g_network_activations_map[0] + 2000);
-    eltwise_63_output_array.data_start = AI_PTR(g_network_activations_map[0] + 2000);
-    eltwise_64_output_array.data = AI_PTR(g_network_activations_map[0] + 0);
-    eltwise_64_output_array.data_start = AI_PTR(g_network_activations_map[0] + 0);
-    eltwise_65_output_array.data = AI_PTR(g_network_activations_map[0] + 2000);
-    eltwise_65_output_array.data_start = AI_PTR(g_network_activations_map[0] + 2000);
-    slice_66_gather_0_output_array.data = AI_PTR(g_network_activations_map[0] + 0);
-    slice_66_gather_0_output_array.data_start = AI_PTR(g_network_activations_map[0] + 0);
-    pool_72_output_array.data = AI_PTR(g_network_activations_map[0] + 12);
-    pool_72_output_array.data_start = AI_PTR(g_network_activations_map[0] + 12);
-    gemm_78_scratch0_array.data = AI_PTR(g_network_activations_map[0] + 20);
-    gemm_78_scratch0_array.data_start = AI_PTR(g_network_activations_map[0] + 20);
-    gemm_78_output_array.data = AI_PTR(g_network_activations_map[0] + 404);
-    gemm_78_output_array.data_start = AI_PTR(g_network_activations_map[0] + 404);
+    conv2d_2_scratch0_array.data = AI_PTR(g_network_activations_map[0] + 0);
+    conv2d_2_scratch0_array.data_start = AI_PTR(g_network_activations_map[0] + 0);
+    conv2d_6_scratch0_array.data = AI_PTR(g_network_activations_map[0] + 0);
+    conv2d_6_scratch0_array.data_start = AI_PTR(g_network_activations_map[0] + 0);
+    gemm_78_scratch0_array.data = AI_PTR(g_network_activations_map[0] + 0);
+    gemm_78_scratch0_array.data_start = AI_PTR(g_network_activations_map[0] + 0);
     gemm_79_scratch0_array.data = AI_PTR(g_network_activations_map[0] + 0);
     gemm_79_scratch0_array.data_start = AI_PTR(g_network_activations_map[0] + 0);
-    gemm_79_output_array.data = AI_PTR(g_network_activations_map[0] + 4);
-    gemm_79_output_array.data_start = AI_PTR(g_network_activations_map[0] + 4);
     gemm_80_scratch0_array.data = AI_PTR(g_network_activations_map[0] + 0);
     gemm_80_scratch0_array.data_start = AI_PTR(g_network_activations_map[0] + 0);
-    gemm_80_output_array.data = AI_PTR(g_network_activations_map[0] + 8);
-    gemm_80_output_array.data_start = AI_PTR(g_network_activations_map[0] + 8);
+    serving_default_keras_tensor_160_output_array.data = AI_PTR(g_network_activations_map[0] + 25872);
+    serving_default_keras_tensor_160_output_array.data_start = AI_PTR(g_network_activations_map[0] + 25872);
+    pad_0_output_array.data = AI_PTR(g_network_activations_map[0] + 23760);
+    pad_0_output_array.data_start = AI_PTR(g_network_activations_map[0] + 23760);
+    conv2d_2_output_array.data = AI_PTR(g_network_activations_map[0] + 21760);
+    conv2d_2_output_array.data_start = AI_PTR(g_network_activations_map[0] + 21760);
+    pad_4_output_array.data = AI_PTR(g_network_activations_map[0] + 21648);
+    pad_4_output_array.data_start = AI_PTR(g_network_activations_map[0] + 21648);
+    conv2d_6_output_array.data = AI_PTR(g_network_activations_map[0] + 23872);
+    conv2d_6_output_array.data_start = AI_PTR(g_network_activations_map[0] + 23872);
+    eltwise_8_output_array.data = AI_PTR(g_network_activations_map[0] + 25872);
+    eltwise_8_output_array.data_start = AI_PTR(g_network_activations_map[0] + 25872);
+    pad_9_output_array.data = AI_PTR(g_network_activations_map[0] + 23432);
+    pad_9_output_array.data_start = AI_PTR(g_network_activations_map[0] + 23432);
+    pad_9_0_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 16112);
+    pad_9_0_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 16112);
+    conv2d_12_output_array.data = AI_PTR(g_network_activations_map[0] + 16072);
+    conv2d_12_output_array.data_start = AI_PTR(g_network_activations_map[0] + 16072);
+    conv2d_12_0_0_eltwise_15_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 16072);
+    conv2d_12_0_0_eltwise_15_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 16072);
+    eltwise_15_output_array.data = AI_PTR(g_network_activations_map[0] + 16072);
+    eltwise_15_output_array.data_start = AI_PTR(g_network_activations_map[0] + 16072);
+    eltwise_16_output_array.data = AI_PTR(g_network_activations_map[0] + 16072);
+    eltwise_16_output_array.data_start = AI_PTR(g_network_activations_map[0] + 16072);
+    eltwise_17_output_array.data = AI_PTR(g_network_activations_map[0] + 23872);
+    eltwise_17_output_array.data_start = AI_PTR(g_network_activations_map[0] + 23872);
+    pad_18_output_array.data = AI_PTR(g_network_activations_map[0] + 23432);
+    pad_18_output_array.data_start = AI_PTR(g_network_activations_map[0] + 23432);
+    pad_18_0_0_conv2d_21_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 16112);
+    pad_18_0_0_conv2d_21_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 16112);
+    conv2d_21_output_array.data = AI_PTR(g_network_activations_map[0] + 16072);
+    conv2d_21_output_array.data_start = AI_PTR(g_network_activations_map[0] + 16072);
+    conv2d_21_0_0_eltwise_24_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 16072);
+    conv2d_21_0_0_eltwise_24_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 16072);
+    eltwise_24_output_array.data = AI_PTR(g_network_activations_map[0] + 23872);
+    eltwise_24_output_array.data_start = AI_PTR(g_network_activations_map[0] + 23872);
+    eltwise_25_output_array.data = AI_PTR(g_network_activations_map[0] + 21872);
+    eltwise_25_output_array.data_start = AI_PTR(g_network_activations_map[0] + 21872);
+    eltwise_26_output_array.data = AI_PTR(g_network_activations_map[0] + 21872);
+    eltwise_26_output_array.data_start = AI_PTR(g_network_activations_map[0] + 21872);
+    eltwise_27_output_array.data = AI_PTR(g_network_activations_map[0] + 25872);
+    eltwise_27_output_array.data_start = AI_PTR(g_network_activations_map[0] + 25872);
+    pad_28_output_array.data = AI_PTR(g_network_activations_map[0] + 22992);
+    pad_28_output_array.data_start = AI_PTR(g_network_activations_map[0] + 22992);
+    pad_28_0_0_conv2d_31_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 14352);
+    pad_28_0_0_conv2d_31_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 14352);
+    conv2d_31_output_array.data = AI_PTR(g_network_activations_map[0] + 14312);
+    conv2d_31_output_array.data_start = AI_PTR(g_network_activations_map[0] + 14312);
+    conv2d_31_0_0_eltwise_34_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 22312);
+    conv2d_31_0_0_eltwise_34_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 22312);
+    eltwise_34_output_array.data = AI_PTR(g_network_activations_map[0] + 14312);
+    eltwise_34_output_array.data_start = AI_PTR(g_network_activations_map[0] + 14312);
+    eltwise_35_output_array.data = AI_PTR(g_network_activations_map[0] + 16312);
+    eltwise_35_output_array.data_start = AI_PTR(g_network_activations_map[0] + 16312);
+    eltwise_36_output_array.data = AI_PTR(g_network_activations_map[0] + 14312);
+    eltwise_36_output_array.data_start = AI_PTR(g_network_activations_map[0] + 14312);
+    pad_37_output_array.data = AI_PTR(g_network_activations_map[0] + 16312);
+    pad_37_output_array.data_start = AI_PTR(g_network_activations_map[0] + 16312);
+    pad_37_0_0_conv2d_40_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 7672);
+    pad_37_0_0_conv2d_40_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 7672);
+    conv2d_40_output_array.data = AI_PTR(g_network_activations_map[0] + 7632);
+    conv2d_40_output_array.data_start = AI_PTR(g_network_activations_map[0] + 7632);
+    conv2d_40_0_0_eltwise_43_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 15632);
+    conv2d_40_0_0_eltwise_43_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 15632);
+    eltwise_43_output_array.data = AI_PTR(g_network_activations_map[0] + 7632);
+    eltwise_43_output_array.data_start = AI_PTR(g_network_activations_map[0] + 7632);
+    eltwise_44_output_array.data = AI_PTR(g_network_activations_map[0] + 9632);
+    eltwise_44_output_array.data_start = AI_PTR(g_network_activations_map[0] + 9632);
+    eltwise_45_output_array.data = AI_PTR(g_network_activations_map[0] + 7632);
+    eltwise_45_output_array.data_start = AI_PTR(g_network_activations_map[0] + 7632);
+    eltwise_46_output_array.data = AI_PTR(g_network_activations_map[0] + 9632);
+    eltwise_46_output_array.data_start = AI_PTR(g_network_activations_map[0] + 9632);
+    pad_47_output_array.data = AI_PTR(g_network_activations_map[0] + 592);
+    pad_47_output_array.data_start = AI_PTR(g_network_activations_map[0] + 592);
+    pad_47_0_0_conv2d_50_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 11632);
+    pad_47_0_0_conv2d_50_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 11632);
+    conv2d_50_output_array.data = AI_PTR(g_network_activations_map[0] + 592);
+    conv2d_50_output_array.data_start = AI_PTR(g_network_activations_map[0] + 592);
+    conv2d_50_0_0_eltwise_53_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 11632);
+    conv2d_50_0_0_eltwise_53_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 11632);
+    eltwise_53_output_array.data = AI_PTR(g_network_activations_map[0] + 592);
+    eltwise_53_output_array.data_start = AI_PTR(g_network_activations_map[0] + 592);
+    eltwise_54_output_array.data = AI_PTR(g_network_activations_map[0] + 2592);
+    eltwise_54_output_array.data_start = AI_PTR(g_network_activations_map[0] + 2592);
+    eltwise_55_output_array.data = AI_PTR(g_network_activations_map[0] + 592);
+    eltwise_55_output_array.data_start = AI_PTR(g_network_activations_map[0] + 592);
+    pad_56_output_array.data = AI_PTR(g_network_activations_map[0] + 38752);
+    pad_56_output_array.data_start = AI_PTR(g_network_activations_map[0] + 38752);
+    pad_56_0_0_conv2d_59_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 11632);
+    pad_56_0_0_conv2d_59_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 11632);
+    conv2d_59_output_array.data = AI_PTR(g_network_activations_map[0] + 592);
+    conv2d_59_output_array.data_start = AI_PTR(g_network_activations_map[0] + 592);
+    conv2d_59_0_0_eltwise_62_conversion_output_array.data = AI_PTR(g_network_activations_map[0] + 11632);
+    conv2d_59_0_0_eltwise_62_conversion_output_array.data_start = AI_PTR(g_network_activations_map[0] + 11632);
+    eltwise_62_output_array.data = AI_PTR(g_network_activations_map[0] + 592);
+    eltwise_62_output_array.data_start = AI_PTR(g_network_activations_map[0] + 592);
+    eltwise_63_output_array.data = AI_PTR(g_network_activations_map[0] + 2592);
+    eltwise_63_output_array.data_start = AI_PTR(g_network_activations_map[0] + 2592);
+    eltwise_64_output_array.data = AI_PTR(g_network_activations_map[0] + 592);
+    eltwise_64_output_array.data_start = AI_PTR(g_network_activations_map[0] + 592);
+    eltwise_65_output_array.data = AI_PTR(g_network_activations_map[0] + 2592);
+    eltwise_65_output_array.data_start = AI_PTR(g_network_activations_map[0] + 2592);
+    slice_66_gather_0_output_array.data = AI_PTR(g_network_activations_map[0] + 592);
+    slice_66_gather_0_output_array.data_start = AI_PTR(g_network_activations_map[0] + 592);
+    pool_72_output_array.data = AI_PTR(g_network_activations_map[0] + 604);
+    pool_72_output_array.data_start = AI_PTR(g_network_activations_map[0] + 604);
+    gemm_78_output_array.data = AI_PTR(g_network_activations_map[0] + 612);
+    gemm_78_output_array.data_start = AI_PTR(g_network_activations_map[0] + 612);
+    gemm_79_output_array.data = AI_PTR(g_network_activations_map[0] + 592);
+    gemm_79_output_array.data_start = AI_PTR(g_network_activations_map[0] + 592);
+    gemm_80_output_array.data = AI_PTR(g_network_activations_map[0] + 596);
+    gemm_80_output_array.data_start = AI_PTR(g_network_activations_map[0] + 596);
     return true;
   }
   AI_ERROR_TRAP(net_ctx, INIT_FAILED, NETWORK_ACTIVATIONS);
@@ -3122,7 +3122,7 @@ ai_bool ai_network_get_info(
       .params            = AI_STRUCT_INIT,
       .activations       = AI_STRUCT_INIT,
       .n_nodes           = 0,
-      .signature         = 0x2cdc004b,
+      .signature         = 0x3064833d,
     };
 
     if (!ai_platform_api_get_network_report(network, &r)) return false;
@@ -3170,7 +3170,7 @@ ai_bool ai_network_get_report(
       .map_weights       = AI_STRUCT_INIT,
       .map_activations   = AI_STRUCT_INIT,
       .n_nodes           = 0,
-      .signature         = 0x2cdc004b,
+      .signature         = 0x3064833d,
     };
 
     if (!ai_platform_api_get_network_report(network, &r)) return false;

@@ -135,6 +135,8 @@ The package also includes a standalone STM32 HIL runner that coordinates:
 - the Nucleo GPIO mapping validated on hardware: `D2 -> PD0` trigger, `D3 -> PE9` active-low arm
 - parsing of harness energy telemetry and DUT clock/cycle telemetry
 - emission of a compact metrics JSON plus a diagnostic sidecar
+- optional `back_to_back` versus `cadenced` DUT firmware modes through a generated
+  `toy_ai_phase_config.h`
 
 Default command:
 
@@ -154,6 +156,36 @@ python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --reuse-st
 python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash
 python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash --weights-flash-address 0x71000000
 python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash --weights-memory-pool analysis_scripts/stm32_example_project/nucleo_mypool.json
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --phase cadenced --latency-budget-ms 200 --measured-runs 10
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --phase cadenced --wake-margin-us 5000 --min-sleep-us 5000
+```
+
+Common commands:
+
+```bash
+# Standard single-attempt back-to-back run:
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py
+
+# Standard single-attempt cadenced run at 200 ms cadence:
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py \
+  --project-root analysis_scripts/stm32_example_project/stm32_cadenced_toy_ai_project/FSBL \
+  --phase cadenced \
+  --latency-budget-ms 200 \
+  --measured-runs 10
+
+# Faster iteration when sources are already staged and the ELF is current:
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py \
+  --project-root analysis_scripts/stm32_example_project/stm32_cadenced_toy_ai_project/FSBL \
+  --phase cadenced \
+  --reuse-staged-model \
+  --no-build \
+  --output /tmp/stm32_cadenced_metrics.json
+```
+
+To inspect the full CLI with examples:
+
+```bash
+python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --help
 ```
 
 To capture an external-flash run under a distinct output name:
@@ -231,6 +263,70 @@ The runner also writes a sidecar diagnostics JSON next to the main output with:
 - parsed DUT clock/cycle telemetry
 - DUT and harness line logs for debugging
 
+Cadenced-mode fields now also include:
+
+- `phase`
+- `window_latency_ms`
+- `active_inference_latency_ms`
+- `rtc_sleep_ms`
+- `deadline_miss_count`
+- `wake_recovery_us_mean`
+- `wake_overshoot_us_mean`
+- `rtc_clock_source`
+- `stop_mode_variant`
+
+## Running The STM32 Cadenced Comparison Runner
+
+The comparison runner wraps the single-run HIL flow and executes both:
+
+- `back_to_back`
+- `cadenced`
+
+It writes:
+
+- a JSON summary with metadata, attempts, aggregates, and per-attempt diagnostics
+- a CSV file with one row per attempt plus comparison-friendly columns
+
+Default command:
+
+```bash
+python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py
+```
+
+Common commands:
+
+```bash
+# One back-to-back + cadenced comparison pass:
+python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py
+
+# Repeat each phase three times:
+python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py \
+  --repeats 3 \
+  --latency-budget-ms 200
+
+# Write outputs to explicit locations:
+python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py \
+  --output-json /tmp/stm32_compare.json \
+  --output-csv /tmp/stm32_compare.csv
+
+# Run the comparison against external-flash weights:
+python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py \
+  --weight-storage-mode external_flash
+```
+
+To inspect the full CLI with examples:
+
+```bash
+python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py --help
+```
+
+Notes:
+
+- The comparison runner delegates each attempt to `run_stm32_toy_ai_hil.py`.
+- The generated phase header is rewritten before each phase build.
+- `--wake-margin-us` and `--min-sleep-us` are exposed on both runners so cadence tuning stays scriptable.
+- The copied cadenced project currently uses the RTC wake-up timer with the secure RTC IRQ path enabled.
+
 ## Running The Phase 0 Probe
 
 The package also contains a host-only ST Edge AI probe:
@@ -258,6 +354,8 @@ does not load firmware, and does not program flash.
 - `run_stm32_toy_ai_hil.py`
   - full HIL runner: stages a fresh perturbed TinyODOM model, builds the toy AI project,
     optionally programs external weights, runs the Arduino harness, and emits metrics JSON
+- `run_stm32_cadenced_comparison.py`
+  - comparison wrapper that runs both `back_to_back` and `cadenced` phases and writes JSON + CSV summaries
 - `run_stedgeai_phase0_probe.py`
   - host-only ST Edge AI probe for the STM32N6 CPU-first Phase 0 work
 - `generate_and_stage_stm32_toy_ai.py`
@@ -270,6 +368,8 @@ does not load firmware, and does not program flash.
   - toy AI STM32CubeIDE FSBL subproject; receives ST Edge AI generated sources and is built by the HIL runner
 - `stm32_toy_ai_project/FSBL/Debug/`
   - committed generated make metadata required by the HIL runner
+- `stm32_cadenced_toy_ai_project/FSBL/`
+  - copied cadence-capable toy AI FSBL subproject used by the comparison runner
 
 The FSBL project now expects the STM32CubeN6 firmware headers at:
 

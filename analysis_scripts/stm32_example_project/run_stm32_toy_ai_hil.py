@@ -58,6 +58,8 @@ DEFAULT_STAGE_OUTPUT_ROOT = Path("/tmp/tinyodom_stm32_toy_generate")
 DEFAULT_HARNESS_FQBN = "arduino:mbed_nano:nano33ble"
 DEFAULT_HARNESS_AUTO_FLASH = "once"
 DEFAULT_WEIGHT_STORAGE_MODE = "embedded"
+DEFAULT_PHASE = "back_to_back"
+DEFAULT_MEASURED_RUNS = 10
 DEFAULT_WEIGHTS_FLASH_ADDRESS = "0x71000000"
 DEFAULT_WEIGHTS_MEMORY_POOL = SCRIPT_DIR / "nucleo_mypool.json"
 DEFAULT_WEIGHTS_EXTERNAL_LOADER_NAME = "MX25UM51245G_STM32N6570-NUCLEO.stldr"
@@ -95,6 +97,7 @@ HEX_DEFINE_RE = re.compile(r"(?P<name>_Min_(?:Heap|Stack)_Size)\s*=\s*(?P<value>
 RUNS_RE = re.compile(r"^runs:\s*(?P<value>\d+)$", re.IGNORECASE)
 FLOAT_CAPTURE = r"(?P<value>[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)"
 HARNESS_FLOAT_PATTERNS = {
+    "inference_seq": re.compile(rf"^inference seq.*?:\s*{FLOAT_CAPTURE}$", re.IGNORECASE),
     "energy_mj_per_inference": re.compile(rf"^energy output.*?:\s*{FLOAT_CAPTURE}$", re.IGNORECASE),
     "avg_power_mw": re.compile(rf"^avg power output.*?:\s*{FLOAT_CAPTURE}$", re.IGNORECASE),
     "avg_current_ma": re.compile(rf"^avg current output.*?:\s*{FLOAT_CAPTURE}$", re.IGNORECASE),
@@ -104,11 +107,41 @@ HARNESS_FLOAT_PATTERNS = {
 }
 DUT_FLOAT_PATTERNS = {
     "clock_hz": re.compile(rf"^clock hz output.*?:\s*{FLOAT_CAPTURE}$", re.IGNORECASE),
+    "inference_seq": re.compile(rf"^inference seq output.*?:\s*{FLOAT_CAPTURE}$", re.IGNORECASE),
     "dwt_cycles_per_inference": re.compile(
         rf"^dwt cycles per inference output.*?:\s*{FLOAT_CAPTURE}$",
         re.IGNORECASE,
     ),
     "timer_output_s": re.compile(rf"^timer output.*?:\s*{FLOAT_CAPTURE}$", re.IGNORECASE),
+    "timer_per_inference_s": re.compile(
+        rf"^timer per inference output.*?:\s*{FLOAT_CAPTURE}$",
+        re.IGNORECASE,
+    ),
+    "timer_per_window_s": re.compile(
+        rf"^timer per window output.*?:\s*{FLOAT_CAPTURE}$",
+        re.IGNORECASE,
+    ),
+    "wake_recovery_us": re.compile(rf"^wake recovery us.*?:\s*{FLOAT_CAPTURE}$", re.IGNORECASE),
+    "wake_overshoot_us": re.compile(rf"^wake overshoot us.*?:\s*{FLOAT_CAPTURE}$", re.IGNORECASE),
+    "rtc_sleep_total_ms": re.compile(rf"^rtc sleep total ms.*?:\s*{FLOAT_CAPTURE}$", re.IGNORECASE),
+    "rtc_clock_hz_nominal": re.compile(
+        rf"^rtc clock hz nominal output.*?:\s*{FLOAT_CAPTURE}$",
+        re.IGNORECASE,
+    ),
+    "cadence_deadline_misses": re.compile(
+        rf"^cadence deadline misses.*?:\s*{FLOAT_CAPTURE}$",
+        re.IGNORECASE,
+    ),
+}
+STRING_CAPTURE = r"(?P<value>.+)"
+DUT_STRING_PATTERNS = {
+    "phase": re.compile(rf"^phase output:\s*{STRING_CAPTURE}$", re.IGNORECASE),
+    "rtc_clock_source": re.compile(rf"^rtc clock source output:\s*{STRING_CAPTURE}$", re.IGNORECASE),
+    "cadence_timing_quality": re.compile(
+        rf"^cadence timing quality output:\s*{STRING_CAPTURE}$",
+        re.IGNORECASE,
+    ),
+    "stop_mode_variant": re.compile(rf"^stop mode variant output:\s*{STRING_CAPTURE}$", re.IGNORECASE),
 }
 
 
@@ -251,7 +284,20 @@ def _build_parser() -> argparse.ArgumentParser:
         Configured parser with all CLI options for paths, timeouts, serial
         ports, hardware pins, and weight storage settings.
     """
-    parser = argparse.ArgumentParser(description="Run one STM32 toy AI HIL attempt.")
+    parser = argparse.ArgumentParser(
+        description="Run one STM32 toy AI HIL attempt.",
+        epilog=(
+            "Examples:\n"
+            "  python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py\n"
+            "  python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py "
+            "--phase cadenced --latency-budget-ms 200 --measured-runs 10\n"
+            "  python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py "
+            "--reuse-staged-model --no-build --output /tmp/stm32_metrics.json\n"
+            "  python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py "
+            "--weight-storage-mode external_flash --clean"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--project-root",
         type=Path,
@@ -308,6 +354,46 @@ def _build_parser() -> argparse.ArgumentParser:
             "Inference latency budget in milliseconds written into the output metrics. "
             f"Default: {DEFAULT_LATENCY_BUDGET_MS}. "
             "Examples: 200.0, 100.0, 50.0"
+        ),
+    )
+    parser.add_argument(
+        "--phase",
+        choices=["back_to_back", "cadenced"],
+        default=DEFAULT_PHASE,
+        help=(
+            "STM32 DUT execution phase. "
+            f"Default: {DEFAULT_PHASE}. "
+            "back_to_back runs all inferences in one active window; "
+            "cadenced uses Stop + RTC wake-up between release slots."
+        ),
+    )
+    parser.add_argument(
+        "--measured-runs",
+        type=int,
+        default=DEFAULT_MEASURED_RUNS,
+        help=(
+            "Number of measured inference slots in one DUT attempt. "
+            f"Default: {DEFAULT_MEASURED_RUNS}. "
+            "Examples: 10, 5, 20"
+        ),
+    )
+    parser.add_argument(
+        "--wake-margin-us",
+        type=int,
+        default=5000,
+        help=(
+            "Wake margin in microseconds written into the generated phase config header. "
+            "Used by cadenced runs to wake before the absolute release time. "
+            "Default: 5000. Examples: 5000, 2000, 10000"
+        ),
+    )
+    parser.add_argument(
+        "--min-sleep-us",
+        type=int,
+        default=5000,
+        help=(
+            "Minimum slack in microseconds required before entering Stop mode. "
+            "Default: 5000. Examples: 5000, 1000, 20000"
         ),
     )
     parser.add_argument(
@@ -720,6 +806,84 @@ def _parse_last_float_fields(lines: list[str], patterns: dict[str, re.Pattern[st
     return values
 
 
+def _parse_last_string_fields(lines: list[str], patterns: dict[str, re.Pattern[str]]) -> dict[str, str]:
+    """Extract the last match for each named string pattern from serial lines.
+
+    Parameters
+    ----------
+    lines : list[str]
+        Lines captured from a serial port.
+    patterns : dict[str, re.Pattern[str]]
+        Mapping of field name to compiled regex. Each pattern must expose a
+        ``value`` named group matching the string payload.
+
+    Returns
+    -------
+    dict[str, str]
+        Latest string value seen for each pattern key. Keys without any match
+        are absent from the result.
+    """
+    values: dict[str, str] = {}
+    for line in lines:
+        stripped = line.strip()
+        for key, pattern in patterns.items():
+            match = pattern.match(stripped)
+            if match:
+                values[key] = match.group("value").strip()
+    return values
+
+
+def _write_phase_config_header(
+    *,
+    project_root: Path,
+    phase: str,
+    latency_budget_ms: float,
+    measured_runs: int,
+    wake_margin_us: int = 5000,
+    min_sleep_us: int = 5000,
+) -> tuple[Path, bool]:
+    """Write the generated phase-config header consumed by the cadenced project.
+
+    Parameters
+    ----------
+    project_root : Path
+        STM32 FSBL project root that owns ``Inc/toy_ai_phase_config.h``.
+    phase : str
+        Requested phase label, either ``"back_to_back"`` or ``"cadenced"``.
+    latency_budget_ms : float
+        Cadence period in milliseconds to write into the generated header.
+    measured_runs : int
+        Number of measured slots or repeated inferences per attempt.
+    wake_margin_us : int, default=5000
+        Microseconds of wake margin used by the cadenced scheduler.
+    min_sleep_us : int, default=5000
+        Minimum slack required before entering Stop mode.
+
+    Returns
+    -------
+    tuple[Path, bool]
+        Generated header path and a flag indicating whether the file contents
+        changed compared with the previous version on disk.
+    """
+    phase_value = "TOY_AI_PHASE_CADENCED" if phase == "cadenced" else "TOY_AI_PHASE_BACK_TO_BACK"
+    header_path = project_root / "Inc" / "toy_ai_phase_config.h"
+    header_text = (
+        "#ifndef TOY_AI_PHASE_CONFIG_H\n"
+        "#define TOY_AI_PHASE_CONFIG_H\n\n"
+        "#define TOY_AI_PHASE_BACK_TO_BACK 0\n"
+        "#define TOY_AI_PHASE_CADENCED 1\n\n"
+        f"#define TOY_AI_SELECTED_PHASE {phase_value}\n"
+        f"#define TOY_AI_LATENCY_BUDGET_MS {max(1, int(round(latency_budget_ms)))}\n"
+        f"#define TOY_AI_MEASURED_RUNS {max(1, int(measured_runs))}\n"
+        f"#define TOY_AI_WAKE_MARGIN_US {max(0, int(wake_margin_us))}\n"
+        f"#define TOY_AI_MIN_SLEEP_US {max(0, int(min_sleep_us))}\n\n"
+        "#endif /* TOY_AI_PHASE_CONFIG_H */\n"
+    )
+    previous_text = header_path.read_text(encoding="utf-8") if header_path.is_file() else None
+    header_path.write_text(header_text, encoding="utf-8")
+    return header_path, previous_text != header_text
+
+
 def _diagnostic_output_path(output_path: Path) -> Path:
     """Derive the sibling diagnostics JSON path from the main output path.
 
@@ -1056,12 +1220,15 @@ def _build_contract(
     arena_bytes: int,
     latency_budget_ms: float,
     dut_metrics: dict[str, float],
+    dut_strings: dict[str, str],
     harness_metrics: dict[str, float],
     error_code: int,
     weight_storage_mode: str,
     weights_flash_bytes: int,
     weights_flash_address: str | None,
     weights_programmed: bool,
+    phase: str,
+    measured_runs: int,
 ) -> dict[str, float | int | bool | str | None]:
     """Assemble the compact metrics contract dict from raw HIL results.
 
@@ -1096,7 +1263,25 @@ def _build_contract(
     harness_latency_ms = -1.0
     if harness_metrics.get("harness_latency_s", -1.0) >= 0.0:
         harness_latency_ms = harness_metrics["harness_latency_s"] * 1000.0
+    phase_label = str(dut_strings.get("phase", phase))
+    timer_per_inference_ms = -1.0
+    if dut_metrics.get("timer_per_inference_s", -1.0) >= 0.0:
+        timer_per_inference_ms = dut_metrics["timer_per_inference_s"] * 1000.0
+    elif dut_metrics.get("timer_output_s", -1.0) >= 0.0:
+        timer_per_inference_ms = dut_metrics["timer_output_s"] * 1000.0
+
+    timer_per_window_ms = -1.0
+    if dut_metrics.get("timer_per_window_s", -1.0) >= 0.0:
+        timer_per_window_ms = dut_metrics["timer_per_window_s"] * 1000.0
+
+    energy_mj_per_inference = float(harness_metrics.get("energy_mj_per_inference", -1.0))
+    energy_mj_per_window = -1.0
+    if energy_mj_per_inference >= 0.0:
+        energy_mj_per_window = energy_mj_per_inference * float(measured_runs)
+
+    latency_ms = timer_per_window_ms if phase_label == "cadenced" and timer_per_window_ms >= 0.0 else harness_latency_ms
     elf_flash_bytes = int(size_info["elf_flash_bytes"])
+    inference_seq = int(harness_metrics.get("inference_seq", dut_metrics.get("inference_seq", -1.0)))
     return {
         "ram_bytes": int(size_info["ram_bytes"]),
         "flash_bytes": int(elf_flash_bytes + weights_flash_bytes),
@@ -1105,17 +1290,32 @@ def _build_contract(
         "weight_storage_mode": weight_storage_mode,
         "weights_flash_address": weights_flash_address,
         "weights_programmed": bool(weights_programmed),
-        "latency_ms": harness_latency_ms,
+        "phase": phase_label,
+        "latency_ms": latency_ms,
         "latency_budget_ms": float(latency_budget_ms),
         "arena_bytes": int(arena_bytes),
         "hil_enabled": True,
+        "clock_hz": float(dut_metrics.get("clock_hz", -1.0)),
         "dwt_cycles_per_inference": float(dut_metrics.get("dwt_cycles_per_inference", -1.0)),
-        "energy_mj_per_inference": float(harness_metrics.get("energy_mj_per_inference", -1.0)),
+        "energy_mj_per_inference": energy_mj_per_inference,
+        "energy_mj_per_window": energy_mj_per_window,
         "avg_power_mw": float(harness_metrics.get("avg_power_mw", -1.0)),
         "avg_current_ma": float(harness_metrics.get("avg_current_ma", -1.0)),
         "bus_voltage_v": float(harness_metrics.get("bus_voltage_v", -1.0)),
         "idle_power_mw": float(harness_metrics.get("idle_power_mw", -1.0)),
         "harness_latency_ms": harness_latency_ms,
+        "active_inference_latency_ms": timer_per_inference_ms,
+        "window_latency_ms": timer_per_window_ms,
+        "rtc_sleep_ms": float(dut_metrics.get("rtc_sleep_total_ms", -1.0)),
+        "deadline_miss_count": int(dut_metrics.get("cadence_deadline_misses", -1.0)),
+        "wake_recovery_us_mean": float(dut_metrics.get("wake_recovery_us", -1.0)),
+        "wake_overshoot_us_mean": float(dut_metrics.get("wake_overshoot_us", -1.0)),
+        "inference_seq": inference_seq,
+        "measured_runs": int(measured_runs),
+        "rtc_clock_source": dut_strings.get("rtc_clock_source"),
+        "rtc_clock_hz_nominal": int(dut_metrics.get("rtc_clock_hz_nominal", -1.0)),
+        "cadence_timing_quality": dut_strings.get("cadence_timing_quality"),
+        "stop_mode_variant": dut_strings.get("stop_mode_variant"),
         "error_code": int(error_code),
         "error_label": ERROR_LABELS.get(int(error_code), f"UNKNOWN_{error_code}"),
     }
@@ -1192,6 +1392,15 @@ def main() -> int:
             weights_external_loader=weights_external_loader,
         )
 
+    phase_config_header, phase_config_changed = _write_phase_config_header(
+        project_root=project_root,
+        phase=args.phase,
+        latency_budget_ms=args.latency_budget_ms,
+        measured_runs=args.measured_runs,
+        wake_margin_us=args.wake_margin_us,
+        min_sleep_us=args.min_sleep_us,
+    )
+
     staging_manifest = _read_staging_manifest(stage_output_root)
     weight_storage_mode = str(staging_manifest.get("weight_storage_mode", args.weight_storage_mode))
     weights_blob_path = staging_manifest.get("weights_blob_path")
@@ -1199,9 +1408,20 @@ def main() -> int:
     weights_flash_bytes = int(staging_manifest.get("weights_blob_size") or 0)
     weights_programmed = False
 
+    if args.no_build and phase_config_changed:
+        raise WorkflowError(
+            "--no-build cannot be used after the generated toy_ai_phase_config.h changed. "
+            "Re-run without --no-build so the phase-specific firmware is rebuilt."
+        )
+
     if not args.no_build:
+        build_clean = args.clean or phase_config_changed
+        if phase_config_changed and not args.clean:
+            LOGGER.info(
+                "toy_ai_phase_config.h changed; forcing a clean rebuild so the phase-specific ELF is refreshed"
+            )
         LOGGER.info("Building STM32 toy AI project in %s", project_root)
-        _build_project(project_root, jobs=args.jobs, clean=args.clean, verbose=args.verbose)
+        _build_project(project_root, jobs=args.jobs, clean=build_clean, verbose=args.verbose)
 
     if not elf_path.is_file():
         raise WorkflowError(f"ELF not found after build: {elf_path}")
@@ -1235,6 +1455,7 @@ def main() -> int:
         harness_fqbn=args.harness_fqbn,
         harness_auto_flash=args.harness_auto_flash,
         build_defines={
+            "TINYODOM_INFERENCE_RUNS": int(args.measured_runs),
             "TINYODOM_HARNESS_ARM_PIN": int(args.harness_arm_pin),
             "TINYODOM_HARNESS_TRIGGER_PIN": int(args.harness_trigger_pin),
             "TINYODOM_DUT_ARM_HOLD_MS": int(args.dut_arm_hold_ms),
@@ -1248,6 +1469,7 @@ def main() -> int:
     dut_lines: list[str] = []
     harness_lines: list[str] = []
     dut_metrics: dict[str, float] = {}
+    dut_strings: dict[str, str] = {}
     harness_metrics: dict[str, float] = {}
 
     try:
@@ -1282,11 +1504,12 @@ def main() -> int:
         dut_lines = dut_monitor.snapshot_lines()
         harness_lines = harness_monitor.snapshot_lines()
         dut_metrics = _parse_last_float_fields(dut_lines, DUT_FLOAT_PATTERNS)
+        dut_strings = _parse_last_string_fields(dut_lines, DUT_STRING_PATTERNS)
         harness_metrics = _parse_last_float_fields(harness_lines, HARNESS_FLOAT_PATTERNS)
 
         runs_dut = _parse_runs(dut_lines)
         runs_harness = _parse_runs(harness_lines)
-        if runs_dut != 10 or runs_harness != 10:
+        if runs_dut != args.measured_runs or runs_harness != args.measured_runs:
             raise RuntimeError(f"Run-count mismatch: dut={runs_dut} harness={runs_harness}")
         if "harness_latency_s" not in harness_metrics:
             raise RuntimeError("Harness latency telemetry missing.")
@@ -1304,6 +1527,7 @@ def main() -> int:
         if harness_monitor is not None:
             harness_lines = harness_monitor.snapshot_lines()
         dut_metrics = _parse_last_float_fields(dut_lines, DUT_FLOAT_PATTERNS)
+        dut_strings = _parse_last_string_fields(dut_lines, DUT_STRING_PATTERNS)
         harness_metrics = _parse_last_float_fields(harness_lines, HARNESS_FLOAT_PATTERNS)
     finally:
         if dut_monitor is not None:
@@ -1316,12 +1540,15 @@ def main() -> int:
         arena_bytes=arena_bytes,
         latency_budget_ms=args.latency_budget_ms,
         dut_metrics=dut_metrics,
+        dut_strings=dut_strings,
         harness_metrics=harness_metrics,
         error_code=error_code,
         weight_storage_mode=weight_storage_mode,
         weights_flash_bytes=weights_flash_bytes,
         weights_flash_address=str(weights_flash_address) if weights_flash_address else None,
         weights_programmed=weights_programmed,
+        phase=args.phase,
+        measured_runs=args.measured_runs,
     )
 
     dut_latency_ms_from_cycles = -1.0
@@ -1333,6 +1560,18 @@ def main() -> int:
     if contract["harness_latency_ms"] >= 0 and dut_latency_ms_from_cycles >= 0:
         latency_delta_ms = abs(float(contract["harness_latency_ms"]) - dut_latency_ms_from_cycles)
 
+    timing_sanity_warning = None
+    expected_window_ms = float(args.latency_budget_ms) * float(args.measured_runs)
+    if (
+        contract.get("phase") == "cadenced"
+        and float(contract.get("window_latency_ms", -1.0)) > 0.0
+        and float(contract["window_latency_ms"]) > (expected_window_ms * 1.5)
+    ):
+        timing_sanity_warning = (
+            f"Cadenced window latency {float(contract['window_latency_ms']):.3f} ms is far above "
+            f"expected {expected_window_ms:.3f} ms."
+        )
+
     diagnostic = {
         "raw_size": size_info,
         "linker": linker_info,
@@ -1340,9 +1579,11 @@ def main() -> int:
         "arena_bytes": arena_bytes,
         "latency_budget_ms": args.latency_budget_ms,
         "dut_metrics": dut_metrics,
+        "dut_strings": dut_strings,
         "harness_metrics": harness_metrics,
         "dut_latency_ms_from_cycles": dut_latency_ms_from_cycles,
         "latency_cross_check_delta_ms": latency_delta_ms,
+        "timing_sanity_warning": timing_sanity_warning,
         "dut_runs": _parse_runs(dut_lines),
         "harness_runs": _parse_runs(harness_lines),
         "dut_lines": dut_lines,
@@ -1353,6 +1594,9 @@ def main() -> int:
         "stage_output_root": str(stage_output_root),
         "reuse_staged_model": bool(args.reuse_staged_model),
         "weights_programmed": bool(weights_programmed),
+        "phase": args.phase,
+        "measured_runs": int(args.measured_runs),
+        "phase_config_header": str(phase_config_header),
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
