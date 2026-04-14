@@ -8,6 +8,7 @@
 #include "main.h"
 #include "network.h"       /* generated: AI_NETWORK_* macros, ai_network_* API */
 #include "network_data.h"  /* generated: AI_NETWORK_DATA_ACTIVATIONS_SIZE, weight storage */
+#include "toy_ai_phase_config.h"
 #include "stm32n6xx_nucleo_xspi.h"
 
 /* Activations pool — the ST Edge AI runtime carves all intermediate tensor
@@ -30,7 +31,6 @@ static ai_u8 s_network_activations[AI_NETWORK_DATA_ACTIVATIONS_SIZE];
 
 enum
 {
-  kMeasuredRuns = 10,
   kStartCommandTimeoutMs = 30000,
   kStartReadyHeartbeatMs = 5000,
   kUartPollTimeoutMs = 20,
@@ -373,13 +373,13 @@ int toy_ai_run_once(void)
   }
 
   /* Timed run: DWT->CYCCNT is a free-running CPU cycle counter enabled in
-   * DWT_Init() (main.c). Capture before and after the full 10-run window,
+   * DWT_Init() (main.c). Capture before and after the full configured window,
    * then normalize the result per inference. */
   fill_input_buffer(input);
   arm_harness_window();
   uint32_t start_cycles = DWT->CYCCNT;
   int runs_completed = 0;
-  for (int run_idx = 0; run_idx < kMeasuredRuns; ++run_idx)
+  for (int run_idx = 0; run_idx < TOY_AI_MEASURED_RUNS; ++run_idx)
   {
     batch = ai_network_run(network, input, output);
     if (batch != 1)

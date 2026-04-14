@@ -138,60 +138,117 @@ The package also includes a standalone STM32 HIL runner that coordinates:
 - optional `back_to_back` versus `cadenced` DUT firmware modes through a generated
   `toy_ai_phase_config.h`
 
+Run these commands from the `tinyodomex` conda environment. The cadence and
+clock-preset paths below are validated against a connected STM32 board, not as
+host-only dry runs.
+
 Default command:
 
 ```bash
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py
 ```
 
 Useful flags:
 
 ```bash
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --clean
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --config src/nas_config.yaml
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --dut-port /dev/ttyACM0 --harness-port /dev/ttyACM1
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --output analysis_scripts/stm32_example_project/last_metrics.json
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --latency-budget-ms 200.0
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --reuse-staged-model --no-build
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash --weights-flash-address 0x71000000
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash --weights-memory-pool analysis_scripts/stm32_example_project/nucleo_mypool.json
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --phase cadenced --latency-budget-ms 200 --measured-runs 10
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --phase cadenced --wake-margin-us 5000 --min-sleep-us 5000
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --clean
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --config src/nas_config.yaml
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --dut-port /dev/ttyACM0 --harness-port /dev/ttyACM1
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --output analysis_scripts/stm32_example_project/last_metrics.json
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --latency-budget-ms 200.0
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --reuse-staged-model --no-build
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash --weights-flash-address 0x71000000
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash --weights-memory-pool analysis_scripts/stm32_example_project/nucleo_mypool.json
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --phase cadenced --latency-budget-ms 200 --measured-runs 100
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --phase cadenced --wake-margin-us 5000 --min-sleep-us 5000
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --cpu-clock-mhz 400
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --cpu-clock-mhz 800
 ```
+
+`--cpu-clock-mhz` accepts fixed presets `200`, `300`, `400`, `600`, and `800`.
+The default is `600`. Presets `200/300/400/600` keep the low-disturbance PLL1
+tree, while `800` switches to the dedicated overdrive profile and is the
+higher-risk option.
+
+### Cadenced RTC Source
+
+The cadenced STM32 project now uses `LSE` as its RTC source and keeps the RTC
+calendar plus wake-up timer on one consistent `32.768 kHz` basis.
+
+Why `LSE`:
+
+- `LSI` is an internal RC oscillator, so its frequency tolerance is coarse and
+  accumulated cadence drift shows up directly in Stop/wake timing.
+- `LSE` is the crystal-backed `32.768 kHz` low-speed clock source, which makes
+  cadenced wall-clock timing materially more stable and repeatable.
+- The RTC source choice is independent of the `--cpu-clock-mhz` presets. CPU
+  clock tuning still happens on the high-speed tree; the RTC change only affects
+  the cadenced low-speed timing domain.
+- The expected board-level energy difference between `LSI` and `LSE` is
+  negligible in this workflow. The reason for choosing `LSE` is timing
+  correctness, not power reduction.
+
+This workflow is run from the `tinyodomex` conda environment. The STM32 board
+and harness board are attached to the machine used for this flow, but live
+validation of the `LSE` change is intentionally deferred when only a host-side
+implementation pass is needed.
+
+ST primary references:
+
+- STM32N657 datasheet oscillator characteristics:
+  <https://www.st.com/resource/en/datasheet/stm32n657i0.pdf>
+- STM32N6 RTC bring-up example from ST:
+  <https://community.st.com/t5/stm32-mcus/how-to-add-rtc-on-the-stm32n6/ta-p/823623>
 
 Common commands:
 
 ```bash
 # Standard single-attempt back-to-back run:
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py
 
 # Standard single-attempt cadenced run at 200 ms cadence:
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py \
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py \
   --project-root analysis_scripts/stm32_example_project/stm32_cadenced_toy_ai_project/FSBL \
   --phase cadenced \
   --latency-budget-ms 200 \
-  --measured-runs 10
+  --measured-runs 100
 
-# Faster iteration when sources are already staged and the ELF is current:
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py \
+# Cadenced run at the 400 MHz low-disturbance preset:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py \
   --project-root analysis_scripts/stm32_example_project/stm32_cadenced_toy_ai_project/FSBL \
   --phase cadenced \
+  --cpu-clock-mhz 400
+
+# Back-to-back run at the 800 MHz overdrive preset:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py \
+  --project-root analysis_scripts/stm32_example_project/stm32_cadenced_toy_ai_project/FSBL \
+  --cpu-clock-mhz 800
+
+# Faster iteration when sources are already staged and the ELF is current:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py \
+  --project-root analysis_scripts/stm32_example_project/stm32_cadenced_toy_ai_project/FSBL \
+  --phase cadenced \
+  --measured-runs 100 \
   --reuse-staged-model \
   --no-build \
   --output /tmp/stm32_cadenced_metrics.json
 ```
 
+Use `--measured-runs N` to change the number of measured inferences per DUT
+attempt. For example, `--measured-runs 100` rebuilds and runs a 100-inference
+window while keeping the default at `10` when the flag is omitted.
+
 To inspect the full CLI with examples:
 
 ```bash
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --help
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --help
 ```
 
 To capture an external-flash run under a distinct output name:
 
 ```bash
-python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py \
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py \
   --clean \
   --weight-storage-mode external_flash \
   --output analysis_scripts/stm32_example_project/stm32_toy_ai_metrics_ext_flash.json
@@ -287,37 +344,54 @@ It writes:
 - a JSON summary with metadata, attempts, aggregates, and per-attempt diagnostics
 - a CSV file with one row per attempt plus comparison-friendly columns
 
+Run this through `conda run -n tinyodomex ...` or from an already activated
+`tinyodomex` shell. The wrapper is intended for live connected-board runs and
+records both the requested preset (`cpu_clock_mhz_requested`) and measured DUT
+telemetry (`clock_hz`) separately.
+
 Default command:
 
 ```bash
-python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py
 ```
 
 Common commands:
 
 ```bash
 # One back-to-back + cadenced comparison pass:
-python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py
 
 # Repeat each phase three times:
-python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py \
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py \
   --repeats 3 \
   --latency-budget-ms 200
 
 # Write outputs to explicit locations:
-python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py \
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py \
   --output-json /tmp/stm32_compare.json \
   --output-csv /tmp/stm32_compare.csv
 
 # Run the comparison against external-flash weights:
-python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py \
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py \
   --weight-storage-mode external_flash
+
+# Run the comparison at the 400 MHz low-disturbance preset:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py \
+  --cpu-clock-mhz 400
+
+# Run the comparison at the 800 MHz overdrive preset:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py \
+  --cpu-clock-mhz 800
 ```
+
+`--cpu-clock-mhz` accepts `200`, `300`, `400`, `600`, and `800`, with `600`
+as the default baseline. Treat `800` as the explicit overdrive and higher-risk
+preset.
 
 To inspect the full CLI with examples:
 
 ```bash
-python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py --help
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_cadenced_comparison.py --help
 ```
 
 Notes:
@@ -326,6 +400,88 @@ Notes:
 - The generated phase header is rewritten before each phase build.
 - `--wake-margin-us` and `--min-sleep-us` are exposed on both runners so cadence tuning stays scriptable.
 - The copied cadenced project currently uses the RTC wake-up timer with the secure RTC IRQ path enabled.
+
+## Running The STM32 Staging Helper
+
+Use the staging helper when you want to regenerate the STM32 toy-AI source tree
+without immediately building or running a HIL attempt:
+
+```bash
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/generate_and_stage_stm32_toy_ai.py --clean
+```
+
+Common commands:
+
+```bash
+# Rebuild the default perturbed model and restage the generated network files:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/generate_and_stage_stm32_toy_ai.py \
+  --config src/nas_config.yaml
+
+# Stage a prebuilt TFLite model instead of rebuilding one:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/generate_and_stage_stm32_toy_ai.py \
+  --model /tmp/tinyodom_model.tflite
+
+# Generate sources for external-flash weights and record the flash handoff in the manifest:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/generate_and_stage_stm32_toy_ai.py \
+  --weight-storage-mode external_flash \
+  --weights-flash-address 0x71000000
+```
+
+This script writes its transient outputs under `/tmp/tinyodom_stm32_toy_generate`
+by default and refreshes `staging_manifest.json` for the downstream HIL runner.
+
+## Running The STM32 CPU Clock Sweep
+
+The archival sweep runner executes the STM32 HIL runner repeatedly across:
+
+- requested CPU clock presets `200`, `300`, `400`, `600`, and `800`
+- both phases (`back_to_back`, `cadenced`)
+- both weight placement modes (`embedded`, `external_flash`)
+
+It preserves every run's metrics JSON, diagnostics JSON, stdout/stderr logs,
+and writes a summary CSV in a timestamped folder under
+`analysis_scripts/stm32_example_project/results/`.
+
+Default command:
+
+```bash
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_cpu_clock_sweep.py
+```
+
+Common commands:
+
+```bash
+# Run the full archival matrix with an explicit fresh first build:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_cpu_clock_sweep.py \
+  --clean-first
+
+# Restrict the sweep to selected presets and phases:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_cpu_clock_sweep.py \
+  --frequencies 400 600 800 \
+  --phases cadenced \
+  --repeats 3
+
+# Stop immediately after the first failed child run:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_cpu_clock_sweep.py \
+  --fail-fast
+```
+
+The default repeat count for this archival sweep is `5` per scenario and
+frequency. Use `--results-root` to send the timestamped archive somewhere other
+than `analysis_scripts/stm32_example_project/results/`.
+
+## Plotting Archived Sweep Results
+
+Use the plotting helper to turn one archived results folder into the current
+comparison plots:
+
+```bash
+python analysis_scripts/stm32_example_project/plot_stm32_cpu_clock_sweep.py \
+  analysis_scripts/stm32_example_project/results/stm32_cpu_clock_sweep_20260411T054113Z
+```
+
+The plotting script expects a results directory that already contains
+`sweep_summary.csv` and prints the output plot paths it writes.
 
 ## Running The Phase 0 Probe
 
@@ -356,6 +512,10 @@ does not load firmware, and does not program flash.
     optionally programs external weights, runs the Arduino harness, and emits metrics JSON
 - `run_stm32_cadenced_comparison.py`
   - comparison wrapper that runs both `back_to_back` and `cadenced` phases and writes JSON + CSV summaries
+- `run_stm32_cpu_clock_sweep.py`
+  - archival sweep wrapper for repeated STM32 runs across clock presets, phases, and weight-storage modes
+- `plot_stm32_cpu_clock_sweep.py`
+  - plotting helper for an archived sweep folder that already contains `sweep_summary.csv`
 - `run_stedgeai_phase0_probe.py`
   - host-only ST Edge AI probe for the STM32N6 CPU-first Phase 0 work
 - `generate_and_stage_stm32_toy_ai.py`
@@ -370,6 +530,8 @@ does not load firmware, and does not program flash.
   - committed generated make metadata required by the HIL runner
 - `stm32_cadenced_toy_ai_project/FSBL/`
   - copied cadence-capable toy AI FSBL subproject used by the comparison runner
+- `results/`
+  - timestamped archived CPU-clock sweep folders containing metrics, logs, summaries, and plots
 
 The FSBL project now expects the STM32CubeN6 firmware headers at:
 

@@ -8,12 +8,12 @@
  *   - waits for host START after emitting DUT READY
  *   - drives D3 active-low arm on PE9
  *   - drives D2 trigger on PD0
- *   - measures 10 inference runs inside one pulse window
+ *   - measures the configured inference-count window inside one pulse window
  *   - emits UART telemetry compatible with the repo's existing harness parser
  *
  * Key UART lines:
  *   DUT READY
- *   runs: 10
+ *   runs: <configured_count>
  *   clock hz output: <cpu_clock_hz>
  *   dwt cycles per inference output: <avg_cycles>
  *   timer output: <seconds_per_inference>
@@ -44,7 +44,7 @@ void toy_ai_harness_gpio_init(void);
 
 /*
  * toy_ai_run_once — initialise, handshake, warm up, time, and report one DUT
- * attempt covering 10 measured inferences.
+ * attempt covering the configured measured inference count.
  *
  * Returns:
  *    0   success

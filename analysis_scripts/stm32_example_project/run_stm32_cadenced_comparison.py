@@ -23,6 +23,8 @@ RUNNER_PATH = SCRIPT_DIR / "run_stm32_toy_ai_hil.py"
 DEFAULT_PROJECT_ROOT = SCRIPT_DIR / "stm32_cadenced_toy_ai_project" / "FSBL"
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "results"
 VALID_PHASES = ("back_to_back", "cadenced")
+VALID_CPU_CLOCK_MHZ = (200, 300, 400, 600, 800)
+DEFAULT_CPU_CLOCK_MHZ = 600
 MODEL_VARIANT_NAME = "approx_trained"
 MASTER_SUCCESS_CODE = 1
 
@@ -37,6 +39,7 @@ CSV_COLUMNS = [
     "window_latency_ms",
     "harness_latency_ms",
     "active_inference_latency_ms",
+    "cpu_clock_mhz_requested",
     "energy_mj_per_inference",
     "energy_mj_per_window",
     "avg_power_mw",
@@ -158,6 +161,7 @@ def _build_attempt_record(
         "window_latency_ms": _safe_float(metrics.get("window_latency_ms", -1.0)),
         "harness_latency_ms": _safe_float(metrics.get("harness_latency_ms", -1.0)),
         "active_inference_latency_ms": _safe_float(metrics.get("active_inference_latency_ms", -1.0)),
+        "cpu_clock_mhz_requested": int(_safe_float(metrics.get("cpu_clock_mhz_requested", -1))),
         "energy_mj_per_inference": _safe_float(metrics.get("energy_mj_per_inference", -1.0)),
         "energy_mj_per_window": _safe_float(metrics.get("energy_mj_per_window", -1.0)),
         "avg_power_mw": _safe_float(metrics.get("avg_power_mw", -1.0)),
@@ -367,6 +371,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=10,
         help="Number of inference slots or back-to-back inferences per attempt. Default: 10.",
+    )
+    parser.add_argument(
+        "--cpu-clock-mhz",
+        type=int,
+        choices=VALID_CPU_CLOCK_MHZ,
+        default=DEFAULT_CPU_CLOCK_MHZ,
+        help=(
+            "Fixed CPU clock preset forwarded to the child runner. "
+            f"Allowed values: {', '.join(str(value) for value in VALID_CPU_CLOCK_MHZ)}. "
+            f"Default: {DEFAULT_CPU_CLOCK_MHZ}. "
+            "Use 800 only as the dedicated overdrive preset."
+        ),
     )
     parser.add_argument(
         "--wake-margin-us",
@@ -586,6 +602,8 @@ def _run_phase_attempt(args: argparse.Namespace, phase: str, repeat_idx: int) ->
             str(args.latency_budget_ms),
             "--measured-runs",
             str(args.measured_runs),
+            "--cpu-clock-mhz",
+            str(args.cpu_clock_mhz),
             "--wake-margin-us",
             str(args.wake_margin_us),
             "--min-sleep-us",
@@ -722,6 +740,7 @@ def main() -> int:
             "repeats": int(args.repeats),
             "latency_budget_ms_requested": float(args.latency_budget_ms),
             "measured_runs": int(args.measured_runs),
+            "cpu_clock_mhz_requested": int(args.cpu_clock_mhz),
             "wake_margin_us": int(args.wake_margin_us),
             "min_sleep_us": int(args.min_sleep_us),
             "weight_storage_mode": args.weight_storage_mode,

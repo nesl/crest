@@ -60,6 +60,8 @@ DEFAULT_HARNESS_AUTO_FLASH = "once"
 DEFAULT_WEIGHT_STORAGE_MODE = "embedded"
 DEFAULT_PHASE = "back_to_back"
 DEFAULT_MEASURED_RUNS = 10
+DEFAULT_CPU_CLOCK_MHZ = 600
+VALID_CPU_CLOCK_MHZ = (200, 300, 400, 600, 800)
 DEFAULT_WEIGHTS_FLASH_ADDRESS = "0x71000000"
 DEFAULT_WEIGHTS_MEMORY_POOL = SCRIPT_DIR / "nucleo_mypool.json"
 DEFAULT_WEIGHTS_EXTERNAL_LOADER_NAME = "MX25UM51245G_STM32N6570-NUCLEO.stldr"
@@ -290,7 +292,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "Examples:\n"
             "  python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py\n"
             "  python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py "
-            "--phase cadenced --latency-budget-ms 200 --measured-runs 10\n"
+            "--phase cadenced --latency-budget-ms 200 --measured-runs 100\n"
             "  python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py "
             "--reuse-staged-model --no-build --output /tmp/stm32_metrics.json\n"
             "  python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py "
@@ -375,6 +377,18 @@ def _build_parser() -> argparse.ArgumentParser:
             "Number of measured inference slots in one DUT attempt. "
             f"Default: {DEFAULT_MEASURED_RUNS}. "
             "Examples: 10, 5, 20"
+        ),
+    )
+    parser.add_argument(
+        "--cpu-clock-mhz",
+        type=int,
+        choices=VALID_CPU_CLOCK_MHZ,
+        default=DEFAULT_CPU_CLOCK_MHZ,
+        help=(
+            "Fixed CPU clock preset written into the generated phase config header. "
+            f"Allowed values: {', '.join(str(value) for value in VALID_CPU_CLOCK_MHZ)}. "
+            f"Default: {DEFAULT_CPU_CLOCK_MHZ}. "
+            "Use 800 only as the dedicated overdrive preset."
         ),
     )
     parser.add_argument(
@@ -839,6 +853,7 @@ def _write_phase_config_header(
     phase: str,
     latency_budget_ms: float,
     measured_runs: int,
+    cpu_clock_mhz: int,
     wake_margin_us: int = 5000,
     min_sleep_us: int = 5000,
 ) -> tuple[Path, bool]:
@@ -854,6 +869,8 @@ def _write_phase_config_header(
         Cadence period in milliseconds to write into the generated header.
     measured_runs : int
         Number of measured slots or repeated inferences per attempt.
+    cpu_clock_mhz : int
+        Fixed CPU clock preset written into the generated header.
     wake_margin_us : int, default=5000
         Microseconds of wake margin used by the cadenced scheduler.
     min_sleep_us : int, default=5000
@@ -875,6 +892,7 @@ def _write_phase_config_header(
         f"#define TOY_AI_SELECTED_PHASE {phase_value}\n"
         f"#define TOY_AI_LATENCY_BUDGET_MS {max(1, int(round(latency_budget_ms)))}\n"
         f"#define TOY_AI_MEASURED_RUNS {max(1, int(measured_runs))}\n"
+        f"#define TOY_AI_CPU_CLOCK_MHZ {int(cpu_clock_mhz)}\n"
         f"#define TOY_AI_WAKE_MARGIN_US {max(0, int(wake_margin_us))}\n"
         f"#define TOY_AI_MIN_SLEEP_US {max(0, int(min_sleep_us))}\n\n"
         "#endif /* TOY_AI_PHASE_CONFIG_H */\n"
@@ -1219,6 +1237,7 @@ def _build_contract(
     size_info: dict[str, int],
     arena_bytes: int,
     latency_budget_ms: float,
+    cpu_clock_mhz_requested: int,
     dut_metrics: dict[str, float],
     dut_strings: dict[str, str],
     harness_metrics: dict[str, float],
@@ -1240,6 +1259,8 @@ def _build_contract(
         ST Edge AI activation arena size in bytes.
     latency_budget_ms : float
         Configured latency budget in milliseconds.
+    cpu_clock_mhz_requested : int
+        Requested compile-time CPU clock preset in MHz.
     dut_metrics : dict[str, float]
         Float metrics parsed from the DUT serial output.
     harness_metrics : dict[str, float]
@@ -1295,6 +1316,7 @@ def _build_contract(
         "latency_budget_ms": float(latency_budget_ms),
         "arena_bytes": int(arena_bytes),
         "hil_enabled": True,
+        "cpu_clock_mhz_requested": int(cpu_clock_mhz_requested),
         "clock_hz": float(dut_metrics.get("clock_hz", -1.0)),
         "dwt_cycles_per_inference": float(dut_metrics.get("dwt_cycles_per_inference", -1.0)),
         "energy_mj_per_inference": energy_mj_per_inference,
@@ -1397,6 +1419,7 @@ def main() -> int:
         phase=args.phase,
         latency_budget_ms=args.latency_budget_ms,
         measured_runs=args.measured_runs,
+        cpu_clock_mhz=args.cpu_clock_mhz,
         wake_margin_us=args.wake_margin_us,
         min_sleep_us=args.min_sleep_us,
     )
@@ -1539,6 +1562,7 @@ def main() -> int:
         size_info=size_info,
         arena_bytes=arena_bytes,
         latency_budget_ms=args.latency_budget_ms,
+        cpu_clock_mhz_requested=args.cpu_clock_mhz,
         dut_metrics=dut_metrics,
         dut_strings=dut_strings,
         harness_metrics=harness_metrics,
@@ -1578,6 +1602,7 @@ def main() -> int:
         "staging_manifest": staging_manifest,
         "arena_bytes": arena_bytes,
         "latency_budget_ms": args.latency_budget_ms,
+        "cpu_clock_mhz_requested": int(args.cpu_clock_mhz),
         "dut_metrics": dut_metrics,
         "dut_strings": dut_strings,
         "harness_metrics": harness_metrics,

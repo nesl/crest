@@ -21,6 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "toy_ai_phase_config.h"
 #include "toy_ai_runner.h"
 
 /* USER CODE END Includes */
@@ -215,6 +216,9 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+#if TOY_AI_CPU_CLOCK_MHZ != 800
+  uint32_t ic1_divider = 2U;
+#endif
 
   /** Configure the System Power Supply
   */
@@ -225,10 +229,18 @@ void SystemClock_Config(void)
 
   /** Configure the main internal regulator output voltage
   */
+#if TOY_AI_CPU_CLOCK_MHZ == 800
+  BSP_SMPS_Init(SMPS_VOLTAGE_OVERDRIVE);
+  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+#else
   if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
   {
     Error_Handler();
   }
+#endif
 
   /* Enable HSI */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
@@ -272,7 +284,17 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL1.PLLFractional = 0;
   RCC_OscInitStruct.PLL1.PLLP1 = 1;
   RCC_OscInitStruct.PLL1.PLLP2 = 1;
+#if TOY_AI_CPU_CLOCK_MHZ == 800
+  RCC_OscInitStruct.PLL2.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL2.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL2.PLLM = 2;
+  RCC_OscInitStruct.PLL2.PLLN = 25;
+  RCC_OscInitStruct.PLL2.PLLFractional = 0;
+  RCC_OscInitStruct.PLL2.PLLP1 = 1;
+  RCC_OscInitStruct.PLL2.PLLP2 = 1;
+#else
   RCC_OscInitStruct.PLL2.PLLState = RCC_PLL_NONE;
+#endif
   RCC_OscInitStruct.PLL3.PLLState = RCC_PLL_NONE;
   RCC_OscInitStruct.PLL4.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -293,8 +315,24 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV1;
   RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV1;
   RCC_ClkInitStruct.APB5CLKDivider = RCC_APB5_DIV1;
+#if TOY_AI_CPU_CLOCK_MHZ == 800
+  RCC_ClkInitStruct.IC1Selection.ClockSelection = RCC_ICCLKSOURCE_PLL2;
+  RCC_ClkInitStruct.IC1Selection.ClockDivider = 1;
+#else
+#if TOY_AI_CPU_CLOCK_MHZ == 600
+  ic1_divider = 2U;
+#elif TOY_AI_CPU_CLOCK_MHZ == 400
+  ic1_divider = 3U;
+#elif TOY_AI_CPU_CLOCK_MHZ == 300
+  ic1_divider = 4U;
+#elif TOY_AI_CPU_CLOCK_MHZ == 200
+  ic1_divider = 6U;
+#else
+#error "Unsupported TOY_AI_CPU_CLOCK_MHZ preset"
+#endif
   RCC_ClkInitStruct.IC1Selection.ClockSelection = RCC_ICCLKSOURCE_PLL1;
-  RCC_ClkInitStruct.IC1Selection.ClockDivider = 2;
+  RCC_ClkInitStruct.IC1Selection.ClockDivider = ic1_divider;
+#endif
   RCC_ClkInitStruct.IC2Selection.ClockSelection = RCC_ICCLKSOURCE_PLL1;
   RCC_ClkInitStruct.IC2Selection.ClockDivider = 3;
   RCC_ClkInitStruct.IC6Selection.ClockSelection = RCC_ICCLKSOURCE_PLL1;

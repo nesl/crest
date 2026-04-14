@@ -30,7 +30,8 @@ target core exposes a DWT cycle counter, the DUT can now report:
 
 - `hil_noise_analysis/`
   - Scripts for running multi-mode HIL noise scans, exporting representative
-    input data, and analyzing the resulting CSV outputs.
+    input data, analyzing the resulting CSV outputs, and running the staged
+    `epoch_sweep/` checkpoint workflow.
   - See `analysis_scripts/hil_noise_analysis/README.md` for details.
 
 - `ina228_check/`
@@ -42,11 +43,15 @@ target core exposes a DWT cycle counter, the DUT can now report:
   - Useful as a quick “does the board/toolchain still work?” sanity check.
   - Surfaces clock telemetry fields too when the underlying DUT sketch reports
     them.
+  - Also contains the toy GPIO harness validation runner used to debug D2/D3
+    handshake wiring.
 
 - `arena_latency_curve/`
   - Runs fixed-arena HIL sweeps and records latency/energy per arena size.
   - Produces attempt CSV, aggregated JSON, and a dual-axis latency+energy PNG.
   - Supports BLE and Portenta H7 (`cm7` / `cm4`).
+  - Includes a companion failure-probe runner for narrowing arena bounds and
+    forced-model-size experiments.
   - See `analysis_scripts/arena_latency_curve/README.md`.
 
 - `clock_tick_latency/`
@@ -61,8 +66,15 @@ target core exposes a DWT cycle counter, the DUT can now report:
     HIL runner (`run_stm32_toy_ai_hil.py`) that stages a perturbed TinyODOM
     model, builds the firmware, optionally programs weights to external NOR
     flash, and collects energy + latency metrics via the Arduino harness.
-  - Also includes the host-only ST Edge AI Phase 0 probe and a smoke-test script.
+  - Also includes the host-only ST Edge AI Phase 0 probe, the standalone
+    staging helper, the back-to-back vs cadenced comparison runner, the
+    archival CPU-clock sweep runner, the plotting helper for archived sweeps,
+    and the smoke-test script.
   - See `analysis_scripts/stm32_example_project/README.md`.
+
+- `toy_gpio_dut/` and `toy_gpio_harness/`
+  - Minimal Arduino sketches used by `hil_single_run/run_toy_hil.py`.
+  - Intended for GPIO-only timing validation without the full TinyODOM runtime.
 
 ## Running the INA228 check
 

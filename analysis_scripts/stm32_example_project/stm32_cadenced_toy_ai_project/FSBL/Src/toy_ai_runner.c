@@ -22,6 +22,8 @@ enum
   kStartReadyHeartbeatMs = 5000,
   kUartPollTimeoutMs = 20,
   kArmHoldMs = 600,
+  kRtcTimebaseHz = 32768,
+  kRtcSyncPrediv = kRtcTimebaseHz - 1,
   kWakeupDivider = 16,
 };
 
@@ -406,7 +408,9 @@ static bool rtc_try_init_with_source(uint32_t oscillator_type,
   s_rtc_handle.Instance = RTC;
   s_rtc_handle.Init.HourFormat = RTC_HOURFORMAT_24;
   s_rtc_handle.Init.AsynchPrediv = 0U;
-  s_rtc_handle.Init.SynchPrediv = 32767U;
+  /* Keep the RTC calendar and wake-up timer on the same 32.768 kHz basis so
+   * subsecond timestamps and WUT sleep requests use one consistent timebase. */
+  s_rtc_handle.Init.SynchPrediv = kRtcSyncPrediv;
   s_rtc_handle.Init.OutPut = RTC_OUTPUT_DISABLE;
   s_rtc_handle.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
   s_rtc_handle.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
@@ -487,12 +491,10 @@ static bool rtc_try_init_with_source(uint32_t oscillator_type,
 
 static bool rtc_init(void)
 {
-  /* Force LSI for bring-up. The cadenced build is currently failing before
-   * any UART output reaches the host, and the fastest way to prove whether
-   * RTC source bring-up is the blocker is to avoid LSE entirely on hardware.
-   * Re-enable LSE preference only after the board-specific LSE behavior is
-   * confirmed and the boot path is stable. */
-  return rtc_try_init_with_source(RCC_OSCILLATORTYPE_LSI, RCC_RTCCLKSOURCE_LSI, "LSI", 32000U);
+  /* Cadenced timing is validated against real wall-clock cadence, so use the
+   * board's 32.768 kHz crystal-backed RTC source rather than the coarse LSI RC
+   * oscillator. Fail the run if LSE bring-up does not succeed. */
+  return rtc_try_init_with_source(RCC_OSCILLATORTYPE_LSE, RCC_RTCCLKSOURCE_LSE, "LSE", kRtcTimebaseHz);
 }
 
 static uint64_t rtc_time_to_us(const RTC_TimeTypeDef *time)
@@ -501,15 +503,20 @@ static uint64_t rtc_time_to_us(const RTC_TimeTypeDef *time)
                             ((uint32_t)time->Minutes * 60U) +
                             (uint32_t)time->Seconds;
   uint32_t fraction_ticks = 0U;
+  uint64_t rtc_clock_hz = (uint64_t)s_rtc_clock_hz_nominal;
 
   if (time->SecondFraction >= time->SubSeconds)
   {
     fraction_ticks = time->SecondFraction - time->SubSeconds;
   }
 
+  if (rtc_clock_hz == 0ULL)
+  {
+    rtc_clock_hz = (uint64_t)kRtcTimebaseHz;
+  }
+
   return ((uint64_t)seconds_of_day * 1000000ULL) +
-         (((uint64_t)fraction_ticks * 1000000ULL) /
-          ((uint64_t)time->SecondFraction + 1ULL));
+         (((uint64_t)fraction_ticks * 1000000ULL) / rtc_clock_hz);
 }
 
 static uint64_t rtc_datetime_to_us(const RTC_TimeTypeDef *time, const RTC_DateTypeDef *date)
