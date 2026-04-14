@@ -5,4 +5,6 @@
 
 USER_OBJS :=
 
-LIBS := /opt/ST/STEdgeAI/4.0/Middlewares/ST/AI/Lib/GCC/ARMCortexM55/NetworkRuntime1200_CM55_GCC.a
+-include stedgeai.mk
+
+LIBS := $(STEDGEAI_RUNTIME_LIB)

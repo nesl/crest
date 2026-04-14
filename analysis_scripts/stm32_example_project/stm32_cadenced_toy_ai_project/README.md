@@ -1,6 +1,6 @@
 # STM32 Cadenced Toy AI Project
 
-This directory contains the copied STM32CubeIDE project used for the
+This directory contains the copied STM32 FSBL project used for the
 `back_to_back` versus `cadenced` STM32 comparison flow.
 
 The main entry points are the Python wrappers in the parent package:
@@ -18,6 +18,9 @@ The main entry points are the Python wrappers in the parent package:
   the fixed `TOY_AI_CPU_CLOCK_MHZ` preset.
 - The project is meant to be built through the generated `FSBL/Debug`
   makefiles, typically via the Python wrappers rather than manually.
+- The committed `FSBL/Debug/stedgeai.mk` file auto-discovers the newest
+  `/opt/ST/STEdgeAI/*` install or honors `STEDGEAI_ROOT` if you need a
+  non-default ST Edge AI location.
 - The cadenced phase uses STM32 Stop mode plus the RTC wake-up timer and
   emits additional cadence telemetry for the host-side comparison scripts.
 - Use the `tinyodomex` conda environment for the host runners. This flow is

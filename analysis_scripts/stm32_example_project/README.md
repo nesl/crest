@@ -5,15 +5,15 @@ This package contains the current STM32N6 example assets for the
 
 It started as a fresh STM32CubeIDE project and was then adapted from the
 STM32CubeN6 Template FSBL project. The committed result is a repo-local,
-self-contained CubeIDE project that builds through the generated `FSBL/Debug`
-makefiles and debug-loads through a Python wrapper. It also now includes the
-host-only ST Edge AI Phase 0 probe used to validate the CPU-first TinyODOM
-path without touching the board.
+CLI-oriented FSBL project that builds through the generated `FSBL/Debug`
+makefiles and debug-loads through a Python wrapper without requiring
+STM32CubeIDE. It also now includes the host-only ST Edge AI Phase 0 probe used
+to validate the CPU-first TinyODOM path without touching the board.
 
 The outer package has been renamed to `stm32_example_project` to reflect that
-it now carries more than the original blink-only bring-up. The nested
-STM32CubeIDE project name remains `stm32_blink_example_project` for now so the
-existing generated makefiles, launch metadata, and debug workflow stay stable.
+it now carries more than the original blink-only bring-up. The nested project
+name remains `stm32_blink_example_project` for now so the generated makefiles
+and debug-load workflow stay stable.
 
 ## Current Status
 
@@ -39,6 +39,11 @@ your shell `PATH`:
 - `ST-LINK_gdbserver`
 - `arm-none-eabi-gdb`
 - `STM32_Programmer_CLI`
+
+The toy AI builds also need an ST Edge AI install. By default the committed
+makefiles auto-discover the newest `/opt/ST/STEdgeAI/*` directory. If your
+install lives elsewhere, export `STEDGEAI_ROOT=/path/to/STEdgeAI/<version>`
+before building.
 
 Then bootstrap the repo-local STM32 dependencies:
 
@@ -521,13 +526,13 @@ does not load firmware, and does not program flash.
 - `generate_and_stage_stm32_toy_ai.py`
   - toy STM32 source staging with `embedded` vs `external_flash` weight placement and a fixed-path staging manifest
 - `stm32_blink_example_project/FSBL/`
-  - original blink STM32CubeIDE FSBL subproject
+  - original blink FSBL subproject kept in CLI-buildable form
 - `stm32_blink_example_project/FSBL/Debug/`
   - committed generated make metadata required by the blink wrapper
 - `stm32_toy_ai_project/FSBL/`
-  - toy AI STM32CubeIDE FSBL subproject; receives ST Edge AI generated sources and is built by the HIL runner
+  - toy AI FSBL subproject; receives ST Edge AI generated sources and is built by the HIL runner
 - `stm32_toy_ai_project/FSBL/Debug/`
-  - committed generated make metadata required by the HIL runner
+  - committed generated make metadata plus `stedgeai.mk` path overrides required by the HIL runner
 - `stm32_cadenced_toy_ai_project/FSBL/`
   - copied cadence-capable toy AI FSBL subproject used by the comparison runner
 - `results/`

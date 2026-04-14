@@ -18,6 +18,7 @@ debug-load-only board smoke test.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -26,11 +27,38 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODEL = REPO_ROOT / "models" / "TinyOdomEx_OxIOD_PORTENTA_H7.tflite"
-DEFAULT_MEMORY_POOL = (
-    Path("/opt/ST/STEdgeAI/4.0/Projects/STM32N6570-DK/Applications/CM55_Validation")
-    / "mypool_N6.json"
-)
 DEFAULT_OUTPUT_ROOT = Path("/tmp/tinyodom_stm32_phase0_probe")
+
+
+def _default_stedgeai_root() -> Path | None:
+    """Resolve the ST Edge AI install root from env or the standard Linux path."""
+
+    env_value = os.environ.get("STEDGEAI_ROOT")
+    if env_value:
+        return Path(env_value).expanduser().resolve()
+    candidates = sorted(Path("/opt/ST/STEdgeAI").glob("*"))
+    if not candidates:
+        return None
+    return candidates[-1].resolve()
+
+
+def _default_memory_pool() -> Path:
+    """Return the default STM32N6 memory-pool path derived from ST Edge AI."""
+
+    stedgeai_root = _default_stedgeai_root()
+    if stedgeai_root is None:
+        return Path("/opt/ST/STEdgeAI/mypool_N6.json")
+    return (
+        stedgeai_root
+        / "Projects"
+        / "STM32N6570-DK"
+        / "Applications"
+        / "CM55_Validation"
+        / "mypool_N6.json"
+    )
+
+
+DEFAULT_MEMORY_POOL = _default_memory_pool()
 
 
 def _build_parser() -> argparse.ArgumentParser:

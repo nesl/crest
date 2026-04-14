@@ -100,6 +100,7 @@ analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/*
 !analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/sources.mk
 !analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/objects.mk
 !analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/objects.list
+!analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/stedgeai.mk
 !analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/Src/
 analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/Src/*
 !analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/Src/subdir.mk
@@ -116,6 +117,7 @@ analysis_scripts/stm32_example_project/*/FSBL/Debug/*
 !analysis_scripts/stm32_example_project/*/FSBL/Debug/sources.mk
 !analysis_scripts/stm32_example_project/*/FSBL/Debug/objects.mk
 !analysis_scripts/stm32_example_project/*/FSBL/Debug/objects.list
+!analysis_scripts/stm32_example_project/*/FSBL/Debug/stedgeai.mk
 !analysis_scripts/stm32_example_project/*/FSBL/Debug/Src/
 analysis_scripts/stm32_example_project/*/FSBL/Debug/Src/*
 !analysis_scripts/stm32_example_project/*/FSBL/Debug/Src/subdir.mk
@@ -134,3 +136,6 @@ stedgeai_stm32n6_reference.md
 phase0_cm55_handoff.md
 analysis_scripts/stm32_example_project/IDE_SETUP_CHECKLIST.md
 addict.py
+
+# STM32 sweep archives
+analysis_scripts/stm32_example_project/results/*
