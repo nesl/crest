@@ -669,8 +669,17 @@ def _run_phase_attempt(args: argparse.Namespace, phase: str, repeat_idx: int) ->
                 f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}"
             )
 
+        diagnostic_path = output_json.with_name("metrics.diagnostics.json")
+        if not output_json.is_file() or not diagnostic_path.is_file():
+            raise RuntimeError(
+                f"Attempt subprocess exited before producing metrics artifacts for phase={phase} "
+                f"repeat={repeat_idx} (returncode={proc.returncode}).\n"
+                f"metrics_exists={output_json.is_file()} diagnostics_exists={diagnostic_path.is_file()}\n\n"
+                f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}"
+            )
+
         metrics = json.loads(output_json.read_text(encoding="utf-8"))
-        diagnostic = json.loads(output_json.with_name("metrics.diagnostics.json").read_text(encoding="utf-8"))
+        diagnostic = json.loads(diagnostic_path.read_text(encoding="utf-8"))
         return metrics, diagnostic
 
 

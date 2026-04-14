@@ -310,6 +310,13 @@ def _append_path_arg(cmd: list[str], flag: str, value: Path | None) -> None:
         cmd.extend([flag, str(value)])
 
 
+def _expected_serial_timeout_s(phase: str, latency_budget_ms: float, measured_runs: int) -> float:
+    """Estimate a phase-aware serial timeout for one child run."""
+    if phase == "cadenced":
+        return max(30.0, (latency_budget_ms * measured_runs) / 1000.0 + 10.0)
+    return 30.0
+
+
 def _build_child_command(
     *,
     args: argparse.Namespace,
@@ -350,7 +357,7 @@ def _build_child_command(
         "--baud",
         str(args.baud),
         "--serial-timeout",
-        str(args.serial_timeout),
+        str(max(args.serial_timeout, _expected_serial_timeout_s(scenario.phase, args.latency_budget_ms, args.measured_runs))),
         "--dut-ready-timeout",
         str(args.dut_ready_timeout),
         "--harness-ready-timeout",

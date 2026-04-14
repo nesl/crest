@@ -490,10 +490,17 @@ def _run_gdb_load(
             _print_command(argv)
         proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
-            proc.wait(timeout=GDB_JUMP_TIMEOUT_S)
+            stdout, _ = proc.communicate(timeout=GDB_JUMP_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.wait()
+            proc.communicate()
+        else:
+            if proc.returncode != 0:
+                detail = stdout.strip() if stdout.strip() else "No GDB output captured."
+                raise WorkflowError(
+                    "GDB load/run failed before the jump timeout elapsed.\n\n"
+                    f"Command: {' '.join(argv)}\n\n{detail}"
+                )
     else:
         _run_command(argv, verbose=verbose)
 
