@@ -4,6 +4,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
@@ -229,6 +230,87 @@ class Stm32RunnerWrapperTests(unittest.TestCase):
         )
 
         self.assertEqual(cmd[cmd.index("--serial-timeout") + 1], "120.0")
+
+    def test_cpu_clock_sweep_reuses_staged_model_on_later_repeats(self):
+        class _DummyTqdm:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                del exc_type, exc, tb
+                return False
+
+            def update(self, n):
+                del n
+
+            def set_postfix(self, **kwargs):
+                del kwargs
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            project_root = tmp_path / "project"
+            project_root.mkdir()
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text("training: {}\n", encoding="utf-8")
+            weights_memory_pool = tmp_path / "mypool.json"
+            weights_memory_pool.write_text("{}\n", encoding="utf-8")
+            results_root = tmp_path / "results"
+            stage_output_root = tmp_path / "stage"
+
+            captured_reuse_flags: list[tuple[str, bool]] = []
+
+            def _fake_run(cmd, cwd, capture_output, text, check):
+                del cwd, capture_output, text, check
+                output_path = Path(cmd[cmd.index("--output") + 1])
+                output_path.write_text(json.dumps({"error_code": 1}), encoding="utf-8")
+                mode = cmd[cmd.index("--weight-storage-mode") + 1]
+                captured_reuse_flags.append((mode, "--reuse-staged-model" in cmd))
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            argv = [
+                "run_stm32_cpu_clock_sweep.py",
+                "--project-root",
+                str(project_root),
+                "--config",
+                str(config_path),
+                "--results-root",
+                str(results_root),
+                "--stage-output-root",
+                str(stage_output_root),
+                "--python-executable",
+                sys.executable,
+                "--weights-memory-pool",
+                str(weights_memory_pool),
+                "--frequencies",
+                "200",
+                "--phases",
+                "back_to_back",
+                "--repeats",
+                "3",
+            ]
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch.object(stm32_cpu_clock_sweep.subprocess, "run", side_effect=_fake_run),
+                patch.object(stm32_cpu_clock_sweep, "tqdm", _DummyTqdm),
+            ):
+                exit_code = stm32_cpu_clock_sweep.main()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            captured_reuse_flags,
+            [
+                ("embedded", False),
+                ("embedded", True),
+                ("embedded", True),
+                ("external_flash", False),
+                ("external_flash", True),
+                ("external_flash", True),
+            ],
+        )
 
 
 if __name__ == "__main__":

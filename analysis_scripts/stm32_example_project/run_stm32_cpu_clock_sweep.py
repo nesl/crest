@@ -559,22 +559,22 @@ def main() -> int:
                 )
                     _write_csv(summary_csv_path, records)
 
-                stage_succeeded = proc.returncode in (0, 1) and output_path.is_file()
-                prior_weight_storage_mode = scenario.weight_storage_mode
-                prior_stage_succeeded = stage_succeeded
+                    stage_succeeded = proc.returncode in (0, 1) and output_path.is_file()
+                    prior_weight_storage_mode = scenario.weight_storage_mode
+                    prior_stage_succeeded = stage_succeeded
 
-                if proc.returncode != 0:
-                    had_failure = True
-                    logging.error(
-                        "Run %03d failed with code %d. stdout=%s stderr=%s",
-                        run_index,
-                        proc.returncode,
-                        stdout_log_path,
-                        stderr_log_path,
-                    )
-                    if args.fail_fast:
-                        logging.error("Stopping early because --fail-fast is enabled.")
-                        return 1
+                    if proc.returncode != 0:
+                        had_failure = True
+                        logging.error(
+                            "Run %03d failed with code %d. stdout=%s stderr=%s",
+                            run_index,
+                            proc.returncode,
+                            stdout_log_path,
+                            stderr_log_path,
+                        )
+                        if args.fail_fast:
+                            logging.error("Stopping early because --fail-fast is enabled.")
+                            return 1
 
     logging.info("Sweep complete. Summary JSON: %s", summary_json_path)
     logging.info("Sweep complete. Summary CSV: %s", summary_csv_path)
