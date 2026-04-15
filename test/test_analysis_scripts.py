@@ -134,12 +134,33 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
             self.assertTrue(changed)
             self.assertIn("#define TOY_AI_MEASURED_RUNS 1", header_path.read_text(encoding="utf-8"))
 
-    def test_main_rejects_no_build_when_measured_runs_change_header(self):
+    def test_main_maps_workflow_error_to_master_fatal(self):
+        class _DummyMonitor:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+
+            def write_line(self, text):
+                del text
+
+            def wait_for(self, predicate, timeout_s, stage):
+                del predicate, timeout_s
+                return "HARNESS READY" if stage == "HARNESS READY" else None
+
+            def snapshot_lines(self):
+                return []
+
+            def close(self):
+                return None
+
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             project_root = tmp_path / "project"
             inc_dir = project_root / "Inc"
+            debug_dir = project_root / "Debug"
             inc_dir.mkdir(parents=True)
+            debug_dir.mkdir(parents=True)
+            elf_path = debug_dir / "toy_ai.elf"
+            elf_path.write_text("", encoding="utf-8")
             (inc_dir / "toy_ai_phase_config.h").write_text(
                 "#ifndef TOY_AI_PHASE_CONFIG_H\n"
                 "#define TOY_AI_PHASE_CONFIG_H\n\n"
@@ -171,7 +192,6 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
                 "--stage-output-root",
                 str(stage_output_root),
                 "--reuse-staged-model",
-                "--no-build",
                 "--measured-runs",
                 "100",
             ]
@@ -183,14 +203,40 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
                 patch.object(
                     stm32_toy_ai_hil,
                     "_validate_paths",
-                    return_value=(project_root / "Debug", project_root / "Debug" / "toy_ai.elf"),
+                    return_value=(debug_dir, elf_path),
                 ),
                 patch.object(stm32_toy_ai_hil, "_read_staging_manifest", return_value={}),
+                patch.object(stm32_toy_ai_hil, "_build_project"),
+                patch.object(
+                    stm32_toy_ai_hil,
+                    "_run_size",
+                    return_value={
+                        "text": 1,
+                        "data": 1,
+                        "bss": 1,
+                        "dec": 3,
+                        "hex": 3,
+                        "elf_flash_bytes": 2,
+                        "ram_bytes": 2,
+                    },
+                ),
+                patch.object(stm32_toy_ai_hil, "_find_linker_script", return_value=project_root / "toy.ld"),
+                patch.object(stm32_toy_ai_hil, "_parse_linker_reservations", return_value={}),
+                patch.object(stm32_toy_ai_hil, "_parse_arena_bytes", return_value=1024),
+                patch.object(stm32_toy_ai_hil, "ensure_harness_firmware"),
+                patch.object(stm32_toy_ai_hil, "SerialMonitor", _DummyMonitor),
+                patch.object(
+                    stm32_toy_ai_hil,
+                    "_load_and_run",
+                    side_effect=stm32_toy_ai_hil.WorkflowError("load failed"),
+                ),
             ):
-                with self.assertRaises(stm32_toy_ai_hil.WorkflowError) as ctx:
-                    stm32_toy_ai_hil.main()
+                exit_code = stm32_toy_ai_hil.main()
 
-            self.assertIn("--no-build cannot be used", str(ctx.exception))
+            self.assertEqual(exit_code, 1)
+            metrics = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(metrics["error_code"], stm32_toy_ai_hil.MASTER_FATAL)
+            self.assertEqual(metrics["error_label"], "HIL_MASTER_FATAL")
             self.assertIn(
                 "#define TOY_AI_MEASURED_RUNS 100",
                 (inc_dir / "toy_ai_phase_config.h").read_text(encoding="utf-8"),
@@ -239,7 +285,6 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
             cubeprog_bin=None,
             jobs=None,
             reuse_staged_model=False,
-            no_build=False,
             verbose=False,
             clean=False,
         )
@@ -286,7 +331,6 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
             cubeprog_bin=None,
             jobs=None,
             reuse_staged_model=False,
-            no_build=False,
             verbose=False,
         )
 

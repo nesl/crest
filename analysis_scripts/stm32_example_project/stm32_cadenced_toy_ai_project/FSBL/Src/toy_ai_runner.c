@@ -854,13 +854,13 @@ static bool run_cadenced_window(ai_handle network,
       if (slack_us > (uint64_t)(TOY_AI_WAKE_MARGIN_US + TOY_AI_MIN_SLEEP_US))
       {
         uint32_t requested_sleep_us = (uint32_t)(slack_us - (uint64_t)TOY_AI_WAKE_MARGIN_US);
-        measurement->rtc_sleep_total_us += (uint64_t)requested_sleep_us;
         printf("STM32_CADENCE_SLOT=%d stage=sleep_request requested_us=%lu\r\n",
                run_idx + 1,
                (unsigned long)requested_sleep_us);
         flush_stdout();
         if (stop_sleep_for_us(requested_sleep_us, &wake_recovery_us))
         {
+          measurement->rtc_sleep_total_us += (uint64_t)requested_sleep_us;
           measurement->wake_recovery_total_us += wake_recovery_us;
         }
       }

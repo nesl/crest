@@ -105,11 +105,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Seconds to wait for all expected tokens (default: {DEFAULT_SERIAL_TIMEOUT_S}).",
     )
     parser.add_argument(
-        "--no-build",
-        action="store_true",
-        help="Skip the make build step.",
-    )
-    parser.add_argument(
         "--clean",
         action="store_true",
         help="Run make clean before building.",
@@ -257,9 +252,8 @@ def main() -> int:
         cubeprog_bin=cubeprog_bin,
     )
 
-    if not args.no_build:
-        LOGGER.info("Building toy AI project in %s", project_root)
-        _build_project(project_root, jobs=args.jobs, clean=args.clean, verbose=args.verbose)
+    LOGGER.info("Building toy AI project in %s", project_root)
+    _build_project(project_root, jobs=args.jobs, clean=args.clean, verbose=args.verbose)
 
     if not elf_path.is_file():
         LOGGER.error("ELF not found after build: %s", elf_path)

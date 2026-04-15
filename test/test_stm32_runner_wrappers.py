@@ -67,7 +67,6 @@ class Stm32RunnerWrapperTests(unittest.TestCase):
             cubeprog_bin=None,
             jobs=None,
             reuse_staged_model=False,
-            no_build=False,
             verbose=False,
             clean=False,
         )
@@ -116,7 +115,6 @@ class Stm32RunnerWrapperTests(unittest.TestCase):
             cubeprog_bin=None,
             jobs=None,
             reuse_staged_model=False,
-            no_build=False,
             verbose=False,
             clean=False,
         )

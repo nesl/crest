@@ -70,7 +70,6 @@ Useful flags:
 
 ```bash
 python analysis_scripts/stm32_example_project/build_and_upload_stm32_blink.py --clean
-python analysis_scripts/stm32_example_project/build_and_upload_stm32_blink.py --no-build
 python analysis_scripts/stm32_example_project/build_and_upload_stm32_blink.py --no-run
 python analysis_scripts/stm32_example_project/build_and_upload_stm32_blink.py --verbose
 ```
@@ -116,9 +115,6 @@ What the smoke test does:
 Useful flags:
 
 ```bash
-# Skip rebuild if the ELF is already current:
-python analysis_scripts/stm32_example_project/smoke_test_stm32_toy_ai.py --no-build
-
 # Use a different serial port or baud rate:
 python analysis_scripts/stm32_example_project/smoke_test_stm32_toy_ai.py --port /dev/ttyACM1 --baud 115200
 
@@ -161,7 +157,7 @@ conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --dut-port /dev/ttyACM0 --harness-port /dev/ttyACM1
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --output analysis_scripts/stm32_example_project/last_metrics.json
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --latency-budget-ms 200.0
-conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --reuse-staged-model --no-build
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --reuse-staged-model
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash --weights-flash-address 0x71000000
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --weight-storage-mode external_flash --weights-memory-pool analysis_scripts/stm32_example_project/nucleo_mypool.json
@@ -236,7 +232,6 @@ conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_
   --phase cadenced \
   --measured-runs 100 \
   --reuse-staged-model \
-  --no-build \
   --output /tmp/stm32_cadenced_metrics.json
 ```
 
@@ -299,7 +294,6 @@ The difference shows up in the output JSON:
 Notes:
 
 - By default, each run rebuilds the perturbed TinyODOM TFLite model, regenerates STM32 network sources, and then rebuilds the Cube project.
-- `--no-build` is only valid together with `--reuse-staged-model`, because otherwise the staged sources would change underneath a stale ELF.
 - In `external_flash` mode the runner reads `<stage_output_root>/staging_manifest.json`, programs the generated weights blob into Nucleo external flash, and only then starts the usual `ST-LINK_gdbserver` + `arm-none-eabi-gdb` RAM/debug-load.
 - The default external weight address is intentionally `0x71000000` for the toy flow.
 

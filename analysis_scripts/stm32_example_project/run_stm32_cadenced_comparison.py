@@ -413,11 +413,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Clean the staging directory and rebuild the STM32 project before the first attempt.",
     )
     parser.add_argument(
-        "--no-build",
-        action="store_true",
-        help="Skip the STM32 build step. Requires --reuse-staged-model and matching generated phase config.",
-    )
-    parser.add_argument(
         "--reuse-staged-model",
         action="store_true",
         help="Reuse the already staged STM32 model artifacts instead of regenerating them.",
@@ -655,8 +650,6 @@ def _run_phase_attempt(args: argparse.Namespace, phase: str, repeat_idx: int) ->
             cmd.extend(["--jobs", str(args.jobs)])
         if args.reuse_staged_model:
             cmd.append("--reuse-staged-model")
-        if args.no_build:
-            cmd.append("--no-build")
         if args.verbose:
             cmd.append("--verbose")
         if args.clean and phase == VALID_PHASES[0] and repeat_idx == 1:

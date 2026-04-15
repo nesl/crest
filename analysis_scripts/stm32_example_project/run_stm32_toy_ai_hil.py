@@ -294,7 +294,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "  python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py "
             "--phase cadenced --latency-budget-ms 200 --measured-runs 100\n"
             "  python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py "
-            "--reuse-staged-model --no-build --output /tmp/stm32_metrics.json\n"
+            "--reuse-staged-model --output /tmp/stm32_metrics.json\n"
             "  python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py "
             "--weight-storage-mode external_flash --clean"
         ),
@@ -434,14 +434,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--clean",
         action="store_true",
         help="Wipe the staging output root and perform a clean STM32 build before running.",
-    )
-    parser.add_argument(
-        "--no-build",
-        action="store_true",
-        help=(
-            "Skip the STM32 build step and use the existing ELF. "
-            "Requires --reuse-staged-model since the default flow regenerates sources before building."
-        ),
     )
     parser.add_argument(
         "--reuse-staged-model",
@@ -1349,7 +1341,7 @@ def main() -> int:
     The full workflow is:
 
     1. Regenerate and stage the perturbed TinyODOM model (unless ``--reuse-staged-model``).
-    2. Build the STM32 FSBL project (unless ``--no-build``).
+    2. Build the STM32 FSBL project.
     3. Optionally program external model weights into NOR flash.
     4. Ensure the Arduino harness firmware is up-to-date.
     5. Open serial monitors on both the DUT and harness ports.
@@ -1395,12 +1387,6 @@ def main() -> int:
         raise WorkflowError(f"Weights memory-pool JSON not found: {weights_memory_pool}")
     if weights_external_loader is not None and not weights_external_loader.is_file():
         raise WorkflowError(f"Weights external loader not found: {weights_external_loader}")
-    if args.no_build and not args.reuse_staged_model:
-        raise WorkflowError(
-            "--no-build requires --reuse-staged-model because the default STM32 flow "
-            "regenerates and stages a fresh perturbed TinyODOM model before building."
-        )
-
     if not args.reuse_staged_model:
         LOGGER.info("Rebuilding perturbed TinyODOM model and staging STM32 network sources")
         _stage_stm32_network(
@@ -1431,20 +1417,13 @@ def main() -> int:
     weights_flash_bytes = int(staging_manifest.get("weights_blob_size") or 0)
     weights_programmed = False
 
-    if args.no_build and phase_config_changed:
-        raise WorkflowError(
-            "--no-build cannot be used after the generated toy_ai_phase_config.h changed. "
-            "Re-run without --no-build so the phase-specific firmware is rebuilt."
+    build_clean = args.clean or phase_config_changed
+    if phase_config_changed and not args.clean:
+        LOGGER.info(
+            "toy_ai_phase_config.h changed; forcing a clean rebuild so the phase-specific ELF is refreshed"
         )
-
-    if not args.no_build:
-        build_clean = args.clean or phase_config_changed
-        if phase_config_changed and not args.clean:
-            LOGGER.info(
-                "toy_ai_phase_config.h changed; forcing a clean rebuild so the phase-specific ELF is refreshed"
-            )
-        LOGGER.info("Building STM32 toy AI project in %s", project_root)
-        _build_project(project_root, jobs=args.jobs, clean=build_clean, verbose=args.verbose)
+    LOGGER.info("Building STM32 toy AI project in %s", project_root)
+    _build_project(project_root, jobs=args.jobs, clean=build_clean, verbose=args.verbose)
 
     if not elf_path.is_file():
         raise WorkflowError(f"ELF not found after build: {elf_path}")
@@ -1542,7 +1521,7 @@ def main() -> int:
         if isinstance(exc, serial.SerialException):
             error_code = MASTER_DEVICE_NOT_FOUND
         elif isinstance(exc, WorkflowError):
-            error_code = MASTER_DEVICE_NOT_FOUND
+            error_code = MASTER_FATAL
         else:
             error_code = MASTER_FATAL
         if dut_monitor is not None:
