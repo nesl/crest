@@ -92,6 +92,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
         fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
         fake_metrics = {"ram_bytes": 1024}
 
@@ -118,6 +119,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
         fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
@@ -190,6 +192,7 @@ class InitializationTests(HILServerTestCase):
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
         fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
 
         self.dataset_mock.assert_not_called()
@@ -215,8 +218,8 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(kwargs["stride"], self.config.data.stride)
         self.assertEqual(kwargs["max_windows"], self.config.data.calibration_windows)
 
-    def test_stm_phase1_skips_dataset_load_and_model_export(self) -> None:
-        """Ensure STM Phase 1 bypasses dataset loading and model export work.
+    def test_stm_phase2_prepares_candidate_but_disables_runtime_hil(self) -> None:
+        """Ensure STM Phase 2 stages candidates but still runs compile-only.
 
         Returns
         -------
@@ -226,8 +229,9 @@ class InitializationTests(HILServerTestCase):
         self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
         server = self.build_server()
         fake_device = MagicMock()
-        fake_device.requires_candidate_model.return_value = False
-        fake_device.requires_training_data.return_value = False
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = False
         fake_device.prepare_candidate.return_value = Path("/tmp/stm_fsbl")
 
         with patch("hil_server.resolve_device_options", return_value={"project_root": Path("/tmp/stm_fsbl")}), patch(
@@ -255,12 +259,14 @@ class InitializationTests(HILServerTestCase):
             result = server.determine_metrics(Dict(flops=1, input_dim=6))
 
         self.assertEqual(result, {"ok": True, "latency_budget_ms": 40.0})
-        self.dataset_mock.assert_not_called()
-        build_mock.assert_not_called()
+        self.dataset_mock.assert_called_once()
+        build_mock.assert_called_once()
         fake_device.prepare_candidate.assert_called_once()
         collect_mock.assert_called_once()
+        self.assertFalse(request_mock.call_args.kwargs["hil_enabled"])
+        self.assertIsNone(server.active_sketch_path)
 
-    def test_stm_phase1_disables_energy_aware_requests_even_when_config_requests_it(self) -> None:
+    def test_stm_phase2_disables_energy_aware_requests_even_when_config_requests_it(self) -> None:
         """Ensure backend capability disables unsupported STM energy requests.
 
         Returns
@@ -272,8 +278,9 @@ class InitializationTests(HILServerTestCase):
         self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
         server = self.build_server()
         fake_device = MagicMock()
-        fake_device.requires_candidate_model.return_value = False
-        fake_device.requires_training_data.return_value = False
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = False
         fake_device.supports_energy_measurement.return_value = False
         fake_device.prepare_candidate.return_value = Path("/tmp/stm_fsbl")
 
@@ -288,7 +295,9 @@ class InitializationTests(HILServerTestCase):
             return_value={"ok": True},
         ), patch(
             "hil_server.build_collect_metrics_request"
-        ) as request_mock:
+        ) as request_mock, patch(
+            "hil_server.build_tinyodom_model"
+        ):
             request_mock.return_value = CollectMetricsRequest(
                 hil_enabled=False,
                 energy_aware=False,

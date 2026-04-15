@@ -279,14 +279,18 @@ class HILServer:
             model_variant=model_variant,
             checkpoint_path=checkpoint_path,
         )
-        if runtime_device.requires_candidate_model():
-            self.active_sketch_path = Path(prepared_dir) / "tinyodom_tcn.ino"
+        prepared_dir = Path(prepared_dir)
+        sketch_candidate = prepared_dir / "tinyodom_tcn.ino"
+        if runtime_device.requires_candidate_model() and sketch_candidate.is_file():
+            self.active_sketch_path = sketch_candidate
             logger.info("Using sketch variant: %s", self.active_sketch_path)
+        elif runtime_device.requires_candidate_model():
+            self.active_sketch_path = None
 
         print("Starting metric collection")
 
         effective_hil_enabled = bool(
-            self.config.device.hil and runtime_device.requires_candidate_model()
+            self.config.device.hil and runtime_device.supports_runtime_measurement()
         )
         # Energy collection is backend-owned. Phase 1 STM returns False here so
         # the rest of the pipeline stops treating energy as a required objective.
@@ -299,7 +303,7 @@ class HILServer:
             config=self.config,
             hyperparams=hyperparams,
             latency_budget_ms=latency_budget_ms,
-            dirpath=Path(prepared_dir),
+            dirpath=prepared_dir,
             device_options=device_options,
             hil_enabled=effective_hil_enabled,
             energy_aware=effective_energy_aware,

@@ -23,8 +23,8 @@ and debug-load workflow stay stable.
   ELF with `arm-none-eabi-gdb`, and resumes execution.
 - The ST Edge AI probe script can reproduce the current host-only Phase 0
   findings for STM32N6 CPU generation.
-- The STM32 firmware headers are expected under `tools/stm32/STM32CubeN6`,
-  pinned to `v1.3.0`.
+- After `make stm32-setup`, each committed FSBL carries the STM32CubeN6
+  firmware subset it needs under a local `FSBL/Drivers/...` tree.
 
 ## Setup
 
@@ -57,6 +57,8 @@ What `make stm32-setup` does:
   on `PATH`
 - clones or repairs `tools/stm32/STM32CubeN6`
 - checks out the pinned firmware baseline `v1.3.0`
+- refreshes the local `FSBL/Drivers/...` vendor subset used by the canonical
+  template and the example STM32 projects
 
 ## Running The Wrapper
 
@@ -532,11 +534,8 @@ does not load firmware, and does not program flash.
 - `results/`
   - timestamped archived CPU-clock sweep folders containing metrics, logs, summaries, and plots
 
-The FSBL project now expects the STM32CubeN6 firmware headers at:
-
-```text
-tools/stm32/STM32CubeN6
-```
+The example FSBL projects no longer compile directly from `tools/stm32`.
+After `make stm32-setup`, they build from their local `FSBL/Drivers/...` trees.
 
 ## First Run Notes
 

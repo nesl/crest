@@ -54,7 +54,7 @@ from build_and_upload_stm32_blink import (
 )
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_PROJECT_ROOT = SCRIPT_DIR / "stm32_toy_ai_project" / "FSBL"
+DEFAULT_PROJECT_ROOT = SCRIPT_DIR.parents[1] / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"
 # ttyACM0 is the ST-LINK virtual COM port on a typical Linux host.
 DEFAULT_SERIAL_PORT = "/dev/ttyACM0"
 DEFAULT_BAUD = 115200

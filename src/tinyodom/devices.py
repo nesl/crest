@@ -103,6 +103,12 @@ class CompileResult:
         "flash" or "ram" when an overflow is detected.
     build_dir : pathlib.Path | None
         Build cache directory if applicable.
+    arena_bytes : int | None
+        Parsed activation arena size in bytes, if available.
+    heap_bytes : int | None
+        Linker-reserved heap bytes, if available.
+    stack_bytes : int | None
+        Linker-reserved stack bytes, if available.
     """
 
     success: bool
@@ -111,6 +117,9 @@ class CompileResult:
     ram_bytes: Optional[int]
     overflow_kind: Optional[str]
     build_dir: Optional[Path] = None
+    arena_bytes: Optional[int] = None
+    heap_bytes: Optional[int] = None
+    stack_bytes: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +177,10 @@ class DeviceInterface(ABC):
 
     def supports_energy_measurement(self) -> bool:
         """Return whether this backend can produce real energy metrics."""
+        return True
+
+    def supports_runtime_measurement(self) -> bool:
+        """Return whether this backend can run upload/measurement passes."""
         return True
 
     def runtime_measure_mode(self) -> RuntimeMeasureMode:

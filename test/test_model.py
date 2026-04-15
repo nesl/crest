@@ -689,8 +689,8 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertIsNone(request.harness)
         self.assertEqual(request.device_options["cpu_clock_mhz"], 400)
 
-    def test_resolve_device_options_requires_stm_project_root(self) -> None:
-        """Ensure STM config resolution fails fast without a project root.
+    def test_resolve_device_options_defaults_stm_template_root(self) -> None:
+        """Ensure STM config resolution no longer requires an explicit project root.
 
         Returns
         -------
@@ -703,8 +703,10 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
 
-        with self.assertRaises(ValueError):
-            resolve_device_options(str(config.device.name), config.device)
+        resolved = resolve_device_options(str(config.device.name), config.device)
+
+        self.assertIn("project_root", resolved)
+        self.assertEqual(resolved["cpu_clock_mhz"], 600)
 
 
 class TrainAndScoreTests(unittest.TestCase):
@@ -913,7 +915,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "device:",
                         "  name: STM32_NUCLEO_N657X0_Q",
                         "  stm32:",
-                        f"    project_root: \"{project_root}\"",
+                        f"    template_root: \"{project_root}\"",
                         "    gdb_port: 61235",
                         "    apid: 2",
                         "    server_ready_timeout_s: 20.0",

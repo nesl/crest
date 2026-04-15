@@ -36,16 +36,13 @@ from .data import OxIODSplitData
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "nas_config.yaml"
 REPO_ROOT = Path(__file__).resolve().parents[2]
-# FIXME: This temporary default points at the toy STM32 example project under
-# `analysis_scripts/` so the Phase 1 backend has a concrete FSBL tree to target
-# before the production STM firmware project is promoted into the main source
-# tree. Replace it with the real TinyODOM STM project root as soon as that
-# project exists. Do not rely on this toy path as the long-term default.
+# Keep the legacy constant name for compatibility with older callers, but point
+# it at the canonical STM32 FSBL template that now lives under ``sketches/``.
 STM32_DEFAULT_PROJECT_ROOT = (
     REPO_ROOT
-    / "analysis_scripts"
-    / "stm32_example_project"
-    / "stm32_toy_ai_project"
+    / "sketches"
+    / "stm32"
+    / "tinyodom_tcn_stm32"
     / "FSBL"
 )
 MIN_TCN_LAYERS = 3

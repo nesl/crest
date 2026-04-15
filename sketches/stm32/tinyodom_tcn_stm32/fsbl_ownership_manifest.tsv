@@ -1,0 +1,93 @@
+# category	relative_path	vendor_source_relative_to_STM32CubeN6
+# ``vendor_copy`` entries are rematerialized by ``setup_stm32.sh`` from the
+# pinned STM32CubeN6 checkout. All other categories are repo-owned.
+
+tinyodom_owned	Inc/tcn_dut_runner.h	
+tinyodom_owned	Src/tcn_dut_runner.c	
+
+vendor_derived	Inc/main.h	
+vendor_derived	Inc/mx25um51245g_conf.h	
+vendor_derived	Inc/stm32n6xx_hal_conf.h	
+vendor_derived	Inc/stm32n6xx_it.h	
+vendor_derived	Inc/stm32n6xx_nucleo_conf.h	
+vendor_derived	STM32N657X0HXQ_AXISRAM2_fsbl.ld	
+vendor_derived	Src/main.c	
+vendor_derived	Src/stm32n6xx_hal_msp.c	
+vendor_derived	Src/stm32n6xx_it.c	
+vendor_derived	Src/syscalls.c	
+vendor_derived	Src/sysmem.c	
+vendor_derived	Startup/startup_stm32n657x0hxq_fsbl.s	
+
+generated	Inc/network.h	
+generated	Inc/network_config.h	
+generated	Inc/network_data.h	
+generated	Inc/network_data_params.h	
+generated	Inc/tcn_dut_phase_config.h	
+generated	Src/network.c	
+generated	Src/network_data.c	
+generated	Src/network_data_params.c	
+
+vendor_copy	Src/stm32n6xx_hal.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal.c
+vendor_copy	Src/stm32n6xx_hal_cortex.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_cortex.c
+vendor_copy	Src/stm32n6xx_hal_dma.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_dma.c
+vendor_copy	Src/stm32n6xx_hal_dma_ex.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_dma_ex.c
+vendor_copy	Src/stm32n6xx_hal_exti.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_exti.c
+vendor_copy	Src/stm32n6xx_hal_gpio.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_gpio.c
+vendor_copy	Src/stm32n6xx_hal_pwr.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_pwr.c
+vendor_copy	Src/stm32n6xx_hal_pwr_ex.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_pwr_ex.c
+vendor_copy	Src/stm32n6xx_hal_rcc.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rcc.c
+vendor_copy	Src/stm32n6xx_hal_rcc_ex.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rcc_ex.c
+vendor_copy	Src/stm32n6xx_hal_rtc.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rtc.c
+vendor_copy	Src/stm32n6xx_hal_rtc_ex.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rtc_ex.c
+vendor_copy	Src/stm32n6xx_hal_uart.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_uart.c
+vendor_copy	Src/stm32n6xx_hal_uart_ex.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_uart_ex.c
+vendor_copy	Src/stm32n6xx_hal_xspi.c	Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_xspi.c
+vendor_copy	Src/stm32n6xx_nucleo.c	Drivers/BSP/STM32N6xx_Nucleo/stm32n6xx_nucleo.c
+vendor_copy	Src/stm32n6xx_nucleo_xspi.c	Drivers/BSP/STM32N6xx_Nucleo/stm32n6xx_nucleo_xspi.c
+vendor_copy	Src/mx25um51245g.c	Drivers/BSP/Components/mx25um51245g/mx25um51245g.c
+vendor_copy	Src/system_stm32n6xx_fsbl.c	Drivers/CMSIS/Device/ST/STM32N6xx/Source/Templates/system_stm32n6xx_fsbl.c
+vendor_copy	Drivers/BSP/Components/mx25um51245g/mx25um51245g.h	Drivers/BSP/Components/mx25um51245g/mx25um51245g.h
+vendor_copy	Drivers/BSP/STM32N6xx_Nucleo/stm32n6xx_nucleo.h	Drivers/BSP/STM32N6xx_Nucleo/stm32n6xx_nucleo.h
+vendor_copy	Drivers/BSP/STM32N6xx_Nucleo/stm32n6xx_nucleo_errno.h	Drivers/BSP/STM32N6xx_Nucleo/stm32n6xx_nucleo_errno.h
+vendor_copy	Drivers/BSP/STM32N6xx_Nucleo/stm32n6xx_nucleo_xspi.h	Drivers/BSP/STM32N6xx_Nucleo/stm32n6xx_nucleo_xspi.h
+vendor_copy	Drivers/CMSIS/Device/ST/STM32N6xx/Include/stm32n657xx.h	Drivers/CMSIS/Device/ST/STM32N6xx/Include/stm32n657xx.h
+vendor_copy	Drivers/CMSIS/Device/ST/STM32N6xx/Include/stm32n6xx.h	Drivers/CMSIS/Device/ST/STM32N6xx/Include/stm32n6xx.h
+vendor_copy	Drivers/CMSIS/Device/ST/STM32N6xx/Include/system_stm32n6xx.h	Drivers/CMSIS/Device/ST/STM32N6xx/Include/system_stm32n6xx.h
+vendor_copy	Drivers/CMSIS/Include/cmsis_compiler.h	Drivers/CMSIS/Include/cmsis_compiler.h
+vendor_copy	Drivers/CMSIS/Include/cmsis_gcc.h	Drivers/CMSIS/Include/cmsis_gcc.h
+vendor_copy	Drivers/CMSIS/Include/cmsis_version.h	Drivers/CMSIS/Include/cmsis_version.h
+vendor_copy	Drivers/CMSIS/Include/core_cm55.h	Drivers/CMSIS/Include/core_cm55.h
+vendor_copy	Drivers/CMSIS/Include/m-profile/armv7m_cachel1.h	Drivers/CMSIS/Include/m-profile/armv7m_cachel1.h
+vendor_copy	Drivers/CMSIS/Include/m-profile/armv7m_mpu.h	Drivers/CMSIS/Include/m-profile/armv7m_mpu.h
+vendor_copy	Drivers/CMSIS/Include/m-profile/armv81m_pac.h	Drivers/CMSIS/Include/m-profile/armv81m_pac.h
+vendor_copy	Drivers/CMSIS/Include/m-profile/armv8m_mpu.h	Drivers/CMSIS/Include/m-profile/armv8m_mpu.h
+vendor_copy	Drivers/CMSIS/Include/m-profile/armv8m_pmu.h	Drivers/CMSIS/Include/m-profile/armv8m_pmu.h
+vendor_copy	Drivers/CMSIS/Include/m-profile/cmsis_gcc_m.h	Drivers/CMSIS/Include/m-profile/cmsis_gcc_m.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/Legacy/stm32_hal_legacy.h	Drivers/STM32N6xx_HAL_Driver/Inc/Legacy/stm32_hal_legacy.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_cortex.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_cortex.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_def.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_def.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_dma.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_dma.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_dma_ex.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_dma_ex.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_exti.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_exti.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_gpio.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_gpio.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_gpio_ex.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_gpio_ex.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_pwr.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_pwr.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_pwr_ex.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_pwr_ex.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_rcc.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_rcc.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_rcc_ex.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_rcc_ex.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_rtc.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_rtc.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_rtc_ex.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_rtc_ex.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_uart.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_uart.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_uart_ex.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_uart_ex.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_xspi.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_hal_xspi.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_ll_bus.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_ll_bus.h
+vendor_copy	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_ll_rcc.h	Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_ll_rcc.h
+
+build_recipe	Debug/makefile	
+build_recipe	Debug/sources.mk	
+build_recipe	Debug/objects.mk	
+build_recipe	Debug/objects.list	
+build_recipe	Debug/stedgeai.mk	
+build_recipe	Debug/Src/subdir.mk	
+build_recipe	Debug/Startup/subdir.mk	

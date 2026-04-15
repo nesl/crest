@@ -6,9 +6,22 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STM32_ROOT = REPO_ROOT / "analysis_scripts" / "stm32_example_project"
+CANONICAL_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"
 
 
 class Stm32ProjectPortabilityTests(unittest.TestCase):
+    def test_all_committed_stm_makefiles_avoid_tools_checkout_paths(self):
+        paths = [
+            CANONICAL_ROOT / "Debug" / "Src" / "subdir.mk",
+            STM32_ROOT / "stm32_blink_example_project" / "FSBL" / "Debug" / "Src" / "subdir.mk",
+            STM32_ROOT / "stm32_toy_ai_project" / "FSBL" / "Debug" / "Src" / "subdir.mk",
+            STM32_ROOT / "stm32_cadenced_toy_ai_project" / "FSBL" / "Debug" / "Src" / "subdir.mk",
+        ]
+        for path in paths:
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("tools/stm32/STM32CubeN6", text, path)
+            self.assertIn("../Drivers/STM32N6xx_HAL_Driver/Inc", text, path)
+
     def test_toy_projects_no_longer_pin_stedgeai_version_in_makefiles(self):
         paths = [
             STM32_ROOT / "stm32_toy_ai_project" / "FSBL" / "Debug" / "objects.mk",
@@ -28,6 +41,8 @@ class Stm32ProjectPortabilityTests(unittest.TestCase):
         for path in paths:
             text = path.read_text(encoding="utf-8")
             self.assertIn("STEDGEAI_ROOT ?=", text, path)
+            self.assertIn("STEDGEAI_CANDIDATES :=", text, path)
+            self.assertIn("/opt/ST/STEdgeAI/*/Middlewares/ST/AI/Inc", text, path)
             self.assertIn("NetworkRuntime1200_CM55_GCC.a", text, path)
             self.assertIn("Middlewares/ST/AI/Inc", text, path)
 

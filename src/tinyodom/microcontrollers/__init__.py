@@ -169,24 +169,18 @@ def resolve_device_options(
         from .stm32_nucleo_n657x0 import resolve_stm32_nucleo_n657x0_q_options
 
         stm32_cfg = _cfg_get(device_config, "stm32", None)
-        if stm32_cfg is None:
-            raise ValueError(
-                "STM32_NUCLEO_N657X0_Q requires a device.stm32 block with project_root set."
-            )
-        raw_project_root = _cfg_get(stm32_cfg, "project_root", None)
-        if raw_project_root in (None, ""):
-            raise ValueError(
-                "STM32_NUCLEO_N657X0_Q requires device.stm32.project_root to be set."
-            )
         raw_options = {
-            "project_root": raw_project_root,
-            "gdbserver": _cfg_get(stm32_cfg, "gdbserver", None),
-            "gdb": _cfg_get(stm32_cfg, "gdb", None),
-            "cubeprog_bin": _cfg_get(stm32_cfg, "cubeprog_bin", None),
-            "gdb_port": _cfg_get(stm32_cfg, "gdb_port", None),
-            "apid": _cfg_get(stm32_cfg, "apid", None),
-            "server_ready_timeout_s": _cfg_get(stm32_cfg, "server_ready_timeout_s", None),
-            "cpu_clock_mhz": _cfg_get(stm32_cfg, "cpu_clock_mhz", None),
+            "template_root": _cfg_get(stm32_cfg, "template_root", None) if stm32_cfg is not None else None,
+            "project_root": _cfg_get(stm32_cfg, "project_root", None) if stm32_cfg is not None else None,
+            "gdbserver": _cfg_get(stm32_cfg, "gdbserver", None) if stm32_cfg is not None else None,
+            "gdb": _cfg_get(stm32_cfg, "gdb", None) if stm32_cfg is not None else None,
+            "cubeprog_bin": _cfg_get(stm32_cfg, "cubeprog_bin", None) if stm32_cfg is not None else None,
+            "gdb_port": _cfg_get(stm32_cfg, "gdb_port", None) if stm32_cfg is not None else None,
+            "apid": _cfg_get(stm32_cfg, "apid", None) if stm32_cfg is not None else None,
+            "server_ready_timeout_s": _cfg_get(stm32_cfg, "server_ready_timeout_s", None)
+            if stm32_cfg is not None
+            else None,
+            "cpu_clock_mhz": _cfg_get(stm32_cfg, "cpu_clock_mhz", None) if stm32_cfg is not None else None,
         }
         resolved = resolve_stm32_nucleo_n657x0_q_options(
             {

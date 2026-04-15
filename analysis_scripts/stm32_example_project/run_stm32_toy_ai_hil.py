@@ -47,7 +47,7 @@ from build_and_upload_stm32_blink import (  # noqa: E402
 )
 from tinyodom.microcontrollers.arduino_base import ensure_harness_firmware  # noqa: E402
 
-DEFAULT_PROJECT_ROOT = SCRIPT_DIR / "stm32_toy_ai_project" / "FSBL"
+DEFAULT_PROJECT_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"
 DEFAULT_DUT_PORT = "/dev/ttyACM0"
 DEFAULT_HARNESS_PORT = "/dev/ttyACM1"
 DEFAULT_BAUD = 115200

@@ -2,7 +2,8 @@
 # Repo-maintained ST Edge AI path overrides for CLI builds.
 ################################################################################
 
-STEDGEAI_ROOT ?= $(lastword $(sort $(wildcard /opt/ST/STEdgeAI/*)))
+STEDGEAI_CANDIDATES := $(patsubst %/Middlewares/ST/AI/Inc,%,$(sort $(wildcard /opt/ST/STEdgeAI/*/Middlewares/ST/AI/Inc)))
+STEDGEAI_ROOT ?= $(lastword $(STEDGEAI_CANDIDATES))
 STEDGEAI_INC := $(STEDGEAI_ROOT)/Middlewares/ST/AI/Inc
 STEDGEAI_RUNTIME_LIB := $(STEDGEAI_ROOT)/Middlewares/ST/AI/Lib/GCC/ARMCortexM55/NetworkRuntime1200_CM55_GCC.a
 
