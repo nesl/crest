@@ -28,10 +28,26 @@ from .hardware import (
     describe_error_code,
     normalize_power_metrics,
 )
-from .microcontrollers import get_device as get_microcontroller_device
+from .microcontrollers import (
+    get_device as get_microcontroller_device,
+    resolve_device_options,
+)
 from .data import OxIODSplitData
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "nas_config.yaml"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+# FIXME: This temporary default points at the toy STM32 example project under
+# `analysis_scripts/` so the Phase 1 backend has a concrete FSBL tree to target
+# before the production STM firmware project is promoted into the main source
+# tree. Replace it with the real TinyODOM STM project root as soon as that
+# project exists. Do not rely on this toy path as the long-term default.
+STM32_DEFAULT_PROJECT_ROOT = (
+    REPO_ROOT
+    / "analysis_scripts"
+    / "stm32_example_project"
+    / "stm32_toy_ai_project"
+    / "FSBL"
+)
 MIN_TCN_LAYERS = 3
 MAX_TCN_LAYERS = 8
 DILATION_POOL = [1, 2, 4, 8, 16, 32, 64, 128, 256]
@@ -359,6 +375,7 @@ def load_config(
     device_name = config.device.get("name")
     if not device_name:
         raise KeyError("Expected 'device.name' to be set in the configuration.")
+    normalized_device_name = str(device_name).strip().upper()
 
     # Derive paths and names for models/checkpoints based on device name.
     outputs = config.outputs
@@ -390,6 +407,7 @@ def load_config(
     config.training.drop_rate_choices = DROP_RATE_CHOICES
 
     device = config.device
+
     device.harness_fqbn = device.get("harness_fqbn", "arduino:mbed_nano:nano33ble")
     device.harness_auto_flash = str(device.get("harness_auto_flash", "once")).lower()
     device.harness_arm_pin = int(device.get("harness_arm_pin", 3))
@@ -402,10 +420,6 @@ def load_config(
     device.harness_done_timeout_s = float(device.get("harness_done_timeout_s", 5.0))
     device.dut_ready_timeout_s = float(device.get("dut_ready_timeout_s", 5.0))
 
-    if training.energy_aware and not device.get("harness_serial_port"):
-        raise RuntimeError(
-            "Set device.harness_serial_port when energy_aware is True so the harness can be used."
-        )
     if device.harness_arm_pin <= 0:
         raise ValueError("device.harness_arm_pin must be a positive integer.")
     if device.harness_trigger_pin <= 0:
@@ -475,6 +489,11 @@ def build_collect_metrics_request(
     config: Dict,
     hyperparams: Dict,
     latency_budget_ms: float,
+    *,
+    dirpath: Path,
+    device_options: dict[str, Any] | None,
+    hil_enabled: bool | None = None,
+    energy_aware: bool | None = None,
 ) -> CollectMetricsRequest:
     """Build a :class:`CollectMetricsRequest` from full config and hyperparameters.
 
@@ -495,38 +514,38 @@ def build_collect_metrics_request(
     Raises
     ------
     RuntimeError
-        If ``training.energy_aware`` is enabled but ``device.harness_serial_port``
-        is not configured, or when ``device.name`` is ``PORTENTA_H7`` and
-        ``device.portenta.target_core`` is missing.
+        If runtime measurement requires a harness but ``device.harness_serial_port``
+        is not configured.
     """
     def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
+        """Read a value from either an ``addict.Dict`` or a namespace-like object.
+
+        Parameters
+        ----------
+        container : Any
+            Config subtree or namespace object to read from.
+        key : str
+            Field name to resolve.
+        default : Any, optional
+            Fallback value when the field is absent.
+
+        Returns
+        -------
+        Any
+            Resolved field value or ``default``.
+        """
         getter = getattr(container, "get", None)
         if callable(getter):
             return getter(key, default)
         return getattr(container, key, default)
 
-    energy_aware = bool(config.training.energy_aware)
+    effective_energy_aware = bool(config.training.energy_aware) if energy_aware is None else bool(energy_aware)
     harness = None
-    device_options: dict[str, Any] | None = None
     normalized_device_name = str(config.device.name).strip().upper()
-
-    if normalized_device_name == "PORTENTA_H7":
-        portenta_cfg = _cfg_get(config.device, "portenta", None)
-        target_core = _cfg_get(portenta_cfg, "target_core", None) if portenta_cfg is not None else None
-        split = _cfg_get(portenta_cfg, "split", None) if portenta_cfg is not None else None
-        security = _cfg_get(portenta_cfg, "security", None) if portenta_cfg is not None else None
-        if not target_core:
-            raise RuntimeError(
-                "Set device.portenta.target_core to 'cm7' or 'cm4' when device.name is PORTENTA_H7."
-            )
-        device_options = {"target_core": str(target_core)}
-        if split:
-            device_options["split"] = str(split)
-        if security:
-            device_options["security"] = str(security)
+    effective_hil_enabled = bool(config.device.hil) if hil_enabled is None else bool(hil_enabled)
 
     runtime_mode = "direct_serial"
-    if bool(config.device.hil):
+    if effective_hil_enabled:
         try:
             runtime_device = get_microcontroller_device(
                 normalized_device_name,
@@ -540,7 +559,7 @@ def build_collect_metrics_request(
             if callable(runtime_mode_fn):
                 runtime_mode = str(runtime_mode_fn())
 
-    if energy_aware or runtime_mode == "harness_only":
+    if effective_energy_aware or runtime_mode == "harness_only":
         harness_serial_port = _cfg_get(config.device, "harness_serial_port", None)
         if not harness_serial_port:
             raise RuntimeError(
@@ -565,13 +584,13 @@ def build_collect_metrics_request(
         dut_ready_timeout = 5.0
 
     return CollectMetricsRequest(
-        hil_enabled=bool(config.device.hil),
-        energy_aware=energy_aware,
+        hil_enabled=effective_hil_enabled,
+        energy_aware=effective_energy_aware,
         flops=hyperparams.flops,
         device_name=normalized_device_name,
         window_size=config.data.window_size,
         input_dim=hyperparams.input_dim,
-        dirpath=config.outputs.tcn_dir,
+        dirpath=Path(dirpath).resolve(),
         latency_proxy_max_flops=config.training.latency_proxy_max_flops,
         serial_port=_cfg_get(config.device, "serial_port", None),
         latency_budget_ms=latency_budget_ms,
@@ -716,6 +735,7 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
         "latency_budget_ms": latency_budget_entry,
         "arena_bytes": arena_bytes,
         "hil_enabled": request.hil_enabled,
+        "energy_aware": request.energy_aware,
         "inference_seq": int(normalized_power["sequence"]) if normalized_power["sequence"] >= 0 else -1,
         "energy_mj_per_inference": normalized_power["energy_mj_per_inference"],
         "avg_power_mw": normalized_power["avg_power_mw"],
@@ -874,7 +894,9 @@ def train_and_score(model, batch_size: int, hyperparams: Dict, metrics: dict, ma
         (rmse_vel_x, rmse_vel_y, score, latency_or_energy).
     """
 
-    if config.training.energy_aware:
+    effective_energy_aware = bool(metrics.get("energy_aware", config.training.energy_aware))
+
+    if effective_energy_aware:
         latency_or_energy = metrics["energy_mj_per_inference"]
     else:
         latency_or_energy = metrics["latency_ms"]

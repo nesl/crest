@@ -1,6 +1,7 @@
 import argparse
 import logging
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import absl.logging
@@ -17,10 +18,13 @@ from tensorflow.keras import optimizers
 from tensorflow.keras.models import load_model
 
 from tinyodom.data import import_oxiod_dataset
+from tinyodom.devices import _sync_arduino_sketch_variant_for_config
 from tinyodom.hardware import (
-    convert_to_cpp_model,
-    convert_to_tflite_model,
     HIL_MASTER_DEVICE_NOT_FOUND,
+)
+from tinyodom.microcontrollers import (
+    get_device as get_microcontroller_device,
+    resolve_device_options,
 )
 from tinyodom.model import (
     DEFAULT_CONFIG_PATH,
@@ -91,8 +95,8 @@ class HILServer:
         # Resolve repository root once so sketch variants can be copied before each compile.
         self.repo_root = Path(__file__).resolve().parent.parent
         self.sketch_variants_dir = self.repo_root / "sketches"
-        self.active_sketch_path = self._sync_sketch_variant()
-        logger.info("Using sketch variant: %s", self.active_sketch_path)
+        self.active_sketch_path: Path | None = None
+        self.training_data = None
 
         if self.config.device.hil is False:
             logger.warning("HIL is disabled in the configuration.")
@@ -100,19 +104,42 @@ class HILServer:
         self.context = zmq.Context.instance()
         self.socket = self.context.socket(zmq.REP)
 
+    def _normalized_device_name(self) -> str:
+        """Return the normalized configured device name.
+
+        Returns
+        -------
+        str
+            Upper-cased device name from the loaded configuration.
+        """
+        return str(getattr(self.config.device, "name", "")).strip().upper()
+
+    def _ensure_training_data(self):
+        """Load training data lazily for backends that still need model export.
+
+        Returns
+        -------
+        Any
+            Cached OxIOD training/calibration dataset.
+        """
+        if self.training_data is not None:
+            return self.training_data
         calibration_windows = self.config.data.calibration_windows
-        self.training_data = import_oxiod_dataset(type_flag=2, 
-                                            useMagnetometer=True, 
-                                            useStepCounter=True, 
-                                            AugmentationCopies=0,
-                                            dataset_folder=self.config.data.directory,
-                                            sub_folders=['handbag/','handheld/','pocket/','running/','slow_walking/','trolley/'],
-                                            sampling_rate=self.config.data.sampling_rate_hz, 
-                                            window_size=self.config.data.window_size, 
-                                            stride=self.config.data.stride, 
-                                            verbose=False,
-                                            max_windows=calibration_windows)
+        self.training_data = import_oxiod_dataset(
+            type_flag=2,
+            useMagnetometer=True,
+            useStepCounter=True,
+            AugmentationCopies=0,
+            dataset_folder=self.config.data.directory,
+            sub_folders=['handbag/', 'handheld/', 'pocket/', 'running/', 'slow_walking/', 'trolley/'],
+            sampling_rate=self.config.data.sampling_rate_hz,
+            window_size=self.config.data.window_size,
+            stride=self.config.data.stride,
+            verbose=False,
+            max_windows=calibration_windows,
+        )
         print("Imported Training Data")
+        return self.training_data
 
     def start(self) -> None:
         """
@@ -189,71 +216,93 @@ class HILServer:
         FileNotFoundError
             If a requested trained checkpoint does not exist.
         """
-        variant = str(model_variant).strip().lower()
-        is_approx_trained = variant in {
-            APPROX_TRAINED_VARIANT_NAME,
-            REPRESENTATIVE_VARIANT_LEGACY_NAME,
-            PERTURBED_VARIANT_LEGACY_NAME,
-        }
-        if variant == "untrained":
-            model = build_tinyodom_model(hyperparams)
-            print("Model created from untrained architecture")
-        elif is_approx_trained:
-            model = build_tinyodom_model(hyperparams)
-            bn_touched, bias_touched = apply_combined_perturbation(model=model, seed=1337)
-            print(
-                "Model created from approx_trained architecture variant (combined perturbation) "
-                f"(bn_layers={bn_touched}, non_bn_bias_layers={bias_touched})"
-            )
-        elif variant.startswith("trained"):
-            if checkpoint_path is None:
-                raise ValueError(
-                    f"model_variant '{model_variant}' requires checkpoint_path to be provided."
-                )
-            ckpt_path = Path(checkpoint_path)
-            if not ckpt_path.exists():
-                raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-            model = load_model(str(ckpt_path), custom_objects={"TCN": TCN})
-            validate_loaded_model_input_shape(model, hyperparams)
-            print(f"Model loaded from checkpoint: {ckpt_path}")
-        else:
-            raise ValueError(
-                f"Unsupported model_variant '{model_variant}'. "
-                f"Use '{APPROX_TRAINED_VARIANT_NAME}', 'untrained', "
-                "or a variant that starts with 'trained'. "
-                f"(Legacy aliases '{REPRESENTATIVE_VARIANT_LEGACY_NAME}' and "
-                f"'{PERTURBED_VARIANT_LEGACY_NAME}' are also accepted.)"
-            )
-
-        optimizer = optimizers.Adam()
-        model.compile(loss={"velx": "mse", "vely": "mse"}, optimizer=optimizer)
-
-        # Convert the model to a TFLite format for deployment on the target device and save to OUTPUT_PATH
-        convert_to_tflite_model(
-            model=model,
-            training_data=self.training_data.inputs,
-            quantization=self.config.training.quantization,
-            output_name=str(self.config.outputs.tflite_model_path),
+        latency_budget_ms = (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000
+        device_options = resolve_device_options(self._normalized_device_name(), self.config.device)
+        runtime_device = get_microcontroller_device(
+            self._normalized_device_name(),
+            serial_port=getattr(self.config.device, "serial_port", None),
+            device_options=device_options,
         )
 
-        print("Converted to TFLite")
+        variant = str(model_variant).strip().lower()
+        model = None
+        training_data = None
+        if runtime_device.requires_candidate_model():
+            is_approx_trained = variant in {
+                APPROX_TRAINED_VARIANT_NAME,
+                REPRESENTATIVE_VARIANT_LEGACY_NAME,
+                PERTURBED_VARIANT_LEGACY_NAME,
+            }
+            if variant == "untrained":
+                model = build_tinyodom_model(hyperparams)
+                print("Model created from untrained architecture")
+            elif is_approx_trained:
+                model = build_tinyodom_model(hyperparams)
+                bn_touched, bias_touched = apply_combined_perturbation(model=model, seed=1337)
+                print(
+                    "Model created from approx_trained architecture variant (combined perturbation) "
+                    f"(bn_layers={bn_touched}, non_bn_bias_layers={bias_touched})"
+                )
+            elif variant.startswith("trained"):
+                if checkpoint_path is None:
+                    raise ValueError(
+                        f"model_variant '{model_variant}' requires checkpoint_path to be provided."
+                    )
+                ckpt_path = Path(checkpoint_path)
+                if not ckpt_path.exists():
+                    raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+                model = load_model(str(ckpt_path), custom_objects={"TCN": TCN})
+                validate_loaded_model_input_shape(model, hyperparams)
+                print(f"Model loaded from checkpoint: {ckpt_path}")
+            else:
+                raise ValueError(
+                    f"Unsupported model_variant '{model_variant}'. "
+                    f"Use '{APPROX_TRAINED_VARIANT_NAME}', 'untrained', "
+                    "or a variant that starts with 'trained'. "
+                    f"(Legacy aliases '{REPRESENTATIVE_VARIANT_LEGACY_NAME}' and "
+                    f"'{PERTURBED_VARIANT_LEGACY_NAME}' are also accepted.)"
+                )
 
-        # Converts the TFLite model to C code for deployment on the target device
-        convert_to_cpp_model(tflite_path=self.config.outputs.tflite_model_path, output_dir=self.config.outputs.tcn_dir)
+            optimizer = optimizers.Adam()
+            model.compile(loss={"velx": "mse", "vely": "mse"}, optimizer=optimizer)
 
-        print("Converted to C++")
+            if runtime_device.requires_training_data():
+                training_data = self._ensure_training_data()
+
+        prepared_dir = runtime_device.prepare_candidate(
+            config=self.config,
+            hyperparams=hyperparams,
+            model=model,
+            outputs_dir=Path(self.config.outputs.tcn_dir),
+            tflite_model_path=Path(self.config.outputs.tflite_model_path),
+            training_data=training_data,
+            model_variant=model_variant,
+            checkpoint_path=checkpoint_path,
+        )
+        if runtime_device.requires_candidate_model():
+            self.active_sketch_path = Path(prepared_dir) / "tinyodom_tcn.ino"
+            logger.info("Using sketch variant: %s", self.active_sketch_path)
 
         print("Starting metric collection")
 
-        # Compute the latency budget once so the downstream metrics/logging logic can reuse it.
-        latency_budget_ms = (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000
-
+        effective_hil_enabled = bool(
+            self.config.device.hil and runtime_device.requires_candidate_model()
+        )
+        # Energy collection is backend-owned. Phase 1 STM returns False here so
+        # the rest of the pipeline stops treating energy as a required objective.
+        effective_energy_aware = bool(
+            self.config.training.energy_aware
+            and effective_hil_enabled
+            and runtime_device.supports_energy_measurement()
+        )
         request_metrics_args = build_collect_metrics_request(
             config=self.config,
             hyperparams=hyperparams,
-            # Stride=20 at 100 Hz emits an inference roughly every 0.2s, so normalize
-            # latency by the stride cadence rather than the full window length.
             latency_budget_ms=latency_budget_ms,
+            dirpath=Path(prepared_dir),
+            device_options=device_options,
+            hil_enabled=effective_hil_enabled,
+            energy_aware=effective_energy_aware,
         )
         metrics = collect_metrics(request_metrics_args)
         
@@ -286,96 +335,11 @@ class HILServer:
         FileNotFoundError
             If a required variant sketch or input header is missing.
         """
-        def _normalize_target_core(raw_value: object) -> str:
-            """Normalize and validate a Portenta target-core token.
-
-            Parameters
-            ----------
-            raw_value : object
-                Raw target-core setting from config.
-
-            Returns
-            -------
-            str
-                Lower-cased target core token (``cm7`` or ``cm4``).
-
-            Raises
-            ------
-            ValueError
-                If the provided value is missing or unsupported.
-            """
-            normalized = str(raw_value).strip().lower() if raw_value is not None else ""
-            if normalized not in {"cm7", "cm4"}:
-                raise ValueError(
-                    "Set device.portenta.target_core to 'cm7' or 'cm4' when device.name is PORTENTA_H7."
-                )
-            return normalized
-
-        def _resolve_uniform_variant_dir() -> Path:
-            """Resolve the folder containing shared uniform sketches.
-
-            Returns
-            -------
-            Path
-                Directory containing ``tinyodom_tcn_energy.ino`` and
-                ``tinyodom_tcn_no_energy.ino`` shared across device profiles.
-            """
-            device_name = str(getattr(self.config.device, "name", "")).strip().upper()
-            if device_name == "PORTENTA_H7":
-                portenta_cfg = getattr(self.config.device, "portenta", None)
-                _normalize_target_core(
-                    getattr(portenta_cfg, "target_core", None) if portenta_cfg is not None else None
-                )
-                # Validation only: uniform sketch source is shared.
-            # Uniform variants are shared for all boards.
-            return self.sketch_variants_dir
-
-        if not bool(self.config.training.energy_aware):
-            variant_dir = _resolve_uniform_variant_dir()
-            variant_name = "tinyodom_tcn_no_energy.ino"
-        else:
-            input_mode = str(getattr(self.config.training, "input_mode", "uniform")).lower()
-            variants = {
-                "uniform": ("tinyodom_tcn_energy.ino", _resolve_uniform_variant_dir()),
-                "representative": (
-                    "tinyodom_tcn_energy_representative.ino",
-                    self.sketch_variants_dir / "analysis_sketches",
-                ),
-                "real": ("tinyodom_tcn_energy_real_data.ino", self.sketch_variants_dir / "analysis_sketches"),
-            }
-            if input_mode not in variants:
-                allowed = ", ".join(sorted(variants))
-                raise ValueError(
-                    f"Unsupported input_mode '{input_mode}'. Expected one of: {allowed}."
-                )
-            variant_name, variant_dir = variants[input_mode]
-        variant_source = variant_dir / variant_name
-        if not variant_source.exists():
-            raise FileNotFoundError(f"Sketch variant not found: {variant_source}")
-
-        sketch_dir = Path(self.config.outputs.tcn_dir)
-        sketch_dir.mkdir(parents=True, exist_ok=True)
-        sketch_target = sketch_dir / "tinyodom_tcn.ino"
-        shutil.copyfile(variant_source, sketch_target)
-
-        common_source = self.sketch_variants_dir / "common"
-        if common_source.exists():
-            shutil.copytree(common_source, sketch_dir / "common", dirs_exist_ok=True)
-        # Allow board-specific overrides while keeping shared-copy behavior.
-        variant_common_source = variant_dir / "common"
-        if variant_common_source.exists() and variant_common_source != common_source:
-            shutil.copytree(variant_common_source, sketch_dir / "common", dirs_exist_ok=True)
-
-        needs_header = variant_name in {
-            "tinyodom_tcn_energy_representative.ino",
-            "tinyodom_tcn_energy_real_data.ino",
-        }
-        header_source = self.sketch_variants_dir / "analysis_sketches" / "tinyodom_tcn_input_data.h"
-        if needs_header:
-            if not header_source.exists():
-                raise FileNotFoundError(f"Input header not found: {header_source}")
-            shutil.copyfile(header_source, sketch_dir / header_source.name)
-        return sketch_target
+        return _sync_arduino_sketch_variant_for_config(
+            self.config,
+            Path(self.config.outputs.tcn_dir),
+            sketches_dir=self.sketch_variants_dir,
+        )
 
     def set_input_mode(self, input_mode: str) -> Path:
         """
@@ -391,9 +355,19 @@ class HILServer:
         -------
         Path
             Path to the active synchronized sketch file.
+
         """
-        self.config.training.input_mode = str(input_mode).lower()
-        self.active_sketch_path = self._sync_sketch_variant()
+        runtime_device = get_microcontroller_device(
+            self._normalized_device_name(),
+            serial_port=getattr(self.config.device, "serial_port", None),
+            device_options=resolve_device_options(self._normalized_device_name(), self.config.device),
+        )
+        self.active_sketch_path = runtime_device.set_input_mode(
+            input_mode,
+            outputs_dir=Path(self.config.outputs.tcn_dir),
+            config=self.config,
+            sketches_dir=self.sketch_variants_dir,
+        )
         logger.info("Using sketch variant: %s", self.active_sketch_path)
         return self.active_sketch_path
 

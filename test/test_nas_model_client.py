@@ -26,6 +26,7 @@ from tinyodom.hardware import (
     HIL_MASTER_FATAL,
     HIL_MASTER_SUCCESS,
 )  # noqa: E402
+from tinyodom.model import train_and_score  # noqa: E402
 
 
 def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
@@ -244,6 +245,62 @@ class ObjectiveTests(unittest.TestCase):
         self.mock_count.assert_called_once()
         self.mock_train.assert_called_once()
         self.assertEqual(result, 0.3)
+        self.mock_log.assert_called_once()
+
+    def test_objective_stm_phase1_allows_arena_sentinel(self) -> None:
+        """Ensure STM Phase 1 does not get pruned solely for ``arena_bytes=-1``.
+
+        Returns
+        -------
+        None
+        """
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": -1,
+            "latency_ms": 10.0,
+        }
+        self.client.config.device.name = "STM32_NUCLEO_N657X0_Q"
+        self.client.config.device.stm32 = SimpleNamespace(project_root="/tmp/stm_fsbl")
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        result = self.client.objective(trial)
+
+        self.mock_train.assert_called_once()
+        self.assertEqual(result, 0.3)
+        self.mock_log.assert_called_once()
+
+    def test_objective_multiobjective_stm_uses_latency_when_energy_is_disabled(self) -> None:
+        """Ensure STM Phase 1 does not force energy scoring in multi-objective mode.
+
+        Returns
+        -------
+        None
+        """
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": -1,
+            "latency_ms": 10.0,
+            "energy_mj_per_inference": -1.0,
+            "energy_aware": False,
+            "hil_enabled": False,
+        }
+        self.client.config.device.name = "STM32_NUCLEO_N657X0_Q"
+        self.client.config.device.stm32 = SimpleNamespace(project_root="/tmp/stm_fsbl")
+        self.client.config.training.energy_aware = True
+        self.client.config.training.nas_multiobjective = True
+        self.client.config.training.train = False
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        with patch("nas_model_client.train_and_score", wraps=train_and_score):
+            result = self.client.objective(trial)
+
+        self.assertEqual(result, (2, 10.0))
         self.mock_log.assert_called_once()
 
     def test_objective_portenta_forwards_device_options_to_hardware_specs(self) -> None:

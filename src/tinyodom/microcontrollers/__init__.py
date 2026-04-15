@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any, Optional
 
 
@@ -20,6 +21,11 @@ def _registry_entries() -> dict[str, tuple[str, str, str]]:
         "PORTENTA_H7": (
             "tinyodom.microcontrollers.arduino_portenta_h7",
             "ArduinoPortentaH7Device",
+            "BOARD_DEFAULT_SPEC",
+        ),
+        "STM32_NUCLEO_N657X0_Q": (
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0",
+            "STM32NucleoN657X0QDevice",
             "BOARD_DEFAULT_SPEC",
         ),
     }
@@ -119,6 +125,81 @@ def get_device(
         raise
 
 
+def resolve_device_options(
+    device_name: str,
+    device_config: Any,
+) -> dict[str, Any] | None:
+    """Resolve backend-owned device options from a config subtree.
+
+    Parameters
+    ----------
+    device_name : str
+        Target device identifier.
+    device_config : Any
+        Device config subtree or namespace-like object.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        Normalized backend options, or ``None`` when the backend does not use
+        explicit option fields.
+    """
+
+    def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
+        getter = getattr(container, "get", None)
+        if callable(getter):
+            return getter(key, default)
+        return getattr(container, key, default)
+
+    normalized_name = device_name.strip().upper()
+    if normalized_name == "PORTENTA_H7":
+        from .arduino_portenta_h7 import resolve_portenta_h7_options
+
+        portenta_cfg = _cfg_get(device_config, "portenta", None)
+        resolved = resolve_portenta_h7_options(
+            {
+                "target_core": _cfg_get(portenta_cfg, "target_core", None) if portenta_cfg is not None else None,
+                "split": _cfg_get(portenta_cfg, "split", None) if portenta_cfg is not None else None,
+                "security": _cfg_get(portenta_cfg, "security", None) if portenta_cfg is not None else None,
+            }
+        )
+        return resolved.to_board_options()
+
+    if normalized_name == "STM32_NUCLEO_N657X0_Q":
+        from .stm32_nucleo_n657x0 import resolve_stm32_nucleo_n657x0_q_options
+
+        stm32_cfg = _cfg_get(device_config, "stm32", None)
+        if stm32_cfg is None:
+            raise ValueError(
+                "STM32_NUCLEO_N657X0_Q requires a device.stm32 block with project_root set."
+            )
+        raw_project_root = _cfg_get(stm32_cfg, "project_root", None)
+        if raw_project_root in (None, ""):
+            raise ValueError(
+                "STM32_NUCLEO_N657X0_Q requires device.stm32.project_root to be set."
+            )
+        raw_options = {
+            "project_root": raw_project_root,
+            "gdbserver": _cfg_get(stm32_cfg, "gdbserver", None),
+            "gdb": _cfg_get(stm32_cfg, "gdb", None),
+            "cubeprog_bin": _cfg_get(stm32_cfg, "cubeprog_bin", None),
+            "gdb_port": _cfg_get(stm32_cfg, "gdb_port", None),
+            "apid": _cfg_get(stm32_cfg, "apid", None),
+            "server_ready_timeout_s": _cfg_get(stm32_cfg, "server_ready_timeout_s", None),
+            "cpu_clock_mhz": _cfg_get(stm32_cfg, "cpu_clock_mhz", None),
+        }
+        resolved = resolve_stm32_nucleo_n657x0_q_options(
+            {
+                key: value
+                for key, value in raw_options.items()
+                if value not in (None, "")
+            }
+        )
+        return asdict(resolved)
+
+    return None
+
+
 def __getattr__(name: str) -> Any:
     """Lazily expose board classes to avoid import cycles.
 
@@ -147,12 +228,19 @@ def __getattr__(name: str) -> Any:
             "tinyodom.microcontrollers.arduino_portenta_h7",
             "ArduinoPortentaH7Device",
         )
+    if name == "STM32NucleoN657X0QDevice":
+        return _load_symbol(
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0",
+            "STM32NucleoN657X0QDevice",
+        )
     raise AttributeError(name)
 
 
 __all__ = [
     "ArduinoBLE33Device",
     "ArduinoPortentaH7Device",
+    "STM32NucleoN657X0QDevice",
     "get_device",
     "list_device_specs",
+    "resolve_device_options",
 ]
