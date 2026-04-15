@@ -136,7 +136,7 @@ def _run_logged(argv: list[str], log_path: Path) -> None:
     ]
     if proc.stderr.strip():
         log_body.extend(["", "[stderr]", proc.stderr.rstrip()])
-    log_path.write_text("\n".join(log_body).rstrip() + "\n", encoding="ascii")
+    log_path.write_text("\n".join(log_body).rstrip() + "\n", encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise RuntimeError(
             f"Command failed with exit code {proc.returncode}: {rendered}\n"

@@ -71,6 +71,34 @@ class Stm32BuildWrapperTests(unittest.TestCase):
         fake_proc.kill.assert_called_once()
         self.assertEqual(fake_proc.communicate.call_count, 2)
 
+    def test_run_gdb_load_timeout_raises_when_output_shows_failure(self):
+        fake_proc = unittest.mock.Mock()
+        fake_proc.communicate.side_effect = [
+            subprocess.TimeoutExpired(
+                cmd="gdb",
+                timeout=stm32_build_wrapper.GDB_JUMP_TIMEOUT_S,
+                output="remote communication error",
+            ),
+            ("target disconnected", ""),
+        ]
+
+        with (
+            patch.object(stm32_build_wrapper, "_get_elf_entry_point", return_value=0x1234),
+            patch.object(stm32_build_wrapper.subprocess, "Popen", return_value=fake_proc),
+        ):
+            with self.assertRaises(stm32_build_wrapper.WorkflowError) as ctx:
+                stm32_build_wrapper._run_gdb_load(
+                    gdb=Path("/tmp/arm-none-eabi-gdb"),
+                    elf_path=Path("/tmp/toy.elf"),
+                    gdb_port=61234,
+                    run_after_load=True,
+                    verbose=False,
+                )
+
+        self.assertIn("appears to have failed", str(ctx.exception))
+        self.assertIn("remote communication error", str(ctx.exception))
+        fake_proc.kill.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -147,11 +147,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Seconds to wait for ST-LINK_gdbserver to open its TCP port.",
     )
     parser.add_argument(
-        "--no-build",
-        action="store_true",
-        help="Skip the make build step.",
-    )
-    parser.add_argument(
         "--no-run",
         action="store_true",
         help="Load the ELF but do not continue execution after download.",
@@ -491,9 +486,31 @@ def _run_gdb_load(
         proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
             stdout, _ = proc.communicate(timeout=GDB_JUMP_TIMEOUT_S)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            partial_stdout = exc.output or ""
+            if isinstance(partial_stdout, bytes):
+                partial_stdout = partial_stdout.decode("utf-8", errors="replace")
             proc.kill()
-            proc.communicate()
+            remaining_stdout, _ = proc.communicate()
+            stdout = partial_stdout + (remaining_stdout or "")
+            failure_indicators = (
+                "error",
+                "failed",
+                "cannot",
+                "no such file",
+                "remote communication error",
+                "connection timed out",
+                "connection refused",
+                "target disconnected",
+                "fault",
+            )
+            stdout_lower = stdout.lower()
+            if any(indicator in stdout_lower for indicator in failure_indicators):
+                detail = stdout.strip() if stdout.strip() else "No GDB output captured."
+                raise WorkflowError(
+                    "GDB load/run appears to have failed before the expected jump timeout.\n\n"
+                    f"Command: {' '.join(argv)}\n\n{detail}"
+                )
         else:
             if proc.returncode != 0:
                 detail = stdout.strip() if stdout.strip() else "No GDB output captured."
@@ -616,15 +633,11 @@ def main() -> int:
         cubeprog_bin=cubeprog_bin,
     )
 
-    if not args.no_build:
-        LOGGER.info("Building STM32 project in %s", project_root)
-        _build_project(project_root, jobs=args.jobs, clean=args.clean, verbose=args.verbose)
+    LOGGER.info("Building STM32 project in %s", project_root)
+    _build_project(project_root, jobs=args.jobs, clean=args.clean, verbose=args.verbose)
 
     if not elf_path.is_file():
-        raise WorkflowError(
-            f"Expected ELF does not exist after build step: {elf_path}\n"
-            "If you passed --no-build, make sure the project has already been built."
-        )
+        raise WorkflowError(f"Expected ELF does not exist after build step: {elf_path}")
 
     LOGGER.info("Starting ST-LINK GDB server")
     server_proc: subprocess.Popen[str] | None = None
