@@ -58,7 +58,10 @@ Optional overrides:
 ```bash
 python analysis_scripts/hil_single_run/run_toy_hil.py --dut-port /dev/ttyACM0 --harness-port /dev/ttyACM1
 python analysis_scripts/hil_single_run/run_toy_hil.py --dut-fqbn arduino:mbed_nano:nano33ble
+python analysis_scripts/hil_single_run/run_toy_hil.py --harness-fqbn arduino:mbed_nano:nano33ble
+python analysis_scripts/hil_single_run/run_toy_hil.py --skip-dut-flash
 python analysis_scripts/hil_single_run/run_toy_hil.py --skip-harness-flash
+python analysis_scripts/hil_single_run/run_toy_hil.py --cycles 10 --sleep-seconds 2
 ```
 
 Default behavior:

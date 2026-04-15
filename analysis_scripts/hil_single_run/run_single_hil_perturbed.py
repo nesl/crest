@@ -17,9 +17,9 @@ import os
 import sys
 from pathlib import Path
 
-from addict import Dict
-
 sys.path.insert(0, os.path.abspath("src"))
+
+from addict import Dict
 
 from hil_server import HILServer, PERTURBED_VARIANT_NAME
 from tinyodom.model import DEFAULT_CONFIG_PATH, build_tinyodom_model, count_flops

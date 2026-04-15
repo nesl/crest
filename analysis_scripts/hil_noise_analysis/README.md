@@ -41,9 +41,17 @@ how input distributions affect latency and energy measurements.
 - `op_transition_probe.py`
   - Builds controlled model variants to probe when extra TFLite ops appear.
   - Exports float/int8 TFLite artifacts per variant and records file size, total ops,
-    and ADD-op count.
+  and ADD-op count.
   - Writes a detailed CSV plus a compact text summary under
     `op_transition_probe_output/` (or caller-provided output directory).
+
+- `epoch_sweep/`
+  - Contains the staged checkpoint workflow:
+    - `train_epoch_sweep.py` for GPU-side staged training and artifact export
+    - `hil_epoch_sweep_scan.py` for HIL-side checkpoint evaluation
+    - `audit_fresh_untrained_tflite.py` for appending a fresh-untrained TFLite
+      audit row to the training CSV
+  - See `analysis_scripts/hil_noise_analysis/epoch_sweep/README.md`.
 
 ## Test sketch variants
 
@@ -100,12 +108,41 @@ python analysis_scripts/hil_noise_analysis/hil_energy_noise_scan.py \
 python analysis_scripts/hil_noise_analysis/hil_energy_noise_analysis.py --csv hil_energy_noise_scan.csv
 ```
 
+## Epoch Sweep Workflow
+
+Use the staged checkpoint flow when you want per-epoch HIL telemetry instead of
+just a trained-vs-untrained comparison:
+
+```bash
+# 1) Train and export checkpoint stages on the GPU host
+python analysis_scripts/hil_noise_analysis/epoch_sweep/train_epoch_sweep.py \
+  --config src/nas_config.yaml \
+  --out-dir analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts \
+  --artifact-prefix noise_scan_epoch_sweep
+
+# 2) Optional: append a fresh-untrained TFLite audit row to the training CSV
+python analysis_scripts/hil_noise_analysis/epoch_sweep/audit_fresh_untrained_tflite.py
+
+# 3) Run HIL metrics across staged checkpoints
+python analysis_scripts/hil_noise_analysis/epoch_sweep/hil_epoch_sweep_scan.py \
+  --config src/nas_config.yaml \
+  --training-csv analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/epoch_sweep_training_stats.csv \
+  --runs 1 \
+  --input-modes uniform
+```
+
+The full staged workflow, optional flags, and artifact layout are documented in
+`analysis_scripts/hil_noise_analysis/epoch_sweep/README.md`.
+
 ## Key CLI Flags
 
 - `hil_energy_noise_scan.py`
+  - `--runs` (default: `20`)
+  - `--cooldown` (default: `20`)
   - `--model-variants` (default: `untrained`)
   - `--trained-checkpoint` (required when any `trained*` variant is requested)
   - `--trained-meta` (optional metadata JSON)
+  - `--energy-aware` to force the energy-aware sketch path for the scan
   - Use `--model-variants untrained` if you only want legacy untrained behavior.
 
 - `train_noise_scan_model.py`
@@ -114,6 +151,16 @@ python analysis_scripts/hil_noise_analysis/hil_energy_noise_analysis.py --csv hi
   - `--artifact-prefix` (default: `noise_scan_50ep`)
   - `--export-tflite` (optional)
   - If pandas import fails with a GLIBCXX/libstdc++ mismatch, the script falls back automatically.
+
+- `oxiod_input_profile.py`
+  - `--export-header` to rewrite `sketches/analysis_sketches/tinyodom_tcn_input_data.h`
+  - `--export-stats-csv` for per-channel summary CSV output
+  - `--real-window-count` (default: `10`) to control the embedded real-window set
+
+- `op_transition_probe.py`
+  - `--variants` to choose the exact perturbation sequence to export
+  - `--quant-modes float,int8` (default) to compare both conversion paths
+  - `--trained-checkpoint` when the `trained_checkpoint` variant is requested
 
 ## Key Finding: Op-Count Transition
 
