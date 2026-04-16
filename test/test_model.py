@@ -796,6 +796,58 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertIn("project_root", resolved)
         self.assertEqual(resolved["cpu_clock_mhz"], 600)
 
+    def test_resolve_device_options_supports_full_canonical_stm_backend_block(self) -> None:
+        """Ensure the full canonical STM config surface resolves predictably.
+
+        Returns
+        -------
+        None
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            template_root = tmp_path / "stm32_project" / "FSBL"
+            (template_root / "Debug").mkdir(parents=True)
+            (template_root / "Debug" / "makefile").write_text("# makefile\n", encoding="utf-8")
+            weights_memory_pool = tmp_path / "nucleo_mypool.json"
+            weights_memory_pool.write_text("{}\n", encoding="utf-8")
+            weights_external_loader = tmp_path / "mx25um51245g.stldr"
+            weights_external_loader.write_text("loader\n", encoding="utf-8")
+
+            config = Dict(
+                training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+                device=Dict(
+                    hil=False,
+                    name="STM32_NUCLEO_N657X0_Q",
+                    stm32=Dict(
+                        template_root=template_root,
+                        gdb_port=61235,
+                        apid=2,
+                        server_ready_timeout_s=20.0,
+                        cpu_clock_mhz=400,
+                        weight_storage_mode="external_flash",
+                        weights_flash_address="0x71000000",
+                        weights_memory_pool=weights_memory_pool,
+                        weights_external_loader=weights_external_loader,
+                        max_external_flash_bytes=123456,
+                    ),
+                ),
+                data=Dict(window_size=128),
+                outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            )
+
+            resolved = resolve_device_options(str(config.device.name), config.device)
+
+        self.assertEqual(resolved["project_root"], template_root.resolve())
+        self.assertEqual(resolved["gdb_port"], 61235)
+        self.assertEqual(resolved["apid"], 2)
+        self.assertEqual(resolved["server_ready_timeout_s"], 20.0)
+        self.assertEqual(resolved["cpu_clock_mhz"], 400)
+        self.assertEqual(resolved["weight_storage_mode"], "external_flash")
+        self.assertEqual(resolved["weights_flash_address"], "0x71000000")
+        self.assertEqual(resolved["weights_memory_pool"], weights_memory_pool.resolve())
+        self.assertEqual(resolved["weights_external_loader"], weights_external_loader.resolve())
+        self.assertEqual(resolved["max_external_flash_bytes"], 123456)
+
 
 class TrainAndScoreTests(unittest.TestCase):
     """Ensure scoring uses backend-effective energy semantics."""

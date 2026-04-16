@@ -31,7 +31,7 @@ from tinyodom.microcontrollers.arduino_base import ensure_harness_firmware  # no
 from tinyodom.microcontrollers import stm32_cube_clt  # noqa: E402
 from tinyodom.microcontrollers.stm32_runtime import SerialMonitor  # noqa: E402
 
-DEFAULT_PROJECT_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"
+DEFAULT_PROJECT_ROOT = SCRIPT_DIR / "stm32_toy_ai_project" / "FSBL"
 DEFAULT_DUT_PORT = "/dev/ttyACM0"
 DEFAULT_HARNESS_PORT = "/dev/ttyACM1"
 DEFAULT_BAUD = 115200

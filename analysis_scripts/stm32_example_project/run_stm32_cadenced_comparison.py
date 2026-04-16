@@ -20,7 +20,7 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 RUNNER_PATH = SCRIPT_DIR / "run_stm32_toy_ai_hil.py"
-DEFAULT_PROJECT_ROOT = SCRIPT_DIR.parents[1] / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"
+DEFAULT_PROJECT_ROOT = SCRIPT_DIR / "stm32_cadenced_toy_ai_project" / "FSBL"
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "results"
 VALID_PHASES = ("back_to_back", "cadenced")
 VALID_CPU_CLOCK_MHZ = (200, 300, 400, 600, 800)

@@ -77,7 +77,7 @@ def _configure_logging(level_name: str) -> None:
     )
 
 
-def _build_stm_backend_failure_metrics(
+def _build_backend_failure_metrics(
     *,
     error_kind: str,
     error_detail: str,
@@ -85,12 +85,12 @@ def _build_stm_backend_failure_metrics(
     hil_enabled: bool,
     energy_aware: bool,
 ) -> dict:
-    """Return a structured metrics dict for STM backend boundary failures.
+    """Return a structured metrics dict for backend/request boundary failures.
 
     Parameters
     ----------
     error_kind : str
-        Stable STM-specific backend error kind.
+        Stable backend error kind.
     error_detail : str
         Human-readable backend failure detail.
     latency_budget_ms : float
@@ -357,16 +357,27 @@ class HILServer:
                 self.active_sketch_path = None
 
             print("Starting metric collection")
-            request_metrics_args = build_collect_metrics_request(
-                config=self.config,
-                hyperparams=hyperparams,
-                latency_budget_ms=latency_budget_ms,
-                dirpath=prepared_dir,
-                device_options=device_options,
-                hil_enabled=effective_hil_enabled,
-                energy_aware=effective_energy_aware,
-            )
-            metrics = collect_metrics(request_metrics_args)
+            try:
+                request_metrics_args = build_collect_metrics_request(
+                    config=self.config,
+                    hyperparams=hyperparams,
+                    latency_budget_ms=latency_budget_ms,
+                    dirpath=prepared_dir,
+                    device_options=device_options,
+                    hil_enabled=effective_hil_enabled,
+                    energy_aware=effective_energy_aware,
+                )
+            except RuntimeError as exc:
+                logger.error("Runtime metrics request failure: %s", exc)
+                metrics = _build_backend_failure_metrics(
+                    error_kind="config",
+                    error_detail=str(exc),
+                    latency_budget_ms=latency_budget_ms,
+                    hil_enabled=effective_hil_enabled,
+                    energy_aware=effective_energy_aware,
+                )
+            else:
+                metrics = collect_metrics(request_metrics_args)
         except (
             stm32_cube_clt.WorkflowError,
             stm32_runtime.STM32RuntimeProtocolError,
@@ -375,7 +386,7 @@ class HILServer:
             if self._normalized_device_name() != STM32_BOARD_NAME:
                 raise
             logger.error("STM backend failure: %s", exc)
-            metrics = _build_stm_backend_failure_metrics(
+            metrics = _build_backend_failure_metrics(
                 error_kind=classify_stm32_backend_error(str(exc)),
                 error_detail=str(exc),
                 latency_budget_ms=latency_budget_ms,

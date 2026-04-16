@@ -191,3 +191,4 @@ addict.py
 
 # STM32 sweep archives
 analysis_scripts/stm32_example_project/results/*
+readme_update_plan.md

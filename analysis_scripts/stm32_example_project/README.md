@@ -15,6 +15,19 @@ it now carries more than the original blink-only bring-up. The nested project
 name remains `stm32_blink_example_project` for now so the generated makefiles
 and debug-load workflow stay stable.
 
+## Status Note
+
+This directory is prototype/example tooling, not the canonical production STM
+backend surface.
+
+- The production STM backend stages from `sketches/stm32/tinyodom_tcn_stm32/FSBL`
+  and is documented in `src/tinyodom/microcontrollers/README.md`.
+- The flows here remain valid evidence and smoke-test helpers for bring-up,
+  diagnostics, and exploratory measurement work.
+- `cadenced`, archival clock sweeps, comparison runners, and other exploratory
+  wrappers in this directory remain example-only unless they are explicitly
+  promoted into the backend/config surface later.
+
 ## Current Status
 
 - The project builds successfully from the committed `FSBL/Debug` makefiles.
@@ -140,6 +153,9 @@ The package also includes a standalone STM32 HIL runner that coordinates:
 - emission of a compact metrics JSON plus a diagnostic sidecar
 - optional `back_to_back` versus `cadenced` DUT firmware modes through a generated
   `toy_ai_phase_config.h`
+
+For current support expectations: `back_to_back` is the production-backed STM
+mode today; `cadenced` in this directory remains prototype/example-only.
 
 Run these commands from the `tinyodomex` conda environment. The cadence and
 clock-preset paths below are validated against a connected STM32 board, not as

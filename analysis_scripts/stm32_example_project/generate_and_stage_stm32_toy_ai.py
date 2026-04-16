@@ -28,7 +28,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from addict import Dict
 from stm32_phase2_candidate import export_perturbed_candidate_tflite
 
-DEFAULT_PROJECT_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"
+DEFAULT_PROJECT_ROOT = SCRIPT_DIR / "stm32_toy_ai_project" / "FSBL"
 DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "nas_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("/tmp/tinyodom_stm32_toy_generate")
 EXPECTED_OUTPUTS = [

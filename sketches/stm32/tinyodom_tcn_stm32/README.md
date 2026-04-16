@@ -12,6 +12,9 @@ The Python side of that backend is split as follows:
 - `src/tinyodom/microcontrollers/stm32_runtime.py`
   Shared STM32 direct-serial runtime protocol and telemetry parsing helpers.
 
+For the canonical production STM config surface, supported runtime behavior,
+and host-tool requirements, see `src/tinyodom/microcontrollers/README.md`.
+
 `setup_stm32.sh` is the source of truth for rebuilding the template. It
 refreshes the vendor-owned files from the pinned `tools/stm32/STM32CubeN6`
 checkout into this self-contained template and preserves the repo-owned
@@ -55,4 +58,4 @@ make -C sketches/stm32/tinyodom_tcn_stm32/FSBL/Debug clean all -j1
 
 The analysis scripts under `analysis_scripts/stm32_example_project/` can still
 be used as optional smoke-test helpers, but this directory is the production
-STM template that the backend targets.
+STM template that the backend targets for the current `back_to_back` flow.

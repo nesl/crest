@@ -37,8 +37,7 @@ training:
   quantization: true
   latency_proxy_max_flops: 30000000.0
   train: true
-  # FIXME: Set true only after the Phase 4 harness-backed smoke test is passing.
-  energy_aware: false
+  energy_aware: true
   # Input mode for HIL sketches: uniform, representative, or real
   input_mode: "uniform"
 

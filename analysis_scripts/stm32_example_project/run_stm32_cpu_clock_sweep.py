@@ -20,7 +20,7 @@ from tqdm import tqdm
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 RUNNER_PATH = SCRIPT_DIR / "run_stm32_toy_ai_hil.py"
-DEFAULT_PROJECT_ROOT = SCRIPT_DIR.parents[1] / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"
+DEFAULT_PROJECT_ROOT = SCRIPT_DIR / "stm32_cadenced_toy_ai_project" / "FSBL"
 DEFAULT_CONFIG = REPO_ROOT / "src" / "nas_config.yaml"
 DEFAULT_RESULTS_ROOT = SCRIPT_DIR / "results"
 DEFAULT_STAGE_OUTPUT_ROOT = Path("/tmp/tinyodom_stm32_toy_generate")
