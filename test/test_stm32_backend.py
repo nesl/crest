@@ -14,11 +14,14 @@ if str(SRC_DIR) not in sys.path:
 from tinyodom.errors import (  # noqa: E402
     HIL_ERROR_COMPILE,
     HIL_ERROR_FLASH_OVERFLOW,
+    HIL_ERROR_LATENCY,
     HIL_ERROR_OK,
     HIL_ERROR_RAM_OVERFLOW,
+    HIL_ERROR_UPLOAD,
 )
 from tinyodom.microcontrollers import get_device, list_device_specs, resolve_device_options  # noqa: E402
 from tinyodom.microcontrollers import stm32_cube_clt  # noqa: E402
+from tinyodom.microcontrollers import stm32_runtime  # noqa: E402
 from tinyodom.microcontrollers.stm32_nucleo_n657x0 import (  # noqa: E402
     BOARD_NAME,
     DEFAULT_TEMPLATE_ROOT,
@@ -78,6 +81,24 @@ def _build_project_tree(root: Path) -> Path:
         ),
     )
     return root
+
+
+class _FakeSerialMonitor:
+    """Context-manager double for STM direct-serial tests."""
+
+    def __init__(self, port: str, baud: int, label: str) -> None:
+        self.port = port
+        self.baud = baud
+        self.label = label
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        del exc_type, exc, traceback
+
+    def write_line(self, text: str) -> None:
+        del text
 
 
 class STM32RegistryTests(unittest.TestCase):
@@ -326,6 +347,149 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         self.assertEqual(metrics.arena_bytes, 4096)
         self.assertEqual(metrics.flash_bytes, 2222)
         self.assertEqual(metrics.ram_bytes, 1111)
+
+    def test_supports_runtime_measurement_is_enabled(self) -> None:
+        """Ensure STM direct-serial runtime measurement is advertised."""
+        device = STM32NucleoN657X0QDevice()
+        self.assertTrue(device.supports_runtime_measurement())
+
+    def test_evaluate_run_hil_success_uses_runtime_session(self) -> None:
+        """Ensure HIL evaluation returns parsed runtime latency on success."""
+        device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0")
+        compile_result = type(
+            "CompileResultDouble",
+            (),
+            {
+                "success": True,
+                "log": "ok",
+                "flash_bytes": 2222,
+                "ram_bytes": 1111,
+                "overflow_kind": None,
+                "build_dir": Path("/tmp/stm/Debug"),
+                "arena_bytes": 4096,
+            },
+        )()
+        telemetry = stm32_runtime.STM32RuntimeTelemetry(
+            latency_s=0.0025,
+            serial_log=["STM32_AI_INIT=OK", "DUT READY", "STM32_AI_RUN=OK"],
+            power_metrics={"clock_hz": 600000000.0, "sequence": 1.0},
+        )
+
+        with patch.object(device, "compile", return_value=compile_result), patch(
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
+            return_value=Path("/tmp/stm/Debug/app.elf"),
+        ), patch(
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+            _FakeSerialMonitor,
+        ), patch(
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+            return_value="upload ok",
+        ) as load_mock, patch(
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+            return_value=telemetry,
+        ) as runtime_mock:
+            metrics = device.evaluate(
+                dirpath=Path("/tmp/stm"),
+                arena_kb=-1,
+                window_size=200,
+                num_channels=6,
+                serial_port="/dev/ttyACM0",
+                run_hil=True,
+                serial_timeout_s=7.5,
+                dut_ready_timeout_s=3.5,
+            )
+
+        load_mock.assert_called_once()
+        runtime_mock.assert_called_once()
+        self.assertEqual(metrics.error_code, HIL_ERROR_OK)
+        self.assertAlmostEqual(metrics.latency_s, 0.0025)
+        self.assertEqual(metrics.power_metrics, {"clock_hz": 600000000.0, "sequence": 1.0})
+
+    def test_evaluate_run_hil_runtime_failure_maps_to_latency_error(self) -> None:
+        """Ensure protocol failures become ``HIL_ERROR_LATENCY`` with backend detail."""
+        device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0")
+        compile_result = type(
+            "CompileResultDouble",
+            (),
+            {
+                "success": True,
+                "log": "ok",
+                "flash_bytes": 2222,
+                "ram_bytes": 1111,
+                "overflow_kind": None,
+                "build_dir": Path("/tmp/stm/Debug"),
+                "arena_bytes": 4096,
+            },
+        )()
+        protocol_error = stm32_runtime.STM32RuntimeProtocolError(
+            kind="runtime_timeout",
+            detail="Timed out waiting for DUT READY.",
+            serial_log=["STM32_AI_INIT=OK"],
+        )
+
+        with patch.object(device, "compile", return_value=compile_result), patch(
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
+            return_value=Path("/tmp/stm/Debug/app.elf"),
+        ), patch(
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+            _FakeSerialMonitor,
+        ), patch(
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+            return_value="upload ok",
+        ), patch(
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+            side_effect=protocol_error,
+        ):
+            metrics = device.evaluate(
+                dirpath=Path("/tmp/stm"),
+                arena_kb=-1,
+                window_size=200,
+                num_channels=6,
+                serial_port="/dev/ttyACM0",
+                run_hil=True,
+            )
+
+        self.assertEqual(metrics.error_code, HIL_ERROR_LATENCY)
+        self.assertEqual(metrics.power_metrics["backend_error_kind"], "runtime_timeout")
+
+    def test_evaluate_run_hil_upload_failure_maps_to_upload_error(self) -> None:
+        """Ensure debug-load failures become ``HIL_ERROR_UPLOAD``."""
+        device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0")
+        compile_result = type(
+            "CompileResultDouble",
+            (),
+            {
+                "success": True,
+                "log": "ok",
+                "flash_bytes": 2222,
+                "ram_bytes": 1111,
+                "overflow_kind": None,
+                "build_dir": Path("/tmp/stm/Debug"),
+                "arena_bytes": 4096,
+            },
+        )()
+
+        with patch.object(device, "compile", return_value=compile_result), patch(
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
+            return_value=Path("/tmp/stm/Debug/app.elf"),
+        ), patch(
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+            _FakeSerialMonitor,
+        ), patch(
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+            side_effect=stm32_cube_clt.WorkflowError("ST-LINK failed"),
+        ):
+            metrics = device.evaluate(
+                dirpath=Path("/tmp/stm"),
+                arena_kb=-1,
+                window_size=200,
+                num_channels=6,
+                serial_port="/dev/ttyACM0",
+                run_hil=True,
+            )
+
+        self.assertEqual(metrics.error_code, HIL_ERROR_UPLOAD)
+        self.assertEqual(metrics.power_metrics["backend_error_kind"], "upload")
 
     def test_evaluate_maps_overflow_kinds(self) -> None:
         """Ensure compile overflow classifications map to shared HIL codes.

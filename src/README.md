@@ -39,8 +39,14 @@ The `tinyodom/` package holds the reusable logic shared by the scripts above.
 - `tinyodom/errors.py`
   - Shared error-code definitions and helpers.
 - `tinyodom/microcontrollers/`
-  - Board-specific Arduino and non-Arduino backends. See
-    `src/tinyodom/microcontrollers/README.md` for board integration guidance.
+  - Board-specific Arduino and non-Arduino backends.
+  - Arduino boards follow the integration guide in
+    `src/tinyodom/microcontrollers/README.md`.
+  - The STM32 backend is split into:
+    - `stm32_nucleo_n657x0.py` for the concrete `DeviceInterface`
+      implementation
+    - `stm32_cube_clt.py` for build/load/toolchain helpers
+    - `stm32_runtime.py` for direct-serial runtime protocol handling
 
 ## Notes
 

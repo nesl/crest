@@ -272,6 +272,68 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["latency_budget_ms"], 50000.0)
         self.assertEqual(metrics["error_label"], "HIL_MASTER_PENDING")
 
+    def test_hil_metrics_forward_serial_timeout_to_controller(self) -> None:
+        """Direct-serial requests should forward ``serial_timeout_s``."""
+
+        def fake_controller(run_hil: bool, **kwargs):
+            self.assertTrue(run_hil)
+            self.assertEqual(kwargs["serial_timeout_s"], 9.5)
+            return (1024, 8192, 0.025, 4096, 0, None)
+
+        with patch("tinyodom.model.HIL_controller", fake_controller):
+            request = CollectMetricsRequest(
+                hil_enabled=True,
+                energy_aware=False,
+                flops=5_000_000,
+                device_name="STM32_NUCLEO_N657X0_Q",
+                window_size=128,
+                input_dim=6,
+                dirpath=Path("tinyodom_tcn"),
+                latency_proxy_max_flops=20_000_000,
+                serial_port="ttyACM0",
+                latency_budget_ms=200.0,
+                serial_timeout_s=9.5,
+            )
+            metrics = collect_metrics(request)
+
+        self.assertEqual(metrics["error_code"], 0)
+
+    def test_collect_metrics_preserves_backend_error_fields(self) -> None:
+        """STM backend detail fields should survive normalization into final metrics."""
+
+        def fake_controller(run_hil: bool, **kwargs):
+            del kwargs
+            self.assertTrue(run_hil)
+            return (
+                1024,
+                8192,
+                None,
+                4096,
+                3,
+                {
+                    "backend_error_kind": "runtime_timeout",
+                    "backend_error_detail": "Timed out waiting for DUT READY.",
+                },
+            )
+
+        with patch("tinyodom.model.HIL_controller", fake_controller):
+            request = CollectMetricsRequest(
+                hil_enabled=True,
+                energy_aware=False,
+                flops=5_000_000,
+                device_name="STM32_NUCLEO_N657X0_Q",
+                window_size=128,
+                input_dim=6,
+                dirpath=Path("tinyodom_tcn"),
+                latency_proxy_max_flops=20_000_000,
+                serial_port="ttyACM0",
+                latency_budget_ms=200.0,
+            )
+            metrics = collect_metrics(request)
+
+        self.assertEqual(metrics["backend_error_kind"], "runtime_timeout")
+        self.assertEqual(metrics["backend_error_detail"], "Timed out waiting for DUT READY.")
+
     def test_energy_aware_harness_fields_forwarded_to_controller(self) -> None:
         """Energy-aware requests should forward harness settings to HIL_controller."""
 
@@ -476,6 +538,28 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertFalse(request.energy_aware)
         self.assertEqual(request.flops, 123)
         self.assertEqual(request.input_dim, 6)
+
+    def test_build_request_defaults_stm_serial_timeout(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=True,
+                name="STM32_NUCLEO_N657X0_Q",
+                serial_port="ttyACM0",
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL")),
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = self._build_request(
+            config,
+            hyperparams,
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"},
+        )
+
+        self.assertEqual(request.serial_timeout_s, 12.0)
 
     def test_energy_aware_populates_harness(self) -> None:
         config = Dict(

@@ -22,9 +22,14 @@ from tinyodom.devices import _sync_arduino_sketch_variant_for_config
 from tinyodom.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
 )
+from tinyodom.errors import HIL_MASTER_FATAL
 from tinyodom.microcontrollers import (
     get_device as get_microcontroller_device,
     resolve_device_options,
+)
+from tinyodom.microcontrollers.stm32_nucleo_n657x0 import (
+    BOARD_NAME as STM32_BOARD_NAME,
+    classify_stm32_backend_error,
 )
 from tinyodom.model import (
     DEFAULT_CONFIG_PATH,
@@ -33,6 +38,7 @@ from tinyodom.model import (
     build_tinyodom_model,
     collect_metrics,
     load_config,
+    set_error_code,
     validate_loaded_model_input_shape,
 )
 
@@ -67,6 +73,56 @@ def _configure_logging(level_name: str) -> None:
         level=level_value,
         format="%(levelname)s:%(name)s:%(message)s",
     )
+
+
+def _build_stm_backend_failure_metrics(
+    *,
+    error_kind: str,
+    error_detail: str,
+    latency_budget_ms: float,
+    hil_enabled: bool,
+    energy_aware: bool,
+) -> dict:
+    """Return a structured metrics dict for STM backend boundary failures.
+
+    Parameters
+    ----------
+    error_kind : str
+        Stable STM-specific backend error kind.
+    error_detail : str
+        Human-readable backend failure detail.
+    latency_budget_ms : float
+        Current trial latency budget in milliseconds.
+    hil_enabled : bool
+        Whether the request intended to run HIL.
+    energy_aware : bool
+        Whether the request intended energy-aware execution.
+
+    Returns
+    -------
+    dict
+        Metrics-shaped failure payload compatible with the HIL server contract.
+    """
+    metrics = {
+        "ram_bytes": -1,
+        "flash_bytes": -1,
+        "latency_ms": -1,
+        "latency_budget_ms": latency_budget_ms if hil_enabled else -1,
+        "arena_bytes": -1,
+        "hil_enabled": hil_enabled,
+        "energy_aware": energy_aware,
+        "inference_seq": -1,
+        "energy_mj_per_inference": -1.0,
+        "avg_power_mw": -1.0,
+        "avg_current_ma": -1.0,
+        "bus_voltage_v": -1.0,
+        "idle_power_mw": -1.0,
+        "harness_latency_ms": -1.0,
+        "backend_error_kind": str(error_kind),
+        "backend_error_detail": str(error_detail),
+    }
+    set_error_code(metrics, HIL_MASTER_FATAL)
+    return metrics
 
 class HILServer:
     def __init__(
@@ -269,47 +325,56 @@ class HILServer:
             if runtime_device.requires_training_data():
                 training_data = self._ensure_training_data()
 
-        prepared_dir = runtime_device.prepare_candidate(
-            config=self.config,
-            hyperparams=hyperparams,
-            model=model,
-            outputs_dir=Path(self.config.outputs.tcn_dir),
-            tflite_model_path=Path(self.config.outputs.tflite_model_path),
-            training_data=training_data,
-            model_variant=model_variant,
-            checkpoint_path=checkpoint_path,
-        )
-        prepared_dir = Path(prepared_dir)
-        sketch_candidate = prepared_dir / "tinyodom_tcn.ino"
-        if runtime_device.requires_candidate_model() and sketch_candidate.is_file():
-            self.active_sketch_path = sketch_candidate
-            logger.info("Using sketch variant: %s", self.active_sketch_path)
-        elif runtime_device.requires_candidate_model():
-            self.active_sketch_path = None
-
-        print("Starting metric collection")
-
         effective_hil_enabled = bool(
             self.config.device.hil and runtime_device.supports_runtime_measurement()
         )
-        # Energy collection is backend-owned. Phase 1 STM returns False here so
-        # the rest of the pipeline stops treating energy as a required objective.
         effective_energy_aware = bool(
             self.config.training.energy_aware
             and effective_hil_enabled
             and runtime_device.supports_energy_measurement()
         )
-        request_metrics_args = build_collect_metrics_request(
-            config=self.config,
-            hyperparams=hyperparams,
-            latency_budget_ms=latency_budget_ms,
-            dirpath=prepared_dir,
-            device_options=device_options,
-            hil_enabled=effective_hil_enabled,
-            energy_aware=effective_energy_aware,
-        )
-        metrics = collect_metrics(request_metrics_args)
-        
+        try:
+            prepared_dir = runtime_device.prepare_candidate(
+                config=self.config,
+                hyperparams=hyperparams,
+                model=model,
+                outputs_dir=Path(self.config.outputs.tcn_dir),
+                tflite_model_path=Path(self.config.outputs.tflite_model_path),
+                training_data=training_data,
+                model_variant=model_variant,
+                checkpoint_path=checkpoint_path,
+            )
+            prepared_dir = Path(prepared_dir)
+            sketch_candidate = prepared_dir / "tinyodom_tcn.ino"
+            if runtime_device.requires_candidate_model() and sketch_candidate.is_file():
+                self.active_sketch_path = sketch_candidate
+                logger.info("Using sketch variant: %s", self.active_sketch_path)
+            elif runtime_device.requires_candidate_model():
+                self.active_sketch_path = None
+
+            print("Starting metric collection")
+            request_metrics_args = build_collect_metrics_request(
+                config=self.config,
+                hyperparams=hyperparams,
+                latency_budget_ms=latency_budget_ms,
+                dirpath=prepared_dir,
+                device_options=device_options,
+                hil_enabled=effective_hil_enabled,
+                energy_aware=effective_energy_aware,
+            )
+            metrics = collect_metrics(request_metrics_args)
+        except Exception as exc:
+            if self._normalized_device_name() != STM32_BOARD_NAME:
+                raise
+            logger.error("STM backend failure: %s", exc)
+            metrics = _build_stm_backend_failure_metrics(
+                error_kind=classify_stm32_backend_error(str(exc)),
+                error_detail=str(exc),
+                latency_budget_ms=latency_budget_ms,
+                hil_enabled=effective_hil_enabled,
+                energy_aware=effective_energy_aware,
+            )
+
         if self.config.device.hil:
             metrics["latency_budget_ms"] = latency_budget_ms
 

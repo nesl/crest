@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+import serial
+
 from ..devices import (
     CompileResult,
     DeviceInterface,
@@ -21,10 +23,13 @@ from ..devices import (
 from ..errors import (
     HIL_ERROR_COMPILE,
     HIL_ERROR_FLASH_OVERFLOW,
+    HIL_ERROR_LATENCY,
     HIL_ERROR_OK,
     HIL_ERROR_RAM_OVERFLOW,
+    HIL_ERROR_UPLOAD,
 )
 from . import stm32_cube_clt
+from . import stm32_runtime
 
 
 BOARD_NAME = "STM32_NUCLEO_N657X0_Q"
@@ -660,6 +665,41 @@ def _run_stedgeai_generate(
         )
 
 
+def classify_stm32_backend_error(detail: str) -> str:
+    """Return a stable STM backend error kind for a diagnostic message.
+
+    Parameters
+    ----------
+    detail : str
+        Diagnostic text from a staging, toolchain, upload, or runtime failure.
+
+    Returns
+    -------
+    str
+        Stable STM-specific backend error kind.
+    """
+    lowered = str(detail).lower()
+    if "st edge ai" in lowered or "stedgeai" in lowered:
+        unsupported_markers = (
+            "unsupported",
+            "not supported",
+            "not yet supported",
+            "operator",
+            "op type",
+            "layer",
+            "incompatible",
+            "not compatible",
+        )
+        if any(marker in lowered for marker in unsupported_markers):
+            return "unsupported_model"
+        return "codegen"
+    if "gdb" in lowered or "st-link" in lowered or "cubeprog" in lowered:
+        return "upload"
+    if "dut ready" in lowered or "stm32_ai_" in lowered or "runtime" in lowered:
+        return "runtime_protocol"
+    return "toolchain"
+
+
 BOARD_DEFAULT_SPEC = build_stm32_nucleo_n657x0_q_spec()
 
 
@@ -761,9 +801,9 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         Returns
         -------
         bool
-            Always ``False`` for Phase 2.
+            ``True`` because direct-serial runtime measurement is available.
         """
-        return False
+        return True
 
     def _build_candidate_root(self, outputs_dir: Path, model_variant: str) -> Path:
         """Return a unique per-candidate staging root.
@@ -1047,7 +1087,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         harness_active_timeout_s: Optional[float] = None,
         harness_done_timeout_s: Optional[float] = None,
     ) -> MeasureResult:
-        """Reject runtime measurement until Phase 3.
+        """Capture direct-serial runtime telemetry from an already-loaded DUT.
 
         Parameters
         ----------
@@ -1056,47 +1096,38 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         baud_rate : int
             Serial baud rate.
         serial_timeout_s : float
-            Serial read timeout in seconds.
+            Post-``START`` runtime timeout in seconds.
         dut_ready_timeout_s : float | None, optional
-            DUT-ready timeout.
+            Pre-``START`` timeout for init and ready tokens.
         harness_serial_port : str | None, optional
-            Harness serial port.
+            Retained for interface compatibility.
         harness_fqbn : str | None, optional
-            Harness FQBN.
+            Retained for interface compatibility.
         harness_auto_flash : str | None, optional
-            Harness flashing policy.
+            Retained for interface compatibility.
         harness_arm_pin : int | None, optional
-            Harness arm pin.
+            Retained for interface compatibility.
         harness_trigger_pin : int | None, optional
-            Harness trigger pin.
+            Retained for interface compatibility.
         dut_arm_hold_ms : int | None, optional
-            DUT arm hold time.
+            Retained for interface compatibility.
         harness_stable_low_ms : int | None, optional
-            Required stable-low period.
+            Retained for interface compatibility.
         harness_ready_timeout_s : float | None, optional
-            Harness ready timeout.
+            Retained for interface compatibility.
         harness_arm_timeout_s : float | None, optional
-            Harness arm timeout.
+            Retained for interface compatibility.
         harness_active_timeout_s : float | None, optional
-            Harness active timeout.
+            Retained for interface compatibility.
         harness_done_timeout_s : float | None, optional
-            Harness done timeout.
+            Retained for interface compatibility.
 
         Returns
         -------
         MeasureResult
-            This method never returns in Phase 2.
-
-        Raises
-        ------
-        RuntimeError
-            Always raised because runtime measurement is a Phase 3 feature.
+            Parsed latency, serial log, and backend error details when present.
         """
         del (
-            serial_port,
-            baud_rate,
-            serial_timeout_s,
-            dut_ready_timeout_s,
             harness_serial_port,
             harness_fqbn,
             harness_auto_flash,
@@ -1109,7 +1140,36 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             harness_active_timeout_s,
             harness_done_timeout_s,
         )
-        raise RuntimeError("STM runtime measurement is not implemented in Phase 2.")
+        use_serial_port = self._serial_port if serial_port is None else serial_port
+        if use_serial_port is None:
+            raise ValueError("serial_port must be provided for STM32 runtime measurement.")
+        try:
+            telemetry = stm32_runtime.measure_direct_serial(
+                serial_port=use_serial_port,
+                baud_rate=baud_rate,
+                boot_timeout_s=dut_ready_timeout_s,
+                run_timeout_s=serial_timeout_s,
+            )
+        except stm32_runtime.STM32RuntimeProtocolError as exc:
+            return MeasureResult(
+                latency_s=None,
+                arena_error_line=None,
+                serial_log=exc.serial_log,
+                power_metrics=stm32_runtime.build_backend_error_metrics(exc.kind, exc.detail),
+            )
+        except (serial.SerialException, RuntimeError) as exc:
+            return MeasureResult(
+                latency_s=None,
+                arena_error_line=None,
+                serial_log=[],
+                power_metrics=stm32_runtime.build_backend_error_metrics("runtime_io", str(exc)),
+            )
+        return MeasureResult(
+            latency_s=telemetry.latency_s,
+            arena_error_line=None,
+            serial_log=telemetry.serial_log,
+            power_metrics=telemetry.power_metrics,
+        )
 
     def evaluate(
         self,
@@ -1135,7 +1195,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         harness_active_timeout_s: Optional[float] = None,
         harness_done_timeout_s: Optional[float] = None,
     ) -> DeviceMetrics:
-        """Run the staged STM32 compile path and return normalized metrics.
+        """Run the staged STM32 compile/upload/runtime path and return metrics.
 
         Parameters
         ----------
@@ -1183,14 +1243,11 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         Returns
         -------
         DeviceMetrics
-            Normalized compile-only STM32 metrics.
+            Normalized STM32 metrics with compile-time sizes and optional runtime
+            latency when HIL is enabled.
         """
         del (
             arena_kb,
-            serial_port,
-            baud_rate,
-            serial_timeout_s,
-            dut_ready_timeout_s,
             harness_serial_port,
             harness_fqbn,
             harness_auto_flash,
@@ -1238,13 +1295,73 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 arena_bytes=compile_result.arena_bytes or -1,
                 error_code=HIL_ERROR_OK,
             )
-        logger.warning(
-            "STM runtime measurement is not implemented in Phase 2; returning compile-only failure semantics."
-        )
+        use_serial_port = self._serial_port if serial_port is None else serial_port
+        if use_serial_port is None:
+            raise ValueError("serial_port must be provided when running STM32 HIL uploads.")
+        try:
+            elf_path = stm32_cube_clt.resolve_elf_path(compile_result.build_dir)
+        except stm32_cube_clt.WorkflowError as exc:
+            return DeviceMetrics(
+                ram_bytes=compile_result.ram_bytes or -1,
+                flash_bytes=compile_result.flash_bytes or -1,
+                latency_s=-1.0,
+                arena_bytes=compile_result.arena_bytes or -1,
+                error_code=HIL_ERROR_UPLOAD,
+                power_metrics=stm32_runtime.build_backend_error_metrics("upload", str(exc)),
+            )
+        try:
+            with stm32_runtime.SerialMonitor(use_serial_port, baud_rate, "dut") as monitor:
+                stm32_cube_clt.debug_load_elf(
+                    elf_path=elf_path,
+                    gdbserver=self._options.gdbserver,
+                    gdb=self._options.gdb,
+                    cubeprog_bin=self._options.cubeprog_bin,
+                    gdb_port=self._options.gdb_port,
+                    apid=self._options.apid,
+                    server_ready_timeout_s=self._options.server_ready_timeout_s,
+                    run_after_load=True,
+                )
+                telemetry = stm32_runtime.execute_runtime_session(
+                    monitor,
+                    boot_timeout_s=(
+                        stm32_runtime.DEFAULT_BOOT_TIMEOUT_S
+                        if dut_ready_timeout_s is None
+                        else float(dut_ready_timeout_s)
+                    ),
+                    run_timeout_s=float(serial_timeout_s),
+                )
+        except stm32_cube_clt.WorkflowError as exc:
+            return DeviceMetrics(
+                ram_bytes=compile_result.ram_bytes or -1,
+                flash_bytes=compile_result.flash_bytes or -1,
+                latency_s=-1.0,
+                arena_bytes=compile_result.arena_bytes or -1,
+                error_code=HIL_ERROR_UPLOAD,
+                power_metrics=stm32_runtime.build_backend_error_metrics("upload", str(exc)),
+            )
+        except stm32_runtime.STM32RuntimeProtocolError as exc:
+            return DeviceMetrics(
+                ram_bytes=compile_result.ram_bytes or -1,
+                flash_bytes=compile_result.flash_bytes or -1,
+                latency_s=-1.0,
+                arena_bytes=compile_result.arena_bytes or -1,
+                error_code=HIL_ERROR_LATENCY,
+                power_metrics=stm32_runtime.build_backend_error_metrics(exc.kind, exc.detail),
+            )
+        except (serial.SerialException, RuntimeError) as exc:
+            return DeviceMetrics(
+                ram_bytes=compile_result.ram_bytes or -1,
+                flash_bytes=compile_result.flash_bytes or -1,
+                latency_s=-1.0,
+                arena_bytes=compile_result.arena_bytes or -1,
+                error_code=HIL_ERROR_LATENCY,
+                power_metrics=stm32_runtime.build_backend_error_metrics("runtime_io", str(exc)),
+            )
         return DeviceMetrics(
             ram_bytes=compile_result.ram_bytes or -1,
             flash_bytes=compile_result.flash_bytes or -1,
-            latency_s=-1.0,
+            latency_s=telemetry.latency_s,
             arena_bytes=compile_result.arena_bytes or -1,
-            error_code=HIL_ERROR_COMPILE,
+            error_code=HIL_ERROR_OK,
+            power_metrics=telemetry.power_metrics,
         )

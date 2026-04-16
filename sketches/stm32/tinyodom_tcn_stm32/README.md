@@ -3,6 +3,15 @@
 This directory contains the canonical STM32 FSBL template used by the
 TinyODOM STM32 backend for `STM32_NUCLEO_N657X0_Q`.
 
+The Python side of that backend is split as follows:
+
+- `src/tinyodom/microcontrollers/stm32_nucleo_n657x0.py`
+  The concrete TinyODOM `DeviceInterface` backend for this board.
+- `src/tinyodom/microcontrollers/stm32_cube_clt.py`
+  Shared STM32 build/debug-load/toolchain helpers.
+- `src/tinyodom/microcontrollers/stm32_runtime.py`
+  Shared STM32 direct-serial runtime protocol and telemetry parsing helpers.
+
 `setup_stm32.sh` is the source of truth for rebuilding the template. It
 refreshes the vendor-owned files from the pinned `tools/stm32/STM32CubeN6`
 checkout into this self-contained template and preserves the repo-owned

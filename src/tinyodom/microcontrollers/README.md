@@ -1,4 +1,34 @@
-# Adding A New Arduino Board
+# Microcontroller Backends
+
+This guide is primarily for adding boards that are built and flashed through
+`arduino-cli`, but this package also contains the non-Arduino STM32 backend.
+
+## STM32 Backend Layout
+
+The STM32 backend is intentionally split across three Python modules because
+they own different responsibilities and failure domains.
+
+1. `stm32_nucleo_n657x0.py`
+   - The concrete TinyODOM board backend.
+   - Implements `DeviceInterface`.
+   - Resolves STM config/options, stages candidate-specific STM projects,
+     invokes ST Edge AI generation, and translates compile/upload/runtime
+     results into TinyODOM's shared dataclasses and error codes.
+2. `stm32_cube_clt.py`
+   - The STM32 toolchain/helper layer.
+   - Owns CubeIDE/CLI build, ELF discovery, size parsing, and ST-LINK
+     debug-load workflow helpers.
+   - Does not implement `DeviceInterface`.
+3. `stm32_runtime.py`
+   - The STM32 runtime protocol layer.
+   - Owns serial monitoring, READY/START handshake handling, telemetry parsing,
+     and runtime protocol error classification.
+   - Does not implement `DeviceInterface`.
+
+Only `stm32_nucleo_n657x0.py` is the TinyODOM backend implementation. The
+other two files are helper modules reused by that backend.
+
+## Arduino Board Guide
 
 This guide is only for adding boards that are built and flashed through `arduino-cli`.
 

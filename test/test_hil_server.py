@@ -218,8 +218,8 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(kwargs["stride"], self.config.data.stride)
         self.assertEqual(kwargs["max_windows"], self.config.data.calibration_windows)
 
-    def test_stm_phase2_prepares_candidate_but_disables_runtime_hil(self) -> None:
-        """Ensure STM Phase 2 stages candidates but still runs compile-only.
+    def test_stm_runtime_backend_keeps_hil_enabled_when_supported(self) -> None:
+        """Ensure STM runtime-capable backends keep HIL enabled.
 
         Returns
         -------
@@ -231,7 +231,8 @@ class InitializationTests(HILServerTestCase):
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
-        fake_device.supports_runtime_measurement.return_value = False
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.supports_energy_measurement.return_value = False
         fake_device.prepare_candidate.return_value = Path("/tmp/stm_fsbl")
 
         with patch("hil_server.resolve_device_options", return_value={"project_root": Path("/tmp/stm_fsbl")}), patch(
@@ -242,7 +243,7 @@ class InitializationTests(HILServerTestCase):
             return_value={"ok": True},
         ) as collect_mock, patch("hil_server.build_tinyodom_model") as build_mock:
             request_mock.return_value = CollectMetricsRequest(
-                hil_enabled=False,
+                hil_enabled=True,
                 energy_aware=False,
                 flops=1,
                 device_name="STM32_NUCLEO_N657X0_Q",
@@ -253,6 +254,7 @@ class InitializationTests(HILServerTestCase):
                 serial_port="ttyACM0",
                 latency_budget_ms=40.0,
                 dut_ready_timeout_s=5.0,
+                serial_timeout_s=12.0,
                 harness=None,
                 device_options={},
             )
@@ -263,7 +265,7 @@ class InitializationTests(HILServerTestCase):
         build_mock.assert_called_once()
         fake_device.prepare_candidate.assert_called_once()
         collect_mock.assert_called_once()
-        self.assertFalse(request_mock.call_args.kwargs["hil_enabled"])
+        self.assertTrue(request_mock.call_args.kwargs["hil_enabled"])
         self.assertIsNone(server.active_sketch_path)
 
     def test_stm_phase2_disables_energy_aware_requests_even_when_config_requests_it(self) -> None:
@@ -280,7 +282,7 @@ class InitializationTests(HILServerTestCase):
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
-        fake_device.supports_runtime_measurement.return_value = False
+        fake_device.supports_runtime_measurement.return_value = True
         fake_device.supports_energy_measurement.return_value = False
         fake_device.prepare_candidate.return_value = Path("/tmp/stm_fsbl")
 
@@ -299,7 +301,7 @@ class InitializationTests(HILServerTestCase):
             "hil_server.build_tinyodom_model"
         ):
             request_mock.return_value = CollectMetricsRequest(
-                hil_enabled=False,
+                hil_enabled=True,
                 energy_aware=False,
                 flops=1,
                 device_name="STM32_NUCLEO_N657X0_Q",
@@ -310,12 +312,34 @@ class InitializationTests(HILServerTestCase):
                 serial_port="ttyACM0",
                 latency_budget_ms=40.0,
                 dut_ready_timeout_s=5.0,
+                serial_timeout_s=12.0,
                 harness=None,
                 device_options={},
             )
             server.determine_metrics(Dict(flops=1, input_dim=6))
 
         self.assertFalse(request_mock.call_args.kwargs["energy_aware"])
+
+    def test_stm_prepare_candidate_failure_returns_structured_backend_metrics(self) -> None:
+        """STM staging failures should become metrics-shaped backend errors."""
+        self.config.device.name = "STM32_NUCLEO_N657X0_Q"
+        self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.supports_energy_measurement.return_value = False
+        fake_device.prepare_candidate.side_effect = RuntimeError("ST Edge AI generation failed: unsupported operator")
+
+        with patch("hil_server.resolve_device_options", return_value={"project_root": Path("/tmp/stm_fsbl")}), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.build_tinyodom_model"):
+            metrics = server.determine_metrics(Dict(flops=1, input_dim=6))
+
+        self.assertEqual(metrics["backend_error_kind"], "unsupported_model")
+        self.assertIn("unsupported operator", metrics["backend_error_detail"])
 
     def test_set_input_mode_delegates_to_backend_for_stm_phase1(self) -> None:
         """Ensure STM servers delegate input-mode changes to the backend.

@@ -13,12 +13,10 @@ import argparse
 import json
 import logging
 import os
-import queue
 import re
 import shutil
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -29,23 +27,9 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from build_and_upload_stm32_blink import (  # noqa: E402
-    WorkflowError,
-    _build_project,
-    _configure_logging,
-    _default_cubeprog_bin,
-    _resolve_required_tool_path,
-    _run_gdb_load,
-    _start_gdb_server,
-    _summarize_server_log,
-    _validate_paths,
-    _wait_for_server_ready,
-    DEFAULT_APID,
-    DEFAULT_GDB_PORT,
-    SERVER_READY_TIMEOUT_S,
-    SERVER_SETTLE_DELAY_S,
-)
 from tinyodom.microcontrollers.arduino_base import ensure_harness_firmware  # noqa: E402
+from tinyodom.microcontrollers import stm32_cube_clt  # noqa: E402
+from tinyodom.microcontrollers.stm32_runtime import SerialMonitor  # noqa: E402
 
 DEFAULT_PROJECT_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"
 DEFAULT_DUT_PORT = "/dev/ttyACM0"
@@ -146,118 +130,78 @@ DUT_STRING_PATTERNS = {
     "stop_mode_variant": re.compile(rf"^stop mode variant output:\s*{STRING_CAPTURE}$", re.IGNORECASE),
 }
 
+WorkflowError = stm32_cube_clt.WorkflowError
+DEFAULT_APID = stm32_cube_clt.DEFAULT_APID
+DEFAULT_GDB_PORT = stm32_cube_clt.DEFAULT_GDB_PORT
+SERVER_READY_TIMEOUT_S = stm32_cube_clt.SERVER_READY_TIMEOUT_S
 
-class SerialMonitor:
-    """Background serial reader with queued line delivery and write support."""
 
-    def __init__(self, port: str, baud: int, label: str) -> None:
-        """Open the serial port and start the background reader thread.
+def _configure_logging(verbose: bool) -> None:
+    """Configure process logging for the example runner.
 
-        Parameters
-        ----------
-        port : str
-            Serial device path, e.g. ``"/dev/ttyACM0"`` or ``"COM3"``.
-        baud : int
-            Baud rate, e.g. ``115200``.
-        label : str
-            Human-readable label used in log messages (e.g. ``"dut"`` or ``"harness"``).
-        """
-        self.port = port
-        self.baud = baud
-        self.label = label
-        self._queue: queue.Queue[str | None] = queue.Queue()
-        self._lines: list[str] = []
-        self._lock = threading.Lock()
-        self._stop = threading.Event()
-        self._serial = serial.Serial(port, baud, timeout=0.2)
-        self._thread = threading.Thread(target=self._reader, daemon=True)
-        self._thread.start()
+    Parameters
+    ----------
+    verbose : bool
+        Whether to emit debug-level logging.
+    """
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format="%(levelname)s:%(name)s:%(message)s",
+    )
 
-    def _reader(self) -> None:
-        """Background thread: read lines from the serial port into the queue."""
-        try:
-            while not self._stop.is_set():
-                raw = self._serial.readline()
-                if not raw:
-                    continue
-                line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
-                if not line:
-                    continue
-                with self._lock:
-                    self._lines.append(line)
-                self._queue.put(line)
-        except serial.SerialException as exc:
-            LOGGER.error("%s serial error: %s", self.label, exc)
-        finally:
-            self._queue.put(None)
 
-    def write_line(self, text: str) -> None:
-        """Write a text line followed by a newline to the serial port.
+def _default_cubeprog_bin() -> Path | None:
+    """Return the default STM32CubeProgrammer bin directory when discoverable."""
+    return stm32_cube_clt.default_cubeprog_bin()
 
-        Parameters
-        ----------
-        text : str
-            Command string to send (a ``\\n`` is appended automatically).
-        """
-        payload = f"{text}\n".encode("utf-8")
-        self._serial.write(payload)
-        self._serial.flush()
 
-    def wait_for(self, predicate, timeout_s: float, stage: str) -> str | None:
-        """Block until a line matching *predicate* arrives or the timeout elapses.
+def _resolve_required_tool_path(path: Path | str | None, label: str, hint: str) -> Path:
+    """Resolve a required STM32 tool path through the shared backend helper."""
+    return stm32_cube_clt.resolve_required_tool_path(path, label=label, hint=hint)
 
-        Parameters
-        ----------
-        predicate : callable[[str], bool]
-            Function that receives each incoming line and returns ``True``
-            when the desired condition is met.
-        timeout_s : float
-            Maximum seconds to wait before returning ``None``.
-        stage : str
-            Human-readable name for the awaited event, used in error messages.
 
-        Returns
-        -------
-        str or None
-            The first matching line, or ``None`` if the timeout elapsed without a match.
+def _build_project(project_root: Path, *, jobs: int | None, clean: bool, verbose: bool) -> stm32_cube_clt.BuildResult:
+    """Build the STM32 project through the shared backend helper.
 
-        Raises
-        ------
-        RuntimeError
-            Raised if the serial reader thread exits unexpectedly while waiting.
-        """
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            try:
-                line = self._queue.get(timeout=min(0.5, max(0.01, deadline - time.monotonic())))
-            except queue.Empty:
-                continue
-            if line is None:
-                raise RuntimeError(f"{self.label} serial reader exited while waiting for {stage}.")
-            LOGGER.info("[%s] %s", self.label, line)
-            if predicate(line):
-                return line
-        return None
+    Parameters
+    ----------
+    project_root : Path
+        STM32 FSBL root.
+    jobs : int | None
+        Parallel make job count.
+    clean : bool
+        Whether to clean before building.
+    verbose : bool
+        Retained for CLI compatibility.
 
-    def snapshot_lines(self) -> list[str]:
-        """Return a thread-safe snapshot of all lines received so far.
+    Returns
+    -------
+    tinyodom.microcontrollers.stm32_cube_clt.BuildResult
+        Shared backend build result.
+    """
+    del verbose
+    return stm32_cube_clt.build_project(project_root=project_root, jobs=jobs, clean=clean)
 
-        Returns
-        -------
-        list[str]
-            Copy of all lines captured since the monitor was opened.
-        """
-        with self._lock:
-            return list(self._lines)
 
-    def close(self) -> None:
-        """Signal the reader thread to stop and close the serial port."""
-        self._stop.set()
-        try:
-            self._thread.join(timeout=2.0)
-        finally:
-            if self._serial.is_open:
-                self._serial.close()
+def _validate_paths(project_root: Path, *, elf_name: str | None = None) -> tuple[Path, Path]:
+    """Validate the project root and resolve its ELF artifact.
+
+    Parameters
+    ----------
+    project_root : Path
+        STM32 FSBL root.
+    elf_name : str | None, optional
+        Explicit ELF artifact name.
+
+    Returns
+    -------
+    tuple[Path, Path]
+        Resolved ``Debug`` directory and ELF path.
+    """
+    resolved_project = stm32_cube_clt.validate_project_root(project_root)
+    debug_dir = resolved_project / "Debug"
+    elf_path = stm32_cube_clt.resolve_elf_path(debug_dir, elf_name=elf_name)
+    return debug_dir, elf_path
 
 
 def _which_path(name: str) -> Path | None:
@@ -1156,11 +1100,7 @@ def _load_and_run(
     verbose: bool,
     elf_path: Path,
 ) -> None:
-    """Start the GDB server, load the ELF onto the target, and resume execution.
-
-    Starts the ST-LINK GDB server, waits for it to become ready, loads the
-    compiled ELF via arm-none-eabi-gdb, and lets the firmware run. The GDB
-    server is terminated in the finally block regardless of outcome.
+    """Load the ELF onto the target and resume execution.
 
     Parameters
     ----------
@@ -1184,44 +1124,19 @@ def _load_and_run(
     Raises
     ------
     WorkflowError
-        Raised if the GDB server or GDB load step fails.
+        Raised if the shared backend debug-load step fails.
     """
-    server_proc = None
-    server_log = None
-    try:
-        server_proc, server_log = _start_gdb_server(
-            gdbserver=gdbserver,
-            cubeprog_bin=cubeprog_bin,
-            gdb_port=gdb_port,
-            apid=apid,
-            verbose=verbose,
-        )
-        try:
-            _wait_for_server_ready(server_proc, server_log, server_ready_timeout)
-        except WorkflowError as exc:
-            raise WorkflowError(f"{exc}\n\n{_summarize_server_log(server_log)}") from exc
-        time.sleep(SERVER_SETTLE_DELAY_S)
-        if server_proc.poll() is not None:
-            raise WorkflowError(
-                "GDB server exited before GDB connected.\n\n" + _summarize_server_log(server_log)
-            )
-        _run_gdb_load(
-            gdb=gdb,
-            elf_path=elf_path,
-            gdb_port=gdb_port,
-            run_after_load=True,
-            verbose=verbose,
-        )
-    finally:
-        if server_proc is not None and server_proc.poll() is None:
-            server_proc.terminate()
-            try:
-                server_proc.wait(timeout=5.0)
-            except Exception:
-                server_proc.kill()
-                server_proc.wait(timeout=5.0)
-        if server_log is not None:
-            server_log.close()
+    del verbose
+    stm32_cube_clt.debug_load_elf(
+        elf_path=elf_path,
+        gdbserver=gdbserver,
+        gdb=gdb,
+        cubeprog_bin=cubeprog_bin,
+        gdb_port=gdb_port,
+        apid=apid,
+        server_ready_timeout_s=server_ready_timeout,
+        run_after_load=True,
+    )
 
 
 def _build_contract(
@@ -1374,12 +1289,7 @@ def main() -> int:
         "STM32CubeProgrammer bin directory",
         "STM32_Programmer_CLI",
     )
-    _debug_dir, elf_path = _validate_paths(
-        project_root=project_root,
-        gdbserver=gdbserver,
-        gdb=gdb,
-        cubeprog_bin=cubeprog_bin,
-    )
+    _debug_dir, elf_path = _validate_paths(project_root=project_root)
 
     if not config_path.is_file():
         raise WorkflowError(f"Config not found: {config_path}")

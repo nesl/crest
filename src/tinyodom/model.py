@@ -135,6 +135,8 @@ class CollectMetricsRequest:
         Target inference cadence in milliseconds for normalized latency checks.
     dut_ready_timeout_s : float | None, optional
         Timeout waiting for DUT ready handshake.
+    serial_timeout_s : float | None, optional
+        Post-``START`` runtime timeout forwarded to direct-serial backends.
     harness : HarnessConfig | None, optional
         Harness settings for energy-aware runs. ``None`` for non-energy-aware runs.
     device_options : dict[str, Any] | None, optional
@@ -152,6 +154,7 @@ class CollectMetricsRequest:
     serial_port: str | None
     latency_budget_ms: float | None = None
     dut_ready_timeout_s: float | None = None
+    serial_timeout_s: float | None = None
     harness: HarnessConfig | None = None
     device_options: dict[str, Any] | None = None
 
@@ -579,6 +582,9 @@ def build_collect_metrics_request(
     dut_ready_timeout = _cfg_get(config.device, "dut_ready_timeout_s", 5.0)
     if dut_ready_timeout is None:
         dut_ready_timeout = 5.0
+    serial_timeout = _cfg_get(config.device, "serial_timeout_s", 12.0)
+    if serial_timeout is None:
+        serial_timeout = 12.0
 
     return CollectMetricsRequest(
         hil_enabled=effective_hil_enabled,
@@ -592,6 +598,7 @@ def build_collect_metrics_request(
         serial_port=_cfg_get(config.device, "serial_port", None),
         latency_budget_ms=latency_budget_ms,
         dut_ready_timeout_s=float(dut_ready_timeout),
+        serial_timeout_s=float(serial_timeout),
         harness=harness,
         device_options=device_options,
     )
@@ -658,6 +665,8 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
 
     if request.hil_enabled and request.dut_ready_timeout_s is not None:
         controller_kwargs["dut_ready_timeout_s"] = request.dut_ready_timeout_s
+    if request.hil_enabled and request.serial_timeout_s is not None:
+        controller_kwargs["serial_timeout_s"] = request.serial_timeout_s
 
     if (
         request.hil_enabled
@@ -721,6 +730,11 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
         raise ValueError("latency_proxy_max_flops must be a positive value")
 
     # Creates the metrics dict to return
+    backend_error_kind = None
+    backend_error_detail = None
+    if power_metrics:
+        backend_error_kind = power_metrics.get("backend_error_kind")
+        backend_error_detail = power_metrics.get("backend_error_detail")
     normalized_power = normalize_power_metrics(power_metrics)
     harness_latency_ms = -1.0
     if normalized_power.get("harness_latency_s", -1.0) >= 0:
@@ -742,6 +756,10 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
         "harness_latency_ms": harness_latency_ms,
     }
     set_error_code(metrics, error_code)
+    if backend_error_kind is not None:
+        metrics["backend_error_kind"] = str(backend_error_kind)
+    if backend_error_detail is not None:
+        metrics["backend_error_detail"] = str(backend_error_detail)
 
     return metrics
 
