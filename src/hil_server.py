@@ -6,6 +6,7 @@ from pathlib import Path
 
 import absl.logging
 # import optuna
+import serial
 import tensorflow as tf
 # import tensorflow_model_optimization as tfmot
 import zmq
@@ -31,6 +32,7 @@ from tinyodom.microcontrollers.stm32_nucleo_n657x0 import (
     BOARD_NAME as STM32_BOARD_NAME,
     classify_stm32_backend_error,
 )
+from tinyodom.microcontrollers import stm32_cube_clt, stm32_runtime
 from tinyodom.model import (
     DEFAULT_CONFIG_PATH,
     apply_combined_perturbation,
@@ -106,6 +108,7 @@ def _build_stm_backend_failure_metrics(
     metrics = {
         "ram_bytes": -1,
         "flash_bytes": -1,
+        "external_flash_bytes": -1,
         "latency_ms": -1,
         "latency_budget_ms": latency_budget_ms if hil_enabled else -1,
         "arena_bytes": -1,
@@ -118,6 +121,7 @@ def _build_stm_backend_failure_metrics(
         "bus_voltage_v": -1.0,
         "idle_power_mw": -1.0,
         "harness_latency_ms": -1.0,
+        "weight_storage_mode": "embedded",
         "backend_error_kind": str(error_kind),
         "backend_error_detail": str(error_detail),
     }
@@ -363,7 +367,11 @@ class HILServer:
                 energy_aware=effective_energy_aware,
             )
             metrics = collect_metrics(request_metrics_args)
-        except Exception as exc:
+        except (
+            stm32_cube_clt.WorkflowError,
+            stm32_runtime.STM32RuntimeProtocolError,
+            serial.SerialException,
+        ) as exc:
             if self._normalized_device_name() != STM32_BOARD_NAME:
                 raise
             logger.error("STM backend failure: %s", exc)

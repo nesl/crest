@@ -131,7 +131,7 @@ After that, the STM32 wrapper uses those same CLT tools from `PATH`.
 - [ ] SSH to the GPU box with reverse tunnel: `ssh -R "6001:127.0.0.1:6001" <gpu_server>`
 - [ ] On the GPU box, run NAS: `python3 src/nas_model_client.py --study-name <name>`
 
-## NAS configuration (`src/nas_config.yaml`)
+## NAS configuration (`src/nas_confizg.yaml`)
 
 Before running long NAS jobs, skim and adjust `src/nas_config.yaml`:
 

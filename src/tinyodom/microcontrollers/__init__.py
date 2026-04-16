@@ -67,6 +67,11 @@ def list_device_specs() -> dict[str, dict[str, Any]]:
             "arena_sizes": list(spec.arena_sizes_kb),
             "max_ram": int(spec.max_ram_bytes),
             "max_flash": int(spec.max_flash_bytes),
+            "max_external_flash": (
+                int(spec.max_external_flash_bytes)
+                if spec.max_external_flash_bytes is not None
+                else None
+            ),
             "fqbn": spec.fqbn,
         }
     return specs
@@ -181,6 +186,21 @@ def resolve_device_options(
             if stm32_cfg is not None
             else None,
             "cpu_clock_mhz": _cfg_get(stm32_cfg, "cpu_clock_mhz", None) if stm32_cfg is not None else None,
+            "weight_storage_mode": _cfg_get(stm32_cfg, "weight_storage_mode", None)
+            if stm32_cfg is not None
+            else None,
+            "weights_flash_address": _cfg_get(stm32_cfg, "weights_flash_address", None)
+            if stm32_cfg is not None
+            else None,
+            "weights_memory_pool": _cfg_get(stm32_cfg, "weights_memory_pool", None)
+            if stm32_cfg is not None
+            else None,
+            "weights_external_loader": _cfg_get(stm32_cfg, "weights_external_loader", None)
+            if stm32_cfg is not None
+            else None,
+            "max_external_flash_bytes": _cfg_get(stm32_cfg, "max_external_flash_bytes", None)
+            if stm32_cfg is not None
+            else None,
         }
         resolved = resolve_stm32_nucleo_n657x0_q_options(
             {

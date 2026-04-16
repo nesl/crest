@@ -15,6 +15,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+import hil_server as hil_server_module  # noqa: E402
 from hil_server import HILServer  # noqa: E402
 from tinyodom.model import CollectMetricsRequest  # noqa: E402
 
@@ -232,7 +233,7 @@ class InitializationTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.supports_energy_measurement.return_value = False
+        fake_device.supports_energy_measurement.return_value = True
         fake_device.prepare_candidate.return_value = Path("/tmp/stm_fsbl")
 
         with patch("hil_server.resolve_device_options", return_value={"project_root": Path("/tmp/stm_fsbl")}), patch(
@@ -268,8 +269,8 @@ class InitializationTests(HILServerTestCase):
         self.assertTrue(request_mock.call_args.kwargs["hil_enabled"])
         self.assertIsNone(server.active_sketch_path)
 
-    def test_stm_phase2_disables_energy_aware_requests_even_when_config_requests_it(self) -> None:
-        """Ensure backend capability disables unsupported STM energy requests.
+    def test_stm_backend_keeps_energy_aware_requests_when_supported(self) -> None:
+        """Ensure STM energy-aware requests remain enabled once the backend supports them.
 
         Returns
         -------
@@ -283,7 +284,7 @@ class InitializationTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.supports_energy_measurement.return_value = False
+        fake_device.supports_energy_measurement.return_value = True
         fake_device.prepare_candidate.return_value = Path("/tmp/stm_fsbl")
 
         with patch(
@@ -302,7 +303,7 @@ class InitializationTests(HILServerTestCase):
         ):
             request_mock.return_value = CollectMetricsRequest(
                 hil_enabled=True,
-                energy_aware=False,
+                energy_aware=True,
                 flops=1,
                 device_name="STM32_NUCLEO_N657X0_Q",
                 window_size=32,
@@ -318,7 +319,7 @@ class InitializationTests(HILServerTestCase):
             )
             server.determine_metrics(Dict(flops=1, input_dim=6))
 
-        self.assertFalse(request_mock.call_args.kwargs["energy_aware"])
+        self.assertTrue(request_mock.call_args.kwargs["energy_aware"])
 
     def test_stm_prepare_candidate_failure_returns_structured_backend_metrics(self) -> None:
         """STM staging failures should become metrics-shaped backend errors."""
@@ -329,8 +330,10 @@ class InitializationTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.supports_energy_measurement.return_value = False
-        fake_device.prepare_candidate.side_effect = RuntimeError("ST Edge AI generation failed: unsupported operator")
+        fake_device.supports_energy_measurement.return_value = True
+        fake_device.prepare_candidate.side_effect = hil_server_module.stm32_cube_clt.WorkflowError(
+            "ST Edge AI generation failed: unsupported operator"
+        )
 
         with patch("hil_server.resolve_device_options", return_value={"project_root": Path("/tmp/stm_fsbl")}), patch(
             "hil_server.get_microcontroller_device",

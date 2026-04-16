@@ -732,9 +732,22 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
     # Creates the metrics dict to return
     backend_error_kind = None
     backend_error_detail = None
+    external_flash_bytes = -1
+    weight_storage_mode = "embedded"
     if power_metrics:
         backend_error_kind = power_metrics.get("backend_error_kind")
         backend_error_detail = power_metrics.get("backend_error_detail")
+        raw_external_flash_bytes = power_metrics.get("external_flash_bytes")
+        if raw_external_flash_bytes is not None:
+            try:
+                parsed_external_flash_bytes = int(float(raw_external_flash_bytes))
+            except (TypeError, ValueError):
+                parsed_external_flash_bytes = -1
+            if parsed_external_flash_bytes >= 0:
+                external_flash_bytes = parsed_external_flash_bytes
+        raw_weight_storage_mode = power_metrics.get("weight_storage_mode")
+        if raw_weight_storage_mode:
+            weight_storage_mode = str(raw_weight_storage_mode)
     normalized_power = normalize_power_metrics(power_metrics)
     harness_latency_ms = -1.0
     if normalized_power.get("harness_latency_s", -1.0) >= 0:
@@ -742,11 +755,13 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
     metrics = {
         "ram_bytes": ram_bytes,
         "flash_bytes": flash_bytes,
+        "external_flash_bytes": external_flash_bytes,
         "latency_ms": latency_ms if request.hil_enabled else -1,
         "latency_budget_ms": latency_budget_entry,
         "arena_bytes": arena_bytes,
         "hil_enabled": request.hil_enabled,
         "energy_aware": request.energy_aware,
+        "weight_storage_mode": weight_storage_mode,
         "inference_seq": int(normalized_power["sequence"]) if normalized_power["sequence"] >= 0 else -1,
         "energy_mj_per_inference": normalized_power["energy_mj_per_inference"],
         "avg_power_mw": normalized_power["avg_power_mw"],
@@ -808,6 +823,8 @@ def log_trial(score,
         "rmse_vel_y",
         "ram_bytes",
         "flash_bytes",
+        "external_flash_bytes",
+        "weight_storage_mode",
         "flops",
         "latency_ms",
         "energy_mj_per_inference",
@@ -840,6 +857,8 @@ def log_trial(score,
         rmse_vel_y,
         metrics["ram_bytes"],
         metrics["flash_bytes"],
+        metrics.get("external_flash_bytes", -1),
+        metrics.get("weight_storage_mode", "embedded"),
         hyperparams["flops"],
         metrics["latency_ms"],
         metrics["energy_mj_per_inference"],
@@ -863,6 +882,8 @@ def log_trial(score,
 
     trial.set_user_attr("ram_bytes", metrics["ram_bytes"])
     trial.set_user_attr("flash_bytes", metrics["flash_bytes"])
+    trial.set_user_attr("external_flash_bytes", metrics.get("external_flash_bytes", -1))
+    trial.set_user_attr("weight_storage_mode", metrics.get("weight_storage_mode", "embedded"))
     trial.set_user_attr("latency_ms", metrics["latency_ms"])
     trial.set_user_attr("latency_budget_ms", metrics["latency_budget_ms"])
     trial.set_user_attr("energy_mj_per_inference", metrics["energy_mj_per_inference"])

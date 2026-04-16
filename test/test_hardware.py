@@ -1915,6 +1915,29 @@ class HILControllerTests(unittest.TestCase):
             (-1, -1, -1.0, -1, HIL_MASTER_ARENA_EXHAUSTED, None),
         )
 
+    def test_hil_controller_single_shot_stm_timeout_is_fatal(self):
+        # STM32 uses a single-shot arena sentinel, so a timeout should remain a
+        # runtime failure instead of being rewritten as arena exhaustion.
+        arena_candidates = np.array([-1])
+        device = self._controller_device(arena_candidates, name="STM32_NUCLEO_N657X0_Q")
+
+        with patch(
+            "tinyodom.hardware.HIL_spec",
+            return_value=(50000, 100000, -1.0, -1024, HIL_ERROR_LATENCY, None),
+        ) as mock_spec:
+            ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
+                dirpath="unused",
+                chosen_device="STM32_NUCLEO_N657X0_Q",
+                run_hil=True,
+                device=device,
+            )
+
+        self.assertEqual(mock_spec.call_count, 1)
+        self.assertEqual(
+            (ram, flash, latency, arena_bytes, master_error, _power_metrics),
+            (50000, 100000, -1.0, -1024, HIL_MASTER_FATAL, None),
+        )
+
     def test_hil_controller_non_arena_failure(self):
         # Non-arena errors should bubble up immediately with masterError=3 and captured metrics.
         arena_candidates = np.array([10, 20])

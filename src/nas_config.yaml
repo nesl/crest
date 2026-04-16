@@ -5,9 +5,18 @@ device:
   serial_port: "/dev/ttyACM0"
   dut_ready_timeout_s: 5.0                     # Time to wait for STM32_AI_INIT / DUT READY before sending START.
   serial_timeout_s: 12.0                       # Time to wait for the measured runtime pass after START.
+  harness_serial_port: "/dev/ttyACM1"
+  harness_fqbn: "arduino:mbed_nano:nano33ble"
+  harness_auto_flash: "once"
+  harness_ready_timeout_s: 5.0
+  harness_arm_timeout_s: 5.0
+  harness_active_timeout_s: 30.0
+  harness_done_timeout_s: 5.0
   stm32:
     project_root: "sketches/stm32/tinyodom_tcn_stm32/FSBL"
-    cpu_clock_mhz: 600
+    cpu_clock_mhz: 600 # options 200 300 400 600 or 800 MHz; note: 800 MHz is overclocked and may cause instability, but can be attempted for max performance
+    weight_storage_mode: "external_flash"          # Set to external_flash to stage weights into NOR flash.
+    weights_memory_pool: "analysis_scripts/stm32_example_project/nucleo_mypool.json"
 
 # Dataset sampling and preprocessing parameters
 data:
@@ -28,7 +37,7 @@ training:
   quantization: true
   latency_proxy_max_flops: 30000000.0
   train: true
-  # FIXME: STM Phase 3 supports direct-serial latency, not harness energy measurement.
+  # FIXME: Set true only after the Phase 4 harness-backed smoke test is passing.
   energy_aware: false
   # Input mode for HIL sketches: uniform, representative, or real
   input_mode: "uniform"

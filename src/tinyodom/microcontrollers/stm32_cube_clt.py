@@ -11,14 +11,30 @@ from pathlib import Path
 from typing import Optional
 
 
+# Default TCP port used for the ST-LINK GDB server session.
 DEFAULT_GDB_PORT = 61234
+# Access port identifier for the main application core; overridable for lab setups.
 DEFAULT_APID = int(os.environ.get("STM32_APID", "1"))
+# Upper bound for waiting until the GDB server starts accepting connections.
 SERVER_READY_TIMEOUT_S = 15.0
+# Poll cadence while probing the GDB server readiness socket.
 SERVER_POLL_INTERVAL_S = 0.1
+# Small post-start delay so the server can finish initialization before GDB attaches.
 SERVER_SETTLE_DELAY_S = 0.5
+# ST-LINK_gdbserver verbosity level passed on the command line.
 DEFAULT_LOG_LEVEL = "1"
+# Delay string forwarded to the server's target-refresh option.
 DEFAULT_REFRESH_DELAY_S = "15"
+# Timeout for the initial GDB jump/continue sequence after symbols are loaded.
 GDB_JUMP_TIMEOUT_S = 5.0
+# Default STM32CubeProgrammer connection mode for normal programming flows.
+DEFAULT_PROGRAMMER_MODE = "hotplug"
+# Conservative SWD frequency to improve stability across host/debugger setups.
+DEFAULT_PROGRAMMER_FREQ_KHZ = "500"
+# Recovery connection mode used when trying to regain control of the target.
+DEFAULT_RECOVERY_MODE = "powerdown"
+# Recovery APID targets the boot-side access port used during board bring-up.
+DEFAULT_RECOVERY_APID = "0"
 SIZE_RE = re.compile(
     r"^\s*(?P<text>\d+)\s+(?P<data>\d+)\s+(?P<bss>\d+)\s+(?P<dec>\d+)\s+(?P<hex>[0-9a-fA-F]+)\s+",
     re.MULTILINE,
@@ -359,6 +375,118 @@ def parse_size_output(elf_path: Path | str) -> SizeResult:
     )
 
 
+def resolve_required_file_path(path: Path | str | None, *, label: str) -> Path:
+    """Resolve a required non-executable file path.
+
+    Parameters
+    ----------
+    path : pathlib.Path | str | None
+        Explicit file path from configuration.
+    label : str
+        Human-readable label used in error messages.
+
+    Returns
+    -------
+    pathlib.Path
+        Resolved file path.
+
+    Raises
+    ------
+    WorkflowError
+        If the file path is missing or does not exist.
+    """
+    if path is None:
+        raise WorkflowError(f"{label} was not provided.")
+    candidate = Path(path).expanduser().resolve()
+    if not candidate.is_file():
+        raise WorkflowError(f"{label} was not found: {candidate}")
+    return candidate
+
+
+def program_external_flash_blob(
+    *,
+    cubeprog_bin: Path | str | None,
+    apid: int,
+    weights_blob_path: Path | str,
+    weights_flash_address: str,
+    external_loader: Path | str,
+) -> str:
+    """Program a staged external-weight blob through STM32CubeProgrammer.
+
+    Parameters
+    ----------
+    cubeprog_bin : pathlib.Path | str | None
+        STM32CubeProgrammer ``bin`` directory or ``None`` to discover it from
+        ``PATH``.
+    apid : int
+        ST-LINK access port identifier for the application core.
+    weights_blob_path : pathlib.Path | str
+        Path to the staged binary weights blob.
+    weights_flash_address : str
+        Absolute external flash address where the blob is programmed.
+    external_loader : pathlib.Path | str
+        Path to the `.stldr` external loader for the mounted NOR flash device.
+
+    Returns
+    -------
+    str
+        Combined recovery/programmer log text.
+
+    Raises
+    ------
+    WorkflowError
+        If recovery or programming fails.
+    """
+    cubeprog_dir = (
+        default_cubeprog_bin()
+        if cubeprog_bin is None
+        else Path(cubeprog_bin).expanduser().resolve()
+    )
+    if cubeprog_dir is None:
+        raise WorkflowError(
+            "STM32CubeProgrammer bin directory was not provided.\n"
+            "Install STM32CubeProgrammer and ensure `STM32_Programmer_CLI` is on PATH, "
+            "or configure device.stm32.cubeprog_bin."
+        )
+    programmer = resolve_required_tool_path(
+        Path(cubeprog_dir) / "STM32_Programmer_CLI",
+        label="STM32_Programmer_CLI",
+        hint="STM32_Programmer_CLI",
+    )
+    blob_path = resolve_required_file_path(weights_blob_path, label="STM32 weights blob")
+    loader_path = resolve_required_file_path(external_loader, label="STM32 external loader")
+
+    recovery_cmd = [
+        str(programmer),
+        "-q",
+        "-c",
+        "port=SWD",
+        f"mode={DEFAULT_RECOVERY_MODE}",
+        f"freq={DEFAULT_PROGRAMMER_FREQ_KHZ}",
+        f"ap={DEFAULT_RECOVERY_APID}",
+    ]
+    program_cmd = [
+        str(programmer),
+        "-q",
+        "-c",
+        "port=SWD",
+        f"mode={DEFAULT_PROGRAMMER_MODE}",
+        f"freq={DEFAULT_PROGRAMMER_FREQ_KHZ}",
+        f"ap={int(apid)}",
+        "-halt",
+        "-el",
+        str(loader_path),
+        "-d",
+        str(blob_path),
+        str(weights_flash_address),
+        "-v",
+    ]
+    recovery_log = _run_command(recovery_cmd)
+    time.sleep(1.0)
+    program_log = _run_command(program_cmd)
+    return "\n".join(text for text in (recovery_log.strip(), program_log.strip()) if text)
+
+
 def classify_build_failure(log_text: str) -> Optional[str]:
     """Classify common STM linker/build failures as flash or RAM overflow.
 
@@ -380,6 +508,8 @@ def classify_build_failure(log_text: str) -> Optional[str]:
         "region `rom' overflowed",
         "will not fit in region `rom'",
         ".text will not fit",
+        "internal flash image exceeds available internal flash",
+        "external weight blob exceeds available external flash",
     )
     if any(indicator in lowered for indicator in flash_indicators):
         return "flash"

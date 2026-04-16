@@ -313,6 +313,8 @@ class CollectMetricsTests(unittest.TestCase):
                 {
                     "backend_error_kind": "runtime_timeout",
                     "backend_error_detail": "Timed out waiting for DUT READY.",
+                    "external_flash_bytes": 2048,
+                    "weight_storage_mode": "external_flash",
                 },
             )
 
@@ -333,6 +335,8 @@ class CollectMetricsTests(unittest.TestCase):
 
         self.assertEqual(metrics["backend_error_kind"], "runtime_timeout")
         self.assertEqual(metrics["backend_error_detail"], "Timed out waiting for DUT READY.")
+        self.assertEqual(metrics["external_flash_bytes"], 2048)
+        self.assertEqual(metrics["weight_storage_mode"], "external_flash")
 
     def test_energy_aware_harness_fields_forwarded_to_controller(self) -> None:
         """Energy-aware requests should forward harness settings to HIL_controller."""
@@ -1091,6 +1095,8 @@ class LogTrialTests(unittest.TestCase):
         "rmse_vel_y",
         "ram_bytes",
         "flash_bytes",
+        "external_flash_bytes",
+        "weight_storage_mode",
         "flops",
         "latency_ms",
         "energy_mj_per_inference",
@@ -1113,6 +1119,8 @@ class LogTrialTests(unittest.TestCase):
         return {
             "ram_bytes": 1000,
             "flash_bytes": 2000,
+            "external_flash_bytes": 3000,
+            "weight_storage_mode": "external_flash",
             "latency_ms": 10,
             "latency_budget_ms": -1,
             "arena_bytes": 4096,
@@ -1170,6 +1178,14 @@ class LogTrialTests(unittest.TestCase):
                 int(rows[1][header_index["ram_bytes"]]), metrics["ram_bytes"]
             )
             self.assertEqual(
+                int(rows[1][header_index["external_flash_bytes"]]),
+                metrics["external_flash_bytes"],
+            )
+            self.assertEqual(
+                rows[1][header_index["weight_storage_mode"]],
+                metrics["weight_storage_mode"],
+            )
+            self.assertEqual(
                 float(rows[1][header_index["latency_ms"]]), metrics["latency_ms"]
             )
             self.assertAlmostEqual(
@@ -1192,6 +1208,14 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(rows[1][header_index["prune_reason"]], "")
 
             self.assertEqual(fake_trial.attrs["ram_bytes"], metrics["ram_bytes"])
+            self.assertEqual(
+                fake_trial.attrs["external_flash_bytes"],
+                metrics["external_flash_bytes"],
+            )
+            self.assertEqual(
+                fake_trial.attrs["weight_storage_mode"],
+                metrics["weight_storage_mode"],
+            )
             self.assertEqual(fake_trial.attrs["rmse_vel_x"], 0.1)
             self.assertEqual(fake_trial.attrs["rmse_vel_y"], 0.2)
             self.assertEqual(fake_trial.attrs["latency_budget_ms"], metrics["latency_budget_ms"])

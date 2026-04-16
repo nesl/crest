@@ -40,6 +40,10 @@ class DeviceSpec:
         Maximum usable RAM on the device in bytes.
     max_flash_bytes : int
         Maximum usable flash on the device in bytes.
+    max_external_flash_bytes : int | None, optional
+        Maximum usable external flash on the device in bytes, when the backend
+        supports separate weight storage outside the primary program image.
+        Not used by all boards.
     fqbn : str | None, optional
         Fully qualified board name (Arduino CLI only).
     toolchain : str | None, optional
@@ -50,6 +54,7 @@ class DeviceSpec:
     arena_sizes_kb: Sequence[int]
     max_ram_bytes: int
     max_flash_bytes: int
+    max_external_flash_bytes: Optional[int] = None
     fqbn: Optional[str] = None
     toolchain: Optional[str] = None
 
@@ -72,6 +77,9 @@ class DeviceMetrics:
         Error code emitted by the device evaluation.
     power_metrics : dict[str, Any] | None, optional
         Optional raw power metrics parsed from the serial log.
+    external_flash_bytes : int | None, optional
+        External flash bytes consumed by staged weight blobs when the backend
+        uses separate weight storage. Not used by Arduino boards.
     retry_hint_bytes : int | None, optional
         Suggested arena size in bytes for the next attempt, when available.
     """
@@ -82,6 +90,7 @@ class DeviceMetrics:
     arena_bytes: int
     error_code: int
     power_metrics: Optional[Dict[str, Any]] = None
+    external_flash_bytes: Optional[int] = None
     retry_hint_bytes: Optional[int] = None
 
 
@@ -109,6 +118,10 @@ class CompileResult:
         Linker-reserved heap bytes, if available.
     stack_bytes : int | None
         Linker-reserved stack bytes, if available.
+    external_flash_bytes : int | None, optional
+        External flash bytes consumed by staged weight blobs when the backend
+        uses separate weight storage.
+        Not used by all boards.
     """
 
     success: bool
@@ -120,6 +133,7 @@ class CompileResult:
     arena_bytes: Optional[int] = None
     heap_bytes: Optional[int] = None
     stack_bytes: Optional[int] = None
+    external_flash_bytes: Optional[int] = None
 
 
 @dataclass(frozen=True)
