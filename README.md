@@ -102,6 +102,11 @@ The STM32 example uses a split setup:
 - the STM32 N6 firmware package is cloned into `tools/stm32/STM32CubeN6`
 - the supported firmware baseline is pinned to `v1.3.0`
 
+Important host split:
+
+- Run the STM32 bootstrap only on the machine that is physically connected to the STM32 board and will run `python src/hil_server.py`
+- The GPU server does not need `make stm32-setup`, `STM32CubeCLT`, `STM32CubeN6`, or other STM32-only tooling when it is only running `python3 src/nas_model_client.py`
+
 First-time STM32 setup:
 
 1. Install `STM32CubeCLT` manually from ST:
@@ -124,12 +129,12 @@ After that, the STM32 wrapper uses those same CLT tools from `PATH`.
 - [ ] `make install`
 - [ ] (GPU) `pip install tensorflow[and-cuda]==2.20.0`
 - [ ] Download OxIOD and run `make prepare-dataset` (or `make prepare-dataset OXIOD_ZIP=/path/to/OxIOD.zip`)
-- [ ] (Alt) `make arduino-setup` then `conda deactivate && conda activate tinyodomex`
-- [ ] (STM32) install STM32CubeCLT, ensure its tools are on `PATH`, then run `make stm32-setup`
+- [ ] (Arduino devices only) `make arduino-setup` then `conda deactivate && conda activate tinyodomex`
+- [ ] (STM32 device host only) install STM32CubeCLT, ensure its tools are on `PATH`, then run `make stm32-setup`
 - [ ] `arduino-cli --config-file tools/arduino-cli.yaml version`
 - [ ] Start HIL server on the device host: `python src/hil_server.py`
 - [ ] SSH to the GPU box with reverse tunnel: `ssh -R "6001:127.0.0.1:6001" <gpu_server>`
-- [ ] On the GPU box, run NAS: `python3 src/nas_model_client.py --study-name <name>`
+- [ ] On the GPU box, run NAS: `python3 src/nas_model_client.py --study-name <name>` (no STM32 bootstrap required there)
 
 ## NAS configuration (`src/nas_config.yaml`)
 
@@ -170,6 +175,9 @@ On the machine physically connected to the board:
 ```bash
 cd /path/to/TinyODOM-EX
 conda activate tinyodomex
+# STM32 board host only:
+# install STM32CubeCLT separately, ensure its tools are on PATH, then run:
+# make stm32-setup
 python src/hil_server.py
 ```
 
@@ -192,6 +200,9 @@ On the GPU box (inside the repo, with the environment created/activated):
 ```bash
 cd /path/to/TinyODOM-EX
 conda activate tinyodomex  # or an equivalent env with the same deps
+
+# No STM32 bootstrap is needed here unless this same machine is also the
+# board-connected HIL host.
 
 # Quick smoke test (few trials, good for sanity checks)
 python3 src/nas_model_client.py --smoke-test 3 --study-name smoke_nano33

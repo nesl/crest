@@ -1,24 +1,22 @@
 # Hardware / device configuration
 device:
-  name: PORTENTA_H7
+  name: STM32_NUCLEO_N657X0_Q
   hil: true
   serial_port: "/dev/ttyACM0"
-  portenta:
-    target_core: "cm7"      # Required for PORTENTA_H7. Choose: cm7 or cm4.
-    split: "75_25"          # Optional. Defaults: cm7->75_25, cm4->50_50.
-    security: "none"        # Optional. Default is none.
-  dut_ready_timeout_s: 14.5                    # Time to wait for DUT READY before sending START.
-  harness_serial_port: "/dev/ttyACM1"          # Serial port for the harness board (INA228 reader).
-  harness_fqbn: "arduino:mbed_nano:nano33ble"  # Arduino FQBN used to compile/upload the harness sketch.
-  harness_auto_flash: "once"                   # Harness flash policy: once, always, or never.
-  harness_arm_pin: 3                           # Active-low arm GPIO shared between DUT and harness.
-  harness_trigger_pin: 2                       # Trigger GPIO toggled HIGH/LOW around inference.
-  dut_arm_hold_ms: 600                         # DUT hold time after arm LOW before trigger HIGH.
-  harness_stable_low_ms: 500                   # Required D3 LOW + D2 LOW stability before harness arms.
-  harness_ready_timeout_s: 3.6                 # Time to wait for HARNESS READY after PING.
-  harness_arm_timeout_s: 0.0                   # Harness arm timeout in seconds (compiled into harness firmware; 0 disables).
-  harness_active_timeout_s: 12.0               # Max duration of the measurement window.
-  harness_done_timeout_s: 3.6                  # Time to wait for DONE after the window completes.
+  dut_ready_timeout_s: 5.0                     # Time to wait for STM32_AI_INIT / DUT READY before sending START.
+  serial_timeout_s: 12.0                       # Time to wait for the measured runtime pass after START.
+  harness_serial_port: "/dev/ttyACM1"
+  harness_fqbn: "arduino:mbed_nano:nano33ble"
+  harness_auto_flash: "once"
+  harness_ready_timeout_s: 5.0
+  harness_arm_timeout_s: 5.0
+  harness_active_timeout_s: 30.0
+  harness_done_timeout_s: 5.0
+  stm32:
+    project_root: "sketches/stm32/tinyodom_tcn_stm32/FSBL"
+    cpu_clock_mhz: 600 # options 200 300 400 600 or 800 MHz; note: 800 MHz is overclocked and may cause instability, but can be attempted for max performance
+    weight_storage_mode: "external_flash"          # Set to external_flash to stage weights into NOR flash.
+    weights_memory_pool: "analysis_scripts/stm32_example_project/nucleo_mypool.json"
 
 # Dataset sampling and preprocessing parameters
 data:
@@ -39,7 +37,6 @@ training:
   quantization: true
   latency_proxy_max_flops: 30000000.0
   train: true
-  # Enable energy-aware scoring during NAS
   energy_aware: true
   # Input mode for HIL sketches: uniform, representative, or real
   input_mode: "uniform"
@@ -48,9 +45,9 @@ training:
 outputs:
   models_dir: "models"
   tcn_dir: "tinyodom_tcn"
-  model_name: "TinyOdomEx_OxIOD_PORTENTA_H7_MO.tflite"
-  checkpoint_name: "TinyOdomEx_OxIOD_PORTENTA_H7_MO.keras"
-  log_file_name: "log_NAS_Oxiod_PORTENTA_H7_MO.csv"
+  model_name: "TinyOdomEx_OxIOD_STM32_NUCLEO_N657X0_Q_MO.tflite"
+  checkpoint_name: "TinyOdomEx_OxIOD_STM32_NUCLEO_N657X0_Q_MO.keras"
+  log_file_name: "log_NAS_Oxiod_STM32_NUCLEO_N657X0_Q_MO.csv"
 
 network:
   host: "127.0.0.1"

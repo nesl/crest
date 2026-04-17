@@ -8,6 +8,7 @@ from typing import Any, Dict, Literal, Mapping, Optional, Sequence
 import numpy as np
 import logging
 import serial
+import shutil
 
 from .errors import (
     HIL_ERROR_OK,
@@ -39,6 +40,10 @@ class DeviceSpec:
         Maximum usable RAM on the device in bytes.
     max_flash_bytes : int
         Maximum usable flash on the device in bytes.
+    max_external_flash_bytes : int | None, optional
+        Maximum usable external flash on the device in bytes, when the backend
+        supports separate weight storage outside the primary program image.
+        Not used by all boards.
     fqbn : str | None, optional
         Fully qualified board name (Arduino CLI only).
     toolchain : str | None, optional
@@ -49,6 +54,7 @@ class DeviceSpec:
     arena_sizes_kb: Sequence[int]
     max_ram_bytes: int
     max_flash_bytes: int
+    max_external_flash_bytes: Optional[int] = None
     fqbn: Optional[str] = None
     toolchain: Optional[str] = None
 
@@ -71,6 +77,9 @@ class DeviceMetrics:
         Error code emitted by the device evaluation.
     power_metrics : dict[str, Any] | None, optional
         Optional raw power metrics parsed from the serial log.
+    external_flash_bytes : int | None, optional
+        External flash bytes consumed by staged weight blobs when the backend
+        uses separate weight storage. Not used by Arduino boards.
     retry_hint_bytes : int | None, optional
         Suggested arena size in bytes for the next attempt, when available.
     """
@@ -81,6 +90,7 @@ class DeviceMetrics:
     arena_bytes: int
     error_code: int
     power_metrics: Optional[Dict[str, Any]] = None
+    external_flash_bytes: Optional[int] = None
     retry_hint_bytes: Optional[int] = None
 
 
@@ -102,6 +112,16 @@ class CompileResult:
         "flash" or "ram" when an overflow is detected.
     build_dir : pathlib.Path | None
         Build cache directory if applicable.
+    arena_bytes : int | None
+        Parsed activation arena size in bytes, if available.
+    heap_bytes : int | None
+        Linker-reserved heap bytes, if available.
+    stack_bytes : int | None
+        Linker-reserved stack bytes, if available.
+    external_flash_bytes : int | None, optional
+        External flash bytes consumed by staged weight blobs when the backend
+        uses separate weight storage.
+        Not used by all boards.
     """
 
     success: bool
@@ -110,6 +130,10 @@ class CompileResult:
     ram_bytes: Optional[int]
     overflow_kind: Optional[str]
     build_dir: Optional[Path] = None
+    arena_bytes: Optional[int] = None
+    heap_bytes: Optional[int] = None
+    stack_bytes: Optional[int] = None
+    external_flash_bytes: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +177,26 @@ class MeasureResult:
 class DeviceInterface(ABC):
     """Contract for device-specific compile/upload/measure workflows."""
 
+    def requires_candidate_model(self) -> bool:
+        """Return whether this backend consumes generated model artifacts."""
+        return True
+
+    def requires_training_data(self) -> bool:
+        """Return whether candidate preparation needs calibration/training data."""
+        return True
+
+    def requires_arena_validation(self) -> bool:
+        """Return whether ``arena_bytes`` should be treated as a required metric."""
+        return True
+
+    def supports_energy_measurement(self) -> bool:
+        """Return whether this backend can produce real energy metrics."""
+        return True
+
+    def supports_runtime_measurement(self) -> bool:
+        """Return whether this backend can run upload/measurement passes."""
+        return True
+
     def runtime_measure_mode(self) -> RuntimeMeasureMode:
         """Return runtime measurement mode for this device profile."""
         return "direct_serial"
@@ -164,6 +208,53 @@ class DeviceInterface(ABC):
     def prepare_for_runtime(self, *, runtime_mode: RuntimeMeasureMode, serial_port: str) -> None:
         """Run optional board-specific setup before upload/measurement."""
         del runtime_mode, serial_port
+
+    def prepare_candidate(
+        self,
+        *,
+        config: Any,
+        hyperparams: Any,
+        model: Any,
+        outputs_dir: Path,
+        tflite_model_path: Path,
+        training_data: Any,
+        model_variant: str,
+        checkpoint_path: Path | str | None,
+    ) -> Path:
+        """Prepare backend-owned build inputs and return the compile directory."""
+        del (
+            config,
+            hyperparams,
+            model,
+            outputs_dir,
+            tflite_model_path,
+            training_data,
+            model_variant,
+            checkpoint_path,
+        )
+        raise NotImplementedError("prepare_candidate() must be implemented by backend classes.")
+
+    def cleanup_prepared_candidate(self, prepared_dir: Path | None) -> None:
+        """Release backend-owned candidate artifacts after one evaluation.
+
+        Parameters
+        ----------
+        prepared_dir : Path | None
+            Path previously returned by ``prepare_candidate()``.
+        """
+        del prepared_dir
+
+    def set_input_mode(
+        self,
+        input_mode: str,
+        *,
+        outputs_dir: Path,
+        config: Any,
+        sketches_dir: Path | None = None,
+    ) -> Path | None:
+        """Apply an input-mode change when the backend uses that concept."""
+        del input_mode, outputs_dir, config, sketches_dir
+        return None
 
     @property
     @abstractmethod
@@ -389,7 +480,10 @@ def _registry_device_specs() -> Dict[str, Dict[str, Any]]:
     except Exception:
         return {}
 
-    loaded_specs = list_device_specs()
+    try:
+        loaded_specs = list_device_specs()
+    except Exception:
+        return {}
     normalized: Dict[str, Dict[str, Any]] = {}
     for device_name, spec in loaded_specs.items():
         normalized[device_name] = {
@@ -467,6 +561,96 @@ def get_device_spec(name: str) -> DeviceSpec:
     )
 
 
+def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
+    """Read a value from a dict-like or namespace-like object."""
+    getter = getattr(container, "get", None)
+    if callable(getter):
+        return getter(key, default)
+    return getattr(container, key, default)
+
+
+def _normalize_portenta_target_core(raw_value: object) -> str:
+    """Normalize and validate a Portenta target-core token."""
+    normalized = str(raw_value).strip().lower() if raw_value is not None else ""
+    if normalized not in {"cm7", "cm4"}:
+        raise ValueError(
+            "Set device.portenta.target_core to 'cm7' or 'cm4' when device.name is PORTENTA_H7."
+        )
+    return normalized
+
+
+def _sync_arduino_sketch_variant_for_config(
+    config: Any,
+    outputs_dir: Path,
+    *,
+    sketches_dir: Path | None = None,
+) -> Path:
+    """Copy the Arduino sketch variant selected by config into ``outputs_dir``."""
+    repo_root = Path(__file__).resolve().parents[2]
+    sketch_variants_dir = (repo_root / "sketches") if sketches_dir is None else Path(sketches_dir)
+    normalized_device_name = str(_cfg_get(_cfg_get(config, "device", None), "name", "")).strip().upper()
+
+    def _resolve_uniform_variant_dir() -> Path:
+        if normalized_device_name == "PORTENTA_H7":
+            portenta_cfg = _cfg_get(_cfg_get(config, "device", None), "portenta", None)
+            _normalize_portenta_target_core(
+                _cfg_get(portenta_cfg, "target_core", None) if portenta_cfg is not None else None
+            )
+        return sketch_variants_dir
+
+    training_cfg = _cfg_get(config, "training", None)
+    energy_aware = bool(_cfg_get(training_cfg, "energy_aware", False))
+    if not energy_aware:
+        variant_dir = _resolve_uniform_variant_dir()
+        variant_name = "tinyodom_tcn_no_energy.ino"
+    else:
+        input_mode = str(_cfg_get(training_cfg, "input_mode", "uniform")).lower()
+        variants = {
+            "uniform": ("tinyodom_tcn_energy.ino", _resolve_uniform_variant_dir()),
+            "representative": (
+                "tinyodom_tcn_energy_representative.ino",
+                sketch_variants_dir / "analysis_sketches",
+            ),
+            "real": (
+                "tinyodom_tcn_energy_real_data.ino",
+                sketch_variants_dir / "analysis_sketches",
+            ),
+        }
+        if input_mode not in variants:
+            allowed = ", ".join(sorted(variants))
+            raise ValueError(
+                f"Unsupported input_mode '{input_mode}'. Expected one of: {allowed}."
+            )
+        variant_name, variant_dir = variants[input_mode]
+
+    variant_source = variant_dir / variant_name
+    if not variant_source.exists():
+        raise FileNotFoundError(f"Sketch variant not found: {variant_source}")
+
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    sketch_target = outputs_dir / "tinyodom_tcn.ino"
+    shutil.copyfile(variant_source, sketch_target)
+
+    common_source = sketch_variants_dir / "common"
+    if common_source.exists():
+        shutil.copytree(common_source, outputs_dir / "common", dirs_exist_ok=True)
+
+    variant_common_source = variant_dir / "common"
+    if variant_common_source.exists() and variant_common_source != common_source:
+        shutil.copytree(variant_common_source, outputs_dir / "common", dirs_exist_ok=True)
+
+    needs_header = variant_name in {
+        "tinyodom_tcn_energy_representative.ino",
+        "tinyodom_tcn_energy_real_data.ino",
+    }
+    header_source = sketch_variants_dir / "analysis_sketches" / "tinyodom_tcn_input_data.h"
+    if needs_header:
+        if not header_source.exists():
+            raise FileNotFoundError(f"Input header not found: {header_source}")
+        shutil.copyfile(header_source, outputs_dir / header_source.name)
+    return sketch_target
+
+
 class ArduinoDevice(DeviceInterface):
     """Temporary bridge that uses the Arduino CLI helpers.
 
@@ -515,6 +699,22 @@ class ArduinoDevice(DeviceInterface):
         """Return runtime measurement mode for this board wrapper."""
         return "direct_serial"
 
+    def requires_candidate_model(self) -> bool:
+        """Return whether Arduino backends consume generated model artifacts."""
+        return True
+
+    def requires_training_data(self) -> bool:
+        """Return whether Arduino candidate preparation needs calibration data."""
+        return True
+
+    def requires_arena_validation(self) -> bool:
+        """Return whether Arduino backends require arena validation."""
+        return True
+
+    def supports_energy_measurement(self) -> bool:
+        """Return whether Arduino backends support real energy measurement."""
+        return True
+
     def runtime_mode_build_defines(self) -> Dict[str, int]:
         """Return additional compile-time defines for runtime behavior."""
         return {}
@@ -522,6 +722,56 @@ class ArduinoDevice(DeviceInterface):
     def prepare_for_runtime(self, *, runtime_mode: RuntimeMeasureMode, serial_port: str) -> None:
         """Run optional board-specific setup before upload/measurement."""
         del runtime_mode, serial_port
+
+    def prepare_candidate(
+        self,
+        *,
+        config: Any,
+        hyperparams: Any,
+        model: Any,
+        outputs_dir: Path,
+        tflite_model_path: Path,
+        training_data: Any,
+        model_variant: str,
+        checkpoint_path: Path | str | None,
+    ) -> Path:
+        """Prepare Arduino build artifacts and return the active sketch directory."""
+        del hyperparams, model_variant, checkpoint_path
+        if model is None:
+            raise ValueError("Arduino candidate preparation requires a built Keras model.")
+        if training_data is None or not hasattr(training_data, "inputs"):
+            raise ValueError("Arduino candidate preparation requires calibration/training data.")
+
+        from .hardware import convert_to_cpp_model, convert_to_tflite_model
+
+        convert_to_tflite_model(
+            model=model,
+            training_data=training_data.inputs,
+            quantization=config.training.quantization,
+            output_name=str(tflite_model_path),
+        )
+        convert_to_cpp_model(
+            tflite_path=tflite_model_path,
+            output_dir=outputs_dir,
+        )
+        _sync_arduino_sketch_variant_for_config(config, outputs_dir)
+        return outputs_dir
+
+    def set_input_mode(
+        self,
+        input_mode: str,
+        *,
+        outputs_dir: Path,
+        config: Any,
+        sketches_dir: Path | None = None,
+    ) -> Path | None:
+        """Update Arduino input mode and resynchronize the active sketch."""
+        config.training.input_mode = str(input_mode).lower()
+        return _sync_arduino_sketch_variant_for_config(
+            config,
+            outputs_dir,
+            sketches_dir=sketches_dir,
+        )
 
     def _resolve_board_options(
         self, device_options: Optional[Mapping[str, object]]

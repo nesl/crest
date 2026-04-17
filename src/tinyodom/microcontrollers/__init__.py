@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any, Optional
 
 
@@ -20,6 +21,11 @@ def _registry_entries() -> dict[str, tuple[str, str, str]]:
         "PORTENTA_H7": (
             "tinyodom.microcontrollers.arduino_portenta_h7",
             "ArduinoPortentaH7Device",
+            "BOARD_DEFAULT_SPEC",
+        ),
+        "STM32_NUCLEO_N657X0_Q": (
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0",
+            "STM32NucleoN657X0QDevice",
             "BOARD_DEFAULT_SPEC",
         ),
     }
@@ -61,6 +67,11 @@ def list_device_specs() -> dict[str, dict[str, Any]]:
             "arena_sizes": list(spec.arena_sizes_kb),
             "max_ram": int(spec.max_ram_bytes),
             "max_flash": int(spec.max_flash_bytes),
+            "max_external_flash": (
+                int(spec.max_external_flash_bytes)
+                if spec.max_external_flash_bytes is not None
+                else None
+            ),
             "fqbn": spec.fqbn,
         }
     return specs
@@ -119,6 +130,90 @@ def get_device(
         raise
 
 
+def resolve_device_options(
+    device_name: str,
+    device_config: Any,
+) -> dict[str, Any] | None:
+    """Resolve backend-owned device options from a config subtree.
+
+    Parameters
+    ----------
+    device_name : str
+        Target device identifier.
+    device_config : Any
+        Device config subtree or namespace-like object.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        Normalized backend options, or ``None`` when the backend does not use
+        explicit option fields.
+    """
+
+    def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
+        getter = getattr(container, "get", None)
+        if callable(getter):
+            return getter(key, default)
+        return getattr(container, key, default)
+
+    normalized_name = device_name.strip().upper()
+    if normalized_name == "PORTENTA_H7":
+        from .arduino_portenta_h7 import resolve_portenta_h7_options
+
+        portenta_cfg = _cfg_get(device_config, "portenta", None)
+        resolved = resolve_portenta_h7_options(
+            {
+                "target_core": _cfg_get(portenta_cfg, "target_core", None) if portenta_cfg is not None else None,
+                "split": _cfg_get(portenta_cfg, "split", None) if portenta_cfg is not None else None,
+                "security": _cfg_get(portenta_cfg, "security", None) if portenta_cfg is not None else None,
+            }
+        )
+        return resolved.to_board_options()
+
+    if normalized_name == "STM32_NUCLEO_N657X0_Q":
+        from .stm32_nucleo_n657x0 import resolve_stm32_nucleo_n657x0_q_options
+
+        stm32_cfg = _cfg_get(device_config, "stm32", None)
+        raw_options = {
+            "template_root": _cfg_get(stm32_cfg, "template_root", None) if stm32_cfg is not None else None,
+            "project_root": _cfg_get(stm32_cfg, "project_root", None) if stm32_cfg is not None else None,
+            "gdbserver": _cfg_get(stm32_cfg, "gdbserver", None) if stm32_cfg is not None else None,
+            "gdb": _cfg_get(stm32_cfg, "gdb", None) if stm32_cfg is not None else None,
+            "cubeprog_bin": _cfg_get(stm32_cfg, "cubeprog_bin", None) if stm32_cfg is not None else None,
+            "gdb_port": _cfg_get(stm32_cfg, "gdb_port", None) if stm32_cfg is not None else None,
+            "apid": _cfg_get(stm32_cfg, "apid", None) if stm32_cfg is not None else None,
+            "server_ready_timeout_s": _cfg_get(stm32_cfg, "server_ready_timeout_s", None)
+            if stm32_cfg is not None
+            else None,
+            "cpu_clock_mhz": _cfg_get(stm32_cfg, "cpu_clock_mhz", None) if stm32_cfg is not None else None,
+            "weight_storage_mode": _cfg_get(stm32_cfg, "weight_storage_mode", None)
+            if stm32_cfg is not None
+            else None,
+            "weights_flash_address": _cfg_get(stm32_cfg, "weights_flash_address", None)
+            if stm32_cfg is not None
+            else None,
+            "weights_memory_pool": _cfg_get(stm32_cfg, "weights_memory_pool", None)
+            if stm32_cfg is not None
+            else None,
+            "weights_external_loader": _cfg_get(stm32_cfg, "weights_external_loader", None)
+            if stm32_cfg is not None
+            else None,
+            "max_external_flash_bytes": _cfg_get(stm32_cfg, "max_external_flash_bytes", None)
+            if stm32_cfg is not None
+            else None,
+        }
+        resolved = resolve_stm32_nucleo_n657x0_q_options(
+            {
+                key: value
+                for key, value in raw_options.items()
+                if value not in (None, "")
+            }
+        )
+        return asdict(resolved)
+
+    return None
+
+
 def __getattr__(name: str) -> Any:
     """Lazily expose board classes to avoid import cycles.
 
@@ -147,12 +242,19 @@ def __getattr__(name: str) -> Any:
             "tinyodom.microcontrollers.arduino_portenta_h7",
             "ArduinoPortentaH7Device",
         )
+    if name == "STM32NucleoN657X0QDevice":
+        return _load_symbol(
+            "tinyodom.microcontrollers.stm32_nucleo_n657x0",
+            "STM32NucleoN657X0QDevice",
+        )
     raise AttributeError(name)
 
 
 __all__ = [
     "ArduinoBLE33Device",
     "ArduinoPortentaH7Device",
+    "STM32NucleoN657X0QDevice",
     "get_device",
     "list_device_specs",
+    "resolve_device_options",
 ]

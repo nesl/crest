@@ -61,10 +61,18 @@ C_DEPS += \
 ./Src/sysmem.d \
 ./Src/system_stm32n6xx_fsbl.d 
 
+LOCAL_C_INCLUDES := \
+-I../Inc \
+-I../Drivers/BSP/Components/mx25um51245g \
+-I../Drivers/BSP/STM32N6xx_Nucleo \
+-I../Drivers/STM32N6xx_HAL_Driver/Inc \
+-I../Drivers/CMSIS/Device/ST/STM32N6xx/Include \
+-I../Drivers/STM32N6xx_HAL_Driver/Inc/Legacy \
+-I../Drivers/CMSIS/Include
 
 # Each subdirectory must supply rules for building sources it contributes
 Src/%.o Src/%.su Src/%.cyclo: ../Src/%.c Src/subdir.mk
-	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c -I../Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/BSP/STM32N6xx_Nucleo -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Device/ST/STM32N6xx/Include -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc/Legacy -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c $(LOCAL_C_INCLUDES) -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
 
 clean: clean-Src
 

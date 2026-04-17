@@ -4,7 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import tensorflow as tf
@@ -32,9 +32,11 @@ from tinyodom.model import (
     iter_layers,
     load_config,
     log_trial,
+    train_and_score,
     validate_loaded_model_input_shape,
 )  # noqa: E402
 from tinyodom.hardware import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
+from tinyodom.microcontrollers import resolve_device_options  # noqa: E402
 
 try:  # Support both `python -m unittest test.test_*` and direct execution.
     from test.test_hardware import _cli_exists  # type: ignore  # noqa: E402
@@ -270,6 +272,72 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["latency_budget_ms"], 50000.0)
         self.assertEqual(metrics["error_label"], "HIL_MASTER_PENDING")
 
+    def test_hil_metrics_forward_serial_timeout_to_controller(self) -> None:
+        """Direct-serial requests should forward ``serial_timeout_s``."""
+
+        def fake_controller(run_hil: bool, **kwargs):
+            self.assertTrue(run_hil)
+            self.assertEqual(kwargs["serial_timeout_s"], 9.5)
+            return (1024, 8192, 0.025, 4096, 0, None)
+
+        with patch("tinyodom.model.HIL_controller", fake_controller):
+            request = CollectMetricsRequest(
+                hil_enabled=True,
+                energy_aware=False,
+                flops=5_000_000,
+                device_name="STM32_NUCLEO_N657X0_Q",
+                window_size=128,
+                input_dim=6,
+                dirpath=Path("tinyodom_tcn"),
+                latency_proxy_max_flops=20_000_000,
+                serial_port="ttyACM0",
+                latency_budget_ms=200.0,
+                serial_timeout_s=9.5,
+            )
+            metrics = collect_metrics(request)
+
+        self.assertEqual(metrics["error_code"], 0)
+
+    def test_collect_metrics_preserves_backend_error_fields(self) -> None:
+        """STM backend detail fields should survive normalization into final metrics."""
+
+        def fake_controller(run_hil: bool, **kwargs):
+            del kwargs
+            self.assertTrue(run_hil)
+            return (
+                1024,
+                8192,
+                None,
+                4096,
+                3,
+                {
+                    "backend_error_kind": "runtime_timeout",
+                    "backend_error_detail": "Timed out waiting for DUT READY.",
+                    "external_flash_bytes": 2048,
+                    "weight_storage_mode": "external_flash",
+                },
+            )
+
+        with patch("tinyodom.model.HIL_controller", fake_controller):
+            request = CollectMetricsRequest(
+                hil_enabled=True,
+                energy_aware=False,
+                flops=5_000_000,
+                device_name="STM32_NUCLEO_N657X0_Q",
+                window_size=128,
+                input_dim=6,
+                dirpath=Path("tinyodom_tcn"),
+                latency_proxy_max_flops=20_000_000,
+                serial_port="ttyACM0",
+                latency_budget_ms=200.0,
+            )
+            metrics = collect_metrics(request)
+
+        self.assertEqual(metrics["backend_error_kind"], "runtime_timeout")
+        self.assertEqual(metrics["backend_error_detail"], "Timed out waiting for DUT READY.")
+        self.assertEqual(metrics["external_flash_bytes"], 2048)
+        self.assertEqual(metrics["weight_storage_mode"], "external_flash")
+
     def test_energy_aware_harness_fields_forwarded_to_controller(self) -> None:
         """Energy-aware requests should forward harness settings to HIL_controller."""
 
@@ -431,6 +499,34 @@ class CollectMetricsTests(unittest.TestCase):
 class BuildCollectMetricsRequestTests(unittest.TestCase):
     """Validate config/hyperparameter mapping into CollectMetricsRequest."""
 
+    _DEFAULT_DIRPATH = Path("tinyodom_tcn")
+
+    def _build_request(
+        self,
+        config: Dict,
+        hyperparams: Dict,
+        *,
+        dirpath: Path | None = None,
+        device_options: dict | None | object = ...,
+        hil_enabled: bool | None = None,
+        energy_aware: bool | None = None,
+    ) -> CollectMetricsRequest:
+        """Build a request with resolved backend options for test readability."""
+        resolved_options = (
+            resolve_device_options(str(config.device.name), config.device)
+            if device_options is ...
+            else device_options
+        )
+        return build_collect_metrics_request(
+            config,
+            hyperparams,
+            latency_budget_ms=200.0,
+            dirpath=self._DEFAULT_DIRPATH if dirpath is None else dirpath,
+            device_options=resolved_options,
+            hil_enabled=hil_enabled,
+            energy_aware=energy_aware,
+        )
+
     def test_non_energy_aware_sets_harness_none(self) -> None:
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
@@ -440,12 +536,34 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
-        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+        request = self._build_request(config, hyperparams)
 
         self.assertIsNone(request.harness)
         self.assertFalse(request.energy_aware)
         self.assertEqual(request.flops, 123)
         self.assertEqual(request.input_dim, 6)
+
+    def test_build_request_defaults_stm_serial_timeout(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=True,
+                name="STM32_NUCLEO_N657X0_Q",
+                serial_port="ttyACM0",
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL")),
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = self._build_request(
+            config,
+            hyperparams,
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"},
+        )
+
+        self.assertEqual(request.serial_timeout_s, 12.0)
 
     def test_energy_aware_populates_harness(self) -> None:
         config = Dict(
@@ -471,7 +589,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
-        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+        request = self._build_request(config, hyperparams)
 
         self.assertTrue(request.energy_aware)
         self.assertIsInstance(request.harness, HarnessConfig)
@@ -487,7 +605,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
-        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+        request = self._build_request(config, hyperparams)
 
         self.assertEqual(request.dut_ready_timeout_s, 5.0)
 
@@ -501,7 +619,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         hyperparams = Dict(flops=123, input_dim=6)
 
         with self.assertRaises(RuntimeError):
-            build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+            self._build_request(config, hyperparams)
 
     def test_portenta_cm4_runtime_missing_harness_serial_port_raises(self) -> None:
         config = Dict(
@@ -518,19 +636,21 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         hyperparams = Dict(flops=123, input_dim=6)
 
         with self.assertRaises(RuntimeError):
-            build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+            self._build_request(
+                config,
+                hyperparams,
+                device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+            )
 
-    def test_portenta_requires_target_core(self) -> None:
+    def test_resolve_device_options_validates_portenta_target_core(self) -> None:
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="PORTENTA_H7", serial_port="ttyACM0", portenta=Dict()),
             data=Dict(window_size=128),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
-        hyperparams = Dict(flops=123, input_dim=6)
-
-        with self.assertRaises(RuntimeError):
-            build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+        with self.assertRaises(ValueError):
+            resolve_device_options(str(config.device.name), config.device)
 
     def test_portenta_options_are_forwarded(self) -> None:
         config = Dict(
@@ -546,7 +666,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
-        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+        request = self._build_request(config, hyperparams)
 
         self.assertEqual(request.device_options["target_core"], "cm4")
         self.assertEqual(request.device_options["split"], "50_50")
@@ -577,7 +697,11 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
-        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+        request = self._build_request(
+            config,
+            hyperparams,
+            device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+        )
 
         self.assertIsNotNone(request.harness)
         self.assertEqual(request.harness.harness_serial_port, "ttyACM1")
@@ -595,7 +719,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
-        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+        request = self._build_request(config, hyperparams)
 
         self.assertEqual(request.device_name, "PORTENTA_H7")
         self.assertEqual(request.device_options["target_core"], "cm7")
@@ -609,9 +733,164 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
-        request = build_collect_metrics_request(config, hyperparams, latency_budget_ms=200.0)
+        request = self._build_request(config, hyperparams)
 
         self.assertIsNone(request.serial_port)
+
+    def test_stm_request_uses_caller_supplied_dirpath_and_options(self) -> None:
+        """Ensure generic request building uses caller-supplied STM fields.
+
+        Returns
+        -------
+        None
+        """
+        config = Dict(
+            training=Dict(energy_aware=True, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=True,
+                name="STM32_NUCLEO_N657X0_Q",
+                serial_port="ttyACM0",
+                stm32=Dict(
+                    project_root=Path("/tmp/stm32_fsbl"),
+                    gdb_port=61234,
+                    apid=1,
+                    server_ready_timeout_s=15.0,
+                    cpu_clock_mhz=400,
+                ),
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = self._build_request(
+            config,
+            hyperparams,
+            dirpath=Path("/tmp/stm32_fsbl"),
+            energy_aware=False,
+            hil_enabled=False,
+        )
+
+        self.assertEqual(request.device_name, "STM32_NUCLEO_N657X0_Q")
+        self.assertEqual(request.dirpath, Path("/tmp/stm32_fsbl"))
+        self.assertFalse(request.energy_aware)
+        self.assertIsNone(request.harness)
+        self.assertEqual(request.device_options["cpu_clock_mhz"], 400)
+
+    def test_resolve_device_options_defaults_stm_template_root(self) -> None:
+        """Ensure STM config resolution no longer requires an explicit project root.
+
+        Returns
+        -------
+        None
+        """
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(hil=False, name="STM32_NUCLEO_N657X0_Q"),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+
+        resolved = resolve_device_options(str(config.device.name), config.device)
+
+        self.assertIn("project_root", resolved)
+        self.assertEqual(resolved["cpu_clock_mhz"], 600)
+
+    def test_resolve_device_options_supports_full_canonical_stm_backend_block(self) -> None:
+        """Ensure the full canonical STM config surface resolves predictably.
+
+        Returns
+        -------
+        None
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            template_root = tmp_path / "stm32_project" / "FSBL"
+            (template_root / "Debug").mkdir(parents=True)
+            (template_root / "Debug" / "makefile").write_text("# makefile\n", encoding="utf-8")
+            weights_memory_pool = tmp_path / "nucleo_mypool.json"
+            weights_memory_pool.write_text("{}\n", encoding="utf-8")
+            weights_external_loader = tmp_path / "mx25um51245g.stldr"
+            weights_external_loader.write_text("loader\n", encoding="utf-8")
+
+            config = Dict(
+                training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+                device=Dict(
+                    hil=False,
+                    name="STM32_NUCLEO_N657X0_Q",
+                    stm32=Dict(
+                        template_root=template_root,
+                        gdb_port=61235,
+                        apid=2,
+                        server_ready_timeout_s=20.0,
+                        cpu_clock_mhz=400,
+                        weight_storage_mode="external_flash",
+                        weights_flash_address="0x71000000",
+                        weights_memory_pool=weights_memory_pool,
+                        weights_external_loader=weights_external_loader,
+                        max_external_flash_bytes=123456,
+                    ),
+                ),
+                data=Dict(window_size=128),
+                outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            )
+
+            resolved = resolve_device_options(str(config.device.name), config.device)
+
+        self.assertEqual(resolved["project_root"], template_root.resolve())
+        self.assertEqual(resolved["gdb_port"], 61235)
+        self.assertEqual(resolved["apid"], 2)
+        self.assertEqual(resolved["server_ready_timeout_s"], 20.0)
+        self.assertEqual(resolved["cpu_clock_mhz"], 400)
+        self.assertEqual(resolved["weight_storage_mode"], "external_flash")
+        self.assertEqual(resolved["weights_flash_address"], "0x71000000")
+        self.assertEqual(resolved["weights_memory_pool"], weights_memory_pool.resolve())
+        self.assertEqual(resolved["weights_external_loader"], weights_external_loader.resolve())
+        self.assertEqual(resolved["max_external_flash_bytes"], 123456)
+
+
+class TrainAndScoreTests(unittest.TestCase):
+    """Ensure scoring uses backend-effective energy semantics."""
+
+    def test_train_and_score_uses_effective_energy_flag_from_metrics(self) -> None:
+        """STM Phase 1 should score on latency when energy was disabled upstream.
+
+        Returns
+        -------
+        None
+        """
+        config = Dict(
+            training=Dict(
+                energy_aware=True,
+                train=False,
+                latency_proxy_max_flops=20_000_000,
+            ),
+            outputs=Dict(checkpoint_path=Path("unused.keras")),
+        )
+        metrics = {
+            "energy_aware": False,
+            "energy_mj_per_inference": -1.0,
+            "latency_ms": 12.5,
+            "hil_enabled": False,
+            "error_code": 0,
+            "ram_bytes": 128,
+            "flash_bytes": 256,
+        }
+        hyperparams = Dict(flops=1_000)
+
+        _rmse_x, _rmse_y, _score, latency_or_energy = train_and_score(
+            model=MagicMock(),
+            batch_size=1,
+            hyperparams=hyperparams,
+            metrics=metrics,
+            max_ram=1_024,
+            max_flash=2_048,
+            training_data=MagicMock(),
+            validation_data=MagicMock(),
+            config=config,
+        )
+
+        self.assertEqual(latency_or_energy, 12.5)
 
 
 class LoadSettingsTests(unittest.TestCase):
@@ -735,7 +1014,7 @@ class LoadSettingsTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             load_config(config_path=Path("does_not_exist.yaml"))
 
-    def test_load_settings_energy_aware_requires_harness_serial_port(self) -> None:
+    def test_load_settings_does_not_apply_backend_specific_harness_validation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -754,8 +1033,51 @@ class LoadSettingsTests(unittest.TestCase):
                 )
             )
 
-            with self.assertRaises(RuntimeError):
-                load_config(config_path=cfg)
+            settings = load_config(config_path=cfg)
+            self.assertTrue(settings.training.energy_aware)
+
+    def test_resolve_device_options_normalizes_stm_backend_block(self) -> None:
+        """Ensure STM backend option normalization moved into the resolver.
+
+        Returns
+        -------
+        None
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            project_root = tmp_path / "stm32_project" / "FSBL"
+            (project_root / "Debug").mkdir(parents=True)
+            (project_root / "Debug" / "makefile").write_text("# makefile\n")
+            cfg = tmp_path / "stm32.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: STM32_NUCLEO_N657X0_Q",
+                        "  stm32:",
+                        f"    template_root: \"{project_root}\"",
+                        "    gdb_port: 61235",
+                        "    apid: 2",
+                        "    server_ready_timeout_s: 20.0",
+                        "    cpu_clock_mhz: 400",
+                        "training:",
+                        "  nas_trials: 5",
+                        "  energy_aware: true",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+            resolved = resolve_device_options(str(settings.device.name), settings.device)
+
+            self.assertEqual(resolved["project_root"], project_root.resolve())
+            self.assertEqual(resolved["gdb_port"], 61235)
+            self.assertEqual(resolved["apid"], 2)
+            self.assertEqual(resolved["server_ready_timeout_s"], 20.0)
+            self.assertEqual(resolved["cpu_clock_mhz"], 400)
 
 
 @unittest.skipUnless(_cli_exists(), "Arduino CLI not installed")
@@ -825,6 +1147,8 @@ class LogTrialTests(unittest.TestCase):
         "rmse_vel_y",
         "ram_bytes",
         "flash_bytes",
+        "external_flash_bytes",
+        "weight_storage_mode",
         "flops",
         "latency_ms",
         "energy_mj_per_inference",
@@ -847,6 +1171,8 @@ class LogTrialTests(unittest.TestCase):
         return {
             "ram_bytes": 1000,
             "flash_bytes": 2000,
+            "external_flash_bytes": 3000,
+            "weight_storage_mode": "external_flash",
             "latency_ms": 10,
             "latency_budget_ms": -1,
             "arena_bytes": 4096,
@@ -904,6 +1230,14 @@ class LogTrialTests(unittest.TestCase):
                 int(rows[1][header_index["ram_bytes"]]), metrics["ram_bytes"]
             )
             self.assertEqual(
+                int(rows[1][header_index["external_flash_bytes"]]),
+                metrics["external_flash_bytes"],
+            )
+            self.assertEqual(
+                rows[1][header_index["weight_storage_mode"]],
+                metrics["weight_storage_mode"],
+            )
+            self.assertEqual(
                 float(rows[1][header_index["latency_ms"]]), metrics["latency_ms"]
             )
             self.assertAlmostEqual(
@@ -926,6 +1260,14 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(rows[1][header_index["prune_reason"]], "")
 
             self.assertEqual(fake_trial.attrs["ram_bytes"], metrics["ram_bytes"])
+            self.assertEqual(
+                fake_trial.attrs["external_flash_bytes"],
+                metrics["external_flash_bytes"],
+            )
+            self.assertEqual(
+                fake_trial.attrs["weight_storage_mode"],
+                metrics["weight_storage_mode"],
+            )
             self.assertEqual(fake_trial.attrs["rmse_vel_x"], 0.1)
             self.assertEqual(fake_trial.attrs["rmse_vel_y"], 0.2)
             self.assertEqual(fake_trial.attrs["latency_budget_ms"], metrics["latency_budget_ms"])

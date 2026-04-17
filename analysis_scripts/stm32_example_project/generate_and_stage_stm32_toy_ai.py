@@ -21,29 +21,16 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from addict import Dict
+from stm32_phase2_candidate import export_perturbed_candidate_tflite
 
-DEFAULT_PROJECT_ROOT = (
-    REPO_ROOT
-    / "analysis_scripts"
-    / "stm32_example_project"
-    / "stm32_toy_ai_project"
-    / "FSBL"
-)
+DEFAULT_PROJECT_ROOT = SCRIPT_DIR / "stm32_toy_ai_project" / "FSBL"
 DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "nas_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("/tmp/tinyodom_stm32_toy_generate")
-DEFAULT_TFLITE_NAME = "TinyOdomEx_OxIOD_PORTENTA_H7_approx_trained.tflite"
-PERTURBED_VARIANT_NAME = "approx_trained"
-OXIOD_SUB_FOLDERS = [
-    "handbag/",
-    "handheld/",
-    "pocket/",
-    "running/",
-    "slow_walking/",
-    "trolley/",
-]
 EXPECTED_OUTPUTS = [
     "network.c",
     "network.h",
@@ -124,70 +111,6 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _build_hyperparams(*, window_size: int, input_dim: int) -> Dict:
-    """Build the fixed perturbed-model hyperparameter bundle.
-
-    Parameters
-    ----------
-    window_size : int
-        Input window length compiled into the TinyODOM model.
-    input_dim : int
-        Number of input channels present in the training data.
-
-    Returns
-    -------
-    Dict
-        Hyperparameter mapping matching the perturbed TinyODOM HIL scripts,
-        annotated with a ``flops`` estimate.
-    """
-    from tinyodom.model import build_tinyodom_model, count_flops
-
-    hyperparams = Dict(
-        nb_filters=10,
-        kernel_size=12,
-        dilations=[1, 4, 8, 64],
-        dropout_rate=0.0,
-        use_skip_connections=False,
-        norm_flag=True,
-        batch_size=256,
-        timesteps=window_size,
-        input_dim=input_dim,
-    )
-    model = build_tinyodom_model(hyperparams)
-    hyperparams.flops = count_flops(model, (hyperparams.timesteps, hyperparams.input_dim))
-    return hyperparams
-
-
-def _load_training_data(config: Dict):
-    """Load the calibration/training windows used for TFLite export.
-
-    Parameters
-    ----------
-    config : Dict
-        TinyODOM configuration loaded from YAML.
-
-    Returns
-    -------
-    Any
-        OxIOD training split structure returned by ``import_oxiod_dataset``.
-    """
-    from tinyodom.data import import_oxiod_dataset
-
-    return import_oxiod_dataset(
-        type_flag=2,
-        useMagnetometer=True,
-        useStepCounter=True,
-        AugmentationCopies=0,
-        dataset_folder=config.data.directory,
-        sub_folders=OXIOD_SUB_FOLDERS,
-        sampling_rate=config.data.sampling_rate_hz,
-        window_size=config.data.window_size,
-        stride=config.data.stride,
-        verbose=False,
-        max_windows=config.data.calibration_windows,
-    )
-
-
 def _export_perturbed_tflite(config_path: Path, output_root: Path) -> tuple[Path, Dict]:
     """Rebuild the perturbed TinyODOM TFLite artifact.
 
@@ -204,57 +127,7 @@ def _export_perturbed_tflite(config_path: Path, output_root: Path) -> tuple[Path
         Path to the generated TFLite file and metadata describing the
         perturbed model variant and resolved hyperparameters.
     """
-    from tensorflow.keras import optimizers
-
-    from tinyodom.hardware import convert_to_tflite_model
-    from tinyodom.model import (
-        apply_combined_perturbation,
-        build_tinyodom_model,
-        load_config,
-    )
-
-    config = load_config(config_path)
-    training_data = _load_training_data(config)
-
-    hyperparams = _build_hyperparams(
-        window_size=int(config.data.window_size),
-        input_dim=int(training_data.inputs.shape[2]),
-    )
-    model = build_tinyodom_model(hyperparams)
-    bn_touched, bias_touched = apply_combined_perturbation(model=model, seed=1337)
-    model.compile(loss={"velx": "mse", "vely": "mse"}, optimizer=optimizers.Adam())
-
-    model_dir = output_root / "model"
-    model_dir.mkdir(parents=True, exist_ok=True)
-    tflite_path = model_dir / DEFAULT_TFLITE_NAME
-    convert_to_tflite_model(
-        model=model,
-        training_data=training_data.inputs,
-        quantization=bool(config.training.quantization),
-        output_name=tflite_path,
-    )
-
-    metadata = Dict(
-        model_variant=PERTURBED_VARIANT_NAME,
-        input_mode="uniform",
-        energy_aware=True,
-        quantization=bool(config.training.quantization),
-        bn_layers_touched=int(bn_touched),
-        non_bn_bias_layers_touched=int(bias_touched),
-        hyperparams={
-            "nb_filters": int(hyperparams.nb_filters),
-            "kernel_size": int(hyperparams.kernel_size),
-            "dilations": [int(value) for value in hyperparams.dilations],
-            "dropout_rate": float(hyperparams.dropout_rate),
-            "use_skip_connections": bool(hyperparams.use_skip_connections),
-            "norm_flag": bool(hyperparams.norm_flag),
-            "batch_size": int(hyperparams.batch_size),
-            "timesteps": int(hyperparams.timesteps),
-            "input_dim": int(hyperparams.input_dim),
-            "flops": float(hyperparams.flops),
-        },
-    )
-    return tflite_path, metadata
+    return export_perturbed_candidate_tflite(config_path, output_root)
 
 
 def _run_generate(

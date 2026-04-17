@@ -15,7 +15,9 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+import hil_server as hil_server_module  # noqa: E402
 from hil_server import HILServer  # noqa: E402
+from tinyodom.model import CollectMetricsRequest  # noqa: E402
 
 
 class HILServerTestCase(unittest.TestCase):
@@ -68,48 +70,64 @@ class HILServerTestCase(unittest.TestCase):
         patch.stopall()
 
     def build_server(self) -> HILServer:
-        """Return a configured HILServer using the mocked dependencies."""
-        return HILServer()
+        """Return a configured ``HILServer`` using the mocked dependencies.
+
+        Returns
+        -------
+        HILServer
+            Server instance whose heavy filesystem and dataset dependencies have
+            already been replaced with lightweight doubles.
+        """
+        server = HILServer()
+        server._sync_sketch_variant = MagicMock(return_value=Path("tinyodom_tcn/tinyodom_tcn.ino"))
+        return server
 
 
 class DetermineMetricsTests(HILServerTestCase):
     """Tests for the conversion + metrics pipeline in `determine_metrics`."""
 
     def test_conversion_pipeline_invoked_in_order(self) -> None:
-        """Building and converting the model should feed into collect_metrics."""
+        """Backend preparation should feed the request builder and metric collection."""
         server = self.build_server()
         fake_model = MagicMock()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
         fake_metrics = {"ram_bytes": 1024}
 
-        # Mock the entire pipeline to verify call order and arguments.
-        with patch("hil_server.build_tinyodom_model", return_value=fake_model) as build_mock, patch(
-            "hil_server.convert_to_tflite_model"
-        ) as to_tflite_mock, patch("hil_server.convert_to_cpp_model") as to_cpp_mock, patch(
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.build_tinyodom_model", return_value=fake_model) as build_mock, patch(
             "hil_server.collect_metrics", return_value=fake_metrics
         ) as collect_mock:
             hyperparams = Dict(flops=123, input_dim=6)
             result = server.determine_metrics(hyperparams)
 
-        # Assert each step in the pipeline was called exactly once with correct args.
         build_mock.assert_called_once_with(hyperparams)
-        to_tflite_mock.assert_called_once_with(
-            model=fake_model,
-            training_data=self.dataset.inputs,
-            quantization=self.config.training.quantization,
-            output_name=str(self.config.outputs.tflite_model_path),
-        )
-        to_cpp_mock.assert_called_once_with(
-            tflite_path=self.config.outputs.tflite_model_path, output_dir=self.config.outputs.tcn_dir
-        )
+        fake_device.prepare_candidate.assert_called_once()
+        prepare_kwargs = fake_device.prepare_candidate.call_args.kwargs
+        self.assertIs(prepare_kwargs["model"], fake_model)
+        self.assertIs(prepare_kwargs["training_data"], self.dataset)
         collect_mock.assert_called_once()
         self.assertEqual(result, fake_metrics)
 
     def test_collect_metrics_receives_expected_fields(self) -> None:
         """Key hyperparameters should flow through untouched to the controller."""
         server = self.build_server()
-        with patch("hil_server.build_tinyodom_model"), patch("hil_server.convert_to_tflite_model"), patch(
-            "hil_server.convert_to_cpp_model"
-        ), patch("hil_server.collect_metrics", return_value={"ok": True}) as collect_mock:
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.build_tinyodom_model"), patch(
+            "hil_server.collect_metrics", return_value={"ok": True}
+        ) as collect_mock:
             hyperparams = Dict(flops=999, input_dim=3)
             server.determine_metrics(hyperparams)
 
@@ -118,7 +136,7 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertEqual(request.flops, 999)
         self.assertEqual(request.input_dim, 3)
         self.assertEqual(request.device_name, self.config.device.name)
-        self.assertEqual(request.dirpath, self.config.outputs.tcn_dir)
+        self.assertEqual(request.dirpath, self.config.outputs.tcn_dir.resolve())
         self.assertAlmostEqual(
             request.latency_budget_ms,
             (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000,
@@ -162,13 +180,32 @@ class StartLoopTests(HILServerTestCase):
 
 
 class InitializationTests(HILServerTestCase):
-    """Ensure constructor wiring calls the data loader with correct inputs."""
+    """Ensure constructor wiring defers dataset loading until needed."""
 
-    def test_import_dataset_called_with_expected_args(self) -> None:
-        """The dataset loader should reflect the OxIOD training split."""
-        self.build_server()
-        
-        # Check that import_oxiod_dataset was called with the right parameters for training data.
+    def test_import_dataset_is_lazy_until_training_data_is_needed(self) -> None:
+        """Ensure the constructor does not eagerly load calibration data.
+
+        Returns
+        -------
+        None
+        """
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+
+        self.dataset_mock.assert_not_called()
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.build_tinyodom_model"), patch(
+            "hil_server.collect_metrics", return_value={"ok": True}
+        ):
+            server.determine_metrics(Dict(flops=1, input_dim=6))
+
         self.dataset_mock.assert_called_once()
         kwargs = self.dataset_mock.call_args.kwargs
         self.assertEqual(kwargs["type_flag"], 2)  # Training split
@@ -181,6 +218,271 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(kwargs["window_size"], self.config.data.window_size)
         self.assertEqual(kwargs["stride"], self.config.data.stride)
         self.assertEqual(kwargs["max_windows"], self.config.data.calibration_windows)
+
+    def test_stm_runtime_backend_keeps_hil_enabled_when_supported(self) -> None:
+        """Ensure STM runtime-capable backends keep HIL enabled.
+
+        Returns
+        -------
+        None
+        """
+        self.config.device.name = "STM32_NUCLEO_N657X0_Q"
+        self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.supports_energy_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = Path("/tmp/stm_fsbl")
+
+        with patch("hil_server.resolve_device_options", return_value={"project_root": Path("/tmp/stm_fsbl")}), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.build_collect_metrics_request") as request_mock, patch(
+            "hil_server.collect_metrics",
+            return_value={"ok": True},
+        ) as collect_mock, patch("hil_server.build_tinyodom_model") as build_mock:
+            request_mock.return_value = CollectMetricsRequest(
+                hil_enabled=True,
+                energy_aware=False,
+                flops=1,
+                device_name="STM32_NUCLEO_N657X0_Q",
+                window_size=32,
+                input_dim=6,
+                dirpath=Path("/tmp/stm_fsbl"),
+                latency_proxy_max_flops=5_000_000,
+                serial_port="ttyACM0",
+                latency_budget_ms=40.0,
+                dut_ready_timeout_s=5.0,
+                serial_timeout_s=12.0,
+                harness=None,
+                device_options={},
+            )
+            result = server.determine_metrics(Dict(flops=1, input_dim=6))
+
+        self.assertEqual(result, {"ok": True, "latency_budget_ms": 40.0})
+        self.dataset_mock.assert_called_once()
+        build_mock.assert_called_once()
+        fake_device.prepare_candidate.assert_called_once()
+        fake_device.cleanup_prepared_candidate.assert_called_once_with(Path("/tmp/stm_fsbl"))
+        collect_mock.assert_called_once()
+        self.assertTrue(request_mock.call_args.kwargs["hil_enabled"])
+        self.assertIsNone(server.active_sketch_path)
+
+    def test_stm_backend_keeps_energy_aware_requests_when_supported(self) -> None:
+        """Ensure STM energy-aware requests remain enabled once the backend supports them.
+
+        Returns
+        -------
+        None
+        """
+        self.config.training.energy_aware = True
+        self.config.device.name = "STM32_NUCLEO_N657X0_Q"
+        self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.supports_energy_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = Path("/tmp/stm_fsbl")
+
+        with patch(
+            "hil_server.resolve_device_options",
+            return_value={"project_root": Path("/tmp/stm_fsbl")},
+        ), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch(
+            "hil_server.collect_metrics",
+            return_value={"ok": True},
+        ), patch(
+            "hil_server.build_collect_metrics_request"
+        ) as request_mock, patch(
+            "hil_server.build_tinyodom_model"
+        ):
+            request_mock.return_value = CollectMetricsRequest(
+                hil_enabled=True,
+                energy_aware=True,
+                flops=1,
+                device_name="STM32_NUCLEO_N657X0_Q",
+                window_size=32,
+                input_dim=6,
+                dirpath=Path("/tmp/stm_fsbl"),
+                latency_proxy_max_flops=5_000_000,
+                serial_port="ttyACM0",
+                latency_budget_ms=40.0,
+                dut_ready_timeout_s=5.0,
+                serial_timeout_s=12.0,
+                harness=None,
+                device_options={},
+            )
+            server.determine_metrics(Dict(flops=1, input_dim=6))
+
+        self.assertTrue(request_mock.call_args.kwargs["energy_aware"])
+
+    def test_arduino_and_stm_candidate_staging_diverge_at_active_sketch_boundary(self) -> None:
+        """Ensure Arduino candidate prep activates a sketch while STM keeps project staging.
+
+        Returns
+        -------
+        None
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+
+            arduino_server = self.build_server()
+            arduino_server.active_sketch_path = None
+            arduino_prepared_dir = tmp_path / "arduino"
+            arduino_prepared_dir.mkdir()
+            expected_sketch = arduino_prepared_dir / "tinyodom_tcn.ino"
+            expected_sketch.write_text("// staged sketch\n", encoding="utf-8")
+
+            fake_arduino_device = MagicMock()
+            fake_arduino_device.requires_candidate_model.return_value = True
+            fake_arduino_device.requires_training_data.return_value = False
+            fake_arduino_device.supports_runtime_measurement.return_value = False
+            fake_arduino_device.supports_energy_measurement.return_value = False
+            fake_arduino_device.prepare_candidate.return_value = arduino_prepared_dir
+
+            with patch("hil_server.resolve_device_options", return_value=None), patch(
+                "hil_server.get_microcontroller_device",
+                return_value=fake_arduino_device,
+            ), patch("hil_server.build_tinyodom_model"), patch(
+                "hil_server.build_collect_metrics_request"
+            ) as arduino_request_mock, patch(
+                "hil_server.collect_metrics",
+                return_value={"ok": True},
+            ):
+                arduino_request_mock.return_value = CollectMetricsRequest(
+                    hil_enabled=False,
+                    energy_aware=False,
+                    flops=1,
+                    device_name="ARDUINO_NANO_33_BLE_SENSE",
+                    window_size=32,
+                    input_dim=6,
+                    dirpath=arduino_prepared_dir,
+                    latency_proxy_max_flops=5_000_000,
+                    serial_port="ttyACM0",
+                    device_options=None,
+                )
+                arduino_server.determine_metrics(Dict(flops=1, input_dim=6))
+
+            self.assertEqual(arduino_server.active_sketch_path, expected_sketch)
+
+            self.config.device.name = "STM32_NUCLEO_N657X0_Q"
+            self.config.device.stm32 = SimpleNamespace(project_root=tmp_path / "stm32" / "FSBL")
+            stm_server = self.build_server()
+            stm_server.active_sketch_path = None
+            stm_prepared_dir = tmp_path / "stm32" / "FSBL"
+            stm_prepared_dir.mkdir(parents=True)
+
+            fake_stm_device = MagicMock()
+            fake_stm_device.requires_candidate_model.return_value = True
+            fake_stm_device.requires_training_data.return_value = False
+            fake_stm_device.supports_runtime_measurement.return_value = False
+            fake_stm_device.supports_energy_measurement.return_value = False
+            fake_stm_device.prepare_candidate.return_value = stm_prepared_dir
+
+            with patch(
+                "hil_server.resolve_device_options",
+                return_value={"project_root": stm_prepared_dir},
+            ), patch(
+                "hil_server.get_microcontroller_device",
+                return_value=fake_stm_device,
+            ), patch("hil_server.build_tinyodom_model"), patch(
+                "hil_server.build_collect_metrics_request"
+            ) as stm_request_mock, patch(
+                "hil_server.collect_metrics",
+                return_value={"ok": True},
+            ):
+                stm_request_mock.return_value = CollectMetricsRequest(
+                    hil_enabled=False,
+                    energy_aware=False,
+                    flops=1,
+                    device_name="STM32_NUCLEO_N657X0_Q",
+                    window_size=32,
+                    input_dim=6,
+                    dirpath=stm_prepared_dir,
+                    latency_proxy_max_flops=5_000_000,
+                    serial_port="ttyACM0",
+                    device_options={"project_root": stm_prepared_dir},
+                )
+                stm_server.determine_metrics(Dict(flops=1, input_dim=6))
+
+            self.assertIsNone(stm_server.active_sketch_path)
+
+    def test_stm_prepare_candidate_failure_returns_structured_backend_metrics(self) -> None:
+        """STM staging failures should become metrics-shaped backend errors."""
+        self.config.device.name = "STM32_NUCLEO_N657X0_Q"
+        self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.supports_energy_measurement.return_value = True
+        fake_device.prepare_candidate.side_effect = hil_server_module.stm32_cube_clt.WorkflowError(
+            "ST Edge AI generation failed: unsupported operator"
+        )
+
+        with patch("hil_server.resolve_device_options", return_value={"project_root": Path("/tmp/stm_fsbl")}), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.build_tinyodom_model"):
+            metrics = server.determine_metrics(Dict(flops=1, input_dim=6))
+
+        self.assertEqual(metrics["backend_error_kind"], "unsupported_model")
+        self.assertIn("unsupported operator", metrics["backend_error_detail"])
+
+    def test_request_build_failure_returns_structured_backend_metrics(self) -> None:
+        """Request-building config failures should not crash the REP loop."""
+        self.config.training.energy_aware = True
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.supports_energy_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.build_tinyodom_model"), patch(
+            "hil_server.build_collect_metrics_request",
+            side_effect=RuntimeError(
+                "Set device.harness_serial_port when runtime measurement requires the harness."
+            ),
+        ):
+            metrics = server.determine_metrics(Dict(flops=1, input_dim=6))
+
+        self.assertEqual(metrics["error_code"], hil_server_module.HIL_MASTER_FATAL)
+        self.assertEqual(metrics["backend_error_kind"], "config")
+        self.assertIn("device.harness_serial_port", metrics["backend_error_detail"])
+        fake_device.cleanup_prepared_candidate.assert_called_once_with(self.config.outputs.tcn_dir)
+
+    def test_set_input_mode_delegates_to_backend_for_stm_phase1(self) -> None:
+        """Ensure STM servers delegate input-mode changes to the backend.
+
+        Returns
+        -------
+        None
+        """
+        self.config.device.name = "STM32_NUCLEO_N657X0_Q"
+        self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.set_input_mode.return_value = Path("/tmp/stm_fsbl")
+
+        with patch("hil_server.resolve_device_options", return_value={"project_root": Path("/tmp/stm_fsbl")}), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ):
+            out_path = server.set_input_mode("uniform")
+
+        self.assertEqual(out_path, Path("/tmp/stm_fsbl"))
 
 
 class SketchVariantTests(unittest.TestCase):

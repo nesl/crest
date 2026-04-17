@@ -35,6 +35,10 @@ from tinyodom.hardware import (
     convert_to_tflite_model,
     return_hardware_specs,
 )
+from tinyodom.microcontrollers import (
+    get_device as get_microcontroller_device,
+    resolve_device_options,
+)
 from tinyodom.model import (
     build_tinyodom_model,
     train_and_score,
@@ -226,29 +230,13 @@ class NASModelClient:
             If ``device.name`` is ``PORTENTA_H7`` and
             ``device.portenta.target_core`` is missing.
         """
-        device_name = str(self._cfg_get(self.config.device, "name", "")).strip().upper()
-        if device_name != "PORTENTA_H7":
-            return None
-
-        portenta_cfg = self._cfg_get(self.config.device, "portenta", None)
-        target_core = (
-            self._cfg_get(portenta_cfg, "target_core", None)
-            if portenta_cfg is not None
-            else None
-        )
-        split = self._cfg_get(portenta_cfg, "split", None) if portenta_cfg is not None else None
-        security = self._cfg_get(portenta_cfg, "security", None) if portenta_cfg is not None else None
-        if not target_core:
-            raise RuntimeError(
-                "Set device.portenta.target_core to 'cm7' or 'cm4' when device.name is PORTENTA_H7."
+        try:
+            return resolve_device_options(
+                str(self._cfg_get(self.config.device, "name", "")),
+                self.config.device,
             )
-
-        options = {"target_core": str(target_core)}
-        if split:
-            options["split"] = str(split)
-        if security:
-            options["security"] = str(security)
-        return options
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
 
     def _probe_hil_endpoint(self, timeout_s: float = 5.0) -> None:
         """Fail fast if the HIL REP socket is unreachable."""
@@ -390,16 +378,33 @@ class NASModelClient:
         metrics = self._hil_request(hyperparams)
 
         # Gets the hardware *estimated* specifications for the target device
+        device_options = self._hardware_limit_device_options()
         max_ram, max_flash = return_hardware_specs(
             self.config.device.name,
-            device_options=self._hardware_limit_device_options(),
+            device_options=device_options,
         )
+        try:
+            runtime_device = get_microcontroller_device(
+                str(self.config.device.name),
+                serial_port=self._cfg_get(self.config.device, "serial_port", None),
+                device_options=device_options,
+            )
+        except ValueError:
+            runtime_device = None
 
         rmse_vel_x = float("inf")
         rmse_vel_y = float("inf")
         penalty_acc = -100.0
+        effective_energy_aware = bool(
+            metrics.get(
+                "energy_aware",
+                self.config.training.energy_aware
+                and runtime_device is not None
+                and runtime_device.supports_energy_measurement(),
+            )
+        )
         # Set a high penalty for energy or latency depending on the mode
-        if self.config.training.energy_aware:
+        if effective_energy_aware:
             penalty_energy_latency = 100.0
         else:
             # latency has been seen to go up to 1 second on the extreme, so set penalty accordingly
@@ -477,7 +482,16 @@ class NASModelClient:
             and metrics["ram_bytes"] < max_ram
             and metrics["flash_bytes"] < max_flash
         )
-        arena_ok = metrics["arena_bytes"] != -1
+        # STM Phase 1 compile-only runs do not participate in tensor-arena
+        # sizing, so `arena_bytes=-1` is an expected sentinel there. Keep the
+        # historical arena validity gate for Arduino/TFLM backends.
+        arena_ok = (
+            metrics["arena_bytes"] != -1
+            or (
+                runtime_device is not None
+                and not runtime_device.requires_arena_validation()
+            )
+        )
 
         # Shouldn't get to here, still included for completeness
         if flash_failure or not resources_ok or not arena_ok:

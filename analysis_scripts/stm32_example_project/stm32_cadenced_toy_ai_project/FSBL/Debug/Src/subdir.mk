@@ -8,7 +8,7 @@
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
 ../Src/main.c \
-../../../../../tools/stm32/STM32CubeN6/Drivers/BSP/Components/mx25um51245g/mx25um51245g.c \
+../Src/mx25um51245g.c \
 ../Src/network.c \
 ../Src/network_data.c \
 ../Src/network_data_params.c \
@@ -23,14 +23,14 @@ C_SRCS += \
 ../Src/stm32n6xx_hal_pwr_ex.c \
 ../Src/stm32n6xx_hal_rcc.c \
 ../Src/stm32n6xx_hal_rcc_ex.c \
-../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rtc.c \
-../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rtc_ex.c \
+../Src/stm32n6xx_hal_rtc.c \
+../Src/stm32n6xx_hal_rtc_ex.c \
 ../Src/stm32n6xx_hal_uart.c \
 ../Src/stm32n6xx_hal_uart_ex.c \
-../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_xspi.c \
+../Src/stm32n6xx_hal_xspi.c \
 ../Src/stm32n6xx_it.c \
 ../Src/stm32n6xx_nucleo.c \
-../../../../../tools/stm32/STM32CubeN6/Drivers/BSP/STM32N6xx_Nucleo/stm32n6xx_nucleo_xspi.c \
+../Src/stm32n6xx_nucleo_xspi.c \
 ../Src/syscalls.c \
 ../Src/sysmem.c \
 ../Src/system_stm32n6xx_fsbl.c \
@@ -96,25 +96,34 @@ C_DEPS += \
 ./Src/system_stm32n6xx_fsbl.d \
 ./Src/toy_ai_runner.d 
 
+LOCAL_C_INCLUDES = \
+-I../Inc \
+-I../Drivers/BSP/Components/mx25um51245g \
+-I../Drivers/BSP/STM32N6xx_Nucleo \
+-I../Drivers/STM32N6xx_HAL_Driver/Inc \
+-I../Drivers/CMSIS/Device/ST/STM32N6xx/Include \
+-I../Drivers/STM32N6xx_HAL_Driver/Inc/Legacy \
+-I../Drivers/CMSIS/Include \
+-I$(STEDGEAI_INC)
 
 # Each subdirectory must supply rules for building sources it contributes
 Src/%.o Src/%.su Src/%.cyclo: ../Src/%.c Src/subdir.mk
-	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c -I../Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/BSP/STM32N6xx_Nucleo -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Device/ST/STM32N6xx/Include -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc/Legacy -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Include -I$(STEDGEAI_INC) -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c $(LOCAL_C_INCLUDES) -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
 
-Src/mx25um51245g.o Src/mx25um51245g.su Src/mx25um51245g.cyclo: ../../../../../tools/stm32/STM32CubeN6/Drivers/BSP/Components/mx25um51245g/mx25um51245g.c Src/subdir.mk
-	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c -I../Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/BSP/STM32N6xx_Nucleo -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Device/ST/STM32N6xx/Include -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc/Legacy -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Include -I$(STEDGEAI_INC) -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
+Src/mx25um51245g.o Src/mx25um51245g.su Src/mx25um51245g.cyclo: ../Src/mx25um51245g.c Src/subdir.mk
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c $(LOCAL_C_INCLUDES) -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
 
-Src/stm32n6xx_hal_xspi.o Src/stm32n6xx_hal_xspi.su Src/stm32n6xx_hal_xspi.cyclo: ../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_xspi.c Src/subdir.mk
-	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c -I../Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/BSP/STM32N6xx_Nucleo -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Device/ST/STM32N6xx/Include -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc/Legacy -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Include -I$(STEDGEAI_INC) -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
+Src/stm32n6xx_hal_xspi.o Src/stm32n6xx_hal_xspi.su Src/stm32n6xx_hal_xspi.cyclo: ../Src/stm32n6xx_hal_xspi.c Src/subdir.mk
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c $(LOCAL_C_INCLUDES) -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
 
-Src/stm32n6xx_hal_rtc.o Src/stm32n6xx_hal_rtc.su Src/stm32n6xx_hal_rtc.cyclo: ../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rtc.c Src/subdir.mk
-	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c -I../Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/BSP/STM32N6xx_Nucleo -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Device/ST/STM32N6xx/Include -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc/Legacy -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Include -I$(STEDGEAI_INC) -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
+Src/stm32n6xx_hal_rtc.o Src/stm32n6xx_hal_rtc.su Src/stm32n6xx_hal_rtc.cyclo: ../Src/stm32n6xx_hal_rtc.c Src/subdir.mk
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c $(LOCAL_C_INCLUDES) -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
 
-Src/stm32n6xx_hal_rtc_ex.o Src/stm32n6xx_hal_rtc_ex.su Src/stm32n6xx_hal_rtc_ex.cyclo: ../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rtc_ex.c Src/subdir.mk
-	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c -I../Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/BSP/STM32N6xx_Nucleo -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Device/ST/STM32N6xx/Include -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc/Legacy -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Include -I$(STEDGEAI_INC) -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
+Src/stm32n6xx_hal_rtc_ex.o Src/stm32n6xx_hal_rtc_ex.su Src/stm32n6xx_hal_rtc_ex.cyclo: ../Src/stm32n6xx_hal_rtc_ex.c Src/subdir.mk
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c $(LOCAL_C_INCLUDES) -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
 
-Src/stm32n6xx_nucleo_xspi.o Src/stm32n6xx_nucleo_xspi.su Src/stm32n6xx_nucleo_xspi.cyclo: ../../../../../tools/stm32/STM32CubeN6/Drivers/BSP/STM32N6xx_Nucleo/stm32n6xx_nucleo_xspi.c Src/subdir.mk
-	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c -I../Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/BSP/STM32N6xx_Nucleo -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Device/ST/STM32N6xx/Include -I../../../../../tools/stm32/STM32CubeN6/Drivers/STM32N6xx_HAL_Driver/Inc/Legacy -I../../../../../tools/stm32/STM32CubeN6/Drivers/CMSIS/Include -I$(STEDGEAI_INC) -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
+Src/stm32n6xx_nucleo_xspi.o Src/stm32n6xx_nucleo_xspi.su Src/stm32n6xx_nucleo_xspi.cyclo: ../Src/stm32n6xx_nucleo_xspi.c Src/subdir.mk
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N657xx -c $(LOCAL_C_INCLUDES) -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
 
 clean: clean-Src
 

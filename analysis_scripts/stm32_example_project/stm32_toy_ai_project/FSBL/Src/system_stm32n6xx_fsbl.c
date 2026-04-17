@@ -84,7 +84,7 @@
 #endif /* HSE_VALUE */
 
 #if !defined  (HSI_VALUE)
-  #define HSI_VALUE      64000000UL /*!< Value of the High-Speed Internal oscillator in Hz */
+#define HSI_VALUE      64000000UL /*!< Value of the High-Speed Internal oscillator in Hz */
 #endif /* HSI_VALUE */
 
 #if !defined  (MSI_VALUE)

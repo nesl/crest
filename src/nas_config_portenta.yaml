@@ -1,0 +1,63 @@
+# Hardware / device configuration
+device:
+  name: PORTENTA_H7
+  hil: true
+  serial_port: "/dev/ttyACM0"
+  portenta:
+    target_core: "cm7"      # Required for PORTENTA_H7. Choose: cm7 or cm4.
+    split: "75_25"          # Optional. Defaults: cm7->75_25, cm4->50_50.
+    security: "none"        # Optional. Default is none.
+  dut_ready_timeout_s: 14.5                    # Time to wait for DUT READY before sending START.
+  harness_serial_port: "/dev/ttyACM1"          # Serial port for the harness board (INA228 reader).
+  harness_fqbn: "arduino:mbed_nano:nano33ble"  # Arduino FQBN used to compile/upload the harness sketch.
+  harness_auto_flash: "once"                   # Harness flash policy: once, always, or never.
+  harness_arm_pin: 3                           # Active-low arm GPIO shared between DUT and harness.
+  harness_trigger_pin: 2                       # Trigger GPIO toggled HIGH/LOW around inference.
+  dut_arm_hold_ms: 600                         # DUT hold time after arm LOW before trigger HIGH.
+  harness_stable_low_ms: 500                   # Required D3 LOW + D2 LOW stability before harness arms.
+  harness_ready_timeout_s: 3.6                 # Time to wait for HARNESS READY after PING.
+  harness_arm_timeout_s: 0.0                   # Harness arm timeout in seconds (compiled into harness firmware; 0 disables).
+  harness_active_timeout_s: 12.0               # Max duration of the measurement window.
+  harness_done_timeout_s: 3.6                  # Time to wait for DONE after the window completes.
+
+# Dataset sampling and preprocessing parameters
+data:
+  sampling_rate_hz: 100           # Hz, derived from dataset
+  window_size: 200             # matches TinyODOM paper
+  stride: 20                   # matches TinyODOM paper
+  directory: "data/oxiod/"
+  calibration_windows: 10000    # windows to load for calibration-only jobs; set None for full split. Balances speed vs representative sampling
+
+# Training-time switches and limits
+training:
+  nas_epochs: 50
+  model_epochs: 900
+  nas_trials: 135
+  nas_multiobjective_population_size: 45 # population size for multi-objective NAS, note: nas trials should be at least 3x this value
+  nas_multiobjective: true # whether to use multi-objective NAS (accuracy + energy/latency) or single-objective (score combination of accuracy, latency, memory and energy)
+  max_total_trials: 270  # safety cap for total attempts to offset pruned/failed runs
+  quantization: true
+  latency_proxy_max_flops: 30000000.0
+  train: true
+  # Enable energy-aware scoring during NAS
+  energy_aware: true
+  # Input mode for HIL sketches: uniform, representative, or real
+  input_mode: "uniform"
+
+# Output directories and filenames
+outputs:
+  models_dir: "models"
+  tcn_dir: "tinyodom_tcn"
+  model_name: "TinyOdomEx_OxIOD_PORTENTA_H7_MO.tflite"
+  checkpoint_name: "TinyOdomEx_OxIOD_PORTENTA_H7_MO.keras"
+  log_file_name: "log_NAS_Oxiod_PORTENTA_H7_MO.csv"
+
+network:
+  host: "127.0.0.1"
+  port: 6001
+  recv_timeout_sec: 720
+  send_timeout_sec: 720
+
+# Runtime logging controls
+logging:
+  level: "INFO"

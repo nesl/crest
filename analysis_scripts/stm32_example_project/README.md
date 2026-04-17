@@ -15,6 +15,19 @@ it now carries more than the original blink-only bring-up. The nested project
 name remains `stm32_blink_example_project` for now so the generated makefiles
 and debug-load workflow stay stable.
 
+## Status Note
+
+This directory is prototype/example tooling, not the canonical production STM
+backend surface.
+
+- The production STM backend stages from `sketches/stm32/tinyodom_tcn_stm32/FSBL`
+  and is documented in `src/tinyodom/microcontrollers/README.md`.
+- The flows here remain valid evidence and smoke-test helpers for bring-up,
+  diagnostics, and exploratory measurement work.
+- `cadenced`, archival clock sweeps, comparison runners, and other exploratory
+  wrappers in this directory remain example-only unless they are explicitly
+  promoted into the backend/config surface later.
+
 ## Current Status
 
 - The project builds successfully from the committed `FSBL/Debug` makefiles.
@@ -23,8 +36,8 @@ and debug-load workflow stay stable.
   ELF with `arm-none-eabi-gdb`, and resumes execution.
 - The ST Edge AI probe script can reproduce the current host-only Phase 0
   findings for STM32N6 CPU generation.
-- The STM32 firmware headers are expected under `tools/stm32/STM32CubeN6`,
-  pinned to `v1.3.0`.
+- After `make stm32-setup`, each committed FSBL carries the STM32CubeN6
+  firmware subset it needs under a local `FSBL/Drivers/...` tree.
 
 ## Setup
 
@@ -57,6 +70,8 @@ What `make stm32-setup` does:
   on `PATH`
 - clones or repairs `tools/stm32/STM32CubeN6`
 - checks out the pinned firmware baseline `v1.3.0`
+- refreshes the local `FSBL/Drivers/...` vendor subset used by the canonical
+  template and the example STM32 projects
 
 ## Running The Wrapper
 
@@ -138,6 +153,9 @@ The package also includes a standalone STM32 HIL runner that coordinates:
 - emission of a compact metrics JSON plus a diagnostic sidecar
 - optional `back_to_back` versus `cadenced` DUT firmware modes through a generated
   `toy_ai_phase_config.h`
+
+For current support expectations: `back_to_back` is the production-backed STM
+mode today; `cadenced` in this directory remains prototype/example-only.
 
 Run these commands from the `tinyodomex` conda environment. The cadence and
 clock-preset paths below are validated against a connected STM32 board, not as
@@ -532,11 +550,8 @@ does not load firmware, and does not program flash.
 - `results/`
   - timestamped archived CPU-clock sweep folders containing metrics, logs, summaries, and plots
 
-The FSBL project now expects the STM32CubeN6 firmware headers at:
-
-```text
-tools/stm32/STM32CubeN6
-```
+The example FSBL projects no longer compile directly from `tools/stm32`.
+After `make stm32-setup`, they build from their local `FSBL/Drivers/...` trees.
 
 ## First Run Notes
 

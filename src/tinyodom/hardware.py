@@ -917,7 +917,20 @@ def HIL_controller(
                     candidate = max(candidate, target_idx)
             next_idx = _next_candidate(low_idx, high_idx, candidate)
             if next_idx is None:
-                masterError = HIL_MASTER_SUCCESS if last_success_metrics else HIL_MASTER_ARENA_EXHAUSTED
+                if last_success_metrics:
+                    masterError = HIL_MASTER_SUCCESS
+                elif len(arena_sweep_list) == 1 and err_flag == HIL_ERROR_LATENCY:
+                    # STM32 uses a documented single-shot arena sentinel. A
+                    # runtime timeout on that path is a real runtime failure,
+                    # not arena exhaustion.
+                    finRAM = ram_bytes
+                    finFlash = flash_bytes
+                    finLatency = latency_s
+                    idealArenaBytes = arena_bytes
+                    finPower_metrics = power_metrics
+                    masterError = HIL_MASTER_FATAL
+                else:
+                    masterError = HIL_MASTER_ARENA_EXHAUSTED
             else:
                 time.sleep(RETRY_BACKOFF_SECONDS)
             continue
