@@ -135,6 +135,10 @@ Notes:
   measurement are both enabled.
 - `latency_ms` is unavailable in non-HIL proxy runs.
 - `cpu_clock_mhz_requested` is optional and backend-dependent.
+- `weight_storage_mode` is logged as trial metadata, but it is not part of the
+  numeric scoring/pruning metric registry.
+- If you disable HIL, avoid score terms and prune rules that reference
+  `latency_ms` or `energy_mj_per_inference`.
 
 ### Derived metrics
 

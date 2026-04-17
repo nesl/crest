@@ -52,6 +52,7 @@ from tinyodom.model import (
     DROP_RATE_CHOICES,
     get_score_config_directions,
     is_multiobjective_score_config,
+    score_config_uses_training_metrics,
     set_error_code,
 )
 
@@ -599,7 +600,7 @@ class NASModelClient:
     def smoke_test(
         self,
         train: bool=True,
-        hil: bool=False,
+        hil: bool | None = None,
         trials: int=5,
         epochs: int=5,
         study_name: str="smoke_test_study",
@@ -610,8 +611,9 @@ class NASModelClient:
         ----------
         train : bool, optional
             Whether to enable model training during the test (default is True).
-        hil : bool, optional
-            Whether to enable hardware-in-the-loop testing (default is False).
+        hil : bool | None, optional
+            Temporary HIL override for the smoke test. When ``None``, the
+            loaded YAML setting is used as-is.
         trials : int, optional
             Number of trials to run in the smoke test (default is 5).
         epochs : int, optional 
@@ -638,20 +640,11 @@ class NASModelClient:
         _previous_train = self.config.training.train
         _previous_epochs = self.config.training.nas_epochs
         try:
-            self.config.device.hil = hil
+            if hil is not None:
+                self.config.device.hil = hil
             self.config.training.train = train
             self.config.training.nas_epochs = epochs  # Speed up smoke test
-            if is_multiobjective_score_config(self.config.nas.score):
-                uses_rmse_metrics = any(
-                    objective.metric in {"rmse_vel_x", "rmse_vel_y", "rmse_total"}
-                    for objective in self.config.nas.score.params.objectives
-                )
-            else:
-                uses_rmse_metrics = any(
-                    term.metric in {"rmse_vel_x", "rmse_vel_y", "rmse_total"}
-                    for term in self.config.nas.score.params.terms
-                )
-            if (not train) and uses_rmse_metrics:
+            if (not train) and score_config_uses_training_metrics(self.config.nas.score):
                 raise ValueError(
                     "train=False is incompatible with score configs that require RMSE metrics."
                 )

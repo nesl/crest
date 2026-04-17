@@ -1554,6 +1554,35 @@ class LoadSettingsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "training-only"):
                 load_config(config_path=cfg)
 
+    def test_load_settings_rejects_weight_storage_mode_in_score_terms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: weight_storage_mode",
+                        "          weight: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "unknown metric"):
+                load_config(config_path=cfg)
+
     def test_load_settings_missing_file(self) -> None:
         """Nonexistent config paths should raise FileNotFoundError."""
         with self.assertRaises(FileNotFoundError):

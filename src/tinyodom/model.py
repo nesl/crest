@@ -92,7 +92,6 @@ BUILTIN_SCORE_METRICS = {
     "max_ram_bytes",
     "max_flash_bytes",
     "external_flash_bytes",
-    "weight_storage_mode",
     "flops",
     "latency_ms",
     "energy_mj_per_inference",
@@ -765,6 +764,43 @@ def _metric_depends_on_training(
         _metric_depends_on_training(child_metric, score_metrics, stack + (metric_name,))
         for child_metric in child_metrics
     )
+
+
+def score_config_uses_training_metrics(score_config: Dict) -> bool:
+    """Return whether a score config depends on post-training RMSE metrics.
+
+    Parameters
+    ----------
+    score_config : addict.Dict
+        Normalized score configuration.
+
+    Returns
+    -------
+    bool
+        ``True`` when any active term, objective, or typed metric reference
+        depends directly or indirectly on training-only metrics.
+    """
+    score_metrics = getattr(score_config, "metrics", Dict())
+
+    def _reference_depends_on_training(reference: Any) -> bool:
+        return (
+            reference is not None
+            and getattr(reference, "type", None) == "metric"
+            and _metric_depends_on_training(str(reference.metric), score_metrics)
+        )
+
+    if is_multiobjective_score_config(score_config):
+        return any(
+            _metric_depends_on_training(str(objective.metric), score_metrics)
+            for objective in getattr(score_config.params, "objectives", [])
+        )
+
+    for term in getattr(score_config.params, "terms", []):
+        if _metric_depends_on_training(str(term.metric), score_metrics):
+            return True
+        if _reference_depends_on_training(getattr(term, "reference", None)):
+            return True
+    return False
 
 
 def _validate_score_config(score_input: Any, has_legacy_multiobjective: bool = False) -> Dict:

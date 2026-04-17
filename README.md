@@ -228,7 +228,8 @@ Useful flags:
 - `--smoke-test N` – run a short NAS smoke test with `N` trials (no final long retrain).
 - `--study-name` – label used for the Optuna study and artifact directory.
 
-Smoke tests use the NAS policy from `src/nas_config.yaml`.
+Smoke tests use the NAS policy from `src/nas_config.yaml` and, by default, also
+use that file's `device.hil` setting.
 
 ### 4. Where outputs go
 

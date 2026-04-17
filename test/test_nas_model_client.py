@@ -594,6 +594,55 @@ class SmokeTestTests(unittest.TestCase):
 
         self.assertEqual(mock_create.call_args.kwargs["direction"], "maximize")
 
+    def test_smoke_test_defaults_to_loaded_hil_setting(self) -> None:
+        client = _build_test_client()
+        observed_hil_values = []
+
+        def _objective(_trial):
+            observed_hil_values.append(client.config.device.hil)
+            return 0.1
+
+        client.objective = MagicMock(side_effect=_objective)
+
+        class DummyStudy:
+            def __init__(self):
+                self.best_trial = SimpleNamespace(value=1.0, params={}, user_attrs={})
+                self.optimize_calls = []
+                self.trials = []
+
+            def optimize(self, func, n_trials):
+                self.optimize_calls.append((func, n_trials))
+                func(SimpleNamespace())
+
+        fake_study = DummyStudy()
+        with patch("nas_model_client.optuna.create_study", return_value=fake_study):
+            client.smoke_test(train=True, trials=1, epochs=1)
+
+        self.assertEqual(observed_hil_values, [True])
+
+    def test_smoke_test_rejects_derived_rmse_usage_when_training_disabled(self) -> None:
+        client = _build_test_client()
+        client.config.nas.score = Dict(
+            type="scoring-function",
+            metrics=Dict(
+                combined_error=Dict(
+                    type="add",
+                    metrics=["rmse_total", "flops"],
+                )
+            ),
+            params=Dict(
+                terms=[
+                    Dict(type="weighted", metric="combined_error", weight=-1.0),
+                ]
+            ),
+        )
+
+        with patch("nas_model_client.optuna.create_study") as mock_create:
+            with self.assertRaises(ValueError):
+                client.smoke_test(train=False, trials=1, epochs=1)
+
+        self.assertFalse(mock_create.called)
+
     def test_smoke_test_removes_stale_db_and_log_before_starting(self) -> None:
         client = _build_test_client()
         client.objective = MagicMock(return_value=0.1)
