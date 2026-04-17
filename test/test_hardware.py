@@ -1335,6 +1335,47 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertAlmostEqual(result.power_metrics["dwt_cycles_per_inference"], 123456.0)
         self.assertAlmostEqual(result.power_metrics["energy_mj_per_inference"], 10.0)
 
+    def test_measure_serial_compiles_harness_with_measured_inference_runs(self):
+        handshake_result = hil_protocol.HandshakeResult(
+            dut_log=["runs: 7", "timer output: 0.125000"],
+            harness_log=["runs: 7", "harness timer output: 0.125000", "DONE"],
+            dut_timer_found=True,
+            harness_done=True,
+            runs_dut=7,
+            runs_harness=7,
+            error=None,
+        )
+        compile_result = ArduinoCompileResult(
+            success=True,
+            log="ok",
+            flash_bytes=None,
+            ram_bytes=None,
+            overflow_kind=None,
+            build_dir=Path("/tmp"),
+        )
+        upload_result = ArduinoUploadResult(success=True, log="ok")
+
+        with patch(
+            "tinyodom.microcontrollers.arduino_base.compile_harness_sketch",
+            return_value=compile_result,
+        ) as compile_mock, patch(
+            "tinyodom.microcontrollers.arduino_base.upload_harness_sketch",
+            return_value=upload_result,
+        ), patch(
+            "tinyodom.hil_protocol.run_handshake",
+            return_value=handshake_result,
+        ):
+            measure_serial(
+                serial_port="/dev/dut",
+                baud_rate=115200,
+                serial_timeout_s=1.0,
+                measured_inference_runs=7,
+                harness_serial_port="/dev/harness",
+                harness_auto_flash="always",
+            )
+
+        self.assertEqual(compile_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"], 7)
+
     def test_measure_harness_only_open_session_uses_harness_latency(self):
         session = hil_protocol.HarnessSessionResult(
             harness_log=[
@@ -1699,6 +1740,124 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
         self.assertEqual(call_kwargs["harness_arm_timeout_s"], 0.0)
         self.assertEqual(call_kwargs["harness_active_timeout_s"], 0.0)
         self.assertEqual(call_kwargs["harness_done_timeout_s"], 0.0)
+
+    def test_arduino_device_measure_forwards_measured_inference_runs(self):
+        device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE")
+        fake_result = ArduinoMeasureResult(
+            latency_s=0.1,
+            arena_error_line=None,
+            serial_log=["timer output: 0.1"],
+            power_metrics=None,
+        )
+        with patch(
+            "tinyodom.microcontrollers.arduino_base.measure_serial",
+            return_value=fake_result,
+        ) as mock_measure:
+            device.measure(
+                serial_port="/dev/dut",
+                baud_rate=115200,
+                serial_timeout_s=1.0,
+                measured_inference_runs=7,
+            )
+
+        self.assertEqual(mock_measure.call_args.kwargs["measured_inference_runs"], 7)
+
+    def test_arduino_device_evaluate_compiles_dut_with_measured_inference_runs(self):
+        device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE", serial_port="/dev/ttyACM0")
+        compile_result = ArduinoCompileResult(
+            success=True,
+            log="ok",
+            flash_bytes=123,
+            ram_bytes=456,
+            overflow_kind=None,
+            build_dir=Path("/tmp/fake_build"),
+        )
+        upload_result = ArduinoUploadResult(success=True, log="ok")
+        measure_result = ArduinoMeasureResult(
+            latency_s=0.1,
+            arena_error_line=None,
+            serial_log=["timer output: 0.1"],
+            power_metrics=None,
+        )
+        with patch.object(device, "compile", return_value=compile_result) as compile_mock, patch.object(
+            device, "upload", return_value=upload_result
+        ), patch.object(
+            device, "measure", return_value=measure_result
+        ):
+            device.evaluate(
+                dirpath=Path("/tmp"),
+                arena_kb=32,
+                window_size=128,
+                num_channels=6,
+                serial_port="/dev/ttyACM0",
+                run_hil=True,
+                measured_inference_runs=7,
+            )
+
+        self.assertEqual(compile_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"], 7)
+
+    def test_portenta_cm4_harness_only_compiles_harness_with_measured_inference_runs(self):
+        device = get_device(
+            "PORTENTA_H7",
+            serial_port="/dev/ttyACM0",
+            device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
+        )
+        compile_result = ArduinoCompileResult(
+            success=True,
+            log="ok",
+            flash_bytes=123,
+            ram_bytes=456,
+            overflow_kind=None,
+            build_dir=Path("/tmp/fake_build"),
+        )
+        upload_result = ArduinoUploadResult(success=True, log="ok")
+        measure_result = ArduinoMeasureResult(
+            latency_s=0.1,
+            arena_error_line=None,
+            serial_log=["HARNESS: DONE"],
+            power_metrics=None,
+        )
+        prime_result = hil_protocol.HarnessSessionResult(
+            harness_log=["HARNESS READY"],
+            harness_ready=True,
+            harness_done=False,
+            runs_harness=None,
+            error=None,
+        )
+
+        class _DummyHarness:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch.object(device, "compile", return_value=compile_result), patch.object(
+            device, "upload", return_value=upload_result
+        ), patch.object(
+            device, "prepare_for_runtime", return_value=None
+        ), patch(
+            "tinyodom.devices.serial.Serial", return_value=_DummyHarness()
+        ), patch(
+            "tinyodom.devices.hil_protocol.prime_harness_session", return_value=prime_result
+        ), patch(
+            "tinyodom.devices.arduino_base.measure_harness_only_open_session",
+            return_value=measure_result,
+        ), patch(
+            "tinyodom.devices.arduino_base.ensure_harness_firmware"
+        ) as ensure_mock:
+            device.evaluate(
+                dirpath=Path("/tmp"),
+                arena_kb=32,
+                window_size=128,
+                num_channels=6,
+                serial_port="/dev/ttyACM0",
+                run_hil=True,
+                harness_serial_port="/dev/ttyACM1",
+                measured_inference_runs=7,
+            )
+
+        self.assertEqual(ensure_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"], 7)
 
 
 class HILSpecErrorTests(unittest.TestCase):

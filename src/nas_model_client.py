@@ -585,6 +585,7 @@ class NASModelClient:
         """
         self.study_name = study_name
         artifacts_dir = self._artifacts_dir()
+        self._copy_run_config(artifacts_dir)
         storage_uri = f"sqlite:///{artifacts_dir / 'optuna_smoke_test.db'}"
         multiobjective = self.config.training.nas_multiobjective if multiobjective is None else multiobjective
         _previous_hil = self.config.device.hil
@@ -817,6 +818,7 @@ class NASModelClient:
         # Ensure all downstream paths use the caller-provided study_name
         self.study_name = study_name
         artifacts_dir = self._artifacts_dir()
+        self._copy_run_config(artifacts_dir)
         storage_uri = f"sqlite:///{artifacts_dir / 'optuna.db'}"
 
         # 1) Run NAS with configured HIL/train settings.
@@ -887,6 +889,19 @@ class NASModelClient:
         d = Path(self.config.outputs.models_dir) / self.study_name
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    def _copy_run_config(self, artifacts_dir: Path | None = None) -> Path | None:
+        """Copy the active NAS config into the study artifacts directory."""
+        cfg_path = self.config_path
+        if not cfg_path.exists():
+            logger.warning("Skipping config copy because the config file is missing: %s", cfg_path)
+            return None
+
+        target_dir = artifacts_dir if artifacts_dir is not None else self._artifacts_dir()
+        dest_cfg = target_dir / cfg_path.name
+        shutil.copy2(cfg_path, dest_cfg)
+        print(f"[CONFIG] Copied run config to {dest_cfg}")
+        return dest_cfg
 
 
     def train_best_trial(

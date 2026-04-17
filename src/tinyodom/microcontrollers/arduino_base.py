@@ -997,6 +997,7 @@ def measure_serial(
     serial_port: str,
     baud_rate: int,
     serial_timeout_s: float,
+    measured_inference_runs: int = 10,
     dut_ready_timeout_s: float = 5.0,
     harness_serial_port: Optional[str] = None,
     harness_fqbn: str = "arduino:mbed_nano:nano33ble",
@@ -1076,6 +1077,7 @@ def measure_serial(
     harness_active_timeout_ms = max(0, int(round(float(harness_active_timeout_s) * 1000.0)))
 
     build_defines = {
+        "TINYODOM_INFERENCE_RUNS": max(1, int(measured_inference_runs)),
         "TINYODOM_HARNESS_ARM_PIN": int(harness_arm_pin),
         "TINYODOM_HARNESS_TRIGGER_PIN": int(harness_trigger_pin),
         "TINYODOM_DUT_ARM_HOLD_MS": int(dut_arm_hold_ms),

@@ -137,6 +137,9 @@ class CollectMetricsRequest:
         Timeout waiting for DUT ready handshake.
     serial_timeout_s : float | None, optional
         Post-``START`` runtime timeout forwarded to direct-serial backends.
+    measured_inference_runs : int, optional
+        Number of on-device inference invokes averaged into one measured HIL
+        attempt.
     harness : HarnessConfig | None, optional
         Harness settings for energy-aware runs. ``None`` for non-energy-aware runs.
     device_options : dict[str, Any] | None, optional
@@ -155,6 +158,7 @@ class CollectMetricsRequest:
     latency_budget_ms: float | None = None
     dut_ready_timeout_s: float | None = None
     serial_timeout_s: float | None = None
+    measured_inference_runs: int = 10
     harness: HarnessConfig | None = None
     device_options: dict[str, Any] | None = None
 
@@ -408,6 +412,18 @@ def load_config(
 
     device = config.device
 
+    measured_inference_runs_raw = device.get("measured_inference_runs", 10)
+    if isinstance(measured_inference_runs_raw, bool):
+        raise ValueError("device.measured_inference_runs must be an integer >= 1.")
+    if isinstance(measured_inference_runs_raw, float) and not measured_inference_runs_raw.is_integer():
+        raise ValueError("device.measured_inference_runs must be an integer >= 1.")
+    try:
+        device.measured_inference_runs = int(measured_inference_runs_raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("device.measured_inference_runs must be an integer >= 1.") from exc
+    if device.measured_inference_runs < 1:
+        raise ValueError("device.measured_inference_runs must be >= 1.")
+
     device.harness_fqbn = device.get("harness_fqbn", "arduino:mbed_nano:nano33ble")
     device.harness_auto_flash = str(device.get("harness_auto_flash", "once")).lower()
     device.harness_arm_pin = int(device.get("harness_arm_pin", 3))
@@ -599,6 +615,7 @@ def build_collect_metrics_request(
         latency_budget_ms=latency_budget_ms,
         dut_ready_timeout_s=float(dut_ready_timeout),
         serial_timeout_s=float(serial_timeout),
+        measured_inference_runs=int(_cfg_get(config.device, "measured_inference_runs", 10)),
         harness=harness,
         device_options=device_options,
     )
@@ -628,6 +645,7 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
         "chosen_device": request.device_name,
         "window_size": request.window_size,
         "number_of_channels": request.input_dim,
+        "measured_inference_runs": request.measured_inference_runs,
     }
     if request.device_options is not None:
         controller_kwargs["device_options"] = request.device_options

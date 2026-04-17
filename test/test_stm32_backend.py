@@ -767,7 +767,14 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
                 with patch("tinyodom.hardware.convert_to_tflite_model", side_effect=_write_tflite):
                     staged_root = device.prepare_candidate(
-                        config=type("Config", (), {"training": type("Training", (), {"quantization": True})()})(),
+                        config=type(
+                            "Config",
+                            (),
+                            {
+                                "training": type("Training", (), {"quantization": True})(),
+                                "device": type("Device", (), {})(),
+                            },
+                        )(),
                         hyperparams=None,
                         model=fake_model,
                         outputs_dir=outputs_dir,
@@ -789,6 +796,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             header_text = (staged_root / "Inc" / "tcn_dut_phase_config.h").read_text(encoding="utf-8")
             self.assertIn("TCN_DUT_SELECTED_PHASE TCN_DUT_PHASE_BACK_TO_BACK", header_text)
             self.assertIn("TCN_DUT_CPU_CLOCK_MHZ 400", header_text)
+            self.assertIn("TCN_DUT_MEASURED_RUNS 10", header_text)
             candidate_root = staged_root.parent
             self.assertTrue((candidate_root / "model" / "tinyodom_candidate.tflite").is_file())
             self.assertTrue((candidate_root / "stedgeai_ws").is_dir())
@@ -797,6 +805,85 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             self.assertTrue(manifest_path.is_file())
             manifest_text = manifest_path.read_text(encoding="utf-8")
             self.assertIn('"weight_storage_mode": "embedded"', manifest_text)
+
+    def test_prepare_candidate_writes_configured_measured_inference_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            template_root = _build_project_tree(tmp_path / "template")
+            outputs_dir = tmp_path / "outputs"
+            outputs_dir.mkdir()
+            device = STM32NucleoN657X0QDevice(
+                serial_port="/dev/ttyACM0",
+                device_options={"project_root": str(template_root), "cpu_clock_mhz": 400},
+            )
+            fake_model = object()
+            fake_training_data = type("TrainingData", (), {"inputs": [[[0.0] * 6] * 4]})()
+
+            def _fake_generate(**kwargs):
+                out_dir = Path(kwargs["output_dir"])
+                network_c = out_dir / "network.c"
+                network_h = out_dir / "network.h"
+                network_config_h = out_dir / "network_config.h"
+                network_data_c = out_dir / "network_data.c"
+                network_data_h = out_dir / "network_data.h"
+                network_data_params_c = out_dir / "network_data_params.c"
+                network_data_params_h = out_dir / "network_data_params.h"
+                for path, text in (
+                    (network_c, "void network_stub(void) {}\n"),
+                    (network_h, "#pragma once\n"),
+                    (network_config_h, "#pragma once\n"),
+                    (network_data_c, "void network_data_stub(void) {}\n"),
+                    (network_data_h, "#pragma once\n"),
+                    (network_data_params_c, "void network_data_params_stub(void) {}\n"),
+                    (network_data_params_h, "#define AI_NETWORK_DATA_ACTIVATIONS_SIZE (47688)\n"),
+                ):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(text, encoding="utf-8")
+                return {
+                    "network_c_path": network_c,
+                    "network_h_path": network_h,
+                    "network_config_h_path": network_config_h,
+                    "network_data_c_path": network_data_c,
+                    "network_data_h_path": network_data_h,
+                    "network_data_params_c_path": network_data_params_c,
+                    "network_data_params_h_path": network_data_params_h,
+                }
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0._ensure_staging_tools"
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_analyze"
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_generate",
+                side_effect=_fake_generate,
+            ):
+                def _write_tflite(*, output_name, **kwargs):
+                    del kwargs
+                    Path(output_name).write_bytes(b"tflite")
+
+                with patch("tinyodom.hardware.convert_to_tflite_model", side_effect=_write_tflite):
+                    staged_root = device.prepare_candidate(
+                        config=type(
+                            "Config",
+                            (),
+                            {
+                                "training": type("Training", (), {"quantization": True})(),
+                                "device": type("Device", (), {"measured_inference_runs": 7})(),
+                            },
+                        )(),
+                        hyperparams=None,
+                        model=fake_model,
+                        outputs_dir=outputs_dir,
+                        tflite_model_path=outputs_dir / "ignored.tflite",
+                        training_data=fake_training_data,
+                        model_variant="approx_trained",
+                        checkpoint_path=None,
+                    )
+
+            header_text = (staged_root / "Inc" / "tcn_dut_phase_config.h").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("TCN_DUT_MEASURED_RUNS 7", header_text)
 
     def test_prepare_candidate_runs_analyze_before_generate(self) -> None:
         """Ensure ST Edge AI analyze preflights compatibility before generate.
