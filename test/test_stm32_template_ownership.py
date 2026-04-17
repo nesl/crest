@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -119,6 +120,93 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
         self.assertIn("fsbl_ownership_manifest.tsv", script_text)
         self.assertIn("assemble_canonical_template", script_text)
         self.assertIn("validate_tracked_template_files", script_text)
+
+    def test_setup_script_prunes_stale_vendor_copy_files_between_runs(self) -> None:
+        """Ensure manifest removals delete old materialized vendor-copy files.
+
+        Returns
+        -------
+        None
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            firmware_root = project_root / "tools" / "stm32" / "STM32CubeN6"
+            canonical_root = project_root / "canonical"
+            example_root = project_root / "example"
+            manifest_path = project_root / "manifest.tsv"
+
+            for relative_path in ("vendor/keep.c", "vendor/remove.c"):
+                source_path = firmware_root / relative_path
+                source_path.parent.mkdir(parents=True, exist_ok=True)
+                source_path.write_text(f"// {relative_path}\n", encoding="utf-8")
+
+            first_manifest = (
+                "vendor_copy\tSrc/keep.c\tvendor/keep.c\n"
+                "vendor_copy\tSrc/remove.c\tvendor/remove.c\n"
+            )
+            second_manifest = "vendor_copy\tSrc/keep.c\tvendor/keep.c\n"
+
+            self._run_setup_materialization(
+                project_root=project_root,
+                firmware_root=firmware_root,
+                canonical_root=canonical_root,
+                example_root=example_root,
+                manifest_path=manifest_path,
+                manifest_text=first_manifest,
+            )
+            self.assertTrue((canonical_root / "Src" / "remove.c").is_file())
+            self.assertTrue((example_root / "Src" / "remove.c").is_file())
+
+            self._run_setup_materialization(
+                project_root=project_root,
+                firmware_root=firmware_root,
+                canonical_root=canonical_root,
+                example_root=example_root,
+                manifest_path=manifest_path,
+                manifest_text=second_manifest,
+            )
+
+            self.assertTrue((canonical_root / "Src" / "keep.c").is_file())
+            self.assertFalse((canonical_root / "Src" / "remove.c").exists())
+            self.assertTrue((example_root / "Src" / "keep.c").is_file())
+            self.assertFalse((example_root / "Src" / "remove.c").exists())
+
+    def _run_setup_materialization(
+        self,
+        *,
+        project_root: Path,
+        firmware_root: Path,
+        canonical_root: Path,
+        example_root: Path,
+        manifest_path: Path,
+        manifest_text: str,
+    ) -> None:
+        """Run the setup helpers against a temporary manifest and firmware tree.
+
+        Returns
+        -------
+        None
+        """
+        manifest_path.write_text(manifest_text, encoding="utf-8")
+        script_path = ROOT_DIR / "setup_stm32.sh"
+        command = f"""
+set -euo pipefail
+source <(sed '$d' "{script_path}")
+PROJECT_ROOT="{project_root}"
+TOOLS_DIR="$PROJECT_ROOT/tools"
+STM32_TOOLS_DIR="$TOOLS_DIR/stm32"
+FIRMWARE_DIR="{firmware_root}"
+CANONICAL_TEMPLATE_ROOT="{canonical_root}"
+OWNERSHIP_MANIFEST="{manifest_path}"
+EXTRA_TEMPLATE_ROOTS=("{example_root}")
+MANIFEST_PATHS=()
+declare -A CATEGORY_BY_PATH=()
+declare -A SOURCE_BY_PATH=()
+load_ownership_manifest
+assemble_canonical_template
+refresh_example_templates
+"""
+        subprocess.run(["bash", "-lc", command], check=True, cwd=ROOT_DIR)
 
 
 if __name__ == "__main__":

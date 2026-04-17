@@ -234,6 +234,16 @@ class DeviceInterface(ABC):
         )
         raise NotImplementedError("prepare_candidate() must be implemented by backend classes.")
 
+    def cleanup_prepared_candidate(self, prepared_dir: Path | None) -> None:
+        """Release backend-owned candidate artifacts after one evaluation.
+
+        Parameters
+        ----------
+        prepared_dir : Path | None
+            Path previously returned by ``prepare_candidate()``.
+        """
+        del prepared_dir
+
     def set_input_mode(
         self,
         input_mode: str,

@@ -265,6 +265,7 @@ class InitializationTests(HILServerTestCase):
         self.dataset_mock.assert_called_once()
         build_mock.assert_called_once()
         fake_device.prepare_candidate.assert_called_once()
+        fake_device.cleanup_prepared_candidate.assert_called_once_with(Path("/tmp/stm_fsbl"))
         collect_mock.assert_called_once()
         self.assertTrue(request_mock.call_args.kwargs["hil_enabled"])
         self.assertIsNone(server.active_sketch_path)
@@ -460,6 +461,7 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(metrics["error_code"], hil_server_module.HIL_MASTER_FATAL)
         self.assertEqual(metrics["backend_error_kind"], "config")
         self.assertIn("device.harness_serial_port", metrics["backend_error_detail"])
+        fake_device.cleanup_prepared_candidate.assert_called_once_with(self.config.outputs.tcn_dir)
 
     def test_set_input_mode_delegates_to_backend_for_stm_phase1(self) -> None:
         """Ensure STM servers delegate input-mode changes to the backend.

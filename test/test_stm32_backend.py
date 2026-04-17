@@ -913,7 +913,27 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                 )
                 self.assertTrue(staged_root.is_dir())
 
-        self.assertEqual(call_order, ["analyze", "generate"])
+            self.assertEqual(call_order, ["analyze", "generate"])
+
+    def test_cleanup_prepared_candidate_removes_staged_root(self) -> None:
+        """Ensure staged STM32 candidate directories are deleted after use.
+
+        Returns
+        -------
+        None
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            project_root = _build_project_tree(tmp_path / "candidate" / "FSBL")
+            _write_text(
+                project_root / STAGED_MANIFEST_NAME,
+                "{}\n",
+            )
+            device = STM32NucleoN657X0QDevice()
+
+            device.cleanup_prepared_candidate(project_root)
+
+            self.assertFalse(project_root.parent.exists())
 
     def test_real_template_parsers_match_checked_in_files(self) -> None:
         """Ensure parser helpers match the canonical checked-in STM template.

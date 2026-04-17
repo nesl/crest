@@ -13,7 +13,6 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "nas_config.yaml"
-DEFAULT_TFLITE_NAME = "TinyOdomEx_OxIOD_PORTENTA_H7_approx_trained.tflite"
 PERTURBED_VARIANT_NAME = "approx_trained"
 OXIOD_SUB_FOLDERS = [
     "handbag/",
@@ -131,7 +130,8 @@ def export_perturbed_candidate_tflite(config_path: Path, output_root: Path) -> t
     bundle = load_or_build_perturbed_candidate(config_path)
     model_dir = output_root / "model"
     model_dir.mkdir(parents=True, exist_ok=True)
-    tflite_path = model_dir / DEFAULT_TFLITE_NAME
+    device_name = str(bundle.config.device.name).strip().upper()
+    tflite_path = model_dir / f"TinyOdomEx_OxIOD_{device_name}_{PERTURBED_VARIANT_NAME}.tflite"
     convert_to_tflite_model(
         model=bundle.model,
         training_data=bundle.training_data.inputs,

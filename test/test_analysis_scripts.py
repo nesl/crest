@@ -39,6 +39,10 @@ stm32_cpu_clock_sweep = _load_module(
     "stm32_cpu_clock_sweep",
     "analysis_scripts/stm32_example_project/run_stm32_cpu_clock_sweep.py",
 )
+stm32_phase2_candidate = _load_module(
+    "stm32_phase2_candidate",
+    "analysis_scripts/stm32_example_project/stm32_phase2_candidate.py",
+)
 
 
 class CadencedPortentaSummaryTests(unittest.TestCase):
@@ -103,6 +107,51 @@ class CadencedPortentaSummaryTests(unittest.TestCase):
 
 
 class Stm32MeasuredRunsTests(unittest.TestCase):
+    def test_phase2_candidate_uses_configured_device_name_in_tflite_filename(self):
+        bundle = type(
+            "Bundle",
+            (),
+            {
+                "config": type(
+                    "Config",
+                    (),
+                    {
+                        "device": type("Device", (), {"name": "STM32_NUCLEO_N657X0_Q"})(),
+                        "training": type("Training", (), {"quantization": True})(),
+                    },
+                )(),
+                "model": object(),
+                "training_data": type("TrainingData", (), {"inputs": object()})(),
+                "metadata": {"model_variant": "approx_trained"},
+            },
+        )()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_root = Path(tmpdir)
+            with (
+                patch.object(stm32_phase2_candidate, "load_or_build_perturbed_candidate", return_value=bundle),
+                patch.dict(
+                    sys.modules,
+                    {
+                        "tinyodom.hardware": type(
+                            "HardwareModule",
+                            (),
+                            {"convert_to_tflite_model": unittest.mock.Mock()},
+                        )()
+                    },
+                ),
+            ):
+                tflite_path, metadata = stm32_phase2_candidate.export_perturbed_candidate_tflite(
+                    Path("/tmp/nas_config.yaml"),
+                    output_root,
+                )
+
+        self.assertEqual(
+            tflite_path.name,
+            "TinyOdomEx_OxIOD_STM32_NUCLEO_N657X0_Q_approx_trained.tflite",
+        )
+        self.assertEqual(metadata, {"model_variant": "approx_trained"})
+
     def test_write_phase_config_header_writes_measured_runs_and_clamps(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir)

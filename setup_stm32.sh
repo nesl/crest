@@ -24,6 +24,95 @@ declare -a MANIFEST_PATHS=()
 declare -A CATEGORY_BY_PATH=()
 declare -A SOURCE_BY_PATH=()
 
+vendor_copy_state_file_for_root() {
+  local template_root="$1"
+  local relative_root=""
+  local sanitized_root=""
+
+  if [[ "$template_root" == "$PROJECT_ROOT"/* ]]; then
+    relative_root="${template_root#"$PROJECT_ROOT"/}"
+    printf '%s/.setup_state/%s.vendor_copy_paths\n' "$STM32_TOOLS_DIR" "$relative_root"
+    return 0
+  fi
+
+  sanitized_root="${template_root//\//_}"
+  printf '%s/.setup_state/external/%s.vendor_copy_paths\n' "$STM32_TOOLS_DIR" "$sanitized_root"
+}
+
+prune_empty_template_dirs() {
+  local template_root="$1"
+  local target_path="$2"
+  local parent_dir=""
+
+  parent_dir="$(dirname "$target_path")"
+  while [[ "$parent_dir" != "$template_root" && "$parent_dir" != "/" ]]; do
+    rmdir "$parent_dir" 2>/dev/null || break
+    parent_dir="$(dirname "$parent_dir")"
+  done
+}
+
+prune_materialized_vendor_copy_files() {
+  local template_root="$1"
+  local state_file=""
+  local relative_path=""
+  local destination_path=""
+
+  state_file="$(vendor_copy_state_file_for_root "$template_root")"
+  [[ -f "$state_file" ]] || return 0
+
+  while IFS= read -r relative_path; do
+    [[ -n "$relative_path" ]] || continue
+    destination_path="$template_root/$relative_path"
+    rm -f "$destination_path"
+    prune_empty_template_dirs "$template_root" "$destination_path"
+  done < "$state_file"
+}
+
+record_materialized_vendor_copy_files() {
+  local template_root="$1"
+  local state_file=""
+  local state_dir=""
+  local relative_path=""
+  local category=""
+
+  state_file="$(vendor_copy_state_file_for_root "$template_root")"
+  state_dir="$(dirname "$state_file")"
+  mkdir -p "$state_dir"
+
+  : > "$state_file"
+  for relative_path in "${MANIFEST_PATHS[@]}"; do
+    category="${CATEGORY_BY_PATH[$relative_path]}"
+    [[ "$category" == "vendor_copy" ]] || continue
+    printf '%s\n' "$relative_path" >> "$state_file"
+  done
+}
+
+materialize_vendor_copy_files() {
+  local template_root="$1"
+  local relative_path=""
+  local category=""
+  local source_path=""
+  local destination_path=""
+  local vendor_copy_count=0
+
+  mkdir -p "$template_root"
+  prune_materialized_vendor_copy_files "$template_root"
+
+  for relative_path in "${MANIFEST_PATHS[@]}"; do
+    category="${CATEGORY_BY_PATH[$relative_path]}"
+    [[ "$category" == "vendor_copy" ]] || continue
+
+    source_path="$FIRMWARE_DIR/${SOURCE_BY_PATH[$relative_path]}"
+    destination_path="$template_root/$relative_path"
+    mkdir -p "$(dirname "$destination_path")"
+    cp "$source_path" "$destination_path"
+    vendor_copy_count=$((vendor_copy_count + 1))
+  done
+
+  record_materialized_vendor_copy_files "$template_root"
+  printf '%s\n' "$vendor_copy_count"
+}
+
 require_file() {
   local path="$1"
   if [[ ! -f "$path" ]]; then
@@ -243,32 +332,18 @@ validate_tracked_template_files() {
 assemble_canonical_template() {
   local relative_path=""
   local category=""
-  local source_path=""
   local destination_path=""
   local -a missing_generated=()
   local vendor_copy_count=0
 
-  mkdir -p "$CANONICAL_TEMPLATE_ROOT"
+  vendor_copy_count="$(materialize_vendor_copy_files "$CANONICAL_TEMPLATE_ROOT")"
 
-  # Vendor-copy files are not repo-owned. Refresh them from CubeN6 each run so
-  # the canonical template stays pinned to the checked-out firmware tag.
   for relative_path in "${MANIFEST_PATHS[@]}"; do
     category="${CATEGORY_BY_PATH[$relative_path]}"
     destination_path="$CANONICAL_TEMPLATE_ROOT/$relative_path"
-
-    case "$category" in
-      vendor_copy)
-        source_path="$FIRMWARE_DIR/${SOURCE_BY_PATH[$relative_path]}"
-        mkdir -p "$(dirname "$destination_path")"
-        cp "$source_path" "$destination_path"
-        vendor_copy_count=$((vendor_copy_count + 1))
-        ;;
-      generated)
-        if [[ ! -f "$destination_path" ]]; then
-          missing_generated+=("$relative_path")
-        fi
-        ;;
-    esac
+    if [[ "$category" == "generated" && ! -f "$destination_path" ]]; then
+      missing_generated+=("$relative_path")
+    fi
   done
 
   if [[ "${#missing_generated[@]}" -gt 0 ]]; then
@@ -286,26 +361,10 @@ EOF
 
 refresh_example_templates() {
   local template_root=""
-  local relative_path=""
-  local category=""
-  local source_path=""
-  local destination_path=""
   local vendor_copy_count=0
 
   for template_root in "${EXTRA_TEMPLATE_ROOTS[@]}"; do
-    mkdir -p "$template_root"
-    vendor_copy_count=0
-
-    for relative_path in "${MANIFEST_PATHS[@]}"; do
-      category="${CATEGORY_BY_PATH[$relative_path]}"
-      [[ "$category" != "vendor_copy" ]] && continue
-
-      source_path="$FIRMWARE_DIR/${SOURCE_BY_PATH[$relative_path]}"
-      destination_path="$template_root/$relative_path"
-      mkdir -p "$(dirname "$destination_path")"
-      cp "$source_path" "$destination_path"
-      vendor_copy_count=$((vendor_copy_count + 1))
-    done
+    vendor_copy_count="$(materialize_vendor_copy_files "$template_root")"
 
     echo "Example STM32 template refreshed at $template_root"
     echo "Vendor-copy files materialized: $vendor_copy_count"

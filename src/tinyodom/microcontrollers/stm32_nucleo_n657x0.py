@@ -85,6 +85,8 @@ WEIGHTS_BLOB_NAME = "network_data.bin"
 DEFAULT_WEIGHTS_EXTERNAL_LOADER_NAME = "MX25UM51245G_STM32N6570-NUCLEO.stldr"
 # Manifest persisted in staged project roots to carry STM backend metadata.
 STAGED_MANIFEST_NAME = "tinyodom_stm32_manifest.json"
+# Environment variable that preserves staged STM32 candidate roots for debugging.
+KEEP_STAGED_CANDIDATES_ENV = "TINYODOM_KEEP_STM32_CANDIDATES"
 # Build-recipe files expected at the staged project root after makefile generation.
 DEBUG_RECIPE_ROOT_FILENAMES = frozenset(
     {
@@ -1542,6 +1544,37 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         """
         del input_mode, outputs_dir, config, sketches_dir
         return self._options.project_root
+
+    def cleanup_prepared_candidate(self, prepared_dir: Path | None) -> None:
+        """Delete staged STM32 candidate roots once evaluation is complete.
+
+        Parameters
+        ----------
+        prepared_dir : Path | None
+            Path previously returned by ``prepare_candidate()``.
+        """
+        if prepared_dir is None:
+            return
+        keep_candidates = str(os.environ.get(KEEP_STAGED_CANDIDATES_ENV, "")).strip().lower()
+        if keep_candidates in {"1", "true", "yes", "on"}:
+            logger.info(
+                "Preserving staged STM32 candidate at %s because %s is enabled.",
+                prepared_dir,
+                KEEP_STAGED_CANDIDATES_ENV,
+            )
+            return
+
+        project_root = Path(prepared_dir).expanduser().resolve()
+        manifest_path = project_root / STAGED_MANIFEST_NAME
+        candidate_root = project_root.parent
+        if not manifest_path.is_file():
+            return
+        if not candidate_root.exists():
+            return
+        try:
+            shutil.rmtree(candidate_root)
+        except OSError:
+            logger.warning("Failed to remove staged STM32 candidate root: %s", candidate_root, exc_info=True)
 
     def compile(
         self,

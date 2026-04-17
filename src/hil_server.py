@@ -1,7 +1,6 @@
 import argparse
 import logging
 import shutil
-from dataclasses import replace
 from pathlib import Path
 
 import absl.logging
@@ -337,6 +336,7 @@ class HILServer:
             and effective_hil_enabled
             and runtime_device.supports_energy_measurement()
         )
+        prepared_dir: Path | None = None
         try:
             prepared_dir = runtime_device.prepare_candidate(
                 config=self.config,
@@ -393,6 +393,8 @@ class HILServer:
                 hil_enabled=effective_hil_enabled,
                 energy_aware=effective_energy_aware,
             )
+        finally:
+            runtime_device.cleanup_prepared_candidate(prepared_dir)
 
         if self.config.device.hil:
             metrics["latency_budget_ms"] = latency_budget_ms
