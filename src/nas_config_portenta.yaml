@@ -35,7 +35,6 @@ training:
   model_epochs: 900
   nas_trials: 135
   nas_multiobjective_population_size: 45 # population size for multi-objective NAS, note: nas trials should be at least 3x this value
-  nas_multiobjective: true # whether to use multi-objective NAS (accuracy + energy/latency) or single-objective (score combination of accuracy, latency, memory and energy)
   max_total_trials: 270  # safety cap for total attempts to offset pruned/failed runs
   quantization: true
   latency_proxy_max_flops: 30000000.0
@@ -44,6 +43,18 @@ training:
   energy_aware: true
   # Input mode for HIL sketches: uniform, representative, or real
   input_mode: "uniform"
+
+nas:
+  score:
+    type: multi-objective
+    params:
+      objectives:
+        - metric: rmse_total
+          direction: minimize
+        - metric: latency_ms
+          direction: minimize
+  prune:
+    rules: []
 
 # Output directories and filenames
 outputs:

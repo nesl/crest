@@ -40,7 +40,10 @@ from tinyodom.microcontrollers import (
     resolve_device_options,
 )
 from tinyodom.model import (
+    ScoringResult,
+    ScoreConfigEvaluationError,
     build_tinyodom_model,
+    evaluate_prune_rules,
     train_and_score,
     count_flops,
     log_trial,
@@ -48,6 +51,9 @@ from tinyodom.model import (
     DEFAULT_CONFIG_PATH,
     DILATION_CANDIDATES,
     DROP_RATE_CHOICES,
+    get_score_config_directions,
+    is_multiobjective_score_config,
+    score_config_uses_training_metrics,
     set_error_code,
 )
 
@@ -88,9 +94,6 @@ class NASModelClient:
     config : addict.Dict
         Parsed configuration with derived fields (e.g., model/checkpoint paths,
         dropout choices). Accessed via dot-notation.
-    latency_or_energy_name : str
-    Label for the second objective in multi-objective mode ("latency [ms]"
-    or "energy per inference [mJ]"), derived from ``config.training.energy_aware``.
     context : zmq.Context
         Shared ZMQ context for the HIL communication.
     socket : zmq.Socket
@@ -105,10 +108,9 @@ class NASModelClient:
 
     Notes
     -----
-    - Multi-objective NAS is enabled via ``config.training.nas_multiobjective``;
-      when true, NSGA-II is used with directions [maximize accuracy, minimize
-      latency/energy]. Otherwise, a single-objective TPE sampler is used using
-      the scoring method described in nas_utils_ex's `train_and_score` function.
+    - Multi-objective NAS is enabled via ``config.nas.score.type``. When true,
+      NSGA-II is used with the configured objective directions. Otherwise, a
+      single-objective TPE sampler is used.
     - Device resource caps (RAM/flash) are checked against board specs returned
       by ``return_hardware_specs``. Trials exceeding limits are pruned.
     - Artifacts (trials CSV, training history, plots, metrics, optional TFLite)
@@ -132,13 +134,8 @@ class NASModelClient:
         
         if self.config.device.hil is False:
             logger.warning("HIL is disabled in the configuration.")
-        if self.config.training.nas_multiobjective:
-            if self.config.training.energy_aware:
-                logger.info("Using multi-objective NAS with energy awareness.")
-                self.latency_or_energy_name = "energy per inference [mJ]"
-            else:
-                logger.info("Using multi-objective NAS with latency.")
-                self.latency_or_energy_name = "latency [ms]"
+        if is_multiobjective_score_config(self.config.nas.score):
+            logger.info("Using multi-objective NAS.")
         else:
             logger.info("Using single-objective NAS.")
 
@@ -209,6 +206,26 @@ class NASModelClient:
         if callable(getter):
             return getter(key, default)
         return getattr(container, key, default)
+
+    def _score_is_multiobjective(self) -> bool:
+        """Return whether the active config uses multi-objective scoring.
+
+        Returns
+        -------
+        bool
+            ``True`` when the active ``score`` block is multi-objective.
+        """
+        return is_multiobjective_score_config(self.config.nas.score)
+
+    def _study_directions(self) -> list[str]:
+        """Return Optuna directions for the active score config.
+
+        Returns
+        -------
+        list[str]
+            Direction list compatible with ``optuna.create_study``.
+        """
+        return get_score_config_directions(self.config.nas.score)
 
     def _hardware_limit_device_options(self) -> dict[str, str] | None:
         """Build board options required to resolve dynamic hardware limits.
@@ -317,14 +334,8 @@ class NASModelClient:
         Returns
         -------
         float or tuple
-            - If ``config.training.nas_multiobjective`` is False: returns a
-                single scalar ``score`` (higher is better) that blends accuracy
-                with latency/energy according to configuration.
-            - If ``config.training.nas_multiobjective`` is True: returns a
-                2-tuple ``(model_acc, latency_or_energy)`` where
-                ``model_acc = -(rmse_vel_x + rmse_vel_y)`` and the second element
-                is either latency (ms) or energy depending on
-                ``config.training.energy_aware``.
+            Returns either a single scalar score or a tuple of configured
+            objective values, depending on ``config.nas.score.type``.
 
         Raises
         ------
@@ -409,6 +420,8 @@ class NASModelClient:
             self.config.device.name,
             device_options=device_options,
         )
+        metrics["max_ram_bytes"] = float(max_ram)
+        metrics["max_flash_bytes"] = float(max_flash)
         try:
             runtime_device = get_microcontroller_device(
                 str(self.config.device.name),
@@ -418,25 +431,9 @@ class NASModelClient:
         except ValueError:
             runtime_device = None
 
-        rmse_vel_x = float("inf")
-        rmse_vel_y = float("inf")
+        rmse_vel_x = -1.0
+        rmse_vel_y = -1.0
         penalty_acc = -100.0
-        effective_energy_aware = bool(
-            metrics.get(
-                "energy_aware",
-                self.config.training.energy_aware
-                and runtime_device is not None
-                and runtime_device.supports_energy_measurement(),
-            )
-        )
-        # Set a high penalty for energy or latency depending on the mode
-        if effective_energy_aware:
-            penalty_energy_latency = 100.0
-        else:
-            # latency has been seen to go up to 1 second on the extreme, so set penalty accordingly
-            penalty_energy_latency = 10000.0
-        score = penalty_acc
-
         # If no error code present (or timeout), treat as fatal error
         error_code = metrics.get("error_code", HIL_MASTER_FATAL)
 
@@ -449,25 +446,46 @@ class NASModelClient:
 
         def _report_if_supported(value: float) -> None:
             """Optuna trial.report is unsupported for multi-objective studies."""
-            if not self.config.training.nas_multiobjective:
+            if not self._score_is_multiobjective():
                 trial.report(value, step=0)
 
-        def _fail_with_penalty(prune_reason: str):
+        def _fail_with_penalty(prune_reason: str, prune_rule: str = ""):
             """Helper to prune with a penalty score and log the failure."""
-            # Multi-objective: return a dominated pair so the trial completes; single-objective still prunes.
-            # Ensure required metrics are present for logging
-            metrics.setdefault("latency_ms", penalty_energy_latency)
-            metrics.setdefault("energy_mj_per_inference", penalty_energy_latency)
+            metrics.setdefault("latency_ms", 10000.0)
+            metrics.setdefault("energy_mj_per_inference", 10000.0)
             metrics.setdefault("avg_power_mw", -1.0)
             metrics.setdefault("avg_current_ma", -1.0)
             metrics.setdefault("bus_voltage_v", -1.0)
             metrics.setdefault("latency_budget_ms", -1.0)
             metrics.setdefault("arena_bytes", -1)
+            metrics.setdefault("rmse_total", -1.0)
+            directions = self._study_directions()
+            if self._score_is_multiobjective():
+                objective_names = [str(obj.metric) for obj in self.config.nas.score.params.objectives]
+                objective_values = [
+                    -1e12 if direction == "maximize" else 1e12
+                    for direction in directions
+                ]
+                scoring_result = ScoringResult(
+                    rmse_vel_x=rmse_vel_x,
+                    rmse_vel_y=rmse_vel_y,
+                    score=None,
+                    objective_names=objective_names,
+                    objective_values=objective_values,
+                    objective_directions=directions,
+                )
+            else:
+                scoring_result = ScoringResult(
+                    rmse_vel_x=rmse_vel_x,
+                    rmse_vel_y=rmse_vel_y,
+                    score=penalty_acc,
+                    objective_names=["score"],
+                    objective_values=[penalty_acc],
+                    objective_directions=["maximize"],
+                )
 
             log_trial(
-                score=penalty_acc,
-                rmse_vel_x=rmse_vel_x,
-                rmse_vel_y=rmse_vel_y,
+                scoring_result=scoring_result,
                 metrics=metrics,
                 hyperparams=hyperparams,
                 trial=trial,
@@ -475,11 +493,11 @@ class NASModelClient:
                 study_name=self.study_name,
                 pruned=True,
                 prune_reason=prune_reason,
+                prune_rule=prune_rule,
             )
 
-            if self.config.training.nas_multiobjective:
-                # penalty_secondary = metrics["energy_mj_per_inference"] if self.config.training.energy_aware else metrics["latency_ms"]
-                return penalty_acc, penalty_energy_latency
+            if self._score_is_multiobjective():
+                return tuple(scoring_result.objective_values)
 
             _report_if_supported(-float("inf"))
             raise optuna.TrialPruned(prune_reason)
@@ -528,63 +546,57 @@ class NASModelClient:
                 set_error_code(metrics, HIL_MASTER_ARENA_EXHAUSTED)
             return _fail_with_penalty("Resource or arena check failed")
 
-        # Only train/evaluate models that pass all resource checks.
-        rmse_vel_x, rmse_vel_y, score, latency_or_energy = train_and_score(
-            model,
-            batch_size=batch_size,
-            hyperparams=Dict(hyperparams),
+        prune_hit = evaluate_prune_rules(
             metrics=metrics,
-            max_ram=max_ram,
-            max_flash=max_flash,
-            training_data=self.training_data,
-            validation_data=self.validation_data,
-            config=self.config
+            hyperparams=Dict(hyperparams),
+            score_config=self.config.nas.score,
+            prune_config=self.config.nas.prune,
         )
-        
-        model_acc = -(rmse_vel_x + rmse_vel_y)
+        if prune_hit is not None:
+            prune_rule, prune_reason = prune_hit
+            return _fail_with_penalty(prune_reason, prune_rule=prune_rule)
 
-        # Return either single-objective score or multi-objective tuple
-        if self.config.training.nas_multiobjective:
-            if (
-                not np.isfinite(model_acc)
-                or not np.isfinite(latency_or_energy)
-                or latency_or_energy < 0
-                or model_acc == -5.0
-            ):
-                # If training produced invalid objectives, fall back to penalty pair.
-                return _fail_with_penalty("Training failed to produce valid metrics")
-            log_trial(
-                score=score,
-                rmse_vel_x=rmse_vel_x,
-                rmse_vel_y=rmse_vel_y,
+        # Only train/evaluate models that pass all resource checks.
+        try:
+            scoring_result = train_and_score(
+                model,
+                batch_size=batch_size,
+                hyperparams=Dict(hyperparams),
                 metrics=metrics,
-                hyperparams=hyperparams,
-                trial=trial,
-                log_file_name=str(log_path),
-                study_name=self.study_name,
+                max_ram=max_ram,
+                max_flash=max_flash,
+                training_data=self.training_data,
+                validation_data=self.validation_data,
+                config=self.config,
             )
-            return model_acc, latency_or_energy
-        else:
-            log_trial(
-                score=score,
-                rmse_vel_x=rmse_vel_x,
-                rmse_vel_y=rmse_vel_y,
-                metrics=metrics,
-                hyperparams=hyperparams,
-                trial=trial,
-                log_file_name=str(log_path),
-                study_name=self.study_name,
-            )
-            return score
+        except ScoreConfigEvaluationError:
+            return _fail_with_penalty("Training failed to produce valid metrics")
+
+        if any(
+            (not np.isfinite(value)) or (direction == "minimize" and value < 0.0)
+            for value, direction in zip(scoring_result.objective_values, scoring_result.objective_directions)
+        ):
+            return _fail_with_penalty("Training failed to produce valid metrics")
+
+        log_trial(
+            scoring_result=scoring_result,
+            metrics=metrics,
+            hyperparams=hyperparams,
+            trial=trial,
+            log_file_name=str(log_path),
+            study_name=self.study_name,
+        )
+        if self._score_is_multiobjective():
+            return tuple(scoring_result.objective_values)
+        return float(scoring_result.score)
 
     def smoke_test(
         self,
         train: bool=True,
-        hil: bool=False,
+        hil: bool | None = None,
         trials: int=5,
         epochs: int=5,
         study_name: str="smoke_test_study",
-        multiobjective: bool | None = None,
     ) -> None:
         """Run a quick Optuna smoke test with configurable training and HIL settings.
 
@@ -592,18 +604,16 @@ class NASModelClient:
         ----------
         train : bool, optional
             Whether to enable model training during the test (default is True).
-        hil : bool, optional
-            Whether to enable hardware-in-the-loop testing (default is False).
+        hil : bool | None, optional
+            Temporary HIL override for the smoke test. When ``None``, the
+            loaded YAML setting is used as-is.
         trials : int, optional
             Number of trials to run in the smoke test (default is 5).
         epochs : int, optional 
             Number of epochs to train during the smoke test (default is 5).
         study_name : str, optional
             Name of the Optuna study (default is "smoke_test_study").
-        multiobjective : bool | None, optional
-            Whether to run the smoke test in multi-objective mode. Defaults to
-            the current configuration if not provided.
-            
+
         Returns
         -------
         None
@@ -619,23 +629,25 @@ class NASModelClient:
                 stale_path.unlink()
                 print(f"[SMOKE] Removed stale artifact: {stale_path}")
         storage_uri = f"sqlite:///{smoke_db_path}"
-        multiobjective = self.config.training.nas_multiobjective if multiobjective is None else multiobjective
         _previous_hil = self.config.device.hil
         _previous_train = self.config.training.train
         _previous_epochs = self.config.training.nas_epochs
-        _previous_multiobjective = self.config.training.nas_multiobjective
         try:
-            self.config.device.hil = hil
+            if hil is not None:
+                self.config.device.hil = hil
             self.config.training.train = train
             self.config.training.nas_epochs = epochs  # Speed up smoke test
-            self.config.training.nas_multiobjective = multiobjective
-            if multiobjective:
+            if (not train) and score_config_uses_training_metrics(self.config.nas.score):
+                raise ValueError(
+                    "train=False is incompatible with score configs that require RMSE metrics."
+                )
+            if self._score_is_multiobjective():
                 sampler = optuna.samplers.NSGAIISampler(
                     population_size=self.config.training.nas_multiobjective_population_size,
                     seed=42,
                 )
                 single_trial_study = optuna.create_study(
-                    directions=["maximize", "minimize"],
+                    directions=self._study_directions(),
                     storage=storage_uri,
                     study_name=study_name,
                     sampler=sampler,
@@ -670,14 +682,13 @@ class NASModelClient:
             self.config.device.hil = _previous_hil
             self.config.training.train = _previous_train
             self.config.training.nas_epochs = _previous_epochs
-            self.config.training.nas_multiobjective = _previous_multiobjective
 
         complete_trials = [t for t in single_trial_study.trials if t.state == TrialState.COMPLETE]
         if not complete_trials:
             print("[SMOKE] No completed trials to report.")
             return
 
-        if multiobjective:
+        if self._score_is_multiobjective():
             pareto = single_trial_study.best_trials
             print(f"Pareto front ({len(pareto)} trial(s)):")
             for trial in pareto:
@@ -728,12 +739,12 @@ class NASModelClient:
         target_completions = self.config.training.nas_trials
         max_total_trials = self.config.training.max_total_trials
 
-        if self.config.training.nas_multiobjective:
+        if self._score_is_multiobjective():
             sampler = optuna.samplers.NSGAIISampler(
                         population_size=self.config.training.nas_multiobjective_population_size,
                         seed=42)
             study = optuna.create_study(
-                    directions=["maximize", "minimize"],  # maximize the accuracy, minimize latency/energy
+                    directions=self._study_directions(),
                     storage=storage,
                     study_name=study_name,
                     sampler=sampler,
@@ -863,7 +874,7 @@ class NASModelClient:
         trials_df.to_csv(trials_csv, index=False)
         print(f"[run_scoring_nas] Saved trials dataframe to {trials_csv}")
 
-        if self.config.training.nas_multiobjective:
+        if self._score_is_multiobjective():
             # Multi-objective: keep this as a “scoring + analysis” run.
             pareto_trials = study.best_trials
             pareto_ids = [t.number for t in pareto_trials]
@@ -1454,11 +1465,6 @@ if __name__ == "__main__":
         help="Name of the Optuna study to use for the NAS pipeline.",
         default="tinyodom_nas_study",
     )
-    parser.add_argument(
-        "--smoke-test-multiobjective",
-        action="store_true",
-        help="Run the smoke test in multi-objective mode (overrides config).",
-    )
     args = parser.parse_args()
 
     # End-to-end NAS + final training + evaluation pipeline.
@@ -1473,7 +1479,6 @@ if __name__ == "__main__":
                 trials=args.smoke_test,
                 epochs=3,
                 study_name=study_name,
-                multiobjective=args.smoke_test_multiobjective if args.smoke_test_multiobjective else None,
             )
             print("[MAIN] Smoke test complete.")
         else:

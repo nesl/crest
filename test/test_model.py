@@ -23,6 +23,8 @@ from tinyodom.model import (
     CollectMetricsRequest,
     DROP_RATE_CHOICES,
     HarnessConfig,
+    ScoringResult,
+    ScoreConfigEvaluationError,
     apply_combined_perturbation,
     build_collect_metrics_request,
     collect_bn_layers,
@@ -873,17 +875,24 @@ class TrainAndScoreTests(unittest.TestCase):
     """Ensure scoring uses backend-effective energy semantics."""
 
     def test_train_and_score_uses_effective_energy_flag_from_metrics(self) -> None:
-        """STM Phase 1 should score on latency when energy was disabled upstream.
-
-        Returns
-        -------
-        None
-        """
+        """STM Phase 1 should score on latency when energy was disabled upstream."""
         config = Dict(
             training=Dict(
                 energy_aware=True,
                 train=False,
                 latency_proxy_max_flops=20_000_000,
+            ),
+            nas=Dict(
+                score=Dict(
+                    type="scoring-function",
+                    metrics=Dict(),
+                    params=Dict(
+                        terms=[
+                            Dict(type="weighted", metric="latency_ms", weight=-1.0),
+                        ]
+                    ),
+                ),
+                prune=Dict(rules=[]),
             ),
             outputs=Dict(checkpoint_path=Path("unused.keras")),
         )
@@ -891,14 +900,14 @@ class TrainAndScoreTests(unittest.TestCase):
             "energy_aware": False,
             "energy_mj_per_inference": -1.0,
             "latency_ms": 12.5,
-            "hil_enabled": False,
+            "hil_enabled": True,
             "error_code": 0,
             "ram_bytes": 128,
             "flash_bytes": 256,
         }
         hyperparams = Dict(flops=1_000)
 
-        _rmse_x, _rmse_y, _score, latency_or_energy = train_and_score(
+        scoring_result = train_and_score(
             model=MagicMock(),
             batch_size=1,
             hyperparams=hyperparams,
@@ -910,11 +919,196 @@ class TrainAndScoreTests(unittest.TestCase):
             config=config,
         )
 
-        self.assertEqual(latency_or_energy, 12.5)
+        self.assertEqual(scoring_result.score, -12.5)
+        self.assertEqual(metrics["rmse_total"], -1.0)
+
+    def test_train_and_score_supports_normalized_weighted_terms(self) -> None:
+        """Normalized weighted terms should use the injected device limits."""
+        config = Dict(
+            training=Dict(
+                energy_aware=False,
+                train=False,
+                latency_proxy_max_flops=20_000_000,
+            ),
+            nas=Dict(
+                score=Dict(
+                    type="scoring-function",
+                    metrics=Dict(),
+                    params=Dict(
+                        terms=[
+                            Dict(
+                                type="normalized-weighted",
+                                metric="ram_bytes",
+                                weight=0.5,
+                                reference=Dict(type="metric", metric="max_ram_bytes"),
+                            ),
+                            Dict(
+                                type="normalized-weighted",
+                                metric="flash_bytes",
+                                weight=-2.0,
+                                reference=Dict(type="metric", metric="max_flash_bytes"),
+                            ),
+                        ]
+                    ),
+                ),
+                prune=Dict(rules=[]),
+            ),
+            outputs=Dict(checkpoint_path=Path("unused.keras")),
+        )
+        metrics = {
+            "energy_aware": False,
+            "energy_mj_per_inference": -1.0,
+            "latency_ms": 12.5,
+            "hil_enabled": True,
+            "error_code": 0,
+            "ram_bytes": 128,
+            "flash_bytes": 256,
+        }
+        hyperparams = Dict(flops=1_000)
+
+        scoring_result = train_and_score(
+            model=MagicMock(),
+            batch_size=1,
+            hyperparams=hyperparams,
+            metrics=metrics,
+            max_ram=1_024,
+            max_flash=2_048,
+            training_data=MagicMock(),
+            validation_data=MagicMock(),
+            config=config,
+        )
+
+        self.assertAlmostEqual(scoring_result.score, -0.1875)
+        self.assertEqual(metrics["max_ram_bytes"], 1_024.0)
+        self.assertEqual(metrics["max_flash_bytes"], 2_048.0)
+
+    def test_train_and_score_supports_energy_budget_from_power_metric(self) -> None:
+        """Energy budget derived metrics should resolve from power and duration."""
+        config = Dict(
+            training=Dict(
+                energy_aware=True,
+                train=False,
+                latency_proxy_max_flops=20_000_000,
+            ),
+            nas=Dict(
+                score=Dict(
+                    type="scoring-function",
+                    metrics=Dict(
+                        energy_budget_mj=Dict(
+                            type="energy-budget-from-power",
+                            power_mw=Dict(type="literal", value=100.0),
+                            duration_ms=Dict(type="metric", metric="latency_budget_ms"),
+                        )
+                    ),
+                    params=Dict(
+                        terms=[
+                            Dict(
+                                type="target",
+                                metric="energy_mj_per_inference",
+                                weight=0.15,
+                                reference=Dict(type="metric", metric="energy_budget_mj"),
+                            ),
+                        ]
+                    )
+                ),
+                prune=Dict(rules=[]),
+            ),
+            outputs=Dict(checkpoint_path=Path("unused.keras")),
+        )
+        metrics = {
+            "energy_aware": True,
+            "energy_mj_per_inference": 3.0,
+            "latency_ms": 12.5,
+            "latency_budget_ms": 20.0,
+            "hil_enabled": True,
+            "error_code": 0,
+            "ram_bytes": 128,
+            "flash_bytes": 256,
+        }
+        hyperparams = Dict(flops=1_000)
+
+        scoring_result = train_and_score(
+            model=MagicMock(),
+            batch_size=1,
+            hyperparams=hyperparams,
+            metrics=metrics,
+            max_ram=1_024,
+            max_flash=2_048,
+            training_data=MagicMock(),
+            validation_data=MagicMock(),
+            config=config,
+        )
+
+        self.assertAlmostEqual(scoring_result.score, -0.15)
+
+    def test_train_and_score_raises_dedicated_exception_for_unavailable_score_metric(self) -> None:
+        """Unavailable score metrics should raise ScoreConfigEvaluationError."""
+        config = Dict(
+            training=Dict(
+                energy_aware=True,
+                train=False,
+                latency_proxy_max_flops=20_000_000,
+            ),
+            nas=Dict(
+                score=Dict(
+                    type="scoring-function",
+                    metrics=Dict(),
+                    params=Dict(
+                        terms=[
+                            Dict(
+                                type="target",
+                                metric="energy_mj_per_inference",
+                                weight=0.15,
+                                reference=Dict(type="metric", metric="latency_budget_ms"),
+                            ),
+                        ]
+                    ),
+                ),
+                prune=Dict(rules=[]),
+            ),
+            outputs=Dict(checkpoint_path=Path("unused.keras")),
+        )
+        metrics = {
+            "energy_aware": True,
+            "energy_mj_per_inference": 3.0,
+            "latency_ms": 12.5,
+            "latency_budget_ms": -1.0,
+            "hil_enabled": True,
+            "error_code": 0,
+            "ram_bytes": 128,
+            "flash_bytes": 256,
+        }
+        hyperparams = Dict(flops=1_000)
+
+        with self.assertRaises(ScoreConfigEvaluationError):
+            train_and_score(
+                model=MagicMock(),
+                batch_size=1,
+                hyperparams=hyperparams,
+                metrics=metrics,
+                max_ram=1_024,
+                max_flash=2_048,
+                training_data=MagicMock(),
+                validation_data=MagicMock(),
+                config=config,
+            )
 
 
 class LoadSettingsTests(unittest.TestCase):
     """Verify the NAS configuration loader derives paths and validates input."""
+
+    @staticmethod
+    def _score_lines() -> list[str]:
+        return [
+            "nas:",
+            "  score:",
+            "    type: scoring-function",
+            "    params:",
+            "      terms:",
+            "        - type: weighted",
+            "          metric: flops",
+            "          weight: -1.0",
+        ]
 
     def test_load_settings_derives_expected_paths(self) -> None:
         """YAML entries should produce resolved paths and derived file names."""
@@ -930,6 +1124,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 5",
+                        *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{models_dir}\"",
                         f"  tcn_dir: \"{tcn_dir}\"",
@@ -967,6 +1162,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        *self._score_lines(),
                     ]
                 )
             )
@@ -980,6 +1176,7 @@ class LoadSettingsTests(unittest.TestCase):
                     [
                         "device:",
                         "  name: TEST_DEVICE",
+                        *self._score_lines(),
                     ]
                 )
             )
@@ -1000,6 +1197,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        *self._score_lines(),
                     ]
                 )
             )
@@ -1019,6 +1217,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
@@ -1040,6 +1239,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
@@ -1063,6 +1263,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "  measured_inference_runs: 0",
                         "training:",
                         "  nas_trials: 10",
+                        *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
@@ -1071,6 +1272,368 @@ class LoadSettingsTests(unittest.TestCase):
             )
 
             with self.assertRaises(ValueError):
+                load_config(config_path=cfg)
+
+    def test_load_settings_accepts_normalized_weighted_term(self) -> None:
+        """Normalized weighted terms should validate typed references."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: normalized-weighted",
+                        "          metric: ram_bytes",
+                        "          weight: 0.01",
+                        "          reference:",
+                        "            type: metric",
+                        "            metric: max_ram_bytes",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.score.params.terms[0].type, "normalized-weighted")
+        self.assertEqual(settings.nas.score.params.terms[0].reference.metric, "max_ram_bytes")
+
+    def test_load_settings_rejects_non_positive_normalized_weight_reference(self) -> None:
+        """Literal normalized references must be strictly positive."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: normalized-weighted",
+                        "          metric: ram_bytes",
+                        "          weight: 0.01",
+                        "          reference:",
+                        "            type: literal",
+                        "            value: 0.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "greater than zero"):
+                load_config(config_path=cfg)
+
+    def test_load_settings_accepts_energy_budget_from_power_metric(self) -> None:
+        """Energy budgets derived from power should validate cleanly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    metrics:",
+                        "      energy_budget_mj:",
+                        "        type: energy-budget-from-power",
+                        "        power_mw:",
+                        "          type: literal",
+                        "          value: 100.0",
+                        "        duration_ms:",
+                        "          type: metric",
+                        "          metric: latency_budget_ms",
+                        "    params:",
+                        "      terms:",
+                        "        - type: target",
+                        "          metric: energy_mj_per_inference",
+                        "          weight: 0.15",
+                        "          reference:",
+                        "            type: metric",
+                        "            metric: energy_budget_mj",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.score.metrics.energy_budget_mj.type, "energy-budget-from-power")
+        self.assertEqual(settings.nas.score.metrics.energy_budget_mj.duration_ms.metric, "latency_budget_ms")
+
+    def test_load_settings_rejects_non_positive_energy_budget_duration(self) -> None:
+        """Energy budget duration literals must stay strictly positive."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    metrics:",
+                        "      energy_budget_mj:",
+                        "        type: energy-budget-from-power",
+                        "        power_mw:",
+                        "          type: literal",
+                        "          value: 100.0",
+                        "        duration_ms:",
+                        "          type: literal",
+                        "          value: 0.0",
+                        "    params:",
+                        "      terms:",
+                        "        - type: target",
+                        "          metric: energy_mj_per_inference",
+                        "          weight: 0.15",
+                        "          reference:",
+                        "            type: metric",
+                        "            metric: energy_budget_mj",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "greater than zero"):
+                load_config(config_path=cfg)
+
+    def test_load_settings_rejects_legacy_top_level_score(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "score:",
+                        "  type: scoring-function",
+                        "  params:",
+                        "    terms:",
+                        "      - type: weighted",
+                        "        metric: flops",
+                        "        weight: -1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(KeyError, "nas.score"):
+                load_config(config_path=cfg)
+
+    def test_load_settings_accepts_scalar_prune_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: flops",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: latency_budget",
+                        "        metric: latency_ms",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: metric",
+                        "          metric: latency_budget_ms",
+                        "        reason: Latency exceeds budget",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.prune.rules[0].rule, "latency_budget")
+        self.assertEqual(settings.nas.prune.rules[0].condition, "gt")
+
+    def test_load_settings_accepts_empty_scalar_prune_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: flops",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules: []",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.prune.rules, [])
+
+    def test_load_settings_rejects_prune_rules_for_multiobjective_score(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: multi-objective",
+                        "    params:",
+                        "      objectives:",
+                        "        - metric: rmse_total",
+                        "          direction: minimize",
+                        "        - metric: latency_ms",
+                        "          direction: minimize",
+                        "  prune:",
+                        "    rules:",
+                        "      - metric: latency_ms",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: metric",
+                        "          metric: latency_budget_ms",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "only supported"):
+                load_config(config_path=cfg)
+
+    def test_load_settings_rejects_prune_rules_that_depend_on_training_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    metrics:",
+                        "      total_error:",
+                        "        type: add",
+                        "        metrics:",
+                        "          - rmse_total",
+                        "          - flops",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: flops",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules:",
+                        "      - metric: total_error",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "training-only"):
+                load_config(config_path=cfg)
+
+    def test_load_settings_rejects_weight_storage_mode_in_score_terms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: weight_storage_mode",
+                        "          weight: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "unknown metric"):
                 load_config(config_path=cfg)
 
     def test_load_settings_missing_file(self) -> None:
@@ -1090,6 +1653,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "training:",
                         "  nas_trials: 5",
                         "  energy_aware: true",
+                        *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
@@ -1126,6 +1690,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "training:",
                         "  nas_trials: 5",
                         "  energy_aware: true",
+                        *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
@@ -1154,6 +1719,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "  cpu_clock_mhz_options: null",
                         "training:",
                         "  nas_trials: 5",
+                        *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
@@ -1177,6 +1743,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "  cpu_clock_mhz_options: [true, 400]",
                         "training:",
                         "  nas_trials: 5",
+                        *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
@@ -1199,6 +1766,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "  cpu_clock_mhz_options: [250, 400]",
                         "training:",
                         "  nas_trials: 5",
+                        *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
@@ -1275,6 +1843,7 @@ class LogTrialTests(unittest.TestCase):
         "score",
         "rmse_vel_x",
         "rmse_vel_y",
+        "rmse_total",
         "ram_bytes",
         "flash_bytes",
         "external_flash_bytes",
@@ -1295,8 +1864,13 @@ class LogTrialTests(unittest.TestCase):
         "norm_flag",
         "error_code",
         "error_label",
+        "score_type",
+        "objective_names_json",
+        "objective_values_json",
+        "objective_directions_json",
         "pruned",
         "prune_reason",
+        "prune_rule",
     ]
 
     def _sample_metrics(self):
@@ -1305,6 +1879,7 @@ class LogTrialTests(unittest.TestCase):
             "flash_bytes": 2000,
             "external_flash_bytes": 3000,
             "weight_storage_mode": "external_flash",
+            "rmse_total": 0.3,
             "latency_ms": 10,
             "latency_budget_ms": -1,
             "arena_bytes": 4096,
@@ -1341,9 +1916,14 @@ class LogTrialTests(unittest.TestCase):
                 "tinyodom.model.time.strftime", return_value="01-02-1970 00:02:03"
             ):
                 log_trial(
-                    score=0.5,
-                    rmse_vel_x=0.1,
-                    rmse_vel_y=0.2,
+                    scoring_result=ScoringResult(
+                        rmse_vel_x=0.1,
+                        rmse_vel_y=0.2,
+                        score=0.5,
+                        objective_names=["score"],
+                        objective_values=[0.5],
+                        objective_directions=["maximize"],
+                    ),
                     metrics=metrics,
                     hyperparams=hyperparams,
                     trial=fake_trial,
@@ -1360,6 +1940,7 @@ class LogTrialTests(unittest.TestCase):
                 rows[1][header_index["timestamp_readable"]], "01-02-1970 00:02:03"
             )
             self.assertEqual(float(rows[1][header_index["score"]]), 0.5)
+            self.assertAlmostEqual(float(rows[1][header_index["rmse_total"]]), metrics["rmse_total"])
             self.assertEqual(
                 int(rows[1][header_index["ram_bytes"]]), metrics["ram_bytes"]
             )
@@ -1397,8 +1978,10 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(
                 rows[1][header_index["error_label"]], metrics["error_label"]
             )
+            self.assertEqual(rows[1][header_index["score_type"]], "scoring-function")
             self.assertEqual(rows[1][header_index["pruned"]], "False")
             self.assertEqual(rows[1][header_index["prune_reason"]], "")
+            self.assertEqual(rows[1][header_index["prune_rule"]], "")
 
             self.assertEqual(fake_trial.attrs["ram_bytes"], metrics["ram_bytes"])
             self.assertEqual(
@@ -1411,6 +1994,7 @@ class LogTrialTests(unittest.TestCase):
             )
             self.assertEqual(fake_trial.attrs["rmse_vel_x"], 0.1)
             self.assertEqual(fake_trial.attrs["rmse_vel_y"], 0.2)
+            self.assertEqual(fake_trial.attrs["rmse_total"], metrics["rmse_total"])
             self.assertEqual(fake_trial.attrs["latency_budget_ms"], metrics["latency_budget_ms"])
             self.assertEqual(
                 fake_trial.attrs["cpu_clock_mhz_requested"],
@@ -1424,6 +2008,7 @@ class LogTrialTests(unittest.TestCase):
                 fake_trial.attrs["energy_mj_per_inference"],
                 metrics["energy_mj_per_inference"],
             )
+            self.assertEqual(fake_trial.attrs["prune_rule"], "")
 
     def test_log_trial_appends_without_duplicate_header(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1435,18 +2020,28 @@ class LogTrialTests(unittest.TestCase):
             fake_trial_two = FakeTrial()
 
             log_trial(
-                score=0.3,
-                rmse_vel_x=0.05,
-                rmse_vel_y=0.06,
+                scoring_result=ScoringResult(
+                    rmse_vel_x=0.05,
+                    rmse_vel_y=0.06,
+                    score=0.3,
+                    objective_names=["score"],
+                    objective_values=[0.3],
+                    objective_directions=["maximize"],
+                ),
                 metrics=metrics,
                 hyperparams=hyperparams,
                 trial=fake_trial_one,
                 log_file_name=str(log_path),
             )
             log_trial(
-                score=0.2,
-                rmse_vel_x=0.04,
-                rmse_vel_y=0.05,
+                scoring_result=ScoringResult(
+                    rmse_vel_x=0.04,
+                    rmse_vel_y=0.05,
+                    score=0.2,
+                    objective_names=["score"],
+                    objective_values=[0.2],
+                    objective_directions=["maximize"],
+                ),
                 metrics=metrics,
                 hyperparams=hyperparams,
                 trial=fake_trial_two,
@@ -1458,6 +2053,36 @@ class LogTrialTests(unittest.TestCase):
 
             self.assertEqual(rows[0], self.HEADER)
             self.assertEqual(len(rows), 3)
+
+    def test_log_trial_marks_single_objective_multiobjective_runs_correctly(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "log.csv"
+            fake_trial = FakeTrial()
+            metrics = self._sample_metrics()
+            hyperparams = self._sample_hyperparams()
+
+            log_trial(
+                scoring_result=ScoringResult(
+                    rmse_vel_x=0.1,
+                    rmse_vel_y=0.2,
+                    score=None,
+                    objective_names=["rmse_total"],
+                    objective_values=[0.3],
+                    objective_directions=["minimize"],
+                ),
+                metrics=metrics,
+                hyperparams=hyperparams,
+                trial=fake_trial,
+                log_file_name=str(log_path),
+            )
+
+            with log_path.open(newline="") as csvfile:
+                rows = list(csv.reader(csvfile))
+
+            header_index = {name: idx for idx, name in enumerate(self.HEADER)}
+            self.assertEqual(rows[1][header_index["score"]], "")
+            self.assertEqual(rows[1][header_index["score_type"]], "multi-objective")
+            self.assertEqual(fake_trial.attrs["score_type"], "multi-objective")
 
 
 if __name__ == "__main__":
