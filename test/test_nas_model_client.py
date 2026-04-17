@@ -27,7 +27,7 @@ from tinyodom.hardware import (
     HIL_MASTER_FATAL,
     HIL_MASTER_SUCCESS,
 )  # noqa: E402
-from tinyodom.model import ScoringResult, train_and_score  # noqa: E402
+from tinyodom.model import ScoringResult, ScoreConfigEvaluationError, train_and_score  # noqa: E402
 
 
 def _make_scoring_result(
@@ -355,6 +355,80 @@ class ObjectiveTests(unittest.TestCase):
         self.mock_train.assert_not_called()
         self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "rule_0")
         self.assertIn("Configured prune metric unavailable", self.mock_log.call_args.kwargs["prune_reason"])
+
+    def test_objective_uses_negative_one_rmse_sentinels_for_failed_trials(self) -> None:
+        metrics = {
+            "error_code": HIL_MASTER_RAM_OVERFLOW,
+            "ram_bytes": -1,
+            "flash_bytes": -1,
+            "arena_bytes": -1,
+            "latency_ms": -1.0,
+            "latency_budget_ms": -1.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        with self.assertRaises(optuna.TrialPruned):
+            self.client.objective(trial)
+
+        scoring_result = self.mock_log.call_args.kwargs["scoring_result"]
+        self.assertEqual(scoring_result.rmse_vel_x, -1.0)
+        self.assertEqual(scoring_result.rmse_vel_y, -1.0)
+
+    def test_objective_does_not_swallow_generic_training_value_errors(self) -> None:
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+            "latency_budget_ms": 20.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        with patch("nas_model_client.train_and_score", side_effect=ValueError("bad shape")):
+            with self.assertRaisesRegex(ValueError, "bad shape"):
+                self.client.objective(trial)
+
+        self.mock_log.assert_not_called()
+
+    def test_objective_converts_score_config_errors_into_prune_penalties(self) -> None:
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+            "latency_budget_ms": 20.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        with patch(
+            "nas_model_client.train_and_score",
+            side_effect=ScoreConfigEvaluationError("Metric 'latency_ms' is unavailable for scoring."),
+        ):
+            with self.assertRaises(optuna.TrialPruned):
+                self.client.objective(trial)
+
+        self.mock_log.assert_called_once()
+        self.assertEqual(
+            self.mock_log.call_args.kwargs["prune_reason"],
+            "Training failed to produce valid metrics",
+        )
 
     def test_objective_samples_cpu_clock_into_device_overrides(self) -> None:
         metrics = {

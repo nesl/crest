@@ -141,6 +141,15 @@ class ScoringResult:
     objective_directions: list[str]
 
 
+class ScoreConfigEvaluationError(ValueError):
+    """Raised when a configured score cannot be evaluated at runtime.
+
+    This is reserved for score-config resolution failures such as unavailable
+    metrics, invalid runtime references, or derived metrics that cannot be
+    computed from the current trial context.
+    """
+
+
 @dataclass(frozen=True)
 class HarnessConfig:
     """Energy-aware harness settings forwarded to ``HIL_controller``.
@@ -624,7 +633,7 @@ def _evaluate_score_config(
 
     Raises
     ------
-    ValueError
+    ScoreConfigEvaluationError
         If any configured metric or derived metric is unavailable, or if a
         normalized reference resolves to a non-positive value.
     """
@@ -634,25 +643,37 @@ def _evaluate_score_config(
     context["rmse_total"] = metrics.get("rmse_total", -1.0)
     context["flops"] = hyperparams["flops"]
 
+    def _resolve_score_metric(metric_name: str) -> float:
+        try:
+            return _resolve_metric_value(metric_name, context, score_config)
+        except ValueError as exc:
+            raise ScoreConfigEvaluationError(str(exc)) from exc
+
+    def _resolve_score_reference(reference: Dict) -> float:
+        try:
+            return _typed_reference_value(reference, context, score_config)
+        except ValueError as exc:
+            raise ScoreConfigEvaluationError(str(exc)) from exc
+
     if not is_multiobjective_score_config(score_config):
         score_total = 0.0
         for term in score_config.params.terms:
-            metric_value = _resolve_metric_value(term.metric, context, score_config)
+            metric_value = _resolve_score_metric(term.metric)
             weight = float(term.get("weight", 1.0))
             if term.type == "weighted":
                 score_total += weight * metric_value
             elif term.type == "normalized-weighted":
-                reference_value = _typed_reference_value(term.reference, context, score_config)
+                reference_value = _resolve_score_reference(term.reference)
                 if reference_value <= 0.0:
-                    raise ValueError(
+                    raise ScoreConfigEvaluationError(
                         f"Normalized reference for metric '{term.metric}' must be greater than zero."
                     )
                 score_total += weight * (metric_value / reference_value)
             elif term.type == "boundary":
-                reference_value = _typed_reference_value(term.reference, context, score_config)
+                reference_value = _resolve_score_reference(term.reference)
                 score_total -= weight * max(0.0, metric_value - reference_value)
             elif term.type == "target":
-                reference_value = _typed_reference_value(term.reference, context, score_config)
+                reference_value = _resolve_score_reference(term.reference)
                 score_total -= weight * abs(metric_value - reference_value)
             else:
                 raise ValueError(f"Unsupported scalar score term '{term.type}'.")
@@ -670,7 +691,7 @@ def _evaluate_score_config(
     objective_directions: list[str] = []
     for objective in score_config.params.objectives:
         objective_names.append(str(objective.metric))
-        objective_values.append(_resolve_metric_value(objective.metric, context, score_config))
+        objective_values.append(_resolve_score_metric(objective.metric))
         objective_directions.append(str(objective.direction))
     return ScoringResult(
         rmse_vel_x=rmse_vel_x,

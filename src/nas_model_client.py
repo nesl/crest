@@ -41,6 +41,7 @@ from tinyodom.microcontrollers import (
 )
 from tinyodom.model import (
     ScoringResult,
+    ScoreConfigEvaluationError,
     build_tinyodom_model,
     evaluate_prune_rules,
     train_and_score,
@@ -430,17 +431,9 @@ class NASModelClient:
         except ValueError:
             runtime_device = None
 
-        rmse_vel_x = float("inf")
-        rmse_vel_y = float("inf")
+        rmse_vel_x = -1.0
+        rmse_vel_y = -1.0
         penalty_acc = -100.0
-        effective_energy_aware = bool(
-            metrics.get(
-                "energy_aware",
-                self.config.training.energy_aware
-                and runtime_device is not None
-                and runtime_device.supports_energy_measurement(),
-            )
-        )
         # If no error code present (or timeout), treat as fatal error
         error_code = metrics.get("error_code", HIL_MASTER_FATAL)
 
@@ -576,7 +569,7 @@ class NASModelClient:
                 validation_data=self.validation_data,
                 config=self.config,
             )
-        except ValueError:
+        except ScoreConfigEvaluationError:
             return _fail_with_penalty("Training failed to produce valid metrics")
 
         if any(

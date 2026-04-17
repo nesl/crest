@@ -143,7 +143,7 @@ Before running long NAS jobs, skim and adjust `src/nas_config.yaml`:
 For the full NAS policy/config reference, including the `nas.score` and
 `nas.prune` schema, available metrics, derived metrics, and scalar term types,
 see
-[src/README.md](/home/joe/Projects/tinyodom-ex/src/README.md).
+[src/README.md](src/README.md).
 
 - **Device block (`device.*`)**
    - `serial_port`: set to your board’s serial device (e.g. `/dev/cu.usbmodem*` on macOS, `/dev/ttyACM*` on Linux).
@@ -170,7 +170,7 @@ see
    - `nas.score.type`: choose `scoring-function` or `multi-objective`.
    - `nas.score.params.objectives`: for multi-objective runs, list `{metric, direction}` entries such as `rmse_total` and `latency_ms`.
    - `nas.score.params.terms`: for scalar runs, compose terms such as `weighted`, `normalized-weighted`, `boundary`, and `target`.
-   - `nas.score.metrics`: optional derived metrics; see [src/README.md](/home/joe/Projects/tinyodom-ex/src/README.md) for the current supported metric types and examples.
+   - `nas.score.metrics`: optional derived metrics; see [src/README.md](src/README.md) for the current supported metric types and examples.
    - `nas.prune.rules`: optional pre-training hard-reject rules for scalar NAS runs.
 - **Outputs and network (`outputs.*`, `network.*`)**
    - `models_dir`, `tcn_dir`: where Optuna DBs, metrics, and TFLite/C++ artifacts are written.

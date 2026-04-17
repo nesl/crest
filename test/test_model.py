@@ -24,6 +24,7 @@ from tinyodom.model import (
     DROP_RATE_CHOICES,
     HarnessConfig,
     ScoringResult,
+    ScoreConfigEvaluationError,
     apply_combined_perturbation,
     build_collect_metrics_request,
     collect_bn_layers,
@@ -1039,6 +1040,58 @@ class TrainAndScoreTests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(scoring_result.score, -0.15)
+
+    def test_train_and_score_raises_dedicated_exception_for_unavailable_score_metric(self) -> None:
+        """Unavailable score metrics should raise ScoreConfigEvaluationError."""
+        config = Dict(
+            training=Dict(
+                energy_aware=True,
+                train=False,
+                latency_proxy_max_flops=20_000_000,
+            ),
+            nas=Dict(
+                score=Dict(
+                    type="scoring-function",
+                    metrics=Dict(),
+                    params=Dict(
+                        terms=[
+                            Dict(
+                                type="target",
+                                metric="energy_mj_per_inference",
+                                weight=0.15,
+                                reference=Dict(type="metric", metric="latency_budget_ms"),
+                            ),
+                        ]
+                    ),
+                ),
+                prune=Dict(rules=[]),
+            ),
+            outputs=Dict(checkpoint_path=Path("unused.keras")),
+        )
+        metrics = {
+            "energy_aware": True,
+            "energy_mj_per_inference": 3.0,
+            "latency_ms": 12.5,
+            "latency_budget_ms": -1.0,
+            "hil_enabled": True,
+            "error_code": 0,
+            "ram_bytes": 128,
+            "flash_bytes": 256,
+        }
+        hyperparams = Dict(flops=1_000)
+
+        with self.assertRaises(ScoreConfigEvaluationError):
+            train_and_score(
+                model=MagicMock(),
+                batch_size=1,
+                hyperparams=hyperparams,
+                metrics=metrics,
+                max_ram=1_024,
+                max_flash=2_048,
+                training_data=MagicMock(),
+                validation_data=MagicMock(),
+                config=config,
+            )
 
 
 class LoadSettingsTests(unittest.TestCase):
