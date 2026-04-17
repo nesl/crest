@@ -246,17 +246,17 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             type(
                 "DeviceConfigDouble",
                 (),
-                {"stm32": type("STMConfigDouble", (), {"cpu_clock_mhz": 400})()},
+                {"stm32": type("STMConfigDouble", (), {"gdb_port": 61235})()},
             )(),
         )
         self.assertEqual(resolved["project_root"], DEFAULT_TEMPLATE_ROOT.resolve())
-        self.assertEqual(resolved["gdb_port"], stm32_cube_clt.DEFAULT_GDB_PORT)
+        self.assertEqual(resolved["gdb_port"], 61235)
         self.assertEqual(resolved["apid"], stm32_cube_clt.DEFAULT_APID)
         self.assertEqual(
             resolved["server_ready_timeout_s"],
             stm32_cube_clt.SERVER_READY_TIMEOUT_S,
         )
-        self.assertEqual(resolved["cpu_clock_mhz"], 400)
+        self.assertEqual(resolved["cpu_clock_mhz"], 600)
         self.assertEqual(resolved["weight_storage_mode"], "embedded")
         self.assertEqual(resolved["weights_flash_address"], DEFAULT_WEIGHTS_FLASH_ADDRESS)
         self.assertEqual(resolved["weights_memory_pool"], DEFAULT_WEIGHTS_MEMORY_POOL.resolve())

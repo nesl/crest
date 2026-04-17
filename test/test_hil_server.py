@@ -142,6 +142,51 @@ class DetermineMetricsTests(HILServerTestCase):
             (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000,
         )
 
+    def test_determine_metrics_uses_override_clock_for_runtime_options_only(self) -> None:
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_metrics = {"ram_bytes": 1024, "clock_hz": 400000000.0}
+
+        with patch("hil_server.resolve_device_options", return_value={"cpu_clock_mhz": 600}), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ) as device_mock, patch("hil_server.build_tinyodom_model"), patch(
+            "hil_server.collect_metrics", return_value=fake_metrics
+        ) as collect_mock:
+            hyperparams = Dict(flops=123, input_dim=6)
+            result = server.determine_metrics(
+                hyperparams,
+                device_options_overrides={"cpu_clock_mhz": 400},
+            )
+
+        self.assertEqual(result["cpu_clock_mhz_requested"], 400)
+        self.assertEqual(device_mock.call_args.kwargs["device_options"]["cpu_clock_mhz"], 400)
+        request = collect_mock.call_args.args[0]
+        self.assertEqual(request.device_options["cpu_clock_mhz"], 400)
+
+    def test_determine_metrics_unsampled_stm_clock_logs_minus_one(self) -> None:
+        server = self.build_server()
+        self.config.device.name = "STM32_NUCLEO_N657X0_Q"
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+
+        with patch("hil_server.resolve_device_options", return_value={"cpu_clock_mhz": 600}), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.build_tinyodom_model"), patch(
+            "hil_server.collect_metrics", return_value={"ram_bytes": 1024, "clock_hz": 600000000.0}
+        ):
+            metrics = server.determine_metrics(Dict(flops=1, input_dim=6))
+
+        self.assertEqual(metrics["cpu_clock_mhz_requested"], -1)
+
 
 class StartLoopTests(HILServerTestCase):
     """Validate the ZeroMQ REP loop implemented in `start`."""
@@ -161,10 +206,27 @@ class StartLoopTests(HILServerTestCase):
         # Verify socket binding, message processing, and cleanup.
         endpoint = f"tcp://{self.config.network.host}:{self.config.network.port}"
         self.socket.bind.assert_called_once_with(endpoint)
-        server.determine_metrics.assert_called_once_with(Dict(hyperparams))
+        server.determine_metrics.assert_called_once_with(Dict(hyperparams), device_options_overrides=None)
         self.socket.send_json.assert_called_once_with(metrics)
         self.socket.close.assert_called_once_with(linger=0)
         self.context.term.assert_called_once()
+
+    def test_start_normalizes_structured_payload(self) -> None:
+        server = self.build_server()
+        payload = {
+            "hyperparams": {"flops": 1, "input_dim": 2},
+            "device_options_overrides": {"cpu_clock_mhz": 400},
+        }
+        metrics = {"flash_bytes": 2048}
+        server.determine_metrics = MagicMock(return_value=metrics)
+        self.socket.recv_json.side_effect = [payload, KeyboardInterrupt()]
+
+        server.start()
+
+        server.determine_metrics.assert_called_once_with(
+            Dict(payload["hyperparams"]),
+            device_options_overrides={"cpu_clock_mhz": 400},
+        )
 
     def test_start_interrupt_cleans_up_resources(self) -> None:
         """If recv_json immediately raises, we should still close the socket."""
@@ -261,7 +323,7 @@ class InitializationTests(HILServerTestCase):
             )
             result = server.determine_metrics(Dict(flops=1, input_dim=6))
 
-        self.assertEqual(result, {"ok": True, "latency_budget_ms": 40.0})
+        self.assertEqual(result, {"ok": True, "cpu_clock_mhz_requested": -1, "latency_budget_ms": 40.0})
         self.dataset_mock.assert_called_once()
         build_mock.assert_called_once()
         fake_device.prepare_candidate.assert_called_once()

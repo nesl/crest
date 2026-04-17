@@ -185,7 +185,6 @@ def resolve_device_options(
             "server_ready_timeout_s": _cfg_get(stm32_cfg, "server_ready_timeout_s", None)
             if stm32_cfg is not None
             else None,
-            "cpu_clock_mhz": _cfg_get(stm32_cfg, "cpu_clock_mhz", None) if stm32_cfg is not None else None,
             "weight_storage_mode": _cfg_get(stm32_cfg, "weight_storage_mode", None)
             if stm32_cfg is not None
             else None,

@@ -6,6 +6,7 @@ device:
   measured_inference_runs: 10                # Number of on-device inference invokes averaged into one measured HIL attempt.
   dut_ready_timeout_s: 5.0                     # Time to wait for STM32_AI_INIT / DUT READY before sending START.
   serial_timeout_s: 12.0                       # Time to wait for the measured runtime pass after START.
+  cpu_clock_mhz_options: [200, 300, 400, 600, 800]  # Optional per-trial CPU presets for boards that support runtime clock selection.
   harness_serial_port: "/dev/ttyACM1"
   harness_fqbn: "arduino:mbed_nano:nano33ble"
   harness_auto_flash: "once"
@@ -15,7 +16,6 @@ device:
   harness_done_timeout_s: 5.0
   stm32:
     project_root: "sketches/stm32/tinyodom_tcn_stm32/FSBL"
-    cpu_clock_mhz: 600 # STM only! Options 200 300 400 600 or 800 MHz; note: 800 MHz is overclocked and may cause instability
     weight_storage_mode: "external_flash"          # Set to external_flash to stage weights into NOR flash.
     weights_memory_pool: "analysis_scripts/stm32_example_project/nucleo_mypool.json"
 
