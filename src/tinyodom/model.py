@@ -103,7 +103,57 @@ BUILTIN_SCORE_METRICS = {
     "latency_budget_ms",
     "arena_bytes",
     "error_code",
+    "cadenced_active_inference_latency_ms",
+    "cadenced_energy_mj_per_inference",
+    "cadenced_energy_mj_per_window",
 }
+NONNEGATIVE_METRICS.update(
+    {
+        "cadenced_active_inference_latency_ms",
+        "cadenced_energy_mj_per_inference",
+        "cadenced_energy_mj_per_window",
+    }
+)
+
+CADENCED_NUMERIC_FIELD_DEFAULTS = {
+    "cadenced_error_code": -1,
+    "cadenced_active_inference_latency_ms": -1.0,
+    "cadenced_energy_mj_per_inference": -1.0,
+    "cadenced_energy_mj_per_window": -1.0,
+    "cadenced_avg_power_mw": -1.0,
+    "cadenced_avg_current_ma": -1.0,
+    "cadenced_bus_voltage_v": -1.0,
+    "cadenced_idle_power_mw": -1.0,
+    "cadenced_harness_latency_ms": -1.0,
+    "cadenced_clock_hz": -1.0,
+    "cadenced_dwt_cycles_per_inference": -1.0,
+    "cadenced_rtc_sleep_ms": -1.0,
+    "cadenced_deadline_miss_count": -1,
+    "cadenced_wake_recovery_us_mean": -1.0,
+    "cadenced_wake_overshoot_us_mean": -1.0,
+    "cadenced_rtc_clock_hz_nominal": -1.0,
+}
+CADENCED_STRING_FIELDS = (
+    "cadenced_error_label",
+    "cadenced_rtc_clock_source",
+    "cadenced_timing_quality",
+    "cadenced_stop_mode_variant",
+)
+CADENCED_ALL_FIELDS = (
+    "runtime_mode",
+    *tuple(CADENCED_NUMERIC_FIELD_DEFAULTS.keys()),
+    *CADENCED_STRING_FIELDS,
+)
+CADENCED_CSV_FIELDS = (
+    "runtime_mode",
+    "cadenced_active_inference_latency_ms",
+    "cadenced_energy_mj_per_inference",
+    "cadenced_energy_mj_per_window",
+    "cadenced_rtc_sleep_ms",
+    "cadenced_deadline_miss_count",
+    "cadenced_error_code",
+    "cadenced_error_label",
+)
 
 
 class TrialLike(Protocol):
@@ -253,6 +303,45 @@ def set_error_code(metrics: dict, code: int) -> None:
     """Attach a numeric error code and its descriptive label to `metrics`."""
     metrics["error_code"] = code
     metrics["error_label"] = describe_error_code(code)
+
+
+def apply_cadenced_metric_defaults(
+    metrics: dict[str, Any],
+    power_metrics: dict[str, Any] | None,
+) -> None:
+    """Populate cadenced metric fields from raw backend metrics plus defaults.
+
+    Parameters
+    ----------
+    metrics : dict[str, Any]
+        Final normalized metrics dictionary being assembled for the caller.
+    power_metrics : dict[str, Any] | None
+        Raw backend metrics payload that may contain ``runtime_mode`` and
+        flattened ``cadenced_*`` fields.
+
+    Returns
+    -------
+    None
+        The function mutates ``metrics`` in place.
+    """
+    raw_power_metrics = dict(power_metrics or {})
+    metrics["runtime_mode"] = str(raw_power_metrics.get("runtime_mode", "back_to_back"))
+    for field_name, default_value in CADENCED_NUMERIC_FIELD_DEFAULTS.items():
+        raw_value = raw_power_metrics.get(field_name, default_value)
+        try:
+            if isinstance(default_value, int) and not isinstance(default_value, bool):
+                metrics[field_name] = int(raw_value)
+            else:
+                metrics[field_name] = float(raw_value)
+        except (TypeError, ValueError):
+            metrics[field_name] = default_value
+    if metrics["cadenced_error_code"] >= 0:
+        metrics["cadenced_error_label"] = describe_error_code(metrics["cadenced_error_code"])
+    else:
+        metrics["cadenced_error_label"] = None
+    for field_name in CADENCED_STRING_FIELDS[1:]:
+        raw_value = raw_power_metrics.get(field_name)
+        metrics[field_name] = None if raw_value in (None, "") else str(raw_value)
 
 
 def validate_loaded_model_input_shape(model: tf.keras.Model, hyperparams: Dict) -> None:
@@ -1377,6 +1466,11 @@ def build_collect_metrics_request(
     harness = None
     normalized_device_name = str(config.device.name).strip().upper()
     effective_hil_enabled = bool(config.device.hil) if hil_enabled is None else bool(hil_enabled)
+    request_device_options = None if device_options is None else dict(device_options)
+    if normalized_device_name == "STM32_NUCLEO_N657X0_Q":
+        if request_device_options is None:
+            request_device_options = {}
+        request_device_options["latency_budget_ms"] = float(latency_budget_ms)
 
     runtime_mode = "direct_serial"
     if effective_hil_enabled:
@@ -1384,7 +1478,7 @@ def build_collect_metrics_request(
             runtime_device = get_microcontroller_device(
                 normalized_device_name,
                 serial_port=_cfg_get(config.device, "serial_port", None),
-                device_options=device_options,
+                device_options=request_device_options,
             )
         except ValueError:
             runtime_device = None
@@ -1435,7 +1529,7 @@ def build_collect_metrics_request(
         serial_timeout_s=float(serial_timeout),
         measured_inference_runs=int(_cfg_get(config.device, "measured_inference_runs", 10)),
         harness=harness,
-        device_options=device_options,
+        device_options=request_device_options,
     )
 
 
@@ -1608,6 +1702,7 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
         "harness_latency_ms": harness_latency_ms,
     }
     set_error_code(metrics, error_code)
+    apply_cadenced_metric_defaults(metrics, power_metrics)
     if backend_error_kind is not None:
         metrics["backend_error_kind"] = str(backend_error_kind)
     if backend_error_detail is not None:
@@ -1691,6 +1786,7 @@ def log_trial(
         "pruned",
         "prune_reason",
         "prune_rule",
+        *CADENCED_CSV_FIELDS,
     ]
     
     if not log_path.exists() or log_path.stat().st_size == 0:
@@ -1733,6 +1829,7 @@ def log_trial(
         pruned,
         prune_reason,
         prune_rule,
+        *[metrics.get(field_name) for field_name in CADENCED_CSV_FIELDS],
     ]
     with open(log_path, "a", newline="") as csvfile:
         csv.writer(csvfile).writerow(row_write)
@@ -1762,6 +1859,8 @@ def log_trial(
     trial.set_user_attr("pruned", pruned)
     trial.set_user_attr("prune_reason", prune_reason)
     trial.set_user_attr("prune_rule", prune_rule)
+    for field_name in CADENCED_ALL_FIELDS:
+        trial.set_user_attr(field_name, metrics.get(field_name))
 
 
 

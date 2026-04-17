@@ -32,9 +32,32 @@ DUT_FLOAT_PATTERNS = {
         rf"^timer per window output.*?:\s*{FLOAT_CAPTURE}$",
         re.IGNORECASE,
     ),
+    "wake_recovery_us": re.compile(rf"^wake recovery us:\s*{FLOAT_CAPTURE}$", re.IGNORECASE),
+    "wake_overshoot_us": re.compile(rf"^wake overshoot us:\s*{FLOAT_CAPTURE}$", re.IGNORECASE),
+    "rtc_sleep_total_ms": re.compile(rf"^rtc sleep total ms:\s*{FLOAT_CAPTURE}$", re.IGNORECASE),
+    "deadline_miss_count": re.compile(
+        rf"^cadence deadline misses:\s*{FLOAT_CAPTURE}$",
+        re.IGNORECASE,
+    ),
+    "rtc_clock_hz_nominal": re.compile(
+        rf"^rtc clock hz nominal output:\s*{FLOAT_CAPTURE}$",
+        re.IGNORECASE,
+    ),
 }
 DUT_STRING_PATTERNS = {
     "phase": re.compile(r"^phase output:\s*(?P<value>.+)$", re.IGNORECASE),
+    "rtc_clock_source": re.compile(
+        r"^rtc clock source output:\s*(?P<value>.+)$",
+        re.IGNORECASE,
+    ),
+    "cadence_timing_quality": re.compile(
+        r"^cadence timing quality output:\s*(?P<value>.+)$",
+        re.IGNORECASE,
+    ),
+    "stop_mode_variant": re.compile(
+        r"^stop mode variant output:\s*(?P<value>.+)$",
+        re.IGNORECASE,
+    ),
 }
 
 
@@ -437,7 +460,7 @@ def _raise_failure_from_lines(lines: Sequence[str]) -> None:
 
 
 def parse_stm32_runtime_lines(lines: Sequence[str]) -> STM32RuntimeTelemetry:
-    """Parse the required back-to-back STM32 runtime telemetry contract.
+    """Parse one STM32 runtime telemetry session.
 
     Parameters
     ----------
@@ -453,17 +476,20 @@ def parse_stm32_runtime_lines(lines: Sequence[str]) -> STM32RuntimeTelemetry:
     ------
     STM32RuntimeProtocolError
         If required success tokens or required telemetry fields are missing or
-        inconsistent with the Phase 2 contract.
+        inconsistent with the STM32 runtime contract.
     """
     serial_log = [str(line) for line in lines]
     _raise_failure_from_lines(serial_log)
     floats = _parse_last_float_fields(serial_log, DUT_FLOAT_PATTERNS)
     strings = _parse_last_string_fields(serial_log, DUT_STRING_PATTERNS)
     phase = strings.get("phase", "").strip().lower()
-    if phase != "back_to_back":
+    if phase not in {"back_to_back", "cadenced"}:
         raise STM32RuntimeProtocolError(
             kind="runtime_protocol",
-            detail=f"Expected 'phase output: back_to_back' but saw {phase or '<missing>'}.",
+            detail=(
+                "Expected 'phase output: back_to_back' or 'phase output: cadenced' "
+                f"but saw {phase or '<missing>'}."
+            ),
             serial_log=serial_log,
         )
     runs = _parse_runs(serial_log)
@@ -482,14 +508,14 @@ def parse_stm32_runtime_lines(lines: Sequence[str]) -> STM32RuntimeTelemetry:
         )
     timer_output_s = floats.get("timer_output_s")
     timer_per_inference_s = floats.get("timer_per_inference_s")
-    if _is_finite_positive(timer_output_s):
+    if phase == "back_to_back" and _is_finite_positive(timer_output_s):
         latency_s = float(timer_output_s)
     elif _is_finite_positive(timer_per_inference_s):
         latency_s = float(timer_per_inference_s)
     else:
         raise STM32RuntimeProtocolError(
             kind="runtime_latency",
-            detail="Missing both 'timer output' and 'timer per inference output' telemetry.",
+            detail="Missing required latency telemetry for the reported STM32 phase.",
             serial_log=serial_log,
         )
     power_metrics = {
@@ -501,7 +527,15 @@ def parse_stm32_runtime_lines(lines: Sequence[str]) -> STM32RuntimeTelemetry:
             float(timer_per_inference_s) if timer_per_inference_s is not None else -1.0
         ),
         "timer_per_window_s": float(floats.get("timer_per_window_s", -1.0)),
+        "wake_recovery_us": float(floats.get("wake_recovery_us", -1.0)),
+        "wake_overshoot_us": float(floats.get("wake_overshoot_us", -1.0)),
+        "rtc_sleep_total_ms": float(floats.get("rtc_sleep_total_ms", -1.0)),
+        "deadline_miss_count": int(float(floats.get("deadline_miss_count", -1.0))),
+        "rtc_clock_hz_nominal": float(floats.get("rtc_clock_hz_nominal", -1.0)),
         "phase": phase,
+        "rtc_clock_source": strings.get("rtc_clock_source"),
+        "cadence_timing_quality": strings.get("cadence_timing_quality"),
+        "stop_mode_variant": strings.get("stop_mode_variant"),
         "runs": runs,
     }
     return STM32RuntimeTelemetry(

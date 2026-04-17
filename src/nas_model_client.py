@@ -42,6 +42,7 @@ from tinyodom.microcontrollers import (
 from tinyodom.model import (
     ScoringResult,
     ScoreConfigEvaluationError,
+    apply_cadenced_metric_defaults,
     build_tinyodom_model,
     evaluate_prune_rules,
     train_and_score,
@@ -459,6 +460,7 @@ class NASModelClient:
             metrics.setdefault("latency_budget_ms", -1.0)
             metrics.setdefault("arena_bytes", -1)
             metrics.setdefault("rmse_total", -1.0)
+            apply_cadenced_metric_defaults(metrics, metrics)
             directions = self._study_directions()
             if self._score_is_multiobjective():
                 objective_names = [str(obj.metric) for obj in self.config.nas.score.params.objectives]

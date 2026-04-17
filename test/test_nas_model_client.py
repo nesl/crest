@@ -223,6 +223,20 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(trial.report_calls, [(-float("inf"), 0)])
         self.mock_train.assert_not_called()
 
+    def test_objective_prune_logging_populates_cadenced_sentinels(self) -> None:
+        """Early-pruned trials should still log stable cadenced metric defaults."""
+        self.client._hil_request = MagicMock(return_value={"error_code": HIL_MASTER_FLASH_OVERFLOW})
+        trial = DummyTrial()
+
+        with self.assertRaises(optuna.TrialPruned):
+            self.client.objective(trial)
+
+        logged_metrics = self.mock_log.call_args.kwargs["metrics"]
+        self.assertEqual(logged_metrics["runtime_mode"], "back_to_back")
+        self.assertEqual(logged_metrics["cadenced_energy_mj_per_window"], -1.0)
+        self.assertEqual(logged_metrics["cadenced_error_code"], -1)
+        self.assertIsNone(logged_metrics["cadenced_error_label"])
+
     def test_objective_prunes_on_ram_overflow(self) -> None:
         """RAM overflow errors should prune the trial to skip training."""
         self.client._hil_request = MagicMock(return_value={"error_code": HIL_MASTER_RAM_OVERFLOW})

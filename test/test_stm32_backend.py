@@ -20,6 +20,7 @@ from tinyodom.errors import (  # noqa: E402
     HIL_ERROR_RAM_OVERFLOW,
     HIL_ERROR_UPLOAD,
 )
+from tinyodom.devices import DeviceMetrics  # noqa: E402
 from tinyodom.microcontrollers import get_device, list_device_specs, resolve_device_options  # noqa: E402
 from tinyodom.microcontrollers import stm32_cube_clt  # noqa: E402
 from tinyodom.microcontrollers import stm32_nucleo_n657x0 as stm32_n657_backend  # noqa: E402
@@ -257,6 +258,9 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             stm32_cube_clt.SERVER_READY_TIMEOUT_S,
         )
         self.assertEqual(resolved["cpu_clock_mhz"], 600)
+        self.assertEqual(resolved["runtime_mode"], "back_to_back")
+        self.assertEqual(resolved["wake_margin_us"], 5000)
+        self.assertEqual(resolved["min_sleep_us"], 5000)
         self.assertEqual(resolved["weight_storage_mode"], "embedded")
         self.assertEqual(resolved["weights_flash_address"], DEFAULT_WEIGHTS_FLASH_ADDRESS)
         self.assertEqual(resolved["weights_memory_pool"], DEFAULT_WEIGHTS_MEMORY_POOL.resolve())
@@ -537,6 +541,148 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         self.assertEqual(metrics.power_metrics["sequence"], 1.0)
         self.assertEqual(metrics.power_metrics["weight_storage_mode"], "embedded")
         self.assertEqual(metrics.power_metrics["external_flash_bytes"], -1.0)
+
+    def test_evaluate_back_to_back_runtime_mode_skips_second_phase(self) -> None:
+        device = STM32NucleoN657X0QDevice(
+            serial_port="/dev/ttyACM0",
+            device_options={"runtime_mode": "back_to_back"},
+        )
+        base_result = DeviceMetrics(
+            ram_bytes=1111,
+            flash_bytes=2222,
+            latency_s=0.0025,
+            arena_bytes=4096,
+            error_code=HIL_ERROR_OK,
+            power_metrics={"clock_hz": 600000000.0, "sequence": 1.0},
+        )
+
+        with patch.object(device, "_evaluate_single_phase", return_value=base_result) as phase_mock:
+            metrics = device.evaluate(
+                dirpath=Path("/tmp/stm"),
+                arena_kb=-1,
+                window_size=200,
+                num_channels=6,
+                serial_port="/dev/ttyACM0",
+                run_hil=True,
+            )
+
+        phase_mock.assert_called_once()
+        self.assertEqual(metrics.power_metrics["runtime_mode"], "back_to_back")
+        self.assertNotIn("cadenced_active_inference_latency_ms", metrics.power_metrics)
+
+    def test_evaluate_cadenced_runtime_mode_merges_second_pass_metrics(self) -> None:
+        device = STM32NucleoN657X0QDevice(
+            serial_port="/dev/ttyACM0",
+            device_options={"runtime_mode": "cadenced"},
+        )
+        base_result = DeviceMetrics(
+            ram_bytes=1111,
+            flash_bytes=2222,
+            latency_s=0.0025,
+            arena_bytes=4096,
+            error_code=HIL_ERROR_OK,
+            power_metrics={"clock_hz": 600000000.0, "sequence": 1.0},
+        )
+        cadenced_result = DeviceMetrics(
+            ram_bytes=1111,
+            flash_bytes=2222,
+            latency_s=0.080,
+            arena_bytes=4096,
+            error_code=HIL_ERROR_OK,
+            power_metrics={
+                "runs": 10,
+                "energy_mj_per_inference": 1.25,
+                "avg_power_mw": 2.5,
+                "avg_current_ma": 0.5,
+                "bus_voltage_v": 5.0,
+                "idle_power_mw": 0.1,
+                "harness_latency_s": 0.2,
+                "clock_hz": 600000000.0,
+                "dwt_cycles_per_inference": 120000.0,
+                "rtc_sleep_total_ms": 1500.0,
+                "deadline_miss_count": 0,
+                "wake_recovery_us": 1200.0,
+                "wake_overshoot_us": 35.0,
+                "rtc_clock_source": "LSE",
+                "rtc_clock_hz_nominal": 32768.0,
+                "cadence_timing_quality": "crystal",
+                "stop_mode_variant": "system_stop_mainreg_wfi",
+            },
+        )
+
+        with patch.object(
+            device,
+            "_evaluate_single_phase",
+            side_effect=[base_result, cadenced_result],
+        ) as phase_mock:
+            metrics = device.evaluate(
+                dirpath=Path("/tmp/stm"),
+                arena_kb=-1,
+                window_size=200,
+                num_channels=6,
+                serial_port="/dev/ttyACM0",
+                run_hil=True,
+            )
+
+        self.assertEqual(phase_mock.call_count, 2)
+        self.assertEqual(phase_mock.call_args_list[0].kwargs["phase"], "back_to_back")
+        self.assertEqual(phase_mock.call_args_list[1].kwargs["phase"], "cadenced")
+        self.assertEqual(metrics.power_metrics["runtime_mode"], "cadenced")
+        self.assertEqual(metrics.power_metrics["cadenced_error_code"], HIL_ERROR_OK)
+        self.assertAlmostEqual(metrics.power_metrics["cadenced_active_inference_latency_ms"], 80.0)
+        self.assertAlmostEqual(metrics.power_metrics["cadenced_energy_mj_per_window"], 12.5)
+        self.assertAlmostEqual(metrics.power_metrics["cadenced_rtc_sleep_ms"], 1500.0)
+
+    def test_evaluate_cadenced_runtime_mode_reports_back_to_back_when_second_phase_never_runs(self) -> None:
+        device = STM32NucleoN657X0QDevice(
+            serial_port="/dev/ttyACM0",
+            device_options={"runtime_mode": "cadenced"},
+        )
+        failed_base_result = DeviceMetrics(
+            ram_bytes=1111,
+            flash_bytes=2222,
+            latency_s=0.0025,
+            arena_bytes=4096,
+            error_code=HIL_ERROR_LATENCY,
+            power_metrics={"clock_hz": 600000000.0},
+        )
+
+        with patch.object(
+            device,
+            "_evaluate_single_phase",
+            return_value=failed_base_result,
+        ) as phase_mock:
+            metrics = device.evaluate(
+                dirpath=Path("/tmp/stm"),
+                arena_kb=-1,
+                window_size=200,
+                num_channels=6,
+                serial_port="/dev/ttyACM0",
+                run_hil=True,
+            )
+
+        phase_mock.assert_called_once()
+        self.assertEqual(metrics.power_metrics["runtime_mode"], "back_to_back")
+        self.assertNotIn("cadenced_energy_mj_per_window", metrics.power_metrics)
+
+    def test_cadenced_energy_window_uses_stable_sentinel_when_energy_is_unavailable(self) -> None:
+        device = STM32NucleoN657X0QDevice(
+            serial_port="/dev/ttyACM0",
+            device_options={"runtime_mode": "cadenced"},
+        )
+        phase_result = DeviceMetrics(
+            ram_bytes=1111,
+            flash_bytes=2222,
+            latency_s=0.080,
+            arena_bytes=4096,
+            error_code=HIL_ERROR_OK,
+            power_metrics={"runs": 10, "energy_mj_per_inference": -1.0},
+        )
+
+        metrics = device._cadenced_power_metrics_from_phase_result(phase_result)
+
+        self.assertEqual(metrics["cadenced_energy_mj_per_inference"], -1.0)
+        self.assertEqual(metrics["cadenced_energy_mj_per_window"], -1.0)
 
     def test_evaluate_run_hil_runtime_failure_maps_to_latency_error(self) -> None:
         """Ensure protocol failures become ``HIL_ERROR_LATENCY`` with backend detail.

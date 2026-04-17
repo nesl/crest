@@ -53,6 +53,9 @@ DEFAULT_MAX_FLASH_BYTES = 8_388_608
 DEFAULT_MAX_EXTERNAL_FLASH_BYTES = 67_108_864
 # Default fixed CPU clock preset written into the generated STM runtime config.
 DEFAULT_CPU_CLOCK_MHZ = 600
+DEFAULT_RUNTIME_MODE = "back_to_back"
+DEFAULT_WAKE_MARGIN_US = 5000
+DEFAULT_MIN_SLEEP_US = 5000
 # Weight placement mode used when callers do not override STM storage policy.
 DEFAULT_WEIGHT_STORAGE_MODE = "embedded"
 # Matches ST Edge AI STM32N6 CM55-validation examples, which generate external
@@ -136,6 +139,15 @@ class STM32NucleoN657X0QOptions:
     cpu_clock_mhz : int
         Requested fixed CPU clock preset written into the generated phase
         configuration header.
+    runtime_mode : str
+        Requested STM32 runtime mode (`back_to_back` or `cadenced`).
+    latency_budget_ms : float
+        Cadence budget written into the generated phase configuration header.
+    wake_margin_us : int
+        Wake margin written into the generated phase configuration header.
+    min_sleep_us : int
+        Minimum stop-sleep duration written into the generated phase
+        configuration header.
     weight_storage_mode : str
         Weight placement policy (`embedded` or `external_flash`).
     weights_flash_address : str
@@ -156,6 +168,10 @@ class STM32NucleoN657X0QOptions:
     apid: int
     server_ready_timeout_s: float
     cpu_clock_mhz: int
+    runtime_mode: str
+    latency_budget_ms: float
+    wake_margin_us: int
+    min_sleep_us: int
     weight_storage_mode: str
     weights_flash_address: str
     weights_memory_pool: Path
@@ -271,6 +287,33 @@ def _resolve_weight_storage_mode(raw_value: object | None) -> str:
     return mode
 
 
+def _resolve_runtime_mode(raw_value: object | None) -> str:
+    """Validate and normalize the requested STM runtime mode.
+
+    Parameters
+    ----------
+    raw_value : object | None
+        Raw runtime-mode value from config or runtime options.
+
+    Returns
+    -------
+    str
+        Normalized runtime mode.
+
+    Raises
+    ------
+    ValueError
+        If the requested runtime mode is unsupported.
+    """
+    runtime_mode = str(raw_value or DEFAULT_RUNTIME_MODE).strip().lower()
+    if runtime_mode not in {"back_to_back", "cadenced"}:
+        raise ValueError(
+            "Unsupported STM runtime mode "
+            f"{runtime_mode!r}. Expected 'back_to_back' or 'cadenced'."
+        )
+    return runtime_mode
+
+
 def _resolve_cubeprog_cli_path(cubeprog_bin: Path | None) -> Path:
     """Resolve the STM32CubeProgrammer CLI executable path.
 
@@ -328,6 +371,21 @@ def resolve_stm32_nucleo_n657x0_q_options(
         stm32_cube_clt.SERVER_READY_TIMEOUT_S,
     )
     cpu_clock_mhz = _resolve_cpu_clock_mhz(options.get("cpu_clock_mhz"))
+    runtime_mode = _resolve_runtime_mode(options.get("runtime_mode"))
+    latency_budget_ms = _coerce_float_with_default(
+        options.get("latency_budget_ms"),
+        1.0,
+    )
+    if latency_budget_ms <= 0.0:
+        raise ValueError("STM latency_budget_ms must be a positive value.")
+    wake_margin_us = _coerce_int_with_default(
+        options.get("wake_margin_us"),
+        DEFAULT_WAKE_MARGIN_US,
+    )
+    min_sleep_us = _coerce_int_with_default(
+        options.get("min_sleep_us"),
+        DEFAULT_MIN_SLEEP_US,
+    )
     weight_storage_mode = _resolve_weight_storage_mode(options.get("weight_storage_mode"))
     weights_flash_address = str(
         options.get("weights_flash_address", DEFAULT_WEIGHTS_FLASH_ADDRESS)
@@ -349,6 +407,10 @@ def resolve_stm32_nucleo_n657x0_q_options(
         apid=apid,
         server_ready_timeout_s=server_ready_timeout_s,
         cpu_clock_mhz=cpu_clock_mhz,
+        runtime_mode=runtime_mode,
+        latency_budget_ms=latency_budget_ms,
+        wake_margin_us=max(0, int(wake_margin_us)),
+        min_sleep_us=max(0, int(min_sleep_us)),
         weight_storage_mode=weight_storage_mode,
         weights_flash_address=weights_flash_address,
         weights_memory_pool=Path(weights_memory_pool).expanduser().resolve(),
@@ -466,10 +528,11 @@ def _write_phase_config_header(
     *,
     project_root: Path,
     cpu_clock_mhz: int,
+    selected_phase: str = DEFAULT_RUNTIME_MODE,
     latency_budget_ms: float = 1.0,
     measured_runs: int = 10,
-    wake_margin_us: int = 5000,
-    min_sleep_us: int = 5000,
+    wake_margin_us: int = DEFAULT_WAKE_MARGIN_US,
+    min_sleep_us: int = DEFAULT_MIN_SLEEP_US,
 ) -> Path:
     """Write the generated STM phase-config header.
 
@@ -479,8 +542,10 @@ def _write_phase_config_header(
         Staged STM32 FSBL root that owns ``Inc/tcn_dut_phase_config.h``.
     cpu_clock_mhz : int
         Requested fixed CPU clock preset.
+    selected_phase : str, default="back_to_back"
+        Runtime phase written into the generated header.
     latency_budget_ms : float, default=1.0
-        Placeholder cadence budget written for deferred cadenced-mode compatibility.
+        Cadence budget written into the generated header.
     measured_runs : int, default=10
         Measured-run count written into the staged DUT phase configuration.
     wake_margin_us : int, default=5000
@@ -493,13 +558,19 @@ def _write_phase_config_header(
     pathlib.Path
         Path to the generated phase-config header.
     """
+    normalized_phase = _resolve_runtime_mode(selected_phase)
+    selected_phase_macro = (
+        "TCN_DUT_PHASE_CADENCED"
+        if normalized_phase == "cadenced"
+        else "TCN_DUT_PHASE_BACK_TO_BACK"
+    )
     header_path = project_root / "Inc" / "tcn_dut_phase_config.h"
     header_text = (
         "#ifndef TCN_DUT_PHASE_CONFIG_H\n"
         "#define TCN_DUT_PHASE_CONFIG_H\n\n"
         "#define TCN_DUT_PHASE_BACK_TO_BACK 0\n"
         "#define TCN_DUT_PHASE_CADENCED 1\n\n"
-        "#define TCN_DUT_SELECTED_PHASE TCN_DUT_PHASE_BACK_TO_BACK\n"
+        f"#define TCN_DUT_SELECTED_PHASE {selected_phase_macro}\n"
         f"#define TCN_DUT_LATENCY_BUDGET_MS {max(1, int(round(latency_budget_ms)))}\n"
         f"#define TCN_DUT_MEASURED_RUNS {max(1, int(measured_runs))}\n"
         f"#define TCN_DUT_CPU_CLOCK_MHZ {int(cpu_clock_mhz)}\n"
@@ -511,7 +582,14 @@ def _write_phase_config_header(
     return header_path
 
 
-def _validate_phase_config_header(header_path: Path, *, cpu_clock_mhz: int) -> None:
+def _validate_phase_config_header(
+    header_path: Path,
+    *,
+    cpu_clock_mhz: int,
+    selected_phase: str,
+    measured_runs: int,
+    latency_budget_ms: float,
+) -> None:
     """Confirm the generated phase-config header contains the expected values.
 
     Parameters
@@ -520,6 +598,12 @@ def _validate_phase_config_header(header_path: Path, *, cpu_clock_mhz: int) -> N
         Generated phase-config header path.
     cpu_clock_mhz : int
         Requested CPU clock preset expected in the generated header.
+    selected_phase : str
+        Requested runtime phase expected in the generated header.
+    measured_runs : int
+        Requested measured-run count expected in the generated header.
+    latency_budget_ms : float
+        Requested cadence budget expected in the generated header.
 
     Returns
     -------
@@ -531,14 +615,33 @@ def _validate_phase_config_header(header_path: Path, *, cpu_clock_mhz: int) -> N
         If the header does not contain the required STM runtime settings.
     """
     text = header_path.read_text(encoding="utf-8")
-    if "#define TCN_DUT_SELECTED_PHASE TCN_DUT_PHASE_BACK_TO_BACK" not in text:
+    normalized_phase = _resolve_runtime_mode(selected_phase)
+    selected_phase_macro = (
+        "TCN_DUT_PHASE_CADENCED"
+        if normalized_phase == "cadenced"
+        else "TCN_DUT_PHASE_BACK_TO_BACK"
+    )
+    expected_phase = f"#define TCN_DUT_SELECTED_PHASE {selected_phase_macro}"
+    if expected_phase not in text:
         raise stm32_cube_clt.WorkflowError(
-            f"Generated phase config did not select back_to_back mode: {header_path}"
+            "Generated phase config did not select the requested runtime phase "
+            f"{normalized_phase}: {header_path}"
         )
     expected_clock = f"#define TCN_DUT_CPU_CLOCK_MHZ {int(cpu_clock_mhz)}"
     if expected_clock not in text:
         raise stm32_cube_clt.WorkflowError(
             f"Generated phase config is missing requested clock preset {cpu_clock_mhz}: {header_path}"
+        )
+    expected_runs = f"#define TCN_DUT_MEASURED_RUNS {max(1, int(measured_runs))}"
+    if expected_runs not in text:
+        raise stm32_cube_clt.WorkflowError(
+            f"Generated phase config is missing requested measured-runs {measured_runs}: {header_path}"
+        )
+    expected_budget = f"#define TCN_DUT_LATENCY_BUDGET_MS {max(1, int(round(latency_budget_ms)))}"
+    if expected_budget not in text:
+        raise stm32_cube_clt.WorkflowError(
+            "Generated phase config is missing requested cadence budget "
+            f"{latency_budget_ms}: {header_path}"
         )
 
 
@@ -1174,8 +1277,9 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
     Notes
     -----
     The production backend supports compile, upload, back-to-back runtime
-    measurement, harness-assisted energy capture, and optional external-flash
-    weight staging. `cadenced` runtime remains deferred.
+    measurement, harness-assisted energy capture, optional external-flash
+    weight staging, and an optional dual-phase cadenced mode that runs a
+    canonical back-to-back pass followed by a cadenced pass.
     """
 
     def __init__(
@@ -1520,9 +1624,19 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             header_path = _write_phase_config_header(
                 project_root=staged_project_root,
                 cpu_clock_mhz=self._options.cpu_clock_mhz,
+                selected_phase=self._options.runtime_mode,
+                latency_budget_ms=self._options.latency_budget_ms,
                 measured_runs=int(getattr(config_device, "measured_inference_runs", 10)),
+                wake_margin_us=self._options.wake_margin_us,
+                min_sleep_us=self._options.min_sleep_us,
             )
-            _validate_phase_config_header(header_path, cpu_clock_mhz=self._options.cpu_clock_mhz)
+            _validate_phase_config_header(
+                header_path,
+                cpu_clock_mhz=self._options.cpu_clock_mhz,
+                selected_phase=self._options.runtime_mode,
+                measured_runs=int(getattr(config_device, "measured_inference_runs", 10)),
+                latency_budget_ms=self._options.latency_budget_ms,
+            )
             return staged_project_root
         except Exception:
             if candidate_root.exists() and not _keep_staged_candidates_enabled():
@@ -1855,10 +1969,11 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             power_metrics=telemetry.power_metrics,
         )
 
-    def evaluate(
+    def _evaluate_single_phase(
         self,
         *,
         dirpath: str | Path,
+        phase: str = DEFAULT_RUNTIME_MODE,
         arena_kb: int,
         window_size: int,
         num_channels: int,
@@ -1880,12 +1995,14 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         harness_active_timeout_s: Optional[float] = None,
         harness_done_timeout_s: Optional[float] = None,
     ) -> DeviceMetrics:
-        """Run the staged STM32 compile/upload/runtime path and return metrics.
+        """Run one STM32 compile/upload/runtime phase and return metrics.
 
         Parameters
         ----------
         dirpath : str | pathlib.Path
             Staged STM32 FSBL root to compile.
+        phase : str, default="back_to_back"
+            Runtime phase compiled and executed for this pass.
         arena_kb : int
             Shared interface argument retained for compatibility.
         window_size : int
@@ -1933,6 +2050,11 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         """
         del arena_kb
         project_root = Path(dirpath).expanduser().resolve()
+        self._write_runtime_phase_config(
+            project_root=project_root,
+            selected_phase=phase,
+            measured_runs=measured_inference_runs,
+        )
         try:
             storage_metrics = self._storage_power_metrics(project_root)
         except stm32_cube_clt.WorkflowError:
@@ -2233,4 +2355,293 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             error_code=HIL_ERROR_OK,
             power_metrics=_merge_metrics(telemetry.power_metrics),
             external_flash_bytes=compile_external_flash_bytes,
+        )
+
+    def _write_runtime_phase_config(
+        self,
+        *,
+        project_root: Path,
+        selected_phase: str,
+        measured_runs: int,
+    ) -> None:
+        """Write and validate the staged STM32 phase configuration.
+
+        Parameters
+        ----------
+        project_root : pathlib.Path
+            Staged STM32 FSBL root that owns the generated phase header.
+        selected_phase : str
+            Runtime phase to compile into the staged project.
+        measured_runs : int
+            Requested on-device run count.
+
+        Returns
+        -------
+        None
+            The method rewrites the generated phase-config header in place.
+        """
+        header_path = _write_phase_config_header(
+            project_root=project_root,
+            cpu_clock_mhz=self._options.cpu_clock_mhz,
+            selected_phase=selected_phase,
+            latency_budget_ms=self._options.latency_budget_ms,
+            measured_runs=max(1, int(measured_runs)),
+            wake_margin_us=self._options.wake_margin_us,
+            min_sleep_us=self._options.min_sleep_us,
+        )
+        _validate_phase_config_header(
+            header_path,
+            cpu_clock_mhz=self._options.cpu_clock_mhz,
+            selected_phase=selected_phase,
+            measured_runs=max(1, int(measured_runs)),
+            latency_budget_ms=self._options.latency_budget_ms,
+        )
+
+    def _cadenced_power_metrics_from_phase_result(
+        self,
+        phase_result: DeviceMetrics,
+    ) -> dict[str, Any]:
+        """Convert one cadenced phase result into flattened metrics extras.
+
+        Parameters
+        ----------
+        phase_result : DeviceMetrics
+            Result returned by the cadenced second pass.
+
+        Returns
+        -------
+        dict[str, Any]
+            Flattened cadenced metrics ready to merge into ``power_metrics``.
+        """
+        power_metrics = dict(phase_result.power_metrics or {})
+
+        def _safe_float(value: Any, default: float = -1.0) -> float:
+            """Coerce a raw metrics value to ``float`` or return ``default``.
+
+            Parameters
+            ----------
+            value : Any
+                Raw metrics payload value.
+            default : float, default=-1.0
+                Fallback value used when ``value`` is unavailable.
+
+            Returns
+            -------
+            float
+                Parsed floating-point value or ``default``.
+            """
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return float(default)
+
+        def _safe_int(value: Any, default: int = -1) -> int:
+            """Coerce a raw metrics value to ``int`` or return ``default``.
+
+            Parameters
+            ----------
+            value : Any
+                Raw metrics payload value.
+            default : int, default=-1
+                Fallback value used when ``value`` is unavailable.
+
+            Returns
+            -------
+            int
+                Parsed integer value or ``default``.
+            """
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return int(default)
+
+        runs = max(1, _safe_int(power_metrics.get("runs", 1), default=1))
+        energy_per_inference = _safe_float(power_metrics.get("energy_mj_per_inference", -1.0))
+        energy_per_window = (
+            float(energy_per_inference) * float(runs)
+            if energy_per_inference >= 0.0
+            else -1.0
+        )
+        harness_latency_s = _safe_float(power_metrics.get("harness_latency_s", -1.0))
+        return {
+            "cadenced_error_code": int(phase_result.error_code),
+            "cadenced_active_inference_latency_ms": (
+                phase_result.latency_s * 1000.0 if phase_result.latency_s >= 0.0 else -1.0
+            ),
+            "cadenced_energy_mj_per_inference": energy_per_inference,
+            "cadenced_energy_mj_per_window": energy_per_window,
+            "cadenced_avg_power_mw": _safe_float(power_metrics.get("avg_power_mw", -1.0)),
+            "cadenced_avg_current_ma": _safe_float(power_metrics.get("avg_current_ma", -1.0)),
+            "cadenced_bus_voltage_v": _safe_float(power_metrics.get("bus_voltage_v", -1.0)),
+            "cadenced_idle_power_mw": _safe_float(power_metrics.get("idle_power_mw", -1.0)),
+            "cadenced_harness_latency_ms": (
+                harness_latency_s * 1000.0
+                if harness_latency_s >= 0.0
+                else -1.0
+            ),
+            "cadenced_clock_hz": _safe_float(power_metrics.get("clock_hz", -1.0)),
+            "cadenced_dwt_cycles_per_inference": _safe_float(
+                power_metrics.get("dwt_cycles_per_inference", -1.0)
+            ),
+            "cadenced_rtc_sleep_ms": _safe_float(power_metrics.get("rtc_sleep_total_ms", -1.0)),
+            "cadenced_deadline_miss_count": _safe_int(power_metrics.get("deadline_miss_count", -1)),
+            "cadenced_wake_recovery_us_mean": _safe_float(power_metrics.get("wake_recovery_us", -1.0)),
+            "cadenced_wake_overshoot_us_mean": _safe_float(power_metrics.get("wake_overshoot_us", -1.0)),
+            "cadenced_rtc_clock_source": power_metrics.get("rtc_clock_source"),
+            "cadenced_rtc_clock_hz_nominal": _safe_float(power_metrics.get("rtc_clock_hz_nominal", -1.0)),
+            "cadenced_timing_quality": power_metrics.get("cadence_timing_quality"),
+            "cadenced_stop_mode_variant": power_metrics.get("stop_mode_variant"),
+        }
+
+    def evaluate(
+        self,
+        *,
+        dirpath: str | Path,
+        arena_kb: int,
+        window_size: int,
+        num_channels: int,
+        serial_port: Optional[str] = None,
+        run_hil: bool = True,
+        baud_rate: int = 115200,
+        serial_timeout_s: float = 12.0,
+        measured_inference_runs: int = 10,
+        dut_ready_timeout_s: Optional[float] = None,
+        harness_serial_port: Optional[str] = None,
+        harness_fqbn: Optional[str] = None,
+        harness_auto_flash: Optional[str] = None,
+        harness_arm_pin: Optional[int] = None,
+        harness_trigger_pin: Optional[int] = None,
+        dut_arm_hold_ms: Optional[int] = None,
+        harness_stable_low_ms: Optional[int] = None,
+        harness_ready_timeout_s: Optional[float] = None,
+        harness_arm_timeout_s: Optional[float] = None,
+        harness_active_timeout_s: Optional[float] = None,
+        harness_done_timeout_s: Optional[float] = None,
+    ) -> DeviceMetrics:
+        """Run the staged STM32 evaluation path and return canonical metrics.
+
+        Parameters
+        ----------
+        dirpath : str | pathlib.Path
+            Staged STM32 FSBL root to compile.
+        arena_kb : int
+            Shared interface argument retained for compatibility.
+        window_size : int
+            Shared interface argument retained for compatibility.
+        num_channels : int
+            Shared interface argument retained for interface compatibility.
+        serial_port : str | None, optional
+            Serial port retained for interface compatibility.
+        run_hil : bool, default=True
+            Whether the caller requested runtime measurement.
+        baud_rate : int, default=115200
+            Serial baud rate retained for interface compatibility.
+        serial_timeout_s : float, default=12.0
+            Serial timeout retained for interface compatibility.
+        measured_inference_runs : int, default=10
+            Requested on-device run count.
+        dut_ready_timeout_s : float | None, optional
+            DUT-ready timeout retained for interface compatibility.
+        harness_serial_port : str | None, optional
+            Harness serial port retained for interface compatibility.
+        harness_fqbn : str | None, optional
+            Harness FQBN retained for interface compatibility.
+        harness_auto_flash : str | None, optional
+            Harness flashing policy retained for interface compatibility.
+        harness_arm_pin : int | None, optional
+            Harness arm pin retained for interface compatibility.
+        harness_trigger_pin : int | None, optional
+            Harness trigger pin retained for interface compatibility.
+        dut_arm_hold_ms : int | None, optional
+            DUT arm hold retained for interface compatibility.
+        harness_stable_low_ms : int | None, optional
+            Stable-low period retained for interface compatibility.
+        harness_ready_timeout_s : float | None, optional
+            Harness ready timeout retained for interface compatibility.
+        harness_arm_timeout_s : float | None, optional
+            Harness arm timeout retained for interface compatibility.
+        harness_active_timeout_s : float | None, optional
+            Harness active timeout retained for interface compatibility.
+        harness_done_timeout_s : float | None, optional
+            Harness done timeout retained for interface compatibility.
+
+        Returns
+        -------
+        DeviceMetrics
+            Canonical STM32 metrics from the back-to-back pass, plus optional
+            cadenced extras stored in ``power_metrics``.
+        """
+        base_result = self._evaluate_single_phase(
+            dirpath=dirpath,
+            phase="back_to_back",
+            arena_kb=arena_kb,
+            window_size=window_size,
+            num_channels=num_channels,
+            serial_port=serial_port,
+            run_hil=run_hil,
+            baud_rate=baud_rate,
+            serial_timeout_s=serial_timeout_s,
+            measured_inference_runs=measured_inference_runs,
+            dut_ready_timeout_s=dut_ready_timeout_s,
+            harness_serial_port=harness_serial_port,
+            harness_fqbn=harness_fqbn,
+            harness_auto_flash=harness_auto_flash,
+            harness_arm_pin=harness_arm_pin,
+            harness_trigger_pin=harness_trigger_pin,
+            dut_arm_hold_ms=dut_arm_hold_ms,
+            harness_stable_low_ms=harness_stable_low_ms,
+            harness_ready_timeout_s=harness_ready_timeout_s,
+            harness_arm_timeout_s=harness_arm_timeout_s,
+            harness_active_timeout_s=harness_active_timeout_s,
+            harness_done_timeout_s=harness_done_timeout_s,
+        )
+        merged_power_metrics = dict(base_result.power_metrics or {})
+        if self._options.runtime_mode != "cadenced" or not run_hil or base_result.error_code != HIL_ERROR_OK:
+            merged_power_metrics["runtime_mode"] = "back_to_back"
+            return DeviceMetrics(
+                ram_bytes=base_result.ram_bytes,
+                flash_bytes=base_result.flash_bytes,
+                latency_s=base_result.latency_s,
+                arena_bytes=base_result.arena_bytes,
+                error_code=base_result.error_code,
+                power_metrics=merged_power_metrics,
+                external_flash_bytes=base_result.external_flash_bytes,
+                retry_hint_bytes=base_result.retry_hint_bytes,
+            )
+
+        cadenced_result = self._evaluate_single_phase(
+            dirpath=dirpath,
+            phase="cadenced",
+            arena_kb=arena_kb,
+            window_size=window_size,
+            num_channels=num_channels,
+            serial_port=serial_port,
+            run_hil=run_hil,
+            baud_rate=baud_rate,
+            serial_timeout_s=serial_timeout_s,
+            measured_inference_runs=measured_inference_runs,
+            dut_ready_timeout_s=dut_ready_timeout_s,
+            harness_serial_port=harness_serial_port,
+            harness_fqbn=harness_fqbn,
+            harness_auto_flash=harness_auto_flash,
+            harness_arm_pin=harness_arm_pin,
+            harness_trigger_pin=harness_trigger_pin,
+            dut_arm_hold_ms=dut_arm_hold_ms,
+            harness_stable_low_ms=harness_stable_low_ms,
+            harness_ready_timeout_s=harness_ready_timeout_s,
+            harness_arm_timeout_s=harness_arm_timeout_s,
+            harness_active_timeout_s=harness_active_timeout_s,
+            harness_done_timeout_s=harness_done_timeout_s,
+        )
+        merged_power_metrics["runtime_mode"] = "cadenced"
+        merged_power_metrics.update(self._cadenced_power_metrics_from_phase_result(cadenced_result))
+        return DeviceMetrics(
+            ram_bytes=base_result.ram_bytes,
+            flash_bytes=base_result.flash_bytes,
+            latency_s=base_result.latency_s,
+            arena_bytes=base_result.arena_bytes,
+            error_code=base_result.error_code,
+            power_metrics=merged_power_metrics,
+            external_flash_bytes=base_result.external_flash_bytes,
+            retry_hint_bytes=base_result.retry_hint_bytes,
         )

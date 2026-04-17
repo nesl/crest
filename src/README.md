@@ -106,6 +106,19 @@ Built-in metrics that can be referenced directly from `nas.score.params.objectiv
   - Measured on-device inference latency in milliseconds for the current trial.
 - `energy_mj_per_inference`
   - Measured energy in millijoules consumed by one inference attempt.
+- `cadenced_active_inference_latency_ms`
+  - STM32-only active compute time for one inference during the second
+    cadenced pass. This excludes the intentional sleep/idle time used to hold
+    the release schedule. Only available when `runtime_mode` is set to `cadenced`
+- `cadenced_energy_mj_per_inference`
+  - STM32-only average energy per cadenced slot, including the cadenced
+    sleep/wake overhead amortized into each scheduled inference. Only available 
+    when `runtime_mode` is set to `cadenced`
+- `cadenced_energy_mj_per_window`
+  - STM32-only total energy for the full cadenced measurement window. This is
+    computed in backend code as `cadenced_energy_mj_per_inference *`
+    `measured_inference_runs`. Only available when `runtime_mode` is set 
+    to `cadenced`
 - `avg_power_mw`
   - Average DUT power during the measured inference window, in milliwatts.
 - `avg_current_ma`
@@ -134,11 +147,69 @@ Notes:
 - `energy_mj_per_inference` is usually only available when HIL and energy-aware
   measurement are both enabled.
 - `latency_ms` is unavailable in non-HIL proxy runs.
+- The cadenced STM32 policy metrics are only available when
+  `device.stm32.runtime_mode: cadenced`.
+- `cadenced_active_inference_latency_ms` and
+  `cadenced_energy_mj_per_inference` are per-slot metrics from the second
+  cadenced STM32 pass. Only available when `runtime_mode` is set  to `cadenced`
+- `cadenced_energy_mj_per_window` is a whole-window metric, not a per-slot
+  metric. Only available when `runtime_mode` is set to `cadenced`
 - `cpu_clock_mhz_requested` is optional and backend-dependent.
 - `weight_storage_mode` is logged as trial metadata, but it is not part of the
   numeric scoring/pruning metric registry.
 - If you disable HIL, avoid score terms and prune rules that reference
-  `latency_ms` or `energy_mj_per_inference`.
+  `latency_ms`, `energy_mj_per_inference`, or the STM32 cadenced policy
+  metrics.
+
+### STM32 cadenced runtime mode
+
+The STM32 backend exposes an optional dual-phase mode under `device.stm32`:
+
+- `runtime_mode: back_to_back`
+  - Default behavior. TinyODOM runs one STM32 HIL session and returns the
+    standard canonical metrics.
+- `runtime_mode: cadenced`
+  - TinyODOM runs two STM32 HIL sessions in order:
+    1. a canonical `back_to_back` pass
+    2. a second `cadenced` pass
+
+Important semantics:
+
+- `latency_ms` remains the canonical `back_to_back` latency metric.
+- `cadenced_active_inference_latency_ms` is not the same thing as
+  `latency_ms`. It measures only the active inference compute time inside a
+  cadenced slot and excludes the intentional wait/sleep time between releases.
+- `energy_mj_per_inference` remains the canonical `back_to_back` per-inference
+  energy metric.
+- `cadenced_energy_mj_per_inference` is the average energy per cadenced slot,
+  so it includes sleep/wake overhead amortized into each scheduled inference.
+- `cadenced_energy_mj_per_window` is the total energy for the full cadenced
+  measurement window.
+
+Additional STM32 knobs:
+
+- `device.stm32.wake_margin_us`
+  - Wake-up guard band used by the cadenced STM32 runtime before each release
+    time.
+- `device.stm32.min_sleep_us`
+  - Minimum Stop-mode sleep request used by the cadenced STM32 runtime.
+
+Export behavior:
+
+- The main trial CSV only includes the small user-facing cadenced subset:
+  - `runtime_mode`
+  - `cadenced_active_inference_latency_ms`
+  - `cadenced_energy_mj_per_inference`
+  - `cadenced_energy_mj_per_window`
+  - `cadenced_rtc_sleep_ms`
+  - `cadenced_deadline_miss_count`
+  - `cadenced_error_code`
+  - `cadenced_error_label`
+- The full cadenced STM32 diagnostics remain available in normalized metrics
+  and Optuna trial attrs.
+- When `runtime_mode: back_to_back`, the cadenced fields are still present for
+  schema stability. Numeric fields use negative sentinels and string fields are
+  `None`.
 
 ### Derived metrics
 

@@ -185,6 +185,13 @@ def resolve_device_options(
             "server_ready_timeout_s": _cfg_get(stm32_cfg, "server_ready_timeout_s", None)
             if stm32_cfg is not None
             else None,
+            "runtime_mode": _cfg_get(stm32_cfg, "runtime_mode", None) if stm32_cfg is not None else None,
+            "wake_margin_us": _cfg_get(stm32_cfg, "wake_margin_us", None)
+            if stm32_cfg is not None
+            else None,
+            "min_sleep_us": _cfg_get(stm32_cfg, "min_sleep_us", None)
+            if stm32_cfg is not None
+            else None,
             "weight_storage_mode": _cfg_get(stm32_cfg, "weight_storage_mode", None)
             if stm32_cfg is not None
             else None,
