@@ -187,6 +187,22 @@ class DetermineMetricsTests(HILServerTestCase):
 
         self.assertEqual(metrics["cpu_clock_mhz_requested"], -1)
 
+    def test_determine_metrics_invalid_clock_override_returns_request_error(self) -> None:
+        server = self.build_server()
+
+        with patch("hil_server.resolve_device_options", return_value={"cpu_clock_mhz": 600}), patch(
+            "hil_server.get_microcontroller_device"
+        ) as device_mock:
+            metrics = server.determine_metrics(
+                Dict(flops=123, input_dim=6),
+                device_options_overrides={"cpu_clock_mhz": float("nan")},
+            )
+
+        device_mock.assert_not_called()
+        self.assertEqual(metrics["error_code"], hil_server_module.HIL_MASTER_FATAL)
+        self.assertEqual(metrics["backend_error_kind"], "request")
+        self.assertIn("device_options_overrides.cpu_clock_mhz", metrics["backend_error_detail"])
+
 
 class StartLoopTests(HILServerTestCase):
     """Validate the ZeroMQ REP loop implemented in `start`."""
@@ -227,6 +243,22 @@ class StartLoopTests(HILServerTestCase):
             Dict(payload["hyperparams"]),
             device_options_overrides={"cpu_clock_mhz": 400},
         )
+
+    def test_start_returns_request_error_for_malformed_payload(self) -> None:
+        server = self.build_server()
+        payload = {
+            "hyperparams": None,
+            "device_options_overrides": {"cpu_clock_mhz": 400},
+        }
+        self.socket.recv_json.side_effect = [payload, KeyboardInterrupt()]
+
+        server.start()
+
+        self.socket.send_json.assert_called_once()
+        metrics = self.socket.send_json.call_args.args[0]
+        self.assertEqual(metrics["error_code"], hil_server_module.HIL_MASTER_FATAL)
+        self.assertEqual(metrics["backend_error_kind"], "request")
+        self.assertIn("hyperparams", metrics["backend_error_detail"])
 
     def test_start_interrupt_cleans_up_resources(self) -> None:
         """If recv_json immediately raises, we should still close the socket."""

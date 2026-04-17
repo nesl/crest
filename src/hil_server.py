@@ -1,4 +1,5 @@
 import argparse
+from collections.abc import Mapping
 import logging
 import shutil
 from pathlib import Path
@@ -221,12 +222,18 @@ class HILServer:
             while True:
                 payload = self.socket.recv_json()
                 print(f"[HIL REP] Received payload: {payload}")
-                hyperparams, device_options_overrides = self._normalize_request_payload(payload)
-
-                metrics = self.determine_metrics(
-                    hyperparams,
-                    device_options_overrides=device_options_overrides,
-                )
+                try:
+                    hyperparams, device_options_overrides = self._normalize_request_payload(payload)
+                    metrics = self.determine_metrics(
+                        hyperparams,
+                        device_options_overrides=device_options_overrides,
+                    )
+                except ValueError as exc:
+                    logger.error("Invalid HIL request payload: %s", exc)
+                    metrics = self._request_boundary_failure_metrics(
+                        error_kind="request",
+                        error_detail=str(exc),
+                    )
 
                 print(f"[HIL REP] Sending metrics: {metrics}")
                 self.socket.send_json(metrics)
@@ -242,12 +249,12 @@ class HILServer:
             self.context.term()
 
     @staticmethod
-    def _normalize_request_payload(payload: dict) -> tuple[Dict, dict | None]:
+    def _normalize_request_payload(payload: object) -> tuple[Dict, dict | None]:
         """Normalize legacy and structured REQ payloads into one internal shape.
 
         Parameters
         ----------
-        payload : dict
+        payload : object
             Inbound JSON-decoded request payload.
 
         Returns
@@ -255,12 +262,38 @@ class HILServer:
         tuple[Dict, dict | None]
             Model hyperparameters plus optional device option overrides.
         """
+        if not isinstance(payload, Mapping):
+            raise ValueError("HIL request payload must be a JSON object.")
         if "hyperparams" in payload:
-            hyperparams = Dict(payload.get("hyperparams", {}))
+            raw_hyperparams = payload.get("hyperparams", {})
+            if not isinstance(raw_hyperparams, Mapping):
+                raise ValueError("HIL request field `hyperparams` must be a JSON object.")
             raw_overrides = payload.get("device_options_overrides", None)
+            if raw_overrides is not None and not isinstance(raw_overrides, Mapping):
+                raise ValueError(
+                    "HIL request field `device_options_overrides` must be a JSON object when provided."
+                )
             overrides = dict(raw_overrides) if raw_overrides is not None else None
-            return hyperparams, overrides
-        return Dict(payload), None
+            return Dict(dict(raw_hyperparams)), overrides
+        return Dict(dict(payload)), None
+
+    def _request_boundary_failure_metrics(
+        self,
+        *,
+        error_kind: str,
+        error_detail: str,
+    ) -> dict:
+        """Build failure metrics for malformed or invalid client requests."""
+        latency_budget_ms = (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000
+        effective_hil_enabled = bool(self.config.device.hil)
+        effective_energy_aware = bool(self.config.training.energy_aware and effective_hil_enabled)
+        return _build_backend_failure_metrics(
+            error_kind=error_kind,
+            error_detail=error_detail,
+            latency_budget_ms=latency_budget_ms,
+            hil_enabled=effective_hil_enabled,
+            energy_aware=effective_energy_aware,
+        )
 
     def determine_metrics(
         self,
@@ -309,20 +342,38 @@ class HILServer:
             for key, value in dict(device_options_overrides or {}).items()
             if value is not None
         }
-        requested_cpu_clock_mhz = (
-            int(filtered_device_options_overrides["cpu_clock_mhz"])
-            if "cpu_clock_mhz" in filtered_device_options_overrides
-            else -1
-        )
+        requested_cpu_clock_mhz = -1
+        if "cpu_clock_mhz" in filtered_device_options_overrides:
+            raw_requested_cpu_clock_mhz = filtered_device_options_overrides["cpu_clock_mhz"]
+            if isinstance(raw_requested_cpu_clock_mhz, bool):
+                return self._request_boundary_failure_metrics(
+                    error_kind="request",
+                    error_detail="device_options_overrides.cpu_clock_mhz must be an integer.",
+                )
+            try:
+                requested_cpu_clock_mhz = int(raw_requested_cpu_clock_mhz)
+            except (TypeError, ValueError):
+                return self._request_boundary_failure_metrics(
+                    error_kind="request",
+                    error_detail="device_options_overrides.cpu_clock_mhz must be an integer.",
+                )
+            filtered_device_options_overrides["cpu_clock_mhz"] = requested_cpu_clock_mhz
         merged_device_options = {
             **resolved_device_options,
             **filtered_device_options_overrides,
         }
-        runtime_device = get_microcontroller_device(
-            self._normalized_device_name(),
-            serial_port=getattr(self.config.device, "serial_port", None),
-            device_options=merged_device_options,
-        )
+        try:
+            runtime_device = get_microcontroller_device(
+                self._normalized_device_name(),
+                serial_port=getattr(self.config.device, "serial_port", None),
+                device_options=merged_device_options,
+            )
+        except ValueError as exc:
+            logger.error("Invalid runtime device options: %s", exc)
+            return self._request_boundary_failure_metrics(
+                error_kind="request" if filtered_device_options_overrides else "config",
+                error_detail=str(exc),
+            )
 
         variant = str(model_variant).strip().lower()
         model = None

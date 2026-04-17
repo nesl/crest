@@ -263,9 +263,14 @@ class NASModelClient:
 
         Returns
         -------
-        dict or None
+        dict
             Dictionary containing metrics like ram_bytes, flash_bytes, latency_ms,
-            etc., or None if the request times out.
+            etc.
+
+        Raises
+        ------
+        RuntimeError
+            If the HIL server times out or cannot be reached.
         """
         print(f"[REQ] Sending payload to {self.config.network.host}:{self.config.network.port}: {payload}")
 
@@ -385,10 +390,11 @@ class NASModelClient:
             )
             cpu_clock_mhz = int(cpu_clock_mhz_options[cpu_clock_mhz_index])
             device_options_overrides = {"cpu_clock_mhz": cpu_clock_mhz}
-            print(f"[SMOKE] CPU clock options: {cpu_clock_mhz_options}")
-            print(
-                f"[SMOKE] Suggested CPU clock index: {cpu_clock_mhz_index} "
-                f"-> {cpu_clock_mhz} MHz"
+            logger.debug(
+                "Sampled CPU clock override for trial: index=%s, value_mhz=%s, options=%s",
+                cpu_clock_mhz_index,
+                cpu_clock_mhz,
+                cpu_clock_mhz_options,
             )
 
         # Ask the HIL server to evaluate the candidate for resource usage and latency.
