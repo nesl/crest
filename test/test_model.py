@@ -278,6 +278,7 @@ class CollectMetricsTests(unittest.TestCase):
         def fake_controller(run_hil: bool, **kwargs):
             self.assertTrue(run_hil)
             self.assertEqual(kwargs["serial_timeout_s"], 9.5)
+            self.assertEqual(kwargs["measured_inference_runs"], 7)
             return (1024, 8192, 0.025, 4096, 0, None)
 
         with patch("tinyodom.model.HIL_controller", fake_controller):
@@ -293,6 +294,7 @@ class CollectMetricsTests(unittest.TestCase):
                 serial_port="ttyACM0",
                 latency_budget_ms=200.0,
                 serial_timeout_s=9.5,
+                measured_inference_runs=7,
             )
             metrics = collect_metrics(request)
 
@@ -542,6 +544,25 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertFalse(request.energy_aware)
         self.assertEqual(request.flops, 123)
         self.assertEqual(request.input_dim, 6)
+        self.assertEqual(request.measured_inference_runs, 10)
+
+    def test_request_uses_configured_measured_inference_runs(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=True,
+                name="ARDUINO_NANO_33_BLE_SENSE",
+                serial_port="ttyACM0",
+                measured_inference_runs=7,
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = self._build_request(config, hyperparams)
+
+        self.assertEqual(request.measured_inference_runs, 7)
 
     def test_build_request_defaults_stm_serial_timeout(self) -> None:
         config = Dict(
@@ -755,7 +776,6 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                     gdb_port=61234,
                     apid=1,
                     server_ready_timeout_s=15.0,
-                    cpu_clock_mhz=400,
                 ),
             ),
             data=Dict(window_size=128),
@@ -767,6 +787,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             config,
             hyperparams,
             dirpath=Path("/tmp/stm32_fsbl"),
+            device_options={"project_root": Path("/tmp/stm32_fsbl"), "cpu_clock_mhz": 400},
             energy_aware=False,
             hil_enabled=False,
         )
@@ -823,7 +844,6 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                         gdb_port=61235,
                         apid=2,
                         server_ready_timeout_s=20.0,
-                        cpu_clock_mhz=400,
                         weight_storage_mode="external_flash",
                         weights_flash_address="0x71000000",
                         weights_memory_pool=weights_memory_pool,
@@ -841,7 +861,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertEqual(resolved["gdb_port"], 61235)
         self.assertEqual(resolved["apid"], 2)
         self.assertEqual(resolved["server_ready_timeout_s"], 20.0)
-        self.assertEqual(resolved["cpu_clock_mhz"], 400)
+        self.assertEqual(resolved["cpu_clock_mhz"], 600)
         self.assertEqual(resolved["weight_storage_mode"], "external_flash")
         self.assertEqual(resolved["weights_flash_address"], "0x71000000")
         self.assertEqual(resolved["weights_memory_pool"], weights_memory_pool.resolve())
@@ -1009,6 +1029,50 @@ class LoadSettingsTests(unittest.TestCase):
             settings = load_config(config_path=cfg)
             self.assertEqual(settings.training.max_total_trials, 20)
 
+    def test_load_settings_defaults_measured_inference_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.device.measured_inference_runs, 10)
+
+    def test_load_settings_rejects_invalid_measured_inference_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "  measured_inference_runs: 0",
+                        "training:",
+                        "  nas_trials: 10",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaises(ValueError):
+                load_config(config_path=cfg)
+
     def test_load_settings_missing_file(self) -> None:
         """Nonexistent config paths should raise FileNotFoundError."""
         with self.assertRaises(FileNotFoundError):
@@ -1059,7 +1123,6 @@ class LoadSettingsTests(unittest.TestCase):
                         "    gdb_port: 61235",
                         "    apid: 2",
                         "    server_ready_timeout_s: 20.0",
-                        "    cpu_clock_mhz: 400",
                         "training:",
                         "  nas_trials: 5",
                         "  energy_aware: true",
@@ -1077,7 +1140,74 @@ class LoadSettingsTests(unittest.TestCase):
             self.assertEqual(resolved["gdb_port"], 61235)
             self.assertEqual(resolved["apid"], 2)
             self.assertEqual(resolved["server_ready_timeout_s"], 20.0)
-            self.assertEqual(resolved["cpu_clock_mhz"], 400)
+            self.assertEqual(resolved["cpu_clock_mhz"], 600)
+
+    def test_load_settings_accepts_null_cpu_clock_options(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "  cpu_clock_mhz_options: null",
+                        "training:",
+                        "  nas_trials: 5",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertIsNone(settings.device.cpu_clock_mhz_options)
+
+    def test_load_settings_rejects_boolean_cpu_clock_options(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "  cpu_clock_mhz_options: [true, 400]",
+                        "training:",
+                        "  nas_trials: 5",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaises(ValueError):
+                load_config(config_path=cfg)
+
+    def test_load_settings_rejects_unsupported_stm_cpu_clock_options(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: STM32_NUCLEO_N657X0_Q",
+                        "  cpu_clock_mhz_options: [250, 400]",
+                        "training:",
+                        "  nas_trials: 5",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "must be one of"):
+                load_config(config_path=cfg)
 
 
 @unittest.skipUnless(_cli_exists(), "Arduino CLI not installed")
@@ -1155,6 +1285,8 @@ class LogTrialTests(unittest.TestCase):
         "avg_power_mw",
         "avg_current_ma",
         "bus_voltage_v",
+        "cpu_clock_mhz_requested",
+        "clock_hz",
         "nb_filters",
         "kernel_size",
         "dilations",
@@ -1182,6 +1314,8 @@ class LogTrialTests(unittest.TestCase):
             "avg_power_mw": 2.0,
             "avg_current_ma": 1.5,
             "bus_voltage_v": 3.3,
+            "cpu_clock_mhz_requested": 400,
+            "clock_hz": 399_000_000.0,
             "idle_power_mw": 2.0,
         }
 
@@ -1254,6 +1388,13 @@ class LogTrialTests(unittest.TestCase):
                 float(rows[1][header_index["bus_voltage_v"]]), metrics["bus_voltage_v"]
             )
             self.assertEqual(
+                int(rows[1][header_index["cpu_clock_mhz_requested"]]),
+                metrics["cpu_clock_mhz_requested"],
+            )
+            self.assertAlmostEqual(
+                float(rows[1][header_index["clock_hz"]]), metrics["clock_hz"]
+            )
+            self.assertEqual(
                 rows[1][header_index["error_label"]], metrics["error_label"]
             )
             self.assertEqual(rows[1][header_index["pruned"]], "False")
@@ -1271,6 +1412,11 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(fake_trial.attrs["rmse_vel_x"], 0.1)
             self.assertEqual(fake_trial.attrs["rmse_vel_y"], 0.2)
             self.assertEqual(fake_trial.attrs["latency_budget_ms"], metrics["latency_budget_ms"])
+            self.assertEqual(
+                fake_trial.attrs["cpu_clock_mhz_requested"],
+                metrics["cpu_clock_mhz_requested"],
+            )
+            self.assertEqual(fake_trial.attrs["clock_hz"], metrics["clock_hz"])
             self.assertEqual(
                 fake_trial.attrs["error_code_label"], metrics["error_label"]
             )

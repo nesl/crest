@@ -322,6 +322,7 @@ class DeviceInterface(ABC):
         serial_port: Optional[str],
         baud_rate: int,
         serial_timeout_s: float,
+        measured_inference_runs: int = 10,
         dut_ready_timeout_s: Optional[float] = None,
         harness_serial_port: Optional[str] = None,
         harness_fqbn: Optional[str] = None,
@@ -390,6 +391,7 @@ class DeviceInterface(ABC):
         run_hil: bool = True,
         baud_rate: int = 115200,
         serial_timeout_s: float = 12.0,
+        measured_inference_runs: int = 10,
         dut_ready_timeout_s: Optional[float] = None,
         harness_serial_port: Optional[str] = None,
         harness_fqbn: Optional[str] = None,
@@ -850,6 +852,7 @@ class ArduinoDevice(DeviceInterface):
         serial_port: Optional[str],
         baud_rate: int,
         serial_timeout_s: float,
+        measured_inference_runs: int = 10,
         dut_ready_timeout_s: Optional[float] = None,
         harness_serial_port: Optional[str] = None,
         harness_fqbn: Optional[str] = None,
@@ -877,6 +880,7 @@ class ArduinoDevice(DeviceInterface):
             serial_port=use_serial_port,
             baud_rate=baud_rate,
             serial_timeout_s=serial_timeout_s,
+            measured_inference_runs=max(1, int(measured_inference_runs)),
             dut_ready_timeout_s=_default(dut_ready_timeout_s, 5.0),
             harness_serial_port=harness_serial_port,
             harness_fqbn=_default(harness_fqbn, "arduino:mbed_nano:nano33ble"),
@@ -908,6 +912,7 @@ class ArduinoDevice(DeviceInterface):
         run_hil: bool = True,
         baud_rate: int = 115200,
         serial_timeout_s: float = 12.0,
+        measured_inference_runs: int = 10,
         dut_ready_timeout_s: Optional[float] = None,
         harness_serial_port: Optional[str] = None,
         harness_fqbn: Optional[str] = None,
@@ -926,6 +931,7 @@ class ArduinoDevice(DeviceInterface):
         arena_bytes = arena_kb * 1024
         runtime_mode = self.runtime_measure_mode()
         build_defines = {
+            "TINYODOM_INFERENCE_RUNS": max(1, int(measured_inference_runs)),
             "TINYODOM_HARNESS_ARM_PIN": 3 if harness_arm_pin is None else int(harness_arm_pin),
             "TINYODOM_HARNESS_TRIGGER_PIN": 2 if harness_trigger_pin is None else int(harness_trigger_pin),
             "TINYODOM_DUT_ARM_HOLD_MS": 600 if dut_arm_hold_ms is None else int(dut_arm_hold_ms),
@@ -1007,6 +1013,7 @@ class ArduinoDevice(DeviceInterface):
             harness_active_timeout = float(_default(harness_active_timeout_s, 30.0))
             harness_done_timeout = float(_default(harness_done_timeout_s, 5.0))
             harness_build_defines = {
+                "TINYODOM_INFERENCE_RUNS": max(1, int(measured_inference_runs)),
                 "TINYODOM_HARNESS_ARM_PIN": int(_default(harness_arm_pin, 3)),
                 "TINYODOM_HARNESS_TRIGGER_PIN": int(_default(harness_trigger_pin, 2)),
                 "TINYODOM_DUT_ARM_HOLD_MS": int(_default(dut_arm_hold_ms, 600)),
@@ -1092,6 +1099,7 @@ class ArduinoDevice(DeviceInterface):
                 serial_port=use_serial_port,
                 baud_rate=baud_rate,
                 serial_timeout_s=serial_timeout_s,
+                measured_inference_runs=measured_inference_runs,
                 dut_ready_timeout_s=dut_ready_timeout_s,
                 harness_serial_port=harness_serial_port,
                 harness_fqbn=harness_fqbn,

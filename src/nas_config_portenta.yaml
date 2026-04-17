@@ -3,6 +3,7 @@ device:
   name: PORTENTA_H7
   hil: true
   serial_port: "/dev/ttyACM0"
+  measured_inference_runs: 10                # Number of on-device inference invokes averaged into one measured HIL attempt.
   portenta:
     target_core: "cm7"      # Required for PORTENTA_H7. Choose: cm7 or cm4.
     split: "75_25"          # Optional. Defaults: cm7->75_25, cm4->50_50.

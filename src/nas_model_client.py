@@ -252,25 +252,30 @@ class NASModelClient:
             ) from exc
 
 
-    def _hil_request(self, hyperparams):
-        """Send hyperparameters to the HIL server and receive metrics.
+    def _hil_request(self, payload):
+        """Send a HIL request payload to the HIL server and receive metrics.
 
         Parameters
         ----------
-        hyperparams : dict
-            Dictionary containing model hyperparameters such as nb_filters,
-            kernel_size, dilations, etc.
+        payload : dict
+            Structured request payload containing model hyperparameters and any
+            device-option overrides.
 
         Returns
         -------
-        dict or None
+        dict
             Dictionary containing metrics like ram_bytes, flash_bytes, latency_ms,
-            etc., or None if the request times out.
+            etc.
+
+        Raises
+        ------
+        RuntimeError
+            If the HIL server times out or cannot be reached.
         """
-        print(f"[REQ] Sending hyperparameters to {self.config.network.host}:{self.config.network.port}: {hyperparams}")
+        print(f"[REQ] Sending payload to {self.config.network.host}:{self.config.network.port}: {payload}")
 
         try:
-            self.socket.send_json(hyperparams)
+            self.socket.send_json(payload)
             metrics = self.socket.recv_json()
             print(f"[REQ] Received metrics: {metrics}")
             return metrics
@@ -342,7 +347,7 @@ class NASModelClient:
         artifacts_dir = self._artifacts_dir()
         log_path = artifacts_dir / self.config.outputs.log_file_name
         # Sample the CNN/TCN architecture knobs for this Optuna trial.
-        # ~8 million combinations
+        # ~40 million combinations
         nb_filters = trial.suggest_int("nb_filters", 2, 63)
         kernel_size = trial.suggest_int("kernel_size", 2, 15)
         dropout_rate = trial.suggest_categorical("dropout_rate", DROP_RATE_CHOICES)
@@ -374,8 +379,29 @@ class NASModelClient:
 
         hyperparams["flops"] = flops
 
+        # if the board supports runtime CPU clock selection, choose it here
+        cpu_clock_mhz_options = self._cfg_get(self.config.device, "cpu_clock_mhz_options", None)
+        device_options_overrides = None
+        if cpu_clock_mhz_options is not None:
+            cpu_clock_mhz_index = trial.suggest_int(
+                "cpu_clock_mhz_index",
+                0,
+                len(cpu_clock_mhz_options) - 1,
+            )
+            cpu_clock_mhz = int(cpu_clock_mhz_options[cpu_clock_mhz_index])
+            device_options_overrides = {"cpu_clock_mhz": cpu_clock_mhz}
+            logger.debug(
+                "Sampled CPU clock override for trial: index=%s, value_mhz=%s, options=%s",
+                cpu_clock_mhz_index,
+                cpu_clock_mhz,
+                cpu_clock_mhz_options,
+            )
+
         # Ask the HIL server to evaluate the candidate for resource usage and latency.
-        metrics = self._hil_request(hyperparams)
+        request_payload = {"hyperparams": hyperparams}
+        if device_options_overrides is not None:
+            request_payload["device_options_overrides"] = device_options_overrides
+        metrics = self._hil_request(request_payload)
 
         # Gets the hardware *estimated* specifications for the target device
         device_options = self._hardware_limit_device_options()
@@ -585,7 +611,14 @@ class NASModelClient:
         """
         self.study_name = study_name
         artifacts_dir = self._artifacts_dir()
-        storage_uri = f"sqlite:///{artifacts_dir / 'optuna_smoke_test.db'}"
+        self._copy_run_config(artifacts_dir)
+        smoke_db_path = artifacts_dir / "optuna_smoke_test.db"
+        smoke_log_path = artifacts_dir / self.config.outputs.log_file_name
+        for stale_path in (smoke_db_path, smoke_log_path):
+            if stale_path.exists():
+                stale_path.unlink()
+                print(f"[SMOKE] Removed stale artifact: {stale_path}")
+        storage_uri = f"sqlite:///{smoke_db_path}"
         multiobjective = self.config.training.nas_multiobjective if multiobjective is None else multiobjective
         _previous_hil = self.config.device.hil
         _previous_train = self.config.training.train
@@ -606,7 +639,7 @@ class NASModelClient:
                     storage=storage_uri,
                     study_name=study_name,
                     sampler=sampler,
-                    load_if_exists=True,
+                    load_if_exists=False,
                 )
             else:
                 sampler = optuna.samplers.TPESampler(
@@ -618,7 +651,7 @@ class NASModelClient:
                     storage=storage_uri,
                     study_name=study_name,
                     sampler=sampler,
-                    load_if_exists=True,
+                    load_if_exists=False,
                 )
             try:
                 single_trial_study.optimize(self.objective, n_trials=trials)
@@ -817,6 +850,7 @@ class NASModelClient:
         # Ensure all downstream paths use the caller-provided study_name
         self.study_name = study_name
         artifacts_dir = self._artifacts_dir()
+        self._copy_run_config(artifacts_dir)
         storage_uri = f"sqlite:///{artifacts_dir / 'optuna.db'}"
 
         # 1) Run NAS with configured HIL/train settings.
@@ -887,6 +921,23 @@ class NASModelClient:
         d = Path(self.config.outputs.models_dir) / self.study_name
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    def _copy_run_config(self, artifacts_dir: Path | None = None) -> Path | None:
+        """Copy the active NAS config into the study artifacts directory."""
+        cfg_path = Path(self.config_path)
+        if not cfg_path.exists():
+            logger.warning("Skipping config copy because the config file is missing: %s", cfg_path)
+            return None
+
+        target_dir = artifacts_dir if artifacts_dir is not None else self._artifacts_dir()
+        source_cfg = cfg_path.resolve()
+        dest_cfg = (target_dir / cfg_path.name).resolve()
+        if dest_cfg == source_cfg:
+            print(f"[CONFIG] Run config already in artifacts dir: {dest_cfg}")
+            return dest_cfg
+        shutil.copy2(source_cfg, dest_cfg)
+        print(f"[CONFIG] Copied run config to {dest_cfg}")
+        return dest_cfg
 
 
     def train_best_trial(
@@ -1297,11 +1348,14 @@ class NASModelClient:
 
             idx_start = idx_end
 
+        finite_rte_values = [float(value) for value in rte_per_traj if np.isfinite(value)]
+        rte_median = float(np.median(finite_rte_values)) if finite_rte_values else float("nan")
+
         metrics = {
             "ate_mean": float(np.mean(ate_per_traj)),
             "ate_median": float(np.median(ate_per_traj)),
             "ate_per_traj": ate_per_traj,
-            "rte_median": float(np.nanmedian(rte_per_traj)),
+            "rte_median": rte_median,
             "rte_per_traj": rte_per_traj,
             "plots": plot_paths,
             "checkpoint_path": str(ckpt_path),

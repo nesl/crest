@@ -143,6 +143,8 @@ Before running long NAS jobs, skim and adjust `src/nas_config.yaml`:
 - **Device block (`device.*`)**
    - `serial_port`: set to your board’s serial device (e.g. `/dev/cu.usbmodem*` on macOS, `/dev/ttyACM*` on Linux).
    - `hil`: keep `true` for full hardware-in-the-loop, or set `false` to run latency/energy proxies without talking to a board.
+   - `measured_inference_runs`: number of on-device inference invokes averaged into one measured HIL attempt; defaults to `10`.
+   - Board subtrees such as `device.portenta.*` and `device.stm32.*` remain for board-specific knobs, while `device.measured_inference_runs` is shared across supported HIL backends.
 - **Data block (`data.*`)**
    - `directory`: root of the OxIOD dataset if you didn’t use the default `data/oxiod/` location.
    - `calibration_windows`: reduce for faster experiments, increase or set `null` for more representative calibration.

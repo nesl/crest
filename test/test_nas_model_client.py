@@ -134,10 +134,10 @@ class HILRequestTests(unittest.TestCase):
         metrics = {"ram_bytes": 1024}
         client.socket.recv_json.return_value = metrics
 
-        hyperparams = {"nb_filters": 4}
-        result = client._hil_request(hyperparams)
+        payload = {"hyperparams": {"nb_filters": 4}}
+        result = client._hil_request(payload)
 
-        client.socket.send_json.assert_called_once_with(hyperparams)
+        client.socket.send_json.assert_called_once_with(payload)
         client.socket.recv_json.assert_called_once()
         self.assertEqual(result, metrics)
 
@@ -147,7 +147,7 @@ class HILRequestTests(unittest.TestCase):
         client.socket.recv_json.side_effect = zmq.error.Again()
 
         with self.assertRaises(RuntimeError):
-            client._hil_request({"nb_filters": 8})
+            client._hil_request({"hyperparams": {"nb_filters": 8}})
 
         client.socket.send_json.assert_called_once()
 
@@ -246,6 +246,45 @@ class ObjectiveTests(unittest.TestCase):
         self.mock_train.assert_called_once()
         self.assertEqual(result, 0.3)
         self.mock_log.assert_called_once()
+
+    def test_objective_samples_cpu_clock_into_device_overrides(self) -> None:
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+            "cpu_clock_mhz_requested": 400,
+        }
+        self.client.config.device.cpu_clock_mhz_options = [200, 400, 600]
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        self.client.objective(trial)
+
+        sent_payload = self.client._hil_request.call_args.args[0]
+        self.assertIn("hyperparams", sent_payload)
+        self.assertEqual(sent_payload["device_options_overrides"], {"cpu_clock_mhz": 200})
+        self.assertNotIn("cpu_clock_mhz", sent_payload["hyperparams"])
+        self.assertEqual(trial.params["cpu_clock_mhz_index"], 0)
+
+    def test_objective_omits_device_overrides_when_clock_options_are_null(self) -> None:
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+            "cpu_clock_mhz_requested": -1,
+        }
+        self.client.config.device.cpu_clock_mhz_options = None
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        self.client.objective(trial)
+
+        sent_payload = self.client._hil_request.call_args.args[0]
+        self.assertEqual(set(sent_payload.keys()), {"hyperparams"})
 
     def test_objective_stm_phase1_allows_arena_sentinel(self) -> None:
         """Ensure STM Phase 1 does not get pruned solely for ``arena_bytes=-1``.
@@ -406,8 +445,50 @@ class SmokeTestTests(unittest.TestCase):
         self.assertEqual(fake_study.optimize_calls[0][1], 1)
         kwargs = mock_create.call_args.kwargs
         self.assertEqual(kwargs["directions"], ["maximize", "minimize"])
+        self.assertFalse(kwargs["load_if_exists"])
         # Ensure we restore the original config flag after the run.
         self.assertFalse(client.config.training.nas_multiobjective)
+
+    def test_smoke_test_removes_stale_db_and_log_before_starting(self) -> None:
+        client = _build_test_client()
+        client.objective = MagicMock(return_value=0.1)
+        study_name = "stale_smoke"
+        client.study_name = study_name
+
+        class DummyStudy:
+            def __init__(self):
+                self.best_trial = SimpleNamespace(value=1.0, params={}, user_attrs={})
+                self.optimize_calls = []
+                self.trials = []
+
+            def optimize(self, func, n_trials):
+                self.optimize_calls.append((func, n_trials))
+
+        fake_study = DummyStudy()
+        artifacts_dir = client._artifacts_dir()
+        db_path = artifacts_dir / "optuna_smoke_test.db"
+        db_path.write_text("stale-db", encoding="utf-8")
+        log_path = artifacts_dir / client.config.outputs.log_file_name
+        log_path.write_text("stale-log", encoding="utf-8")
+
+        with patch("nas_model_client.optuna.create_study", return_value=fake_study) as mock_create:
+            client.smoke_test(train=False, hil=False, trials=1, epochs=1, study_name=study_name)
+
+        self.assertFalse(db_path.exists())
+        self.assertFalse(log_path.exists())
+        self.assertFalse(mock_create.call_args.kwargs["load_if_exists"])
+
+    def test_copy_run_config_skips_same_file(self) -> None:
+        client = _build_test_client()
+        artifacts_dir = client._artifacts_dir()
+        cfg_path = artifacts_dir / "config.yaml"
+        cfg_path.write_text("device:\n  name: TEST_DEVICE\n", encoding="utf-8")
+        client.config_path = cfg_path
+
+        copied_path = client._copy_run_config(artifacts_dir)
+
+        self.assertEqual(copied_path, cfg_path.resolve())
+        self.assertEqual(cfg_path.read_text(encoding="utf-8"), "device:\n  name: TEST_DEVICE\n")
 
 
 class RunNASTests(unittest.TestCase):

@@ -137,6 +137,9 @@ class CollectMetricsRequest:
         Timeout waiting for DUT ready handshake.
     serial_timeout_s : float | None, optional
         Post-``START`` runtime timeout forwarded to direct-serial backends.
+    measured_inference_runs : int, optional
+        Number of on-device inference invokes averaged into one measured HIL
+        attempt.
     harness : HarnessConfig | None, optional
         Harness settings for energy-aware runs. ``None`` for non-energy-aware runs.
     device_options : dict[str, Any] | None, optional
@@ -155,6 +158,7 @@ class CollectMetricsRequest:
     latency_budget_ms: float | None = None
     dut_ready_timeout_s: float | None = None
     serial_timeout_s: float | None = None
+    measured_inference_runs: int = 10
     harness: HarnessConfig | None = None
     device_options: dict[str, Any] | None = None
 
@@ -408,6 +412,47 @@ def load_config(
 
     device = config.device
 
+    measured_inference_runs_raw = device.get("measured_inference_runs", 10)
+    if isinstance(measured_inference_runs_raw, bool):
+        raise ValueError("device.measured_inference_runs must be an integer >= 1.")
+    if isinstance(measured_inference_runs_raw, float) and not measured_inference_runs_raw.is_integer():
+        raise ValueError("device.measured_inference_runs must be an integer >= 1.")
+    try:
+        device.measured_inference_runs = int(measured_inference_runs_raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("device.measured_inference_runs must be an integer >= 1.") from exc
+    if device.measured_inference_runs < 1:
+        raise ValueError("device.measured_inference_runs must be >= 1.")
+
+    cpu_clock_mhz_options_raw = device.get("cpu_clock_mhz_options", None)
+    if cpu_clock_mhz_options_raw is None:
+        device.cpu_clock_mhz_options = None
+    else:
+        if not isinstance(cpu_clock_mhz_options_raw, list) or len(cpu_clock_mhz_options_raw) == 0:
+            raise ValueError("device.cpu_clock_mhz_options must be a non-empty list of integers or null.")
+        normalized_cpu_clock_mhz_options = []
+        for value in cpu_clock_mhz_options_raw:
+            if isinstance(value, bool):
+                raise ValueError("device.cpu_clock_mhz_options entries must be integers, not booleans.")
+            if isinstance(value, float) and not value.is_integer():
+                raise ValueError("device.cpu_clock_mhz_options entries must be integers.")
+            try:
+                normalized_value = int(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("device.cpu_clock_mhz_options entries must be integers.") from exc
+            normalized_cpu_clock_mhz_options.append(normalized_value)
+        if normalized_device_name == "STM32_NUCLEO_N657X0_Q":
+            from .microcontrollers.stm32_nucleo_n657x0 import SUPPORTED_CPU_CLOCK_MHZ
+
+            allowed_cpu_clock_mhz_options = sorted(SUPPORTED_CPU_CLOCK_MHZ)
+            for normalized_value in normalized_cpu_clock_mhz_options:
+                if normalized_value not in SUPPORTED_CPU_CLOCK_MHZ:
+                    raise ValueError(
+                        "device.cpu_clock_mhz_options entries for STM32_NUCLEO_N657X0_Q "
+                        f"must be one of: {allowed_cpu_clock_mhz_options}."
+                    )
+        device.cpu_clock_mhz_options = normalized_cpu_clock_mhz_options
+
     device.harness_fqbn = device.get("harness_fqbn", "arduino:mbed_nano:nano33ble")
     device.harness_auto_flash = str(device.get("harness_auto_flash", "once")).lower()
     device.harness_arm_pin = int(device.get("harness_arm_pin", 3))
@@ -599,6 +644,7 @@ def build_collect_metrics_request(
         latency_budget_ms=latency_budget_ms,
         dut_ready_timeout_s=float(dut_ready_timeout),
         serial_timeout_s=float(serial_timeout),
+        measured_inference_runs=int(_cfg_get(config.device, "measured_inference_runs", 10)),
         harness=harness,
         device_options=device_options,
     )
@@ -628,6 +674,7 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
         "chosen_device": request.device_name,
         "window_size": request.window_size,
         "number_of_channels": request.input_dim,
+        "measured_inference_runs": request.measured_inference_runs,
     }
     if request.device_options is not None:
         controller_kwargs["device_options"] = request.device_options
@@ -768,6 +815,7 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
         "avg_current_ma": normalized_power["avg_current_ma"],
         "bus_voltage_v": normalized_power["bus_voltage_v"],
         "idle_power_mw": normalized_power["idle_power_mw"],
+        "clock_hz": normalized_power["clock_hz"],
         "harness_latency_ms": harness_latency_ms,
     }
     set_error_code(metrics, error_code)
@@ -831,6 +879,8 @@ def log_trial(score,
         "avg_power_mw",
         "avg_current_ma",
         "bus_voltage_v",
+        "cpu_clock_mhz_requested",
+        "clock_hz",
         "nb_filters",
         "kernel_size",
         "dilations",
@@ -865,6 +915,8 @@ def log_trial(score,
         metrics["avg_power_mw"],
         metrics["avg_current_ma"],
         metrics["bus_voltage_v"],
+        metrics.get("cpu_clock_mhz_requested", -1),
+        metrics.get("clock_hz", -1.0),
         hyperparams["nb_filters"],
         hyperparams["kernel_size"],
         hyperparams["dilations"],
@@ -887,6 +939,8 @@ def log_trial(score,
     trial.set_user_attr("latency_ms", metrics["latency_ms"])
     trial.set_user_attr("latency_budget_ms", metrics["latency_budget_ms"])
     trial.set_user_attr("energy_mj_per_inference", metrics["energy_mj_per_inference"])
+    trial.set_user_attr("cpu_clock_mhz_requested", metrics.get("cpu_clock_mhz_requested", -1))
+    trial.set_user_attr("clock_hz", metrics.get("clock_hz", -1.0))
     trial.set_user_attr("rmse_vel_x", rmse_vel_x)
     trial.set_user_attr("rmse_vel_y", rmse_vel_y)
     trial.set_user_attr("hil_error_code", metrics["error_code"])

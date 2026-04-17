@@ -467,7 +467,7 @@ def _write_phase_config_header(
     project_root: Path,
     cpu_clock_mhz: int,
     latency_budget_ms: float = 1.0,
-    measured_runs: int = 1,
+    measured_runs: int = 10,
     wake_margin_us: int = 5000,
     min_sleep_us: int = 5000,
 ) -> Path:
@@ -481,8 +481,8 @@ def _write_phase_config_header(
         Requested fixed CPU clock preset.
     latency_budget_ms : float, default=1.0
         Placeholder cadence budget written for deferred cadenced-mode compatibility.
-    measured_runs : int, default=1
-        Placeholder measured-run count written for deferred cadenced-mode compatibility.
+    measured_runs : int, default=10
+        Measured-run count written into the staged DUT phase configuration.
     wake_margin_us : int, default=5000
         Wake margin in microseconds.
     min_sleep_us : int, default=5000
@@ -1516,9 +1516,11 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 weights_external_loader=resolved_external_loader,
             )
             _parse_arena_bytes(staged_project_root / "Inc" / "network_data_params.h")
+            config_device = getattr(config, "device", None)
             header_path = _write_phase_config_header(
                 project_root=staged_project_root,
                 cpu_clock_mhz=self._options.cpu_clock_mhz,
+                measured_runs=int(getattr(config_device, "measured_inference_runs", 10)),
             )
             _validate_phase_config_header(header_path, cpu_clock_mhz=self._options.cpu_clock_mhz)
             return staged_project_root
@@ -1754,6 +1756,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         serial_port: Optional[str],
         baud_rate: int,
         serial_timeout_s: float,
+        measured_inference_runs: int = 10,
         dut_ready_timeout_s: Optional[float] = None,
         harness_serial_port: Optional[str] = None,
         harness_fqbn: Optional[str] = None,
@@ -1808,6 +1811,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             Parsed latency, serial log, and backend error details when present.
         """
         del (
+            measured_inference_runs,
             harness_serial_port,
             harness_fqbn,
             harness_auto_flash,
@@ -1862,6 +1866,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         run_hil: bool = True,
         baud_rate: int = 115200,
         serial_timeout_s: float = 12.0,
+        measured_inference_runs: int = 10,
         dut_ready_timeout_s: Optional[float] = None,
         harness_serial_port: Optional[str] = None,
         harness_fqbn: Optional[str] = None,

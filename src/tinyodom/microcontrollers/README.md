@@ -426,6 +426,7 @@ Example config block:
 device:
   name: STM32_NUCLEO_N657X0_Q
   serial_port: /dev/ttyACM0
+  measured_inference_runs: 10
   stm32:
     template_root: sketches/stm32/tinyodom_tcn_stm32/FSBL
     cpu_clock_mhz: 600
@@ -436,12 +437,15 @@ device:
 
 Supported STM options today:
 
-1. `template_root` or legacy `project_root` for the canonical FSBL template.
-2. `cpu_clock_mhz` fixed presets: `200`, `300`, `400`, `600`, `800`.
-3. `weight_storage_mode`: `embedded` or `external_flash`.
-4. `weights_flash_address`, `weights_memory_pool`, and optional
+1. Shared runtime knob: `device.measured_inference_runs` controls how many on-device
+   inference invokes are averaged into one measured HIL attempt. This is not an
+   STM-only board option.
+2. `template_root` or legacy `project_root` for the canonical FSBL template.
+3. `cpu_clock_mhz` fixed presets: `200`, `300`, `400`, `600`, `800`.
+4. `weight_storage_mode`: `embedded` or `external_flash`.
+5. `weights_flash_address`, `weights_memory_pool`, and optional
    `weights_external_loader` for external flash mode.
-5. Optional tool overrides:
+6. Optional tool overrides:
    - `gdbserver`
    - `gdb`
    - `cubeprog_bin`
