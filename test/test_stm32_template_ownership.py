@@ -34,7 +34,14 @@ def _load_manifest_rows() -> list[tuple[str, str, str]]:
     for raw_line in MANIFEST_PATH.read_text(encoding="utf-8").splitlines():
         if not raw_line or raw_line.startswith("#"):
             continue
-        category, relative_path, source_path = raw_line.split("\t")
+        parts = raw_line.split("\t")
+        if len(parts) == 2:
+            category, relative_path = parts
+            source_path = ""
+        elif len(parts) == 3:
+            category, relative_path, source_path = parts
+        else:
+            raise ValueError(f"Malformed ownership manifest row: {raw_line!r}")
         rows.append((category, relative_path, source_path))
     return rows
 
@@ -63,6 +70,37 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
                 self.assertEqual(source_path, "")
         self.assertTrue(
             any(category == "vendor_copy" and relative_path.startswith("Drivers/") for category, relative_path, _ in rows)
+        )
+
+    def test_manifest_loader_accepts_two_column_non_vendor_rows(self) -> None:
+        """Ensure the manifest test helper matches the shell parser's tolerance.
+
+        Returns
+        -------
+        None
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = Path(tmpdir) / "manifest.tsv"
+            manifest_path.write_text(
+                "# comment\n"
+                "tinyodom_owned\tInc/example.h\n"
+                "vendor_copy\tSrc/example.c\tDrivers/example.c\n",
+                encoding="utf-8",
+            )
+
+            original_manifest_path = globals()["MANIFEST_PATH"]
+            globals()["MANIFEST_PATH"] = manifest_path
+            try:
+                rows = _load_manifest_rows()
+            finally:
+                globals()["MANIFEST_PATH"] = original_manifest_path
+
+        self.assertEqual(
+            rows,
+            [
+                ("tinyodom_owned", "Inc/example.h", ""),
+                ("vendor_copy", "Src/example.c", "Drivers/example.c"),
+            ],
         )
 
     def test_manifest_kept_files_exist_in_canonical_template(self) -> None:
@@ -170,6 +208,50 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
             self.assertFalse((canonical_root / "Src" / "remove.c").exists())
             self.assertTrue((example_root / "Src" / "keep.c").is_file())
             self.assertFalse((example_root / "Src" / "remove.c").exists())
+
+    def test_setup_script_preserves_reclassified_vendor_copy_files(self) -> None:
+        """Ensure reclassified vendor-copy paths are not deleted on refresh.
+
+        Returns
+        -------
+        None
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            firmware_root = project_root / "tools" / "stm32" / "STM32CubeN6"
+            canonical_root = project_root / "canonical"
+            example_root = project_root / "example"
+            manifest_path = project_root / "manifest.tsv"
+
+            source_path = firmware_root / "vendor" / "keep.c"
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.write_text("// vendor/keep.c\n", encoding="utf-8")
+
+            first_manifest = "vendor_copy\tSrc/keep.c\tvendor/keep.c\n"
+            second_manifest = "vendor_derived\tSrc/keep.c\t\n"
+
+            self._run_setup_materialization(
+                project_root=project_root,
+                firmware_root=firmware_root,
+                canonical_root=canonical_root,
+                example_root=example_root,
+                manifest_path=manifest_path,
+                manifest_text=first_manifest,
+            )
+            self.assertTrue((canonical_root / "Src" / "keep.c").is_file())
+            self.assertTrue((example_root / "Src" / "keep.c").is_file())
+
+            self._run_setup_materialization(
+                project_root=project_root,
+                firmware_root=firmware_root,
+                canonical_root=canonical_root,
+                example_root=example_root,
+                manifest_path=manifest_path,
+                manifest_text=second_manifest,
+            )
+
+            self.assertTrue((canonical_root / "Src" / "keep.c").is_file())
+            self.assertTrue((example_root / "Src" / "keep.c").is_file())
 
     def _run_setup_materialization(
         self,

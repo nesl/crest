@@ -935,6 +935,55 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
             self.assertFalse(project_root.parent.exists())
 
+    def test_prepare_candidate_cleans_up_candidate_root_after_generate_failure(self) -> None:
+        """Ensure failed STM32 staging does not leak per-candidate directories.
+
+        Returns
+        -------
+        None
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            template_root = _build_project_tree(tmp_path / "template")
+            outputs_dir = tmp_path / "outputs"
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "template_root": str(template_root),
+                }
+            )
+            fake_training_data = type("TrainingData", (), {"inputs": [[[0.0] * 6] * 4]})()
+
+            def _write_tflite(*, output_name, **kwargs):
+                del kwargs
+                Path(output_name).write_bytes(b"tflite")
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0._ensure_staging_tools"
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_analyze"
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_generate",
+                side_effect=stm32_cube_clt.WorkflowError("generate failed"),
+            ), patch(
+                "tinyodom.hardware.convert_to_tflite_model",
+                side_effect=_write_tflite,
+            ):
+                with self.assertRaisesRegex(stm32_cube_clt.WorkflowError, "generate failed"):
+                    device.prepare_candidate(
+                        config=type("Config", (), {"training": type("Training", (), {"quantization": True})()})(),
+                        hyperparams=None,
+                        model=object(),
+                        outputs_dir=outputs_dir,
+                        tflite_model_path=outputs_dir / "ignored.tflite",
+                        training_data=fake_training_data,
+                        model_variant="approx_trained",
+                        checkpoint_path=None,
+                    )
+
+            stm32_outputs_root = outputs_dir / "stm32"
+            self.assertTrue(stm32_outputs_root.exists())
+            self.assertEqual(list(stm32_outputs_root.iterdir()), [])
+
     def test_real_template_parsers_match_checked_in_files(self) -> None:
         """Ensure parser helpers match the canonical checked-in STM template.
 

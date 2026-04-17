@@ -56,12 +56,17 @@ prune_materialized_vendor_copy_files() {
   local state_file=""
   local relative_path=""
   local destination_path=""
+  local current_category=""
 
   state_file="$(vendor_copy_state_file_for_root "$template_root")"
   [[ -f "$state_file" ]] || return 0
 
   while IFS= read -r relative_path; do
     [[ -n "$relative_path" ]] || continue
+    current_category="${CATEGORY_BY_PATH[$relative_path]:-}"
+    if [[ -n "$current_category" && "$current_category" != "vendor_copy" ]]; then
+      continue
+    fi
     destination_path="$template_root/$relative_path"
     rm -f "$destination_path"
     prune_empty_template_dirs "$template_root" "$destination_path"

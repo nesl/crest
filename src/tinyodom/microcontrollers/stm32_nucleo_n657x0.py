@@ -880,6 +880,12 @@ def _strip_stale_debug_artifacts(project_root: Path) -> None:
             child.unlink()
 
 
+def _keep_staged_candidates_enabled() -> bool:
+    """Return whether staged STM32 candidate roots should be preserved."""
+    keep_candidates = str(os.environ.get(KEEP_STAGED_CANDIDATES_ENV, "")).strip().lower()
+    return keep_candidates in {"1", "true", "yes", "on"}
+
+
 def _ensure_staging_tools() -> None:
     """Fail early when STM staging tools are unavailable.
 
@@ -1468,53 +1474,65 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         analyze_output_dir = candidate_root / "stedgeai_analyze_out"
         stedgeai_workspace_dir = candidate_root / "stedgeai_ws"
         generated_output_dir = candidate_root / "stedgeai_out"
-        model_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(canonical_template, staged_project_root)
-        _strip_stale_debug_artifacts(staged_project_root)
-        staged_project_root = _validate_project_structure(staged_project_root)
-        _validate_memory_reservations(staged_project_root)
+        try:
+            model_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(canonical_template, staged_project_root)
+            _strip_stale_debug_artifacts(staged_project_root)
+            staged_project_root = _validate_project_structure(staged_project_root)
+            _validate_memory_reservations(staged_project_root)
 
-        tflite_path = model_dir / "tinyodom_candidate.tflite"
-        convert_to_tflite_model(
-            model=model,
-            training_data=training_data.inputs,
-            quantization=bool(config.training.quantization),
-            output_name=tflite_path,
-        )
-        _run_stedgeai_analyze(
-            model_path=tflite_path,
-            workspace_dir=analyze_workspace_dir,
-            output_dir=analyze_output_dir,
-        )
-        _run_stedgeai_generate(
-            model_path=tflite_path,
-            workspace_dir=stedgeai_workspace_dir,
-            output_dir=generated_output_dir,
-            weight_storage_mode=self._options.weight_storage_mode,
-            weights_flash_address=self._options.weights_flash_address,
-            weights_memory_pool=self._options.weights_memory_pool,
-        )
-        _stage_generated_outputs(generated_output_dir, staged_project_root)
-        weights_blob_path = _generated_weights_blob_path(
-            generated_output_dir,
-            weight_storage_mode=self._options.weight_storage_mode,
-        )
-        _write_staged_manifest(
-            project_root=staged_project_root,
-            candidate_root=candidate_root,
-            generated_output_dir=generated_output_dir,
-            weight_storage_mode=self._options.weight_storage_mode,
-            weights_blob_path=weights_blob_path,
-            weights_flash_address=self._options.weights_flash_address,
-            weights_external_loader=resolved_external_loader,
-        )
-        _parse_arena_bytes(staged_project_root / "Inc" / "network_data_params.h")
-        header_path = _write_phase_config_header(
-            project_root=staged_project_root,
-            cpu_clock_mhz=self._options.cpu_clock_mhz,
-        )
-        _validate_phase_config_header(header_path, cpu_clock_mhz=self._options.cpu_clock_mhz)
-        return staged_project_root
+            tflite_path = model_dir / "tinyodom_candidate.tflite"
+            convert_to_tflite_model(
+                model=model,
+                training_data=training_data.inputs,
+                quantization=bool(config.training.quantization),
+                output_name=tflite_path,
+            )
+            _run_stedgeai_analyze(
+                model_path=tflite_path,
+                workspace_dir=analyze_workspace_dir,
+                output_dir=analyze_output_dir,
+            )
+            _run_stedgeai_generate(
+                model_path=tflite_path,
+                workspace_dir=stedgeai_workspace_dir,
+                output_dir=generated_output_dir,
+                weight_storage_mode=self._options.weight_storage_mode,
+                weights_flash_address=self._options.weights_flash_address,
+                weights_memory_pool=self._options.weights_memory_pool,
+            )
+            _stage_generated_outputs(generated_output_dir, staged_project_root)
+            weights_blob_path = _generated_weights_blob_path(
+                generated_output_dir,
+                weight_storage_mode=self._options.weight_storage_mode,
+            )
+            _write_staged_manifest(
+                project_root=staged_project_root,
+                candidate_root=candidate_root,
+                generated_output_dir=generated_output_dir,
+                weight_storage_mode=self._options.weight_storage_mode,
+                weights_blob_path=weights_blob_path,
+                weights_flash_address=self._options.weights_flash_address,
+                weights_external_loader=resolved_external_loader,
+            )
+            _parse_arena_bytes(staged_project_root / "Inc" / "network_data_params.h")
+            header_path = _write_phase_config_header(
+                project_root=staged_project_root,
+                cpu_clock_mhz=self._options.cpu_clock_mhz,
+            )
+            _validate_phase_config_header(header_path, cpu_clock_mhz=self._options.cpu_clock_mhz)
+            return staged_project_root
+        except Exception:
+            if candidate_root.exists() and not _keep_staged_candidates_enabled():
+                try:
+                    shutil.rmtree(candidate_root)
+                except OSError:
+                    logger.warning(
+                        "Failed to remove staged STM32 candidate root after prepare_candidate failure: %s",
+                        candidate_root,
+                        exc_info=True,
+                    )
+            raise
 
     def set_input_mode(
         self,
@@ -1555,8 +1573,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         """
         if prepared_dir is None:
             return
-        keep_candidates = str(os.environ.get(KEEP_STAGED_CANDIDATES_ENV, "")).strip().lower()
-        if keep_candidates in {"1", "true", "yes", "on"}:
+        if _keep_staged_candidates_enabled():
             logger.info(
                 "Preserving staged STM32 candidate at %s because %s is enabled.",
                 prepared_dir,
