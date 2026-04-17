@@ -99,14 +99,17 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
             nas_multiobjective_population_size=8,
         ),
         device=SimpleNamespace(name="TEST_DEVICE", hil=True, serial_port="ttyACM0"),
-        score=Dict(
-            type="scoring-function",
-            metrics=Dict(),
-            params=Dict(
-                terms=[
-                    Dict(type="weighted", metric="rmse_total", weight=-1.0),
-                ]
+        nas=SimpleNamespace(
+            score=Dict(
+                type="scoring-function",
+                metrics=Dict(),
+                params=Dict(
+                    terms=[
+                        Dict(type="weighted", metric="rmse_total", weight=-1.0),
+                    ]
+                ),
             ),
+            prune=Dict(rules=[]),
         ),
         outputs=SimpleNamespace(
             log_file_name="test_log.csv",
@@ -281,6 +284,78 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(result, 0.3)
         self.mock_log.assert_called_once()
 
+    def test_objective_prunes_before_training_on_config_rule(self) -> None:
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 25.0,
+            "latency_budget_ms": 20.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client.config.nas.prune = Dict(
+            rules=[
+                Dict(
+                    rule="latency_budget",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds deployment budget",
+                )
+            ]
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        with self.assertRaises(optuna.TrialPruned):
+            self.client.objective(trial)
+
+        self.mock_train.assert_not_called()
+        self.mock_log.assert_called_once()
+        self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "latency_budget")
+        self.assertEqual(
+            self.mock_log.call_args.kwargs["prune_reason"],
+            "Latency exceeds deployment budget",
+        )
+
+    def test_objective_prunes_when_rule_metric_is_unavailable(self) -> None:
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": -1.0,
+            "latency_budget_ms": 20.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client.config.nas.prune = Dict(
+            rules=[
+                Dict(
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds deployment budget",
+                    rule="rule_0",
+                )
+            ]
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        with self.assertRaises(optuna.TrialPruned):
+            self.client.objective(trial)
+
+        self.mock_train.assert_not_called()
+        self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "rule_0")
+        self.assertIn("Configured prune metric unavailable", self.mock_log.call_args.kwargs["prune_reason"])
+
     def test_objective_samples_cpu_clock_into_device_overrides(self) -> None:
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
@@ -365,7 +440,7 @@ class ObjectiveTests(unittest.TestCase):
         self.client.config.device.name = "STM32_NUCLEO_N657X0_Q"
         self.client.config.device.stm32 = SimpleNamespace(project_root="/tmp/stm_fsbl")
         self.client.config.training.energy_aware = True
-        self.client.config.score = Dict(
+        self.client.config.nas.score = Dict(
             type="multi-objective",
             metrics=Dict(),
             params=Dict(
@@ -455,12 +530,12 @@ class SmokeTestTests(unittest.TestCase):
         self.assertEqual(client.config.device.hil, True)
         self.assertEqual(client.config.training.train, True)
         self.assertEqual(client.config.training.nas_epochs, 10)
-        self.assertEqual(client.config.score.type, "scoring-function")
+        self.assertEqual(client.config.nas.score.type, "scoring-function")
 
     def test_smoke_test_uses_loaded_multiobjective_config(self) -> None:
         """Smoke test should honor multi-objective mode from the loaded config."""
         client = _build_test_client()
-        client.config.score = Dict(
+        client.config.nas.score = Dict(
             type="multi-objective",
             metrics=Dict(),
             params=Dict(

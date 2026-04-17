@@ -39,14 +39,17 @@ training:
   # Input mode for HIL sketches: uniform, representative, or real
   input_mode: "uniform"
 
-score:
-  type: multi-objective
-  params:
-    objectives:
-      - metric: rmse_total
-        direction: minimize
-      - metric: latency_ms
-        direction: minimize
+nas:
+  score:
+    type: multi-objective
+    params:
+      objectives:
+        - metric: rmse_total
+          direction: minimize
+        - metric: latency_ms
+          direction: minimize
+  prune:
+    rules: []
 
 # Output directories and filenames
 outputs:

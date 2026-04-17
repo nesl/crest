@@ -61,6 +61,8 @@ VALID_SCORE_TYPES = {"scoring-function", "multi-objective"}
 VALID_DERIVED_METRIC_TYPES = {"add", "energy-budget-from-power"}
 VALID_TERM_TYPES = {"weighted", "normalized-weighted", "boundary", "target"}
 VALID_OBJECTIVE_DIRECTIONS = {"maximize", "minimize"}
+VALID_PRUNE_CONDITIONS = {"gt", "gte", "lt", "lte"}
+TRAINING_ONLY_METRICS = {"rmse_vel_x", "rmse_vel_y", "rmse_total"}
 NONNEGATIVE_METRICS = {
     "rmse_vel_x",
     "rmse_vel_y",
@@ -546,8 +548,8 @@ def _resolve_metric_value(
                 for child_name in metric_config.metrics
             )
         elif metric_config.type == "energy-budget-from-power":
-            power_mw = _typed_reference_value(metric_config.power, context, score_config)
-            duration_ms = _typed_reference_value(metric_config.duration, context, score_config)
+            power_mw = _typed_reference_value(metric_config.power_mw, context, score_config)
+            duration_ms = _typed_reference_value(metric_config.duration_ms, context, score_config)
             if duration_ms <= 0.0:
                 raise ValueError(
                     f"Derived metric '{metric_name}' requires a positive duration reference."
@@ -723,36 +725,81 @@ def _validate_typed_reference(reference: Any, allowed_metrics: set[str], context
     return normalized_reference
 
 
-def _validate_score_config(config: Dict) -> Dict:
-    """Validate and normalize the top-level score configuration.
+def _metric_depends_on_training(
+    metric_name: str,
+    score_metrics: Dict,
+    stack: tuple[str, ...] = (),
+) -> bool:
+    """Return whether a metric depends on training-only quantities.
 
     Parameters
     ----------
-    config : addict.Dict
-        Parsed YAML configuration tree.
+    metric_name : str
+        Metric name to inspect.
+    score_metrics : addict.Dict
+        Normalized derived metrics from ``nas.score.metrics``.
+    stack : tuple[str, ...], optional
+        Active recursion stack used to detect cycles.
+
+    Returns
+    -------
+    bool
+        ``True`` when the metric or any derived dependency requires
+        post-training values such as RMSE.
+    """
+    if metric_name in TRAINING_ONLY_METRICS:
+        return True
+    if metric_name not in score_metrics or metric_name in stack:
+        return False
+
+    metric_cfg = score_metrics[metric_name]
+    child_metrics: list[str] = []
+    if metric_cfg.type == "add":
+        child_metrics = list(metric_cfg.metrics)
+    elif metric_cfg.type == "energy-budget-from-power":
+        if metric_cfg.power_mw.type == "metric":
+            child_metrics.append(str(metric_cfg.power_mw.metric))
+        if metric_cfg.duration_ms.type == "metric":
+            child_metrics.append(str(metric_cfg.duration_ms.metric))
+    return any(
+        _metric_depends_on_training(child_metric, score_metrics, stack + (metric_name,))
+        for child_metric in child_metrics
+    )
+
+
+def _validate_score_config(score_input: Any, has_legacy_multiobjective: bool = False) -> Dict:
+    """Validate and normalize the NAS score configuration.
+
+    Parameters
+    ----------
+    score_input : object
+        Raw ``nas.score`` configuration.
+    has_legacy_multiobjective : bool, optional
+        Whether the deprecated ``training.nas_multiobjective`` field is still
+        present in the source configuration.
 
     Returns
     -------
     addict.Dict
-        Normalized score configuration stored back onto ``config.score``.
+        Normalized score configuration.
 
     Raises
     ------
     KeyError
-        If the required ``score`` section is missing or the deprecated
+        If the required score section is missing or the deprecated
         ``training.nas_multiobjective`` field is still present.
     ValueError
         If any score type, metric, term, reference, or objective entry is
         invalid.
     """
-    if "score" not in config:
-        raise KeyError("Missing required top-level 'score' section in the configuration.")
-    if "nas_multiobjective" in config.training:
+    if score_input is None:
+        raise KeyError("Missing required 'nas.score' section in the configuration.")
+    if has_legacy_multiobjective:
         raise KeyError(
-            "training.nas_multiobjective is no longer supported; define top-level score.type instead."
+            "training.nas_multiobjective is no longer supported; define nas.score.type instead."
         )
 
-    score_config = Dict(config.score)
+    score_config = Dict(score_input)
     score_type = str(score_config.get("type", "")).strip().lower()
     if score_type not in VALID_SCORE_TYPES:
         raise ValueError("score.type must be one of: scoring-function, multi-objective.")
@@ -790,23 +837,37 @@ def _validate_score_config(config: Dict) -> Dict:
                 normalized_metric_list.append(child_name)
             metric_cfg.metrics = normalized_metric_list
         elif metric_type == "energy-budget-from-power":
-            metric_cfg.power = _validate_typed_reference(
-                metric_cfg.get("power"),
-                allowed_metric_names,
-                f"score.metrics.{metric_name}.power",
-            )
-            metric_cfg.duration = _validate_typed_reference(
-                metric_cfg.get("duration"),
-                allowed_metric_names,
-                f"score.metrics.{metric_name}.duration",
-            )
-            if metric_cfg.duration.type == "literal" and float(metric_cfg.duration.value) <= 0.0:
+            if "power" in metric_cfg and "power_mw" in metric_cfg:
                 raise ValueError(
-                    f"score.metrics.{metric_name}.duration literal reference must be greater than zero."
+                    f"score.metrics.{metric_name} may define only one of power or power_mw."
                 )
-            if metric_cfg.power.type == "literal" and float(metric_cfg.power.value) < 0.0:
+            if "duration" in metric_cfg and "duration_ms" in metric_cfg:
                 raise ValueError(
-                    f"score.metrics.{metric_name}.power literal reference must be non-negative."
+                    f"score.metrics.{metric_name} may define only one of duration or duration_ms."
+                )
+
+            # Keep the runtime representation explicit about units even when
+            # reading older configs that still use the shorter key names.
+            metric_cfg.power_mw = _validate_typed_reference(
+                metric_cfg.get("power_mw", metric_cfg.get("power")),
+                allowed_metric_names,
+                f"score.metrics.{metric_name}.power_mw",
+            )
+            metric_cfg.duration_ms = _validate_typed_reference(
+                metric_cfg.get("duration_ms", metric_cfg.get("duration")),
+                allowed_metric_names,
+                f"score.metrics.{metric_name}.duration_ms",
+            )
+            if (
+                metric_cfg.duration_ms.type == "literal"
+                and float(metric_cfg.duration_ms.value) <= 0.0
+            ):
+                raise ValueError(
+                    f"score.metrics.{metric_name}.duration_ms literal reference must be greater than zero."
+                )
+            if metric_cfg.power_mw.type == "literal" and float(metric_cfg.power_mw.value) < 0.0:
+                raise ValueError(
+                    f"score.metrics.{metric_name}.power_mw literal reference must be non-negative."
                 )
         normalized_metrics[metric_name] = metric_cfg
     score_config.metrics = normalized_metrics
@@ -865,6 +926,157 @@ def _validate_score_config(config: Dict) -> Dict:
             normalized_objectives.append(objective)
         score_config.params.objectives = normalized_objectives
     return score_config
+
+
+def _validate_prune_config(prune_input: Any, score_config: Dict) -> Dict:
+    """Validate and normalize NAS prune policy.
+
+    Parameters
+    ----------
+    prune_input : object
+        Raw ``nas.prune`` configuration.
+    score_config : addict.Dict
+        Normalized ``nas.score`` configuration.
+
+    Returns
+    -------
+    addict.Dict
+        Normalized prune configuration with a ``rules`` list.
+
+    Raises
+    ------
+    ValueError
+        If any prune rule is invalid or incompatible with the score mode.
+    """
+    prune_config = Dict(prune_input or {})
+    raw_rules = prune_config.get("rules", [])
+    if raw_rules is None:
+        raw_rules = []
+    if not isinstance(raw_rules, list):
+        raise ValueError("nas.prune.rules must be a list when provided.")
+    if is_multiobjective_score_config(score_config) and len(raw_rules) > 0:
+        raise ValueError("nas.prune.rules is only supported when nas.score.type is scoring-function.")
+
+    allowed_metric_names = BUILTIN_SCORE_METRICS | set(getattr(score_config, "metrics", Dict()).keys())
+    normalized_rules = []
+    for idx, raw_rule in enumerate(raw_rules):
+        rule_cfg = Dict(raw_rule)
+        metric_name = str(rule_cfg.get("metric", "")).strip()
+        condition = str(rule_cfg.get("condition", "")).strip().lower()
+        if metric_name not in allowed_metric_names:
+            raise ValueError(f"nas.prune.rules[{idx}] references unknown metric '{metric_name}'.")
+        if condition not in VALID_PRUNE_CONDITIONS:
+            raise ValueError(
+                f"nas.prune.rules[{idx}].condition must be one of: {sorted(VALID_PRUNE_CONDITIONS)}."
+            )
+        if _metric_depends_on_training(metric_name, getattr(score_config, "metrics", Dict())):
+            raise ValueError(
+                f"nas.prune.rules[{idx}] may not use training-only metric '{metric_name}'."
+            )
+        reference = _validate_typed_reference(
+            rule_cfg.get("reference"),
+            allowed_metric_names,
+            f"nas.prune.rules[{idx}]",
+        )
+        if reference.type == "metric" and _metric_depends_on_training(
+            str(reference.metric),
+            getattr(score_config, "metrics", Dict()),
+        ):
+            raise ValueError(
+                f"nas.prune.rules[{idx}] may not reference training-only metric '{reference.metric}'."
+            )
+        rule_cfg.metric = metric_name
+        rule_cfg.condition = condition
+        rule_cfg.reference = reference
+        rule_cfg.reason = str(rule_cfg.get("reason", "")).strip()
+        raw_rule_id = str(rule_cfg.get("rule", "")).strip()
+        rule_cfg.rule = raw_rule_id if raw_rule_id else f"rule_{idx}"
+        normalized_rules.append(rule_cfg)
+    prune_config.rules = normalized_rules
+    return prune_config
+
+
+def _validate_nas_config(config: Dict) -> Dict:
+    """Validate and normalize the top-level NAS policy configuration.
+
+    Parameters
+    ----------
+    config : addict.Dict
+        Parsed YAML configuration tree.
+
+    Returns
+    -------
+    addict.Dict
+        Normalized ``nas`` subtree containing ``score`` and ``prune``.
+
+    Raises
+    ------
+    KeyError
+        If the NAS policy section is missing or legacy score fields are used.
+    """
+    if "score" in config:
+        raise KeyError("Top-level 'score' is no longer supported; move it to 'nas.score'.")
+    if "nas" not in config:
+        raise KeyError("Missing required top-level 'nas' section in the configuration.")
+
+    nas_config = Dict(config.nas)
+    score_config = _validate_score_config(
+        nas_config.get("score"),
+        has_legacy_multiobjective="nas_multiobjective" in config.training,
+    )
+    prune_config = _validate_prune_config(nas_config.get("prune", {}), score_config)
+    nas_config.score = score_config
+    nas_config.prune = prune_config
+    return nas_config
+
+
+def evaluate_prune_rules(
+    metrics: dict[str, Any],
+    hyperparams: Dict,
+    score_config: Dict,
+    prune_config: Dict,
+) -> tuple[str, str] | None:
+    """Evaluate pre-training prune rules against the current trial context.
+
+    Parameters
+    ----------
+    metrics : dict[str, Any]
+        Runtime metrics available before training.
+    hyperparams : addict.Dict
+        Trial hyperparameters.
+    score_config : addict.Dict
+        Normalized score configuration that owns the derived metric registry.
+    prune_config : addict.Dict
+        Normalized prune configuration.
+
+    Returns
+    -------
+    tuple[str, str] | None
+        ``(prune_rule, prune_reason)`` when a rule matches, otherwise ``None``.
+    """
+    context = dict(metrics)
+    context["flops"] = hyperparams["flops"]
+
+    for rule_cfg in getattr(prune_config, "rules", []):
+        try:
+            metric_value = _resolve_metric_value(rule_cfg.metric, context, score_config)
+            reference_value = _typed_reference_value(rule_cfg.reference, context, score_config)
+        except ValueError:
+            return rule_cfg.rule, f"Configured prune metric unavailable: {rule_cfg.metric}"
+
+        condition_matched = {
+            "gt": metric_value > reference_value,
+            "gte": metric_value >= reference_value,
+            "lt": metric_value < reference_value,
+            "lte": metric_value <= reference_value,
+        }[rule_cfg.condition]
+        if condition_matched:
+            reason = (
+                rule_cfg.reason
+                or f"Prune rule '{rule_cfg.rule}' matched: {rule_cfg.metric} {rule_cfg.condition} {reference_value}"
+            )
+            return rule_cfg.rule, reason
+    return None
 
 
 def load_config(
@@ -1011,7 +1223,7 @@ def load_config(
         )
     config.logging = Dict()
     config.logging.level = level_name
-    config.score = _validate_score_config(config)
+    config.nas = _validate_nas_config(config)
 
     return config
 
@@ -1355,6 +1567,7 @@ def log_trial(
     study_name: str = "",
     pruned: bool = False,
     prune_reason: str = "",
+    prune_rule: str = "",
 ):
     """Write one trial summary row to CSV and annotate the Optuna trial.
 
@@ -1376,6 +1589,8 @@ def log_trial(
         Whether the trial was pruned.
     prune_reason : str, optional
         Reason for pruning.
+    prune_rule : str, optional
+        Stable machine-readable pruning rule identifier.
 
     Returns
     -------
@@ -1418,6 +1633,7 @@ def log_trial(
         "objective_directions_json",
         "pruned",
         "prune_reason",
+        "prune_rule",
     ]
     
     if not log_path.exists() or log_path.stat().st_size == 0:
@@ -1459,6 +1675,7 @@ def log_trial(
         json.dumps(scoring_result.objective_directions),
         pruned,
         prune_reason,
+        prune_rule,
     ]
     with open(log_path, "a", newline="") as csvfile:
         csv.writer(csvfile).writerow(row_write)
@@ -1487,6 +1704,7 @@ def log_trial(
     trial.set_user_attr("error_code_label", error_label)
     trial.set_user_attr("pruned", pruned)
     trial.set_user_attr("prune_reason", prune_reason)
+    trial.set_user_attr("prune_rule", prune_rule)
 
 
 
@@ -1553,7 +1771,7 @@ def train_and_score(
         if (not metrics["hil_enabled"]) and metrics.get("error_code", 0) == 0:
             metrics["latency_ms"] = -1  # keep CSV compatibility for non-HIL trials
             set_error_code(metrics, 1)
-        return _evaluate_score_config(rmse_vel_x, rmse_vel_y, metrics, hyperparams, config.score)
+        return _evaluate_score_config(rmse_vel_x, rmse_vel_y, metrics, hyperparams, config.nas.score)
     
     # Train the model with early stopping and checkpointing
     checkpoint = ModelCheckpoint(
@@ -1600,7 +1818,7 @@ def train_and_score(
     if (not metrics["hil_enabled"]) and metrics.get("error_code", 0) == 0:
         metrics["latency_ms"] = -1  # keep CSV compatibility for non-HIL trials
         set_error_code(metrics, 1)
-    return _evaluate_score_config(rmse_vel_x, rmse_vel_y, metrics, hyperparams, config.score)
+    return _evaluate_score_config(rmse_vel_x, rmse_vel_y, metrics, hyperparams, config.nas.score)
 
 
 def build_tinyodom_model(hyperparams: Dict) -> Model:

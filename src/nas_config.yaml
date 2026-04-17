@@ -41,74 +41,142 @@ training:
   # Input mode for HIL sketches: uniform, representative, or real
   input_mode: "uniform"
 
-score:
-  type: multi-objective
-  params:
-    objectives:
-      - metric: rmse_total
-        direction: minimize
-      - metric: latency_ms
-        direction: minimize
+# Active NAS policy configuration.
+# This is the default scalar NAS setup used by the repo.
+#
+# This example is meant to be the readable config equivalent of the old
+# hard-coded score in `model.py`. Each term below exists for a specific reason:
+# - reward lower RMSE
+# - lightly penalize RAM usage relative to device RAM capacity
+# - lightly penalize flash usage relative to device flash capacity
+# - penalize latency only after it exceeds the configured latency budget
+# - penalize energy when it deviates from an energy budget derived from power
+#   budget and latency budget
+#
+# The `metrics:` subsection defines reusable derived values that make the score
+# terms easier to read. The `params.terms:` subsection then says how each value
+# contributes to the final scalar score.
+nas:
+  score:
+    type: scoring-function
+    metrics:
+    # Flash can live in internal flash and, on some targets, external flash.
+    # This derived metric lets the score treat total model storage as one value.
+      total_flash_bytes:
+        type: add
+        metrics:
+          - flash_bytes
+          - external_flash_bytes
+    # Reconstruct the old energy target from:
+    #   target power (mW) * latency budget (ms) / 1000 = energy budget (mJ)
+    # Adjust `power_mw.value` to reflect the per-inference power budget you want.
+      energy_budget_mj:
+        type: energy-budget-from-power
+        power_mw:
+          type: literal
+          value: 100.0
+        duration_ms:
+          type: metric
+          metric: latency_budget_ms
+    params:
+      terms:
+      # Core accuracy term.
+      # Negative weight means lower RMSE produces a higher scalar score.
+        - type: weighted
+          metric: rmse_total
+          weight: -1.0
 
-# Closest scalar equivalent to the old hard-coded score in model.py.
-# Note: this now matches the old normalized RAM/flash resource terms directly.
-# The energy target can also be reconstructed as a derived metric from target
-# power and latency_budget_ms.
+      # Resource term for RAM usage.
+      # This is normalized by the target device RAM capacity so the penalty
+      # scales sensibly across boards with different memory sizes.
+        - type: normalized-weighted
+          metric: ram_bytes
+          weight: 0.01
+          reference:
+            type: metric
+            metric: max_ram_bytes
+
+      # Resource term for flash usage.
+      # Uses `total_flash_bytes` so internal + external flash are considered
+      # together when the target supports both.
+        - type: normalized-weighted
+          metric: total_flash_bytes
+          weight: 0.01
+          reference:
+            type: metric
+            metric: max_flash_bytes
+
+      # Latency policy term.
+      # Below the latency budget this contributes nothing.
+      # Above the latency budget it subtracts a penalty proportional to the
+      # amount of overrun.
+        - type: boundary
+          metric: latency_ms
+          weight: 1.0
+          reference:
+            type: metric
+            metric: latency_budget_ms
+
+      # Energy policy term.
+      # This compares measured energy per inference against the derived
+      # `energy_budget_mj` target. If energy is below target or above target,
+      # the penalty grows with the distance from that target.
+        - type: target
+          metric: energy_mj_per_inference
+          weight: 0.15
+          reference:
+            type: metric
+            metric: energy_budget_mj
+  prune:
+    rules:
+      # Pre-training latency gate.
+      # If the measured latency already exceeds the deployment budget, prune
+      # the trial before training so NAS does not waste time on it.
+      - rule: latency_budget
+        metric: latency_ms
+        condition: gt
+        reference:
+          type: metric
+          metric: latency_budget_ms
+        reason: "Latency exceeds deployment budget"
+      # Optional energy gate that reuses the derived budget metric above.
+      - rule: energy_budget
+        metric: energy_mj_per_inference
+        condition: gt
+        reference:
+          type: metric
+          metric: energy_budget_mj
+        reason: "Energy exceeds deployment budget"
+
+# Alternative multi-objective NAS example.
+# Uncomment this block if you want a Pareto front instead of one scalar score.
 #
-# score:
-#   type: scoring-function
-#   metrics:
-#     total_flash_bytes:
-#       type: add
-#       metrics:
-#         - flash_bytes
-#         - external_flash_bytes
-#     energy_budget_mj:
-#       type: energy-budget-from-power
-#       power:
-#         type: literal
-#         value: 100.0
-#       duration:
-#         type: metric
-#         metric: latency_budget_ms
-#   params:
-#     terms:
-#       # Old model_acc term: -(rmse_vel_x + rmse_vel_y)
-#       - type: weighted
-#         metric: rmse_total
-#         weight: -1.0
+# Multi-objective mode does not collapse everything into one scalar. Instead,
+# Optuna keeps a frontier of models that trade off accuracy against runtime.
+# This is the better fit when you want to inspect the quality/latency trade
+# space rather than committing to one fixed weighting policy up front.
+# Note: Pruning is not supported for multi objective studies in Optuna, so the 
+# `prune.rules` list is left empty here.
 #
-#       # Old resource term: 0.01 * (ram_bytes / max_ram_bytes)
-#       - type: normalized-weighted
-#         metric: ram_bytes
-#         weight: 0.01
-#         reference:
-#           type: metric
-#           metric: max_ram_bytes
-#       # Old resource term: 0.01 * (total_flash_bytes / max_flash_bytes)
-#       - type: normalized-weighted
-#         metric: total_flash_bytes
-#         weight: 0.01
-#         reference:
-#           type: metric
-#           metric: max_flash_bytes
+# In this example:
+# - objective 1 minimizes total RMSE
+# - objective 2 minimizes on-device latency
 #
-#       # Old latency penalty only applied above the budget.
-#       - type: boundary
-#         metric: latency_ms
-#         weight: 1.0
-#         reference:
-#           type: metric
-#           metric: latency_budget_ms
-#
-#       # Old energy penalty compared measured energy against a target derived
-#       # from target power and latency_budget_ms.
-#       - type: target
-#         metric: energy_mj_per_inference
-#         weight: 0.15
-#         reference:
-#           type: metric
-#           metric: energy_budget_mj
+# nas:
+#   score:
+#     type: multi-objective
+#     params:
+#       objectives:
+#         # Objective 1: minimize overall prediction error.
+#         # `rmse_total` is the built-in aggregate `rmse_vel_x + rmse_vel_y`.
+#         - metric: rmse_total
+#           direction: minimize
+#         # Objective 2: minimize on-device latency.
+#         # This gives Optuna a Pareto tradeoff between model quality and runtime.
+#         - metric: latency_ms
+#           direction: minimize
+#   prune:
+#     rules: []
 
 # Output directories and filenames
 outputs:

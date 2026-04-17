@@ -42,6 +42,7 @@ from tinyodom.microcontrollers import (
 from tinyodom.model import (
     ScoringResult,
     build_tinyodom_model,
+    evaluate_prune_rules,
     train_and_score,
     count_flops,
     log_trial,
@@ -105,7 +106,7 @@ class NASModelClient:
 
     Notes
     -----
-    - Multi-objective NAS is enabled via ``config.score.type``. When true,
+    - Multi-objective NAS is enabled via ``config.nas.score.type``. When true,
       NSGA-II is used with the configured objective directions. Otherwise, a
       single-objective TPE sampler is used.
     - Device resource caps (RAM/flash) are checked against board specs returned
@@ -131,7 +132,7 @@ class NASModelClient:
         
         if self.config.device.hil is False:
             logger.warning("HIL is disabled in the configuration.")
-        if is_multiobjective_score_config(self.config.score):
+        if is_multiobjective_score_config(self.config.nas.score):
             logger.info("Using multi-objective NAS.")
         else:
             logger.info("Using single-objective NAS.")
@@ -212,7 +213,7 @@ class NASModelClient:
         bool
             ``True`` when the active ``score`` block is multi-objective.
         """
-        return is_multiobjective_score_config(self.config.score)
+        return is_multiobjective_score_config(self.config.nas.score)
 
     def _study_directions(self) -> list[str]:
         """Return Optuna directions for the active score config.
@@ -222,7 +223,7 @@ class NASModelClient:
         list[str]
             Direction list compatible with ``optuna.create_study``.
         """
-        return get_score_config_directions(self.config.score)
+        return get_score_config_directions(self.config.nas.score)
 
     def _hardware_limit_device_options(self) -> dict[str, str] | None:
         """Build board options required to resolve dynamic hardware limits.
@@ -332,7 +333,7 @@ class NASModelClient:
         -------
         float or tuple
             Returns either a single scalar score or a tuple of configured
-            objective values, depending on ``config.score.type``.
+            objective values, depending on ``config.nas.score.type``.
 
         Raises
         ------
@@ -417,6 +418,8 @@ class NASModelClient:
             self.config.device.name,
             device_options=device_options,
         )
+        metrics["max_ram_bytes"] = float(max_ram)
+        metrics["max_flash_bytes"] = float(max_flash)
         try:
             runtime_device = get_microcontroller_device(
                 str(self.config.device.name),
@@ -452,7 +455,7 @@ class NASModelClient:
             if not self._score_is_multiobjective():
                 trial.report(value, step=0)
 
-        def _fail_with_penalty(prune_reason: str):
+        def _fail_with_penalty(prune_reason: str, prune_rule: str = ""):
             """Helper to prune with a penalty score and log the failure."""
             metrics.setdefault("latency_ms", 10000.0)
             metrics.setdefault("energy_mj_per_inference", 10000.0)
@@ -464,7 +467,7 @@ class NASModelClient:
             metrics.setdefault("rmse_total", -1.0)
             directions = self._study_directions()
             if self._score_is_multiobjective():
-                objective_names = [str(obj.metric) for obj in self.config.score.params.objectives]
+                objective_names = [str(obj.metric) for obj in self.config.nas.score.params.objectives]
                 objective_values = [
                     -1e12 if direction == "maximize" else 1e12
                     for direction in directions
@@ -496,6 +499,7 @@ class NASModelClient:
                 study_name=self.study_name,
                 pruned=True,
                 prune_reason=prune_reason,
+                prune_rule=prune_rule,
             )
 
             if self._score_is_multiobjective():
@@ -547,6 +551,16 @@ class NASModelClient:
             elif not flash_failure and not arena_ok:
                 set_error_code(metrics, HIL_MASTER_ARENA_EXHAUSTED)
             return _fail_with_penalty("Resource or arena check failed")
+
+        prune_hit = evaluate_prune_rules(
+            metrics=metrics,
+            hyperparams=Dict(hyperparams),
+            score_config=self.config.nas.score,
+            prune_config=self.config.nas.prune,
+        )
+        if prune_hit is not None:
+            prune_rule, prune_reason = prune_hit
+            return _fail_with_penalty(prune_reason, prune_rule=prune_rule)
 
         # Only train/evaluate models that pass all resource checks.
         try:
@@ -627,15 +641,15 @@ class NASModelClient:
             self.config.device.hil = hil
             self.config.training.train = train
             self.config.training.nas_epochs = epochs  # Speed up smoke test
-            if is_multiobjective_score_config(self.config.score):
+            if is_multiobjective_score_config(self.config.nas.score):
                 uses_rmse_metrics = any(
                     objective.metric in {"rmse_vel_x", "rmse_vel_y", "rmse_total"}
-                    for objective in self.config.score.params.objectives
+                    for objective in self.config.nas.score.params.objectives
                 )
             else:
                 uses_rmse_metrics = any(
                     term.metric in {"rmse_vel_x", "rmse_vel_y", "rmse_total"}
-                    for term in self.config.score.params.terms
+                    for term in self.config.nas.score.params.terms
                 )
             if (not train) and uses_rmse_metrics:
                 raise ValueError(

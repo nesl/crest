@@ -140,8 +140,9 @@ After that, the STM32 wrapper uses those same CLT tools from `PATH`.
 
 Before running long NAS jobs, skim and adjust `src/nas_config.yaml`:
 
-For the full scoring/config reference, including the `score:` schema, available
-metrics, derived metrics, and scalar term types, see
+For the full NAS policy/config reference, including the `nas.score` and
+`nas.prune` schema, available metrics, derived metrics, and scalar term types,
+see
 [src/README.md](/home/joe/Projects/tinyodom-ex/src/README.md).
 
 - **Device block (`device.*`)**
@@ -165,11 +166,12 @@ metrics, derived metrics, and scalar term types, see
    - Portenta CM4 note: runtime telemetry is harness-based (`harness_only`), and
      TinyODOM may upload a CM7 boot-helper sketch first to bring up CM4 before
      uploading the DUT sketch.
-- **Score block (`score.*`)**
-   - `score.type`: choose `scoring-function` or `multi-objective`.
-   - `score.params.objectives`: for multi-objective runs, list `{metric, direction}` entries such as `rmse_total` and `latency_ms`.
-   - `score.params.terms`: for scalar runs, compose terms such as `weighted`, `normalized-weighted`, `boundary`, and `target`.
-   - `score.metrics`: optional derived metrics; see [src/README.md](/home/joe/Projects/tinyodom-ex/src/README.md) for the current supported metric types and examples.
+- **NAS policy block (`nas.*`)**
+   - `nas.score.type`: choose `scoring-function` or `multi-objective`.
+   - `nas.score.params.objectives`: for multi-objective runs, list `{metric, direction}` entries such as `rmse_total` and `latency_ms`.
+   - `nas.score.params.terms`: for scalar runs, compose terms such as `weighted`, `normalized-weighted`, `boundary`, and `target`.
+   - `nas.score.metrics`: optional derived metrics; see [src/README.md](/home/joe/Projects/tinyodom-ex/src/README.md) for the current supported metric types and examples.
+   - `nas.prune.rules`: optional pre-training hard-reject rules for scalar NAS runs.
 - **Outputs and network (`outputs.*`, `network.*`)**
    - `models_dir`, `tcn_dir`: where Optuna DBs, metrics, and TFLite/C++ artifacts are written.
    - `host`, `port`: must match the HIL server and SSH tunnel; defaults (`127.0.0.1:6001`) usually work as-is.
@@ -226,7 +228,7 @@ Useful flags:
 - `--smoke-test N` – run a short NAS smoke test with `N` trials (no final long retrain).
 - `--study-name` – label used for the Optuna study and artifact directory.
 
-Smoke tests use the score mode and score definition from `src/nas_config.yaml`.
+Smoke tests use the NAS policy from `src/nas_config.yaml`.
 
 ### 4. Where outputs go
 
