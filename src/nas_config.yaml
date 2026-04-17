@@ -16,7 +16,7 @@ device:
   harness_done_timeout_s: 5.0
   stm32:
     project_root: "sketches/stm32/tinyodom_tcn_stm32/FSBL"
-    runtime_mode: "back_to_back"              # Use `cadenced` to run back_to_back first, then a second cadenced STM32 pass.
+    runtime_mode: cadenced  #"back_to_back"              # Use `cadenced` to run back_to_back first, then a second cadenced STM32 pass.
     wake_margin_us: 5000                      # Cadenced wake-up guard band before each release time.
     min_sleep_us: 5000                        # Cadenced minimum Stop-mode sleep request.
     weight_storage_mode: "external_flash"          # Set to external_flash to stage weights into NOR flash.
@@ -143,13 +143,13 @@ nas:
           metric: latency_budget_ms
         reason: "Latency exceeds deployment budget"
       # Optional energy gate that reuses the derived budget metric above.
-      - rule: energy_budget
-        metric: energy_mj_per_inference
-        condition: gt
-        reference:
-          type: metric
-          metric: energy_budget_mj
-        reason: "Energy exceeds deployment budget"
+      # - rule: energy_budget
+      #   metric: energy_mj_per_inference
+      #   condition: gt
+      #   reference:
+      #     type: metric
+      #     metric: energy_budget_mj
+      #   reason: "Energy exceeds deployment budget"
 
 # Alternative multi-objective NAS example.
 # Uncomment this block if you want a Pareto front instead of one scalar score.
