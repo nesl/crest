@@ -620,16 +620,17 @@ class NASModelClient:
         -------
         None
             Prints the best trial value, parameters, and runtime metrics.
+
+        Notes
+        -----
+        Smoke tests reuse the same per-study SQLite storage and trial log when
+        the caller passes the same ``study_name``. Re-running the smoke test
+        therefore appends more trials instead of deleting prior results.
         """
         self.study_name = study_name
         artifacts_dir = self._artifacts_dir()
         self._copy_run_config(artifacts_dir)
         smoke_db_path = artifacts_dir / "optuna_smoke_test.db"
-        smoke_log_path = artifacts_dir / self.config.outputs.log_file_name
-        for stale_path in (smoke_db_path, smoke_log_path):
-            if stale_path.exists():
-                stale_path.unlink()
-                print(f"[SMOKE] Removed stale artifact: {stale_path}")
         storage_uri = f"sqlite:///{smoke_db_path}"
         _previous_hil = self.config.device.hil
         _previous_train = self.config.training.train
@@ -653,7 +654,7 @@ class NASModelClient:
                     storage=storage_uri,
                     study_name=study_name,
                     sampler=sampler,
-                    load_if_exists=False,
+                    load_if_exists=True,
                 )
             else:
                 sampler = optuna.samplers.TPESampler(
@@ -665,7 +666,7 @@ class NASModelClient:
                     storage=storage_uri,
                     study_name=study_name,
                     sampler=sampler,
-                    load_if_exists=False,
+                    load_if_exists=True,
                 )
             try:
                 single_trial_study.optimize(self.objective, n_trials=trials)

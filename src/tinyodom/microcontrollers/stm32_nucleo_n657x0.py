@@ -2312,6 +2312,21 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                         timer_value = telemetry.power_metrics.get(timer_field)
                         if timer_value is not None:
                             merged_power_metrics[timer_field] = timer_value
+                    # Preserve STM32-specific cadence telemetry that the generic
+                    # harness merge helper does not know about.
+                    for passthrough_field in (
+                        "wake_recovery_us",
+                        "wake_overshoot_us",
+                        "rtc_sleep_total_ms",
+                        "deadline_miss_count",
+                        "rtc_clock_hz_nominal",
+                        "rtc_clock_source",
+                        "cadence_timing_quality",
+                        "stop_mode_variant",
+                    ):
+                        passthrough_value = telemetry.power_metrics.get(passthrough_field)
+                        if passthrough_value is not None:
+                            merged_power_metrics[passthrough_field] = passthrough_value
                     merged_power_metrics.update(runtime_storage_metrics)
                     return DeviceMetrics(
                         ram_bytes=compile_result.ram_bytes or -1,

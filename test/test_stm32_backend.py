@@ -1478,6 +1478,14 @@ class STM32HelperTests(unittest.TestCase):
                     "timer_output_s": 0.015,
                     "timer_per_inference_s": 0.003,
                     "timer_per_window_s": 0.003,
+                    "wake_recovery_us": 1200.0,
+                    "wake_overshoot_us": 35.0,
+                    "rtc_sleep_total_ms": 1500.0,
+                    "deadline_miss_count": 2,
+                    "rtc_clock_hz_nominal": 32768.0,
+                    "rtc_clock_source": "LSE",
+                    "cadence_timing_quality": "crystal",
+                    "stop_mode_variant": "system_stop_mainreg_wfi",
                 },
             )
             trace: list[str] = []
@@ -1646,6 +1654,17 @@ class STM32HelperTests(unittest.TestCase):
             self.assertEqual(metrics.power_metrics["timer_output_s"], 0.015)
             self.assertEqual(metrics.power_metrics["timer_per_inference_s"], 0.003)
             self.assertEqual(metrics.power_metrics["timer_per_window_s"], 0.003)
+            self.assertEqual(metrics.power_metrics["wake_recovery_us"], 1200.0)
+            self.assertEqual(metrics.power_metrics["wake_overshoot_us"], 35.0)
+            self.assertEqual(metrics.power_metrics["rtc_sleep_total_ms"], 1500.0)
+            self.assertEqual(metrics.power_metrics["deadline_miss_count"], 2)
+            self.assertEqual(metrics.power_metrics["rtc_clock_hz_nominal"], 32768.0)
+            self.assertEqual(metrics.power_metrics["rtc_clock_source"], "LSE")
+            self.assertEqual(metrics.power_metrics["cadence_timing_quality"], "crystal")
+            self.assertEqual(
+                metrics.power_metrics["stop_mode_variant"],
+                "system_stop_mainreg_wfi",
+            )
 
     def test_evaluate_harness_ready_timeout_maps_to_latency_error(self) -> None:
         """Ensure missing HARNESS READY becomes a stable latency failure.
