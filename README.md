@@ -140,6 +140,10 @@ After that, the STM32 wrapper uses those same CLT tools from `PATH`.
 
 Before running long NAS jobs, skim and adjust `src/nas_config.yaml`:
 
+For the full scoring/config reference, including the `score:` schema, available
+metrics, derived metrics, and scalar term types, see
+[src/README.md](/home/joe/Projects/tinyodom-ex/src/README.md).
+
 - **Device block (`device.*`)**
    - `serial_port`: set to your board’s serial device (e.g. `/dev/cu.usbmodem*` on macOS, `/dev/ttyACM*` on Linux).
    - `hil`: keep `true` for full hardware-in-the-loop, or set `false` to run latency/energy proxies without talking to a board.
@@ -150,8 +154,7 @@ Before running long NAS jobs, skim and adjust `src/nas_config.yaml`:
    - `calibration_windows`: reduce for faster experiments, increase or set `null` for more representative calibration.
 - **Training block (`training.*`)**
    - `nas_trials`, `nas_epochs`, `model_epochs`: trade off search depth vs wall-clock time.
-   - `nas_multiobjective`: enable/disable multi-objective NAS (accuracy + latency/energy).
-   - `energy_aware`: toggle whether energy (instead of latency) is used as the secondary objective/penalty; leave `false` if you do not have INA228 energy hardware attached.
+   - `energy_aware`: enable harness-based energy measurement when available; this is now a runtime measurement flag, not the scoring-mode selector.
    - `input_mode`: choose Arduino-side inference input source.
      - `uniform`: random values in `[0, 5]` using shared uniform sketches (`sketches/tinyodom_tcn_energy.ino` when `energy_aware=true`, `sketches/tinyodom_tcn_no_energy.ino` when `energy_aware=false`).
      - `representative`: synthetic OxIOD-shaped values using `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino`.
@@ -162,6 +165,11 @@ Before running long NAS jobs, skim and adjust `src/nas_config.yaml`:
    - Portenta CM4 note: runtime telemetry is harness-based (`harness_only`), and
      TinyODOM may upload a CM7 boot-helper sketch first to bring up CM4 before
      uploading the DUT sketch.
+- **Score block (`score.*`)**
+   - `score.type`: choose `scoring-function` or `multi-objective`.
+   - `score.params.objectives`: for multi-objective runs, list `{metric, direction}` entries such as `rmse_total` and `latency_ms`.
+   - `score.params.terms`: for scalar runs, compose terms such as `weighted`, `normalized-weighted`, `boundary`, and `target`.
+   - `score.metrics`: optional derived metrics; see [src/README.md](/home/joe/Projects/tinyodom-ex/src/README.md) for the current supported metric types and examples.
 - **Outputs and network (`outputs.*`, `network.*`)**
    - `models_dir`, `tcn_dir`: where Optuna DBs, metrics, and TFLite/C++ artifacts are written.
    - `host`, `port`: must match the HIL server and SSH tunnel; defaults (`127.0.0.1:6001`) usually work as-is.
@@ -216,8 +224,9 @@ python3 src/nas_model_client.py --study-name tinyodom_nas_nano33
 Useful flags:
 
 - `--smoke-test N` – run a short NAS smoke test with `N` trials (no final long retrain).
-- `--smoke-test-multiobjective` – make the smoke test multi-objective regardless of the YAML.
 - `--study-name` – label used for the Optuna study and artifact directory.
+
+Smoke tests use the score mode and score definition from `src/nas_config.yaml`.
 
 ### 4. Where outputs go
 

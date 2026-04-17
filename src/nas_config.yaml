@@ -33,7 +33,6 @@ training:
   model_epochs: 900
   nas_trials: 135
   nas_multiobjective_population_size: 45 # population size for multi-objective NAS, note: nas trials should be at least 3x this value
-  nas_multiobjective: true # whether to use multi-objective NAS (accuracy + energy/latency) or single-objective (score combination of accuracy, latency, memory and energy)
   max_total_trials: 270  # safety cap for total attempts to offset pruned/failed runs
   quantization: true
   latency_proxy_max_flops: 30000000.0
@@ -41,6 +40,75 @@ training:
   energy_aware: true
   # Input mode for HIL sketches: uniform, representative, or real
   input_mode: "uniform"
+
+score:
+  type: multi-objective
+  params:
+    objectives:
+      - metric: rmse_total
+        direction: minimize
+      - metric: latency_ms
+        direction: minimize
+
+# Closest scalar equivalent to the old hard-coded score in model.py.
+# Note: this now matches the old normalized RAM/flash resource terms directly.
+# The energy target can also be reconstructed as a derived metric from target
+# power and latency_budget_ms.
+#
+# score:
+#   type: scoring-function
+#   metrics:
+#     total_flash_bytes:
+#       type: add
+#       metrics:
+#         - flash_bytes
+#         - external_flash_bytes
+#     energy_budget_mj:
+#       type: energy-budget-from-power
+#       power:
+#         type: literal
+#         value: 100.0
+#       duration:
+#         type: metric
+#         metric: latency_budget_ms
+#   params:
+#     terms:
+#       # Old model_acc term: -(rmse_vel_x + rmse_vel_y)
+#       - type: weighted
+#         metric: rmse_total
+#         weight: -1.0
+#
+#       # Old resource term: 0.01 * (ram_bytes / max_ram_bytes)
+#       - type: normalized-weighted
+#         metric: ram_bytes
+#         weight: 0.01
+#         reference:
+#           type: metric
+#           metric: max_ram_bytes
+#       # Old resource term: 0.01 * (total_flash_bytes / max_flash_bytes)
+#       - type: normalized-weighted
+#         metric: total_flash_bytes
+#         weight: 0.01
+#         reference:
+#           type: metric
+#           metric: max_flash_bytes
+#
+#       # Old latency penalty only applied above the budget.
+#       - type: boundary
+#         metric: latency_ms
+#         weight: 1.0
+#         reference:
+#           type: metric
+#           metric: latency_budget_ms
+#
+#       # Old energy penalty compared measured energy against a target derived
+#       # from target power and latency_budget_ms.
+#       - type: target
+#         metric: energy_mj_per_inference
+#         weight: 0.15
+#         reference:
+#           type: metric
+#           metric: energy_budget_mj
 
 # Output directories and filenames
 outputs:

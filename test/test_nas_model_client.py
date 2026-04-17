@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import optuna
 import zmq
+from addict import Dict
 from optuna.trial import TrialState
 
 # Ensure `src` is importable when the suite is launched via `python -m unittest`.
@@ -26,7 +27,32 @@ from tinyodom.hardware import (
     HIL_MASTER_FATAL,
     HIL_MASTER_SUCCESS,
 )  # noqa: E402
-from tinyodom.model import train_and_score  # noqa: E402
+from tinyodom.model import ScoringResult, train_and_score  # noqa: E402
+
+
+def _make_scoring_result(
+    *,
+    score: float | None = 0.3,
+    objective_names: list[str] | None = None,
+    objective_values: list[float] | None = None,
+    objective_directions: list[str] | None = None,
+    rmse_vel_x: float = 0.1,
+    rmse_vel_y: float = 0.2,
+) -> ScoringResult:
+    if objective_names is None:
+        objective_names = ["score"]
+    if objective_values is None:
+        objective_values = [score if score is not None else 0.0]
+    if objective_directions is None:
+        objective_directions = ["maximize"]
+    return ScoringResult(
+        rmse_vel_x=rmse_vel_x,
+        rmse_vel_y=rmse_vel_y,
+        score=score,
+        objective_names=objective_names,
+        objective_values=objective_values,
+        objective_directions=objective_directions,
+    )
 
 
 def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
@@ -69,11 +95,19 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
             latency_proxy_max_flops=1_000_000,
             nas_trials=2,
             max_total_trials=4,
-            nas_multiobjective=False,
             energy_aware=False,
             nas_multiobjective_population_size=8,
         ),
         device=SimpleNamespace(name="TEST_DEVICE", hil=True, serial_port="ttyACM0"),
+        score=Dict(
+            type="scoring-function",
+            metrics=Dict(),
+            params=Dict(
+                terms=[
+                    Dict(type="weighted", metric="rmse_total", weight=-1.0),
+                ]
+            ),
+        ),
         outputs=SimpleNamespace(
             log_file_name="test_log.csv",
             tflite_model_path=base_dir / "model.tflite",
@@ -161,7 +195,7 @@ class ObjectiveTests(unittest.TestCase):
         # Patch the heavy TensorFlow / hardware helpers to keep tests fast.
         self.build_patcher = patch("nas_model_client.build_tinyodom_model", return_value=MagicMock(compile=MagicMock()))
         self.count_patcher = patch("nas_model_client.count_flops", return_value=1234)
-        self.train_patcher = patch("nas_model_client.train_and_score", return_value=(0.1, 0.2, 0.3, 0.4))
+        self.train_patcher = patch("nas_model_client.train_and_score", return_value=_make_scoring_result())
         self.hw_specs_patcher = patch("nas_model_client.return_hardware_specs", return_value=(2048, 4096))
         self.log_patcher = patch("nas_model_client.log_trial")
 
@@ -311,8 +345,8 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(result, 0.3)
         self.mock_log.assert_called_once()
 
-    def test_objective_multiobjective_stm_uses_latency_when_energy_is_disabled(self) -> None:
-        """Ensure STM Phase 1 does not force energy scoring in multi-objective mode.
+    def test_objective_returns_configured_multiobjective_tuple(self) -> None:
+        """Configured multi-objective runs should return all objective values.
 
         Returns
         -------
@@ -331,7 +365,16 @@ class ObjectiveTests(unittest.TestCase):
         self.client.config.device.name = "STM32_NUCLEO_N657X0_Q"
         self.client.config.device.stm32 = SimpleNamespace(project_root="/tmp/stm_fsbl")
         self.client.config.training.energy_aware = True
-        self.client.config.training.nas_multiobjective = True
+        self.client.config.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="latency_ms", direction="minimize"),
+                    Dict(metric="flash_bytes", direction="minimize"),
+                ]
+            ),
+        )
         self.client.config.training.train = False
         self.client._hil_request = MagicMock(return_value=metrics)
         trial = DummyTrial()
@@ -339,7 +382,7 @@ class ObjectiveTests(unittest.TestCase):
         with patch("nas_model_client.train_and_score", wraps=train_and_score):
             result = self.client.objective(trial)
 
-        self.assertEqual(result, (2, 10.0))
+        self.assertEqual(result, (10.0, 512.0))
         self.mock_log.assert_called_once()
 
     def test_objective_portenta_forwards_device_options_to_hardware_specs(self) -> None:
@@ -406,17 +449,27 @@ class SmokeTestTests(unittest.TestCase):
         fake_study = DummyStudy()
 
         with patch("nas_model_client.optuna.create_study", return_value=fake_study):
-            client.smoke_test(train=False, hil=False, trials=2, epochs=1)
+            with self.assertRaises(ValueError):
+                client.smoke_test(train=False, hil=False, trials=2, epochs=1)
 
-        self.assertEqual(fake_study.optimize_calls[0][1], 2)
         self.assertEqual(client.config.device.hil, True)
         self.assertEqual(client.config.training.train, True)
         self.assertEqual(client.config.training.nas_epochs, 10)
-        self.assertEqual(client.config.training.nas_multiobjective, False)
+        self.assertEqual(client.config.score.type, "scoring-function")
 
-    def test_smoke_test_handles_multiobjective(self) -> None:
-        """Smoke test should configure a multi-objective study when requested."""
+    def test_smoke_test_uses_loaded_multiobjective_config(self) -> None:
+        """Smoke test should honor multi-objective mode from the loaded config."""
         client = _build_test_client()
+        client.config.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="rmse_total", direction="minimize"),
+                    Dict(metric="latency_ms", direction="minimize"),
+                ]
+            ),
+        )
         client.objective = MagicMock(return_value=(0.1, 1.0))
 
         class DummyStudy:
@@ -440,14 +493,31 @@ class SmokeTestTests(unittest.TestCase):
         fake_study = DummyStudy()
 
         with patch("nas_model_client.optuna.create_study", return_value=fake_study) as mock_create:
-            client.smoke_test(train=False, hil=False, trials=1, epochs=1, multiobjective=True)
+            client.smoke_test(train=True, hil=False, trials=1, epochs=1)
 
         self.assertEqual(fake_study.optimize_calls[0][1], 1)
         kwargs = mock_create.call_args.kwargs
-        self.assertEqual(kwargs["directions"], ["maximize", "minimize"])
+        self.assertEqual(kwargs["directions"], ["minimize", "minimize"])
         self.assertFalse(kwargs["load_if_exists"])
-        # Ensure we restore the original config flag after the run.
-        self.assertFalse(client.config.training.nas_multiobjective)
+
+    def test_smoke_test_uses_loaded_scalar_config(self) -> None:
+        client = _build_test_client()
+        client.objective = MagicMock(return_value=0.1)
+
+        class DummyStudy:
+            def __init__(self):
+                self.best_trial = SimpleNamespace(value=1.0, params={}, user_attrs={})
+                self.optimize_calls = []
+                self.trials = []
+
+            def optimize(self, func, n_trials):
+                self.optimize_calls.append((func, n_trials))
+
+        fake_study = DummyStudy()
+        with patch("nas_model_client.optuna.create_study", return_value=fake_study) as mock_create:
+            client.smoke_test(train=True, hil=False, trials=1, epochs=1)
+
+        self.assertEqual(mock_create.call_args.kwargs["direction"], "maximize")
 
     def test_smoke_test_removes_stale_db_and_log_before_starting(self) -> None:
         client = _build_test_client()
@@ -472,11 +542,12 @@ class SmokeTestTests(unittest.TestCase):
         log_path.write_text("stale-log", encoding="utf-8")
 
         with patch("nas_model_client.optuna.create_study", return_value=fake_study) as mock_create:
-            client.smoke_test(train=False, hil=False, trials=1, epochs=1, study_name=study_name)
+            with self.assertRaises(ValueError):
+                client.smoke_test(train=False, hil=False, trials=1, epochs=1, study_name=study_name)
 
         self.assertFalse(db_path.exists())
         self.assertFalse(log_path.exists())
-        self.assertFalse(mock_create.call_args.kwargs["load_if_exists"])
+        self.assertFalse(mock_create.called)
 
     def test_copy_run_config_skips_same_file(self) -> None:
         client = _build_test_client()
