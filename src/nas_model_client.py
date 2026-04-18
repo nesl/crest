@@ -42,6 +42,7 @@ from tinyodom.microcontrollers import (
 from tinyodom.model import (
     ScoringResult,
     ScoreConfigEvaluationError,
+    apply_cadenced_metric_defaults,
     build_tinyodom_model,
     evaluate_prune_rules,
     train_and_score,
@@ -129,6 +130,18 @@ class NASModelClient:
     >>> client.run_scoring_nas(study_name="tinyodom_nas_study")
     """
     def __init__(self, config_path: Path=DEFAULT_CONFIG_PATH):
+        """Initialize NAS state, datasets, and the HIL client socket.
+
+        Parameters
+        ----------
+        config_path : Path, optional
+            Configuration file used to load dataset paths, NAS settings, and
+            network endpoints.
+
+        Returns
+        -------
+        None
+        """
         self.config_path = Path(config_path)
         self.config = load_config(self.config_path)
         
@@ -459,6 +472,7 @@ class NASModelClient:
             metrics.setdefault("latency_budget_ms", -1.0)
             metrics.setdefault("arena_bytes", -1)
             metrics.setdefault("rmse_total", -1.0)
+            apply_cadenced_metric_defaults(metrics, metrics)
             directions = self._study_directions()
             if self._score_is_multiobjective():
                 objective_names = [str(obj.metric) for obj in self.config.nas.score.params.objectives]
@@ -618,16 +632,17 @@ class NASModelClient:
         -------
         None
             Prints the best trial value, parameters, and runtime metrics.
+
+        Notes
+        -----
+        Smoke tests reuse the same per-study SQLite storage and trial log when
+        the caller passes the same ``study_name``. Re-running the smoke test
+        therefore appends more trials instead of deleting prior results.
         """
         self.study_name = study_name
         artifacts_dir = self._artifacts_dir()
         self._copy_run_config(artifacts_dir)
         smoke_db_path = artifacts_dir / "optuna_smoke_test.db"
-        smoke_log_path = artifacts_dir / self.config.outputs.log_file_name
-        for stale_path in (smoke_db_path, smoke_log_path):
-            if stale_path.exists():
-                stale_path.unlink()
-                print(f"[SMOKE] Removed stale artifact: {stale_path}")
         storage_uri = f"sqlite:///{smoke_db_path}"
         _previous_hil = self.config.device.hil
         _previous_train = self.config.training.train
@@ -651,7 +666,7 @@ class NASModelClient:
                     storage=storage_uri,
                     study_name=study_name,
                     sampler=sampler,
-                    load_if_exists=False,
+                    load_if_exists=True,
                 )
             else:
                 sampler = optuna.samplers.TPESampler(
@@ -663,7 +678,7 @@ class NASModelClient:
                     storage=storage_uri,
                     study_name=study_name,
                     sampler=sampler,
-                    load_if_exists=False,
+                    load_if_exists=True,
                 )
             try:
                 single_trial_study.optimize(self.objective, n_trials=trials)
@@ -781,6 +796,13 @@ class NASModelClient:
             )
 
         def _trial_counts():
+            """Count completed, pruned, and failed Optuna trials.
+
+            Returns
+            -------
+            tuple[int, int, int]
+                Counts for complete, pruned, and failed trials in that order.
+            """
             completed = sum(1 for t in study.trials if t.state == TrialState.COMPLETE)
             pruned = sum(1 for t in study.trials if t.state == TrialState.PRUNED)
             failed = sum(1 for t in study.trials if t.state == TrialState.FAIL)
@@ -1293,6 +1315,24 @@ class NASModelClient:
         samples_per_window = max((window_size - stride) / stride, 1)
 
         def integrate_track(vx, vy, start_x, start_y):
+            """Integrate velocity samples into absolute XY positions.
+
+            Parameters
+            ----------
+            vx : array-like of float
+                X velocity samples for one trajectory.
+            vy : array-like of float
+                Y velocity samples for one trajectory.
+            start_x : float
+                Initial x position.
+            start_y : float
+                Initial y position.
+
+            Returns
+            -------
+            tuple[np.ndarray, np.ndarray]
+                Integrated x and y coordinates for the trajectory.
+            """
             xs = []
             ys = []
             x = start_x
@@ -1442,6 +1482,12 @@ class NASModelClient:
         return summary_path
 
     def close(self):
+        """Close the ZeroMQ socket and terminate its context.
+
+        Returns
+        -------
+        None
+        """
         self.socket.close(linger=0)
         self.context.term()
 

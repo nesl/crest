@@ -1,6 +1,7 @@
 import argparse
 from collections.abc import Mapping
 import logging
+import math
 import shutil
 from pathlib import Path
 
@@ -22,8 +23,9 @@ from tinyodom.data import import_oxiod_dataset
 from tinyodom.devices import _sync_arduino_sketch_variant_for_config
 from tinyodom.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
+    describe_error_code,
 )
-from tinyodom.errors import HIL_MASTER_FATAL
+from tinyodom.errors import HIL_ERROR_OK, HIL_MASTER_FATAL
 from tinyodom.microcontrollers import (
     get_device as get_microcontroller_device,
     resolve_device_options,
@@ -130,6 +132,26 @@ def _build_backend_failure_metrics(
     return metrics
 
 class HILServer:
+    """Serve HIL metric requests over a ZeroMQ REP socket.
+
+    Attributes
+    ----------
+    config : Dict
+        Loaded NAS and device configuration.
+    repo_root : Path
+        Repository root used to locate sketch variants and other artifacts.
+    sketch_variants_dir : Path
+        Directory containing Arduino sketch templates selected per request.
+    active_sketch_path : Path | None
+        Most recently staged sketch path, when one has been selected.
+    training_data : object | None
+        Lazily cached calibration dataset for model export workflows.
+    context : zmq.Context
+        Shared ZeroMQ context backing the server socket.
+    socket : zmq.Socket
+        REP socket bound by :meth:`start`.
+    """
+
     def __init__(
         self,
         config_path: Path = DEFAULT_CONFIG_PATH,
@@ -175,6 +197,17 @@ class HILServer:
         """
         return str(getattr(self.config.device, "name", "")).strip().upper()
 
+    def _effective_latency_budget_ms(self) -> float:
+        """Return the resolved latency budget for the active configuration."""
+        configured_budget = getattr(self.config.device, "latency_budget_ms", None)
+        if configured_budget is not None:
+            return float(configured_budget)
+        return (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000
+
+    def _configured_runtime_mode(self) -> str:
+        """Return the normalized configured runtime mode."""
+        return str(getattr(self.config.device, "runtime_mode", "back_to_back")).strip().lower()
+
     def _ensure_training_data(self):
         """Load training data lazily for backends that still need model export.
 
@@ -201,6 +234,90 @@ class HILServer:
         )
         print("Imported Training Data")
         return self.training_data
+
+    def _run_arduino_cadenced_second_pass(
+        self,
+        *,
+        runtime_device: object,
+        hyperparams: Dict,
+        prepared_dir: Path,
+        base_metrics: dict,
+        request_metrics_args,
+    ) -> dict:
+        """Run and merge the Arduino-only cadenced second pass."""
+        normalized_device_name = self._normalized_device_name()
+        if self._configured_runtime_mode() != "cadenced":
+            return base_metrics
+        if normalized_device_name not in {"PORTENTA_H7", "ARDUINO_NANO_33_BLE_SENSE"}:
+            return base_metrics
+        if not request_metrics_args.hil_enabled:
+            return base_metrics
+        if int(base_metrics.get("error_code", -1)) != HIL_ERROR_OK:
+            return base_metrics
+
+        arena_bytes = int(base_metrics.get("arena_bytes", -1))
+        if arena_bytes <= 0:
+            return base_metrics
+
+        runtime_device.set_input_mode(
+            str(self.config.training.input_mode),
+            outputs_dir=prepared_dir,
+            config=self.config,
+            sketches_dir=self.sketch_variants_dir,
+            runtime_phase="cadenced",
+        )
+        sketch_candidate = prepared_dir / "tinyodom_tcn.ino"
+        if sketch_candidate.is_file():
+            self.active_sketch_path = sketch_candidate
+            logger.info("Using sketch variant: %s", self.active_sketch_path)
+
+        arena_kb = max(1, int(math.ceil(float(arena_bytes) / 1024.0)))
+        harness = request_metrics_args.harness
+        cadenced_result = runtime_device.evaluate(
+            dirpath=prepared_dir,
+            arena_kb=arena_kb,
+            window_size=int(self.config.data.window_size),
+            num_channels=int(hyperparams.input_dim),
+            serial_port=request_metrics_args.serial_port,
+            run_hil=True,
+            serial_timeout_s=float(request_metrics_args.serial_timeout_s or 12.0),
+            measured_inference_runs=int(request_metrics_args.measured_inference_runs),
+            dut_ready_timeout_s=request_metrics_args.dut_ready_timeout_s,
+            harness_serial_port=None if harness is None else harness.harness_serial_port,
+            harness_fqbn=None if harness is None else harness.harness_fqbn,
+            harness_auto_flash=None if harness is None else harness.harness_auto_flash,
+            harness_arm_pin=None if harness is None else harness.harness_arm_pin,
+            harness_trigger_pin=None if harness is None else harness.harness_trigger_pin,
+            dut_arm_hold_ms=None if harness is None else harness.dut_arm_hold_ms,
+            harness_stable_low_ms=None if harness is None else harness.harness_stable_low_ms,
+            harness_ready_timeout_s=None if harness is None else harness.harness_ready_timeout_s,
+            harness_arm_timeout_s=None if harness is None else harness.harness_arm_timeout_s,
+            harness_active_timeout_s=None if harness is None else harness.harness_active_timeout_s,
+            harness_done_timeout_s=None if harness is None else harness.harness_done_timeout_s,
+        )
+
+        base_metrics["runtime_mode"] = "cadenced"
+        base_metrics["cadenced_error_code"] = int(cadenced_result.error_code)
+        base_metrics["cadenced_error_label"] = describe_error_code(int(cadenced_result.error_code))
+        if int(cadenced_result.error_code) != HIL_ERROR_OK:
+            return base_metrics
+
+        raw_energy = -1.0
+        if cadenced_result.power_metrics is not None:
+            try:
+                raw_energy = float(
+                    cadenced_result.power_metrics.get("energy_mj_per_inference", -1.0)
+                )
+            except (AttributeError, TypeError, ValueError):
+                raw_energy = -1.0
+        energy_per_slot = raw_energy if math.isfinite(raw_energy) and raw_energy >= 0.0 else -1.0
+        base_metrics["cadenced_energy_mj_per_inference"] = energy_per_slot
+        base_metrics["cadenced_energy_mj_per_window"] = (
+            energy_per_slot * float(request_metrics_args.measured_inference_runs)
+            if energy_per_slot >= 0.0
+            else -1.0
+        )
+        return base_metrics
 
     def start(self) -> None:
         """
@@ -284,7 +401,7 @@ class HILServer:
         error_detail: str,
     ) -> dict:
         """Build failure metrics for malformed or invalid client requests."""
-        latency_budget_ms = (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000
+        latency_budget_ms = self._effective_latency_budget_ms()
         effective_hil_enabled = bool(self.config.device.hil)
         effective_energy_aware = bool(self.config.training.energy_aware and effective_hil_enabled)
         return _build_backend_failure_metrics(
@@ -335,7 +452,7 @@ class HILServer:
         FileNotFoundError
             If a requested trained checkpoint does not exist.
         """
-        latency_budget_ms = (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000
+        latency_budget_ms = self._effective_latency_budget_ms()
         resolved_device_options = resolve_device_options(self._normalized_device_name(), self.config.device) or {}
         filtered_device_options_overrides = {
             key: value
@@ -362,6 +479,7 @@ class HILServer:
             **resolved_device_options,
             **filtered_device_options_overrides,
         }
+        merged_device_options["latency_budget_ms"] = float(latency_budget_ms)
         try:
             runtime_device = get_microcontroller_device(
                 self._normalized_device_name(),
@@ -470,6 +588,13 @@ class HILServer:
                 )
             else:
                 metrics = collect_metrics(request_metrics_args)
+                metrics = self._run_arduino_cadenced_second_pass(
+                    runtime_device=runtime_device,
+                    hyperparams=hyperparams,
+                    prepared_dir=prepared_dir,
+                    base_metrics=metrics,
+                    request_metrics_args=request_metrics_args,
+                )
         except (
             stm32_cube_clt.WorkflowError,
             stm32_runtime.STM32RuntimeProtocolError,
@@ -530,7 +655,7 @@ class HILServer:
             sketches_dir=self.sketch_variants_dir,
         )
 
-    def set_input_mode(self, input_mode: str) -> Path:
+    def set_input_mode(self, input_mode: str, *, runtime_phase: str = "back_to_back") -> Path:
         """
         Set the input mode and resynchronize the active Arduino sketch variant.
 
@@ -539,6 +664,8 @@ class HILServer:
         input_mode : str
             Desired input mode (``"uniform"``, ``"representative"``, or
             ``"real"``).
+        runtime_phase : str, optional
+            Runtime sketch phase (``"back_to_back"`` or ``"cadenced"``).
 
         Returns
         -------
@@ -556,6 +683,7 @@ class HILServer:
             outputs_dir=Path(self.config.outputs.tcn_dir),
             config=self.config,
             sketches_dir=self.sketch_variants_dir,
+            runtime_phase=runtime_phase,
         )
         logger.info("Using sketch variant: %s", self.active_sketch_path)
         return self.active_sketch_path

@@ -24,6 +24,25 @@ TIMER_PREFIX = "timer output:"
 
 @dataclass
 class HandshakeResult:
+    """Capture the outcome of a DUT and harness synchronization attempt.
+
+    Attributes
+    ----------
+    dut_log : list[str]
+        Lines observed from the DUT serial port.
+    harness_log : list[str]
+        Lines observed from the harness serial port.
+    dut_timer_found : bool
+        Whether a DUT timing line was detected.
+    harness_done : bool
+        Whether the harness reported ``DONE``.
+    runs_dut : int | None
+        Parsed DUT run count, if present.
+    runs_harness : int | None
+        Parsed harness run count, if present.
+    error : str | None
+        Human-readable protocol error, if the handshake failed.
+    """
     dut_log: List[str]
     harness_log: List[str]
     dut_timer_found: bool
@@ -35,6 +54,21 @@ class HandshakeResult:
 
 @dataclass
 class HarnessSessionResult:
+    """Capture the state of a primed harness-only session.
+
+    Attributes
+    ----------
+    harness_log : list[str]
+        Lines observed from the harness serial port.
+    harness_ready : bool
+        Whether the harness emitted ``HARNESS READY``.
+    harness_done : bool
+        Whether the harness emitted ``DONE``.
+    runs_harness : int | None
+        Parsed harness run count, if present.
+    error : str | None
+        Human-readable protocol error, if one occurred.
+    """
     harness_log: List[str]
     harness_ready: bool
     harness_done: bool
@@ -304,6 +338,21 @@ def _total_harness_done_timeout(
     harness_active_timeout_s: float,
     harness_done_timeout_s: float,
 ) -> float:
+    """Compute the combined timeout budget for waiting on harness completion.
+
+    Parameters
+    ----------
+    harness_active_timeout_s : float
+        Timeout budget for the active phase before ``DONE``.
+    harness_done_timeout_s : float
+        Additional timeout budget after activity has been observed.
+
+    Returns
+    -------
+    float
+        Total timeout in seconds. Returns ``0.0`` when either component is
+        non-positive.
+    """
     if harness_active_timeout_s <= 0 or harness_done_timeout_s <= 0:
         return 0.0
     return max(0.0, harness_active_timeout_s) + max(0.0, harness_done_timeout_s)

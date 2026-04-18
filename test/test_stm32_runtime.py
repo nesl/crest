@@ -117,6 +117,39 @@ class STM32RuntimeParserTests(unittest.TestCase):
 
         self.assertEqual(context.exception.kind, "runtime_latency")
 
+    def test_parse_runtime_lines_accepts_cadenced_grammar(self) -> None:
+        lines = [
+            "STM32_BOOT=START",
+            "STM32_AI_INIT=OK",
+            "phase output: cadenced",
+            "rtc clock source output: LSE",
+            "rtc clock hz nominal output: 32768",
+            "cadence timing quality output: crystal",
+            "stop mode variant output: system_stop_mainreg_wfi",
+            "DUT READY",
+            "runs: 10",
+            "clock hz output: 600000000",
+            "dwt cycles per inference output: 120000",
+            "timer per inference output: 0.080000",
+            "timer per window output: 2.000000",
+            "wake recovery us: 1200",
+            "wake overshoot us: 35",
+            "rtc sleep total ms: 1500.000",
+            "cadence deadline misses: 0",
+            "inference seq output: 1",
+            "STM32_AI_RUN=OK",
+        ]
+
+        telemetry = stm32_runtime.parse_stm32_runtime_lines(lines)
+
+        self.assertAlmostEqual(telemetry.latency_s, 0.08)
+        self.assertEqual(telemetry.power_metrics["phase"], "cadenced")
+        self.assertEqual(telemetry.power_metrics["rtc_clock_source"], "LSE")
+        self.assertEqual(telemetry.power_metrics["cadence_timing_quality"], "crystal")
+        self.assertEqual(telemetry.power_metrics["stop_mode_variant"], "system_stop_mainreg_wfi")
+        self.assertAlmostEqual(telemetry.power_metrics["rtc_sleep_total_ms"], 1500.0)
+        self.assertEqual(telemetry.power_metrics["deadline_miss_count"], 0)
+
 
 class SerialMonitorTests(unittest.TestCase):
     def test_serial_monitor_replays_history_and_writes_lines(self) -> None:

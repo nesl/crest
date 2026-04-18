@@ -20,9 +20,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from tinyodom.model import (
+    CADENCED_CSV_FIELDS,
     CollectMetricsRequest,
     DROP_RATE_CHOICES,
     HarnessConfig,
+    _metric_unavailable,
     ScoringResult,
     ScoreConfigEvaluationError,
     apply_combined_perturbation,
@@ -342,6 +344,118 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["external_flash_bytes"], 2048)
         self.assertEqual(metrics["weight_storage_mode"], "external_flash")
 
+    def test_collect_metrics_copies_cadenced_metrics_and_runtime_mode(self) -> None:
+        """Cadenced STM32 extras should survive normalization into final metrics."""
+
+        def fake_controller(run_hil: bool, **kwargs):
+            del kwargs
+            self.assertTrue(run_hil)
+            return (
+                1024,
+                8192,
+                0.025,
+                4096,
+                0,
+                {
+                    "runtime_mode": "cadenced",
+                    "cadenced_error_code": 0,
+                    "cadenced_active_inference_latency_ms": 80.0,
+                    "cadenced_window_latency_ms": 20000.0,
+                    "cadenced_energy_mj_per_inference": 1.25,
+                    "cadenced_energy_mj_per_window": 12.5,
+                    "cadenced_rtc_sleep_ms": 1500.0,
+                    "cadenced_deadline_miss_count": 0,
+                    "cadenced_rtc_clock_source": "LSE",
+                    "cadenced_timing_quality": "crystal",
+                    "cadenced_stop_mode_variant": "system_stop_mainreg_wfi",
+                },
+            )
+
+        with patch("tinyodom.model.HIL_controller", fake_controller):
+            request = CollectMetricsRequest(
+                hil_enabled=True,
+                energy_aware=False,
+                flops=5_000_000,
+                device_name="STM32_NUCLEO_N657X0_Q",
+                window_size=128,
+                input_dim=6,
+                dirpath=Path("tinyodom_tcn"),
+                latency_proxy_max_flops=20_000_000,
+                serial_port="ttyACM0",
+                latency_budget_ms=200.0,
+            )
+            metrics = collect_metrics(request)
+
+        self.assertEqual(metrics["runtime_mode"], "cadenced")
+        self.assertAlmostEqual(metrics["cadenced_active_inference_latency_ms"], 80.0)
+        self.assertAlmostEqual(metrics["cadenced_window_latency_ms"], 20000.0)
+        self.assertAlmostEqual(metrics["cadenced_energy_mj_per_window"], 12.5)
+        self.assertEqual(metrics["cadenced_deadline_miss_count"], 0)
+        self.assertEqual(metrics["cadenced_error_label"], "HIL_MASTER_PENDING")
+
+    def test_collect_metrics_back_to_back_mode_emits_cadenced_sentinels(self) -> None:
+        """Single-pass mode should keep cadenced keys present with sentinel values."""
+
+        def fake_controller(run_hil: bool, **kwargs):
+            del kwargs
+            self.assertTrue(run_hil)
+            return (1024, 8192, 0.025, 4096, 0, {"runtime_mode": "back_to_back"})
+
+        with patch("tinyodom.model.HIL_controller", fake_controller):
+            request = CollectMetricsRequest(
+                hil_enabled=True,
+                energy_aware=False,
+                flops=5_000_000,
+                device_name="STM32_NUCLEO_N657X0_Q",
+                window_size=128,
+                input_dim=6,
+                dirpath=Path("tinyodom_tcn"),
+                latency_proxy_max_flops=20_000_000,
+                serial_port="ttyACM0",
+                latency_budget_ms=200.0,
+            )
+            metrics = collect_metrics(request)
+
+        self.assertEqual(metrics["runtime_mode"], "back_to_back")
+        self.assertEqual(metrics["cadenced_active_inference_latency_ms"], -1.0)
+        self.assertIsNone(metrics["cadenced_rtc_clock_source"])
+        self.assertEqual(metrics["cadenced_error_code"], -1)
+
+    def test_collect_metrics_normalizes_runtime_mode_from_backend_payload(self) -> None:
+        """Runtime mode should be normalized and default invalid values safely."""
+
+        cases = [
+            ("CADENCED", "cadenced"),
+            ("  back_to_back  ", "back_to_back"),
+            (None, "back_to_back"),
+            ("", "back_to_back"),
+            ("unexpected", "back_to_back"),
+        ]
+
+        for raw_runtime_mode, expected_runtime_mode in cases:
+            with self.subTest(raw_runtime_mode=raw_runtime_mode):
+                def fake_controller(run_hil: bool, **kwargs):
+                    del kwargs
+                    self.assertTrue(run_hil)
+                    return (1024, 8192, 0.025, 4096, 0, {"runtime_mode": raw_runtime_mode})
+
+                with patch("tinyodom.model.HIL_controller", fake_controller):
+                    request = CollectMetricsRequest(
+                        hil_enabled=True,
+                        energy_aware=False,
+                        flops=5_000_000,
+                        device_name="STM32_NUCLEO_N657X0_Q",
+                        window_size=128,
+                        input_dim=6,
+                        dirpath=Path("tinyodom_tcn"),
+                        latency_proxy_max_flops=20_000_000,
+                        serial_port="ttyACM0",
+                        latency_budget_ms=200.0,
+                    )
+                    metrics = collect_metrics(request)
+
+                self.assertEqual(metrics["runtime_mode"], expected_runtime_mode)
+
     def test_energy_aware_harness_fields_forwarded_to_controller(self) -> None:
         """Energy-aware requests should forward harness settings to HIL_controller."""
 
@@ -498,6 +612,13 @@ class CollectMetricsTests(unittest.TestCase):
             metrics = collect_metrics(request)
 
         self.assertEqual(metrics["error_code"], 0)
+
+    def test_metric_unavailable_treats_negative_cadenced_sentinel_as_missing(self) -> None:
+        self.assertTrue(_metric_unavailable("cadenced_energy_mj_per_window", -1.0))
+        self.assertFalse(_metric_unavailable("cadenced_energy_mj_per_window", 0.0))
+        self.assertTrue(_metric_unavailable("cadenced_rtc_sleep_ms", -1.0))
+        self.assertTrue(_metric_unavailable("cadenced_deadline_miss_count", -1))
+        self.assertTrue(_metric_unavailable("cadenced_window_latency_ms", -1.0))
 
 
 class BuildCollectMetricsRequestTests(unittest.TestCase):
@@ -1251,6 +1372,56 @@ class LoadSettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.device.measured_inference_runs, 10)
 
+    def test_load_settings_defaults_runtime_mode_and_latency_budget_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.device.runtime_mode, "back_to_back")
+        self.assertIsNone(settings.device.latency_budget_ms)
+
+    def test_load_settings_accepts_runtime_mode_and_latency_budget_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "  runtime_mode: cadenced",
+                        "  latency_budget_ms: 37.5",
+                        "training:",
+                        "  nas_trials: 10",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.device.runtime_mode, "cadenced")
+        self.assertEqual(settings.device.latency_budget_ms, 37.5)
+
     def test_load_settings_rejects_invalid_measured_inference_runs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -1272,6 +1443,56 @@ class LoadSettingsTests(unittest.TestCase):
             )
 
             with self.assertRaises(ValueError):
+                load_config(config_path=cfg)
+
+    def test_load_settings_rejects_legacy_stm_runtime_mode_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: STM32_NUCLEO_N657X0_Q",
+                        "  stm32:",
+                        "    runtime_mode: cadenced",
+                        "training:",
+                        "  nas_trials: 10",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "device.stm32.runtime_mode"):
+                load_config(config_path=cfg)
+
+    def test_load_settings_rejects_cadenced_portenta_non_uniform_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: PORTENTA_H7",
+                        "  runtime_mode: cadenced",
+                        "  portenta:",
+                        "    target_core: cm7",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  input_mode: representative",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "only supports training.input_mode='uniform'"):
                 load_config(config_path=cfg)
 
     def test_load_settings_accepts_normalized_weighted_term(self) -> None:
@@ -1636,6 +1857,75 @@ class LoadSettingsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unknown metric"):
                 load_config(config_path=cfg)
 
+    def test_load_settings_accepts_cadenced_sleep_metric_in_score_terms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: cadenced_rtc_sleep_ms",
+                        "          weight: -1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.score.params.terms[0].metric, "cadenced_rtc_sleep_ms")
+
+    def test_load_settings_accepts_cadenced_deadline_metric_in_prune_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: latency_ms",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: deadline_budget",
+                        "        metric: cadenced_deadline_miss_count",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0",
+                        "        reason: deadline misses exceed budget",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.prune.rules[0].metric, "cadenced_deadline_miss_count")
+
     def test_load_settings_missing_file(self) -> None:
         """Nonexistent config paths should raise FileNotFoundError."""
         with self.assertRaises(FileNotFoundError):
@@ -1871,6 +2161,7 @@ class LogTrialTests(unittest.TestCase):
         "pruned",
         "prune_reason",
         "prune_rule",
+        *CADENCED_CSV_FIELDS,
     ]
 
     def _sample_metrics(self):
@@ -1892,6 +2183,15 @@ class LogTrialTests(unittest.TestCase):
             "cpu_clock_mhz_requested": 400,
             "clock_hz": 399_000_000.0,
             "idle_power_mw": 2.0,
+            "runtime_mode": "back_to_back",
+            "cadenced_error_code": -1,
+            "cadenced_error_label": None,
+            "cadenced_active_inference_latency_ms": -1.0,
+            "cadenced_window_latency_ms": -1.0,
+            "cadenced_energy_mj_per_inference": -1.0,
+            "cadenced_energy_mj_per_window": -1.0,
+            "cadenced_rtc_sleep_ms": -1.0,
+            "cadenced_deadline_miss_count": -1,
         }
 
     def _sample_hyperparams(self):
@@ -1982,6 +2282,18 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(rows[1][header_index["pruned"]], "False")
             self.assertEqual(rows[1][header_index["prune_reason"]], "")
             self.assertEqual(rows[1][header_index["prune_rule"]], "")
+            self.assertEqual(rows[1][header_index["runtime_mode"]], "back_to_back")
+            self.assertEqual(rows[1][header_index["cadenced_window_latency_ms"]], "-1.0")
+            self.assertEqual(rows[1][header_index["cadenced_energy_mj_per_window"]], "-1.0")
+            self.assertEqual(rows[1][header_index["cadenced_error_code"]], "-1")
+            self.assertEqual(
+                fake_trial.attrs["cadenced_window_latency_ms"],
+                metrics["cadenced_window_latency_ms"],
+            )
+            self.assertEqual(
+                fake_trial.attrs["cadenced_energy_mj_per_window"],
+                metrics["cadenced_energy_mj_per_window"],
+            )
 
             self.assertEqual(fake_trial.attrs["ram_bytes"], metrics["ram_bytes"])
             self.assertEqual(
@@ -2009,6 +2321,7 @@ class LogTrialTests(unittest.TestCase):
                 metrics["energy_mj_per_inference"],
             )
             self.assertEqual(fake_trial.attrs["prune_rule"], "")
+            self.assertEqual(fake_trial.attrs["runtime_mode"], "back_to_back")
 
     def test_log_trial_appends_without_duplicate_header(self):
         with tempfile.TemporaryDirectory() as tmpdir:

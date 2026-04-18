@@ -151,12 +151,30 @@ def resolve_device_options(
     """
 
     def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
+        """Read a config field from mapping-like or attribute-style objects.
+
+        Parameters
+        ----------
+        container : Any
+            Config object or mapping to inspect.
+        key : str
+            Field name to retrieve.
+        default : Any, optional
+            Fallback value returned when the field is missing.
+
+        Returns
+        -------
+        Any
+            Resolved field value or ``default``.
+        """
         getter = getattr(container, "get", None)
         if callable(getter):
             return getter(key, default)
         return getattr(container, key, default)
 
     normalized_name = device_name.strip().upper()
+    shared_runtime_mode = _cfg_get(device_config, "runtime_mode", None)
+    shared_latency_budget_ms = _cfg_get(device_config, "latency_budget_ms", None)
     if normalized_name == "PORTENTA_H7":
         from .arduino_portenta_h7 import resolve_portenta_h7_options
 
@@ -168,7 +186,20 @@ def resolve_device_options(
                 "security": _cfg_get(portenta_cfg, "security", None) if portenta_cfg is not None else None,
             }
         )
-        return resolved.to_board_options()
+        options = resolved.to_board_options()
+        if shared_runtime_mode not in (None, ""):
+            options["runtime_mode"] = shared_runtime_mode
+        if shared_latency_budget_ms not in (None, ""):
+            options["latency_budget_ms"] = shared_latency_budget_ms
+        return options
+
+    if normalized_name == "ARDUINO_NANO_33_BLE_SENSE":
+        options: dict[str, Any] = {}
+        if shared_runtime_mode not in (None, ""):
+            options["runtime_mode"] = shared_runtime_mode
+        if shared_latency_budget_ms not in (None, ""):
+            options["latency_budget_ms"] = shared_latency_budget_ms
+        return options or None
 
     if normalized_name == "STM32_NUCLEO_N657X0_Q":
         from .stm32_nucleo_n657x0 import resolve_stm32_nucleo_n657x0_q_options
@@ -183,6 +214,14 @@ def resolve_device_options(
             "gdb_port": _cfg_get(stm32_cfg, "gdb_port", None) if stm32_cfg is not None else None,
             "apid": _cfg_get(stm32_cfg, "apid", None) if stm32_cfg is not None else None,
             "server_ready_timeout_s": _cfg_get(stm32_cfg, "server_ready_timeout_s", None)
+            if stm32_cfg is not None
+            else None,
+            "runtime_mode": shared_runtime_mode,
+            "latency_budget_ms": shared_latency_budget_ms,
+            "wake_margin_us": _cfg_get(stm32_cfg, "wake_margin_us", None)
+            if stm32_cfg is not None
+            else None,
+            "min_sleep_us": _cfg_get(stm32_cfg, "min_sleep_us", None)
             if stm32_cfg is not None
             else None,
             "weight_storage_mode": _cfg_get(stm32_cfg, "weight_storage_mode", None)

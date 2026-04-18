@@ -2,6 +2,8 @@
 device:
   name: STM32_NUCLEO_N657X0_Q
   hil: true
+  runtime_mode: cadenced                     # Shared runtime control: `back_to_back` or `cadenced`.
+  # latency_budget_ms: 200.0                # Optional shared cadence-budget override. Defaults to stride / sampling_rate_hz * 1000.
   serial_port: "/dev/ttyACM0"
   measured_inference_runs: 10                # Number of on-device inference invokes averaged into one measured HIL attempt.
   dut_ready_timeout_s: 5.0                     # Time to wait for STM32_AI_INIT / DUT READY before sending START.
@@ -16,6 +18,8 @@ device:
   harness_done_timeout_s: 5.0
   stm32:
     project_root: "sketches/stm32/tinyodom_tcn_stm32/FSBL"
+    wake_margin_us: 5000                      # Cadenced wake-up guard band before each release time.
+    min_sleep_us: 5000                        # Cadenced minimum Stop-mode sleep request.
     weight_storage_mode: "external_flash"          # Set to external_flash to stage weights into NOR flash.
     weights_memory_pool: "analysis_scripts/stm32_example_project/nucleo_mypool.json"
 
@@ -140,13 +144,13 @@ nas:
           metric: latency_budget_ms
         reason: "Latency exceeds deployment budget"
       # Optional energy gate that reuses the derived budget metric above.
-      - rule: energy_budget
-        metric: energy_mj_per_inference
-        condition: gt
-        reference:
-          type: metric
-          metric: energy_budget_mj
-        reason: "Energy exceeds deployment budget"
+      # - rule: energy_budget
+      #   metric: energy_mj_per_inference
+      #   condition: gt
+      #   reference:
+      #     type: metric
+      #     metric: energy_budget_mj
+      #   reason: "Energy exceeds deployment budget"
 
 # Alternative multi-objective NAS example.
 # Uncomment this block if you want a Pareto front instead of one scalar score.

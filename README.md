@@ -149,7 +149,11 @@ see
    - `serial_port`: set to your board’s serial device (e.g. `/dev/cu.usbmodem*` on macOS, `/dev/ttyACM*` on Linux).
    - `hil`: keep `true` for full hardware-in-the-loop, or set `false` to run latency/energy proxies without talking to a board.
    - `measured_inference_runs`: number of on-device inference invokes averaged into one measured HIL attempt; defaults to `10`.
-   - Board subtrees such as `device.portenta.*` and `device.stm32.*` remain for board-specific knobs, while `device.measured_inference_runs` is shared across supported HIL backends.
+   - Shared device keys include `device.measured_inference_runs` and `device.runtime_mode`, while board subtrees such as `device.portenta.*` and `device.stm32.*` remain for board-specific knobs.
+   - `runtime_mode`: set under `device.runtime_mode`; `back_to_back` by default, or `cadenced` to run the canonical STM32 back-to-back pass followed by a second cadenced pass.
+   - STM32-specific timing knobs live under `device.stm32.*`.
+     - `wake_margin_us`: cadenced wake-up guard band before each release time.
+     - `min_sleep_us`: cadenced minimum Stop-mode sleep request.
 - **Data block (`data.*`)**
    - `directory`: root of the OxIOD dataset if you didn’t use the default `data/oxiod/` location.
    - `calibration_windows`: reduce for faster experiments, increase or set `null` for more representative calibration.
@@ -172,6 +176,7 @@ see
    - `nas.score.params.terms`: for scalar runs, compose terms such as `weighted`, `normalized-weighted`, `boundary`, and `target`.
    - `nas.score.metrics`: optional derived metrics; see [src/README.md](src/README.md) for the current supported metric types and examples.
    - `nas.prune.rules`: optional pre-training hard-reject rules for scalar NAS runs.
+   - STM32 cadenced policy metrics are documented in [src/README.md](src/README.md), including the difference between `latency_ms` and `cadenced_active_inference_latency_ms`, and between `energy_mj_per_inference`, `cadenced_energy_mj_per_inference`, and `cadenced_energy_mj_per_window`.
 - **Outputs and network (`outputs.*`, `network.*`)**
    - `models_dir`, `tcn_dir`: where Optuna DBs, metrics, and TFLite/C++ artifacts are written.
    - `host`, `port`: must match the HIL server and SSH tunnel; defaults (`127.0.0.1:6001`) usually work as-is.

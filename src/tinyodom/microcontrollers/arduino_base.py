@@ -199,7 +199,11 @@ def _replace_define(text: str, name: str, value: str) -> str:
 
 
 def _patch_sketch_constants(
-    sketch_path: Path, arena_kb: int, window_size: int, num_channels: int
+    sketch_path: Path,
+    arena_kb: int,
+    window_size: int,
+    num_channels: int,
+    latency_budget_ms: float | None = None,
 ) -> None:
     """Rewrite TinyODOM deployment constants inside the Arduino sketch.
 
@@ -213,16 +217,26 @@ def _patch_sketch_constants(
         Sliding window length used by the model.
     num_channels : int
         Number of sensor channels captured per window.
+    latency_budget_ms : float | None, optional
+        Cadence budget used by cadenced runtime sketches. When provided and the
+        sketch declares ``TINYODOM_LATENCY_BUDGET_MS``, the define is updated
+        in-place.
     """
     ino_files = sorted(sketch_path.glob("*.ino"))
     if not ino_files:
         raise FileNotFoundError(f"No .ino file found in {sketch_path}")
     ino_path = ino_files[0]
-    text = ino_path.read_text()
+    text = ino_path.read_text(encoding="utf-8")
     text = _replace_define(text, "TINYODOM_WINDOW_SIZE", str(window_size))
     text = _replace_define(text, "TINYODOM_NUM_CHANNELS", str(num_channels))
     text = _replace_define(text, "TINYODOM_TENSOR_ARENA_BYTES", f"({arena_kb} * 1024)")
-    ino_path.write_text(text)
+    if latency_budget_ms is not None and "TINYODOM_LATENCY_BUDGET_MS" in text:
+        text = _replace_define(
+            text,
+            "TINYODOM_LATENCY_BUDGET_MS",
+            str(max(1, int(round(float(latency_budget_ms))))),
+        )
+    ino_path.write_text(text, encoding="utf-8")
 
 
 def _parse_memory_from_compile(output: str) -> Tuple[Optional[int], Optional[int]]:
@@ -1087,6 +1101,18 @@ def measure_serial(
     }
 
     def _flash_harness(force: bool = False) -> bool:
+        """Ensure the harness firmware matches the current timing settings.
+
+        Parameters
+        ----------
+        force : bool, optional
+            Whether to reflash even when the cached firmware already matches.
+
+        Returns
+        -------
+        bool
+            ``True`` when the harness is ready for use after this call.
+        """
         return ensure_harness_firmware(
             harness_serial_port=harness_serial_port,
             harness_fqbn=harness_fqbn,
@@ -1096,6 +1122,13 @@ def measure_serial(
         )
 
     def _run_handshake() -> hil_protocol.HandshakeResult:
+        """Run the coordinated DUT and harness handshake sequence.
+
+        Returns
+        -------
+        hil_protocol.HandshakeResult
+            Combined serial logs, run counts, and any handshake error details.
+        """
         logger.info(
             "measure_serial: starting DUT+harness handshake (dut=%s, harness=%s)",
             serial_port,

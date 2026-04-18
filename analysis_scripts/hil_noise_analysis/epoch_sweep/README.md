@@ -31,7 +31,6 @@ This folder contains a two-step experiment flow:
 ## GPU (Overnight) Training Run
 
 ```bash
-cd /home/joe/Projects/tinyodom-ex
 python analysis_scripts/hil_noise_analysis/epoch_sweep/train_epoch_sweep.py \
   --config src/nas_config.yaml \
   --out-dir analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts \
@@ -46,7 +45,6 @@ python analysis_scripts/hil_noise_analysis/epoch_sweep/train_epoch_sweep.py \
 ### GPU Training Run (Explicit Output Paths)
 
 ```bash
-cd /home/joe/Projects/tinyodom-ex
 python analysis_scripts/hil_noise_analysis/epoch_sweep/train_epoch_sweep.py \
   --config src/nas_config.yaml \
   --out-dir analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts \
@@ -77,7 +75,6 @@ scp -r analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts <hil_host>:<rep
 ## HIL Sweep Run (Morning)
 
 ```bash
-cd /home/joe/Projects/tinyodom-ex
 python analysis_scripts/hil_noise_analysis/epoch_sweep/hil_epoch_sweep_scan.py \
   --config src/nas_config.yaml \
   --training-csv analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/epoch_sweep_training_stats.csv \

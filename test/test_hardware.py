@@ -490,6 +490,30 @@ class SketchHelperTests(unittest.TestCase):
             self.assertIn("TINYODOM_NUM_CHANNELS 3", text)
             self.assertIn("TINYODOM_TENSOR_ARENA_BYTES (42 * 1024)", text)
 
+    def test_patch_sketch_constants_updates_latency_budget_when_present(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketch_dir = Path(tmpdir)
+            ino_path = sketch_dir / "TinyOdom.ino"
+            ino_path.write_text(
+                "\n".join(
+                    [
+                        "#define TINYODOM_WINDOW_SIZE 100",
+                        "#define TINYODOM_NUM_CHANNELS 1",
+                        "#define TINYODOM_TENSOR_ARENA_BYTES (10 * 1024)",
+                        "#define TINYODOM_LATENCY_BUDGET_MS 200",
+                    ]
+                )
+            )
+            _patch_sketch_constants(
+                sketch_dir,
+                arena_kb=42,
+                window_size=256,
+                num_channels=3,
+                latency_budget_ms=75.8,
+            )
+            text = ino_path.read_text()
+            self.assertIn("TINYODOM_LATENCY_BUDGET_MS 76", text)
+
     def test_parse_memory_from_compile_extracts_numbers(self):
         # Validates CLI parsing so RAM/flash metrics stay trustworthy for scoring.
         sample_output = (

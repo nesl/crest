@@ -128,6 +128,13 @@ def convert_to_tflite_model(
         max_examples = min(len(data), 100)
 
         def representative_dataset() -> Iterable[Sequence[tf.Tensor]]:
+            """Yield calibration samples for post-training quantization.
+
+            Yields
+            ------
+            list[tf.Tensor]
+                Single-sample batches formatted for the TFLite converter.
+            """
             for sample in data[:max_examples]:
                 # Yield calibrated batches so the converter can determine proper scale/zero-point.
                 yield [tf.convert_to_tensor(sample[np.newaxis, ...], tf.float32)]
@@ -789,6 +796,22 @@ def HIL_controller(
     high_idx = len(arena_sweep_list)
 
     def _next_candidate(low: int, high: int, preferred: int) -> Optional[int]:
+        """Clamp a preferred search index to the current open interval.
+
+        Parameters
+        ----------
+        low : int
+            Inclusive lower bound index known to fail.
+        high : int
+            Exclusive upper bound index known to succeed.
+        preferred : int
+            Candidate index to try next.
+
+        Returns
+        -------
+        int | None
+            Next valid candidate index, or ``None`` when the interval is empty.
+        """
         lower_bound = low + 1
         upper_bound = high - 1
         if lower_bound > upper_bound:

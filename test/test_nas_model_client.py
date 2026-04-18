@@ -223,6 +223,20 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(trial.report_calls, [(-float("inf"), 0)])
         self.mock_train.assert_not_called()
 
+    def test_objective_prune_logging_populates_cadenced_sentinels(self) -> None:
+        """Early-pruned trials should still log stable cadenced metric defaults."""
+        self.client._hil_request = MagicMock(return_value={"error_code": HIL_MASTER_FLASH_OVERFLOW})
+        trial = DummyTrial()
+
+        with self.assertRaises(optuna.TrialPruned):
+            self.client.objective(trial)
+
+        logged_metrics = self.mock_log.call_args.kwargs["metrics"]
+        self.assertEqual(logged_metrics["runtime_mode"], "back_to_back")
+        self.assertEqual(logged_metrics["cadenced_energy_mj_per_window"], -1.0)
+        self.assertEqual(logged_metrics["cadenced_error_code"], -1)
+        self.assertIsNone(logged_metrics["cadenced_error_label"])
+
     def test_objective_prunes_on_ram_overflow(self) -> None:
         """RAM overflow errors should prune the trial to skip training."""
         self.client._hil_request = MagicMock(return_value={"error_code": HIL_MASTER_RAM_OVERFLOW})
@@ -647,7 +661,7 @@ class SmokeTestTests(unittest.TestCase):
         self.assertEqual(fake_study.optimize_calls[0][1], 1)
         kwargs = mock_create.call_args.kwargs
         self.assertEqual(kwargs["directions"], ["minimize", "minimize"])
-        self.assertFalse(kwargs["load_if_exists"])
+        self.assertTrue(kwargs["load_if_exists"])
 
     def test_smoke_test_uses_loaded_scalar_config(self) -> None:
         client = _build_test_client()
@@ -667,6 +681,7 @@ class SmokeTestTests(unittest.TestCase):
             client.smoke_test(train=True, hil=False, trials=1, epochs=1)
 
         self.assertEqual(mock_create.call_args.kwargs["direction"], "maximize")
+        self.assertTrue(mock_create.call_args.kwargs["load_if_exists"])
 
     def test_smoke_test_defaults_to_loaded_hil_setting(self) -> None:
         client = _build_test_client()
@@ -717,7 +732,7 @@ class SmokeTestTests(unittest.TestCase):
 
         self.assertFalse(mock_create.called)
 
-    def test_smoke_test_removes_stale_db_and_log_before_starting(self) -> None:
+    def test_smoke_test_preserves_existing_db_and_log_before_validation(self) -> None:
         client = _build_test_client()
         client.objective = MagicMock(return_value=0.1)
         study_name = "stale_smoke"
@@ -743,8 +758,10 @@ class SmokeTestTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 client.smoke_test(train=False, hil=False, trials=1, epochs=1, study_name=study_name)
 
-        self.assertFalse(db_path.exists())
-        self.assertFalse(log_path.exists())
+        self.assertTrue(db_path.exists())
+        self.assertTrue(log_path.exists())
+        self.assertEqual(db_path.read_text(encoding="utf-8"), "stale-db")
+        self.assertEqual(log_path.read_text(encoding="utf-8"), "stale-log")
         self.assertFalse(mock_create.called)
 
     def test_copy_run_config_skips_same_file(self) -> None:

@@ -273,7 +273,7 @@ class ArduinoPortentaH7Device(ArduinoDevice):
         super().__init__(
             BOARD_NAME,
             serial_port=serial_port,
-            device_options=self._resolved_options.to_board_options(),
+            device_options=dict(device_options or {}),
             spec_override=spec,
         )
 
