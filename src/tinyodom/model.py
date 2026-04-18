@@ -342,7 +342,16 @@ def apply_cadenced_metric_defaults(
         The function mutates ``metrics`` in place.
     """
     raw_power_metrics = dict(power_metrics or {})
-    metrics["runtime_mode"] = str(raw_power_metrics.get("runtime_mode", "back_to_back"))
+    raw_runtime_mode = raw_power_metrics.get("runtime_mode")
+    if raw_runtime_mode in (None, ""):
+        metrics["runtime_mode"] = "back_to_back"
+    else:
+        normalized_runtime_mode = str(raw_runtime_mode).strip().lower()
+        metrics["runtime_mode"] = (
+            normalized_runtime_mode
+            if normalized_runtime_mode in {"back_to_back", "cadenced"}
+            else "back_to_back"
+        )
     for field_name, default_value in CADENCED_NUMERIC_FIELD_DEFAULTS.items():
         raw_value = raw_power_metrics.get(field_name, default_value)
         try:

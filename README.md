@@ -176,7 +176,7 @@ see
    - `nas.score.params.terms`: for scalar runs, compose terms such as `weighted`, `normalized-weighted`, `boundary`, and `target`.
    - `nas.score.metrics`: optional derived metrics; see [src/README.md](src/README.md) for the current supported metric types and examples.
    - `nas.prune.rules`: optional pre-training hard-reject rules for scalar NAS runs.
-   - STM32 cadenced policy metrics are documented in [src/README.md](/home/joe/Projects/tinyodom-ex/src/README.md), including the difference between `latency_ms` and `cadenced_active_inference_latency_ms`, and between `energy_mj_per_inference`, `cadenced_energy_mj_per_inference`, and `cadenced_energy_mj_per_window`.
+   - STM32 cadenced policy metrics are documented in [src/README.md](src/README.md), including the difference between `latency_ms` and `cadenced_active_inference_latency_ms`, and between `energy_mj_per_inference`, `cadenced_energy_mj_per_inference`, and `cadenced_energy_mj_per_window`.
 - **Outputs and network (`outputs.*`, `network.*`)**
    - `models_dir`, `tcn_dir`: where Optuna DBs, metrics, and TFLite/C++ artifacts are written.
    - `host`, `port`: must match the HIL server and SSH tunnel; defaults (`127.0.0.1:6001`) usually work as-is.

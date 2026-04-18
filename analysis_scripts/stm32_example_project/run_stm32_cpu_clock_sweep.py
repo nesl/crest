@@ -122,7 +122,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "  python analysis_scripts/stm32_example_project/run_stm32_cpu_clock_sweep.py\n"
             "  python analysis_scripts/stm32_example_project/run_stm32_cpu_clock_sweep.py "
             "--repeats 5 --frequencies 200 300 400 600 800\n"
-            "  /home/joe/miniforge3/envs/tinyodomex/bin/python "
+            "  python "
             "analysis_scripts/stm32_example_project/run_stm32_cpu_clock_sweep.py --clean-first"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

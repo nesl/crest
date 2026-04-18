@@ -40,7 +40,7 @@ Choose the path that matches your board.
 ## MCU Backend Contract
 
 All microcontroller backends must satisfy the `DeviceInterface` contract in
-[`src/tinyodom/devices.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/devices.py:177).
+[`src/tinyodom/devices.py`](src/tinyodom/devices.py:177).
 
 In plain English, a backend owns these responsibilities:
 
@@ -83,20 +83,20 @@ If you are adding a new backend family, start by understanding this contract.
 
 These files are the main integration points in this package.
 
-1. [`devices.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/devices.py:177)
+1. [`devices.py`](src/tinyodom/devices.py:177)
    Defines the shared dataclasses and the `DeviceInterface` contract. Also
    contains the shared Arduino bridge class `ArduinoDevice`.
-2. [`__init__.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/__init__.py:7)
+2. [`__init__.py`](src/tinyodom/microcontrollers/__init__.py:7)
    Registry, factory, and config-option resolution for known devices.
-3. [`arduino_base.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/arduino_base.py:557)
+3. [`arduino_base.py`](src/tinyodom/microcontrollers/arduino_base.py:557)
    Shared Arduino CLI compile/upload/measurement helpers.
 4. `arduino_<board>.py`
    One concrete Arduino-backed board wrapper per board family.
-5. [`stm32_nucleo_n657x0.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/stm32_nucleo_n657x0.py:1386)
+5. [`stm32_nucleo_n657x0.py`](src/tinyodom/microcontrollers/stm32_nucleo_n657x0.py:1386)
    The concrete STM32 backend currently shipped in this repo.
-6. [`stm32_cube_clt.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/stm32_cube_clt.py:121)
+6. [`stm32_cube_clt.py`](src/tinyodom/microcontrollers/stm32_cube_clt.py:121)
    STM32 Cube / build / ELF / ST-LINK / CubeProgrammer helper layer.
-7. [`stm32_runtime.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/stm32_runtime.py:439)
+7. [`stm32_runtime.py`](src/tinyodom/microcontrollers/stm32_runtime.py:439)
    STM32 runtime serial protocol parser and runtime error classifier.
 
 ## Backend Types In This Repo
@@ -106,9 +106,9 @@ These files are the main integration points in this package.
 Arduino boards are the most standardized path in this repo.
 
 Shared behavior comes from
-[`ArduinoDevice`](/home/joe/Projects/tinyodom-ex/src/tinyodom/devices.py:644)
+[`ArduinoDevice`]( src/tinyodom/devices.py:644)
 and
-[`arduino_base.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/arduino_base.py:557).
+[`arduino_base.py`]( src/tinyodom/microcontrollers/arduino_base.py:557).
 
 That shared path already handles:
 
@@ -122,24 +122,24 @@ That shared path already handles:
 
 Current examples:
 
-1. [`arduino_ble33.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/arduino_ble33.py:1)
-2. [`arduino_portenta_h7.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/arduino_portenta_h7.py:1)
+1. [`arduino_ble33.py`]( src/tinyodom/microcontrollers/arduino_ble33.py:1)
+2. [`arduino_portenta_h7.py`]( src/tinyodom/microcontrollers/arduino_portenta_h7.py:1)
 
 ### STM32 Cube Backend
 
 The STM32 implementation is intentionally split across three modules because
 they own different responsibilities and failure domains.
 
-1. [`stm32_nucleo_n657x0.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/stm32_nucleo_n657x0.py:1386)
+1. [`stm32_nucleo_n657x0.py`]( src/tinyodom/microcontrollers/stm32_nucleo_n657x0.py:1386)
    The concrete TinyODOM board backend. It implements `DeviceInterface`,
    resolves STM options, stages candidate-specific projects, invokes ST Edge AI
    generation, and translates compile/upload/runtime results into TinyODOM
    dataclasses and error codes.
-2. [`stm32_cube_clt.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/stm32_cube_clt.py:121)
+2. [`stm32_cube_clt.py`]( src/tinyodom/microcontrollers/stm32_cube_clt.py:121)
    The STM32 toolchain/helper layer. It owns build, ELF discovery, size
    parsing, ST-LINK debug-load workflow, and external flash programming
    helpers. It does not implement `DeviceInterface`.
-3. [`stm32_runtime.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/stm32_runtime.py:439)
+3. [`stm32_runtime.py`]( src/tinyodom/microcontrollers/stm32_runtime.py:439)
    The STM32 runtime protocol layer. It owns serial monitoring, READY/START
    handshake handling, telemetry parsing, and runtime protocol error typing. It
    does not implement `DeviceInterface`.
@@ -161,9 +161,9 @@ That usually means:
 
 1. Implement `DeviceInterface` directly.
 2. Add a registry entry in
-   [`__init__.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/__init__.py:7).
+   [`__init__.py`]( src/tinyodom/microcontrollers/__init__.py:7).
 3. Add config-option resolution in
-   [`resolve_device_options(...)`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/__init__.py:133)
+   [`resolve_device_options(...)`]( src/tinyodom/microcontrollers/__init__.py:133)
    when needed.
 4. Provide your own build, flash/load, and runtime telemetry path.
 
@@ -175,7 +175,7 @@ and config plumbing.
 ### Registry
 
 Update
-[`src/tinyodom/microcontrollers/__init__.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/__init__.py:7).
+[`src/tinyodom/microcontrollers/__init__.py`]( src/tinyodom/microcontrollers/__init__.py:7).
 
 Required work:
 
@@ -201,11 +201,11 @@ If the board has custom options:
 
 1. Add a nested config block such as `device.portenta.*` or `device.stm32.*`.
 2. Parse it in
-   [`resolve_device_options(...)`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/__init__.py:133).
+   [`resolve_device_options(...)`]( src/tinyodom/microcontrollers/__init__.py:133).
 3. Ensure those options flow through
-   [`build_collect_metrics_request(...)`](/home/joe/Projects/tinyodom-ex/src/tinyodom/model.py:488)
+   [`build_collect_metrics_request(...)`]( src/tinyodom/model.py:488)
    and the HIL server path in
-   [`src/hil_server.py`](/home/joe/Projects/tinyodom-ex/src/hil_server.py:279).
+   [`src/hil_server.py`]( src/hil_server.py:279).
 
 Do not bypass `collect_metrics(...)` or `HIL_controller(...)`. Device options
 must flow through the shared controller path.
@@ -217,7 +217,7 @@ TinyODOM has two major candidate-prep families today.
 ### Arduino Candidate Staging
 
 Arduino backends use the shared candidate path in
-[`ArduinoDevice.prepare_candidate(...)`](/home/joe/Projects/tinyodom-ex/src/tinyodom/devices.py:716).
+[`ArduinoDevice.prepare_candidate(...)`]( src/tinyodom/devices.py:716).
 
 That path:
 
@@ -226,7 +226,7 @@ That path:
 3. Copies the selected sketch variant into the active output directory.
 
 Runtime sketch selection is handled by
-[`_sync_arduino_sketch_variant_for_config(...)`](/home/joe/Projects/tinyodom-ex/src/tinyodom/devices.py:584)
+[`_sync_arduino_sketch_variant_for_config(...)`]( src/tinyodom/devices.py:584)
 and uses a `runtime_phase` selector plus this layout:
 
 1. Shared uniform variants:
@@ -255,7 +255,7 @@ runtime_phase="cadenced")` before one extra fixed-arena evaluation.
 STM32 does not use Arduino sketch staging.
 
 The current backend in
-[`stm32_nucleo_n657x0.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/stm32_nucleo_n657x0.py:1386)
+[`stm32_nucleo_n657x0.py`]( src/tinyodom/microcontrollers/stm32_nucleo_n657x0.py:1386)
 instead:
 
 1. Copies a canonical FSBL template into a candidate-specific staging root.
@@ -306,14 +306,14 @@ Create `src/tinyodom/microcontrollers/arduino_<board>.py` with this shape:
    - a resolver/validator
    - a spec builder using resolved options
 5. Implement a wrapper class that extends
-   [`ArduinoDevice`](/home/joe/Projects/tinyodom-ex/src/tinyodom/devices.py:644)
+   [`ArduinoDevice`]( src/tinyodom/devices.py:644)
 
 Current in-repo examples:
 
 1. BLE33:
-   [`arduino_ble33.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/arduino_ble33.py:1)
+   [`arduino_ble33.py`]( src/tinyodom/microcontrollers/arduino_ble33.py:1)
 2. Portenta H7:
-   [`arduino_portenta_h7.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/arduino_portenta_h7.py:1)
+   [`arduino_portenta_h7.py`]( src/tinyodom/microcontrollers/arduino_portenta_h7.py:1)
 
 Example minimal static board pattern:
 
@@ -376,7 +376,7 @@ If the board needs a new Arduino core package:
 
 ### Memory Parsing Notes
 
-[`arduino_base.compile_sketch(...)`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/arduino_base.py:557)
+[`arduino_base.compile_sketch(...)`]( src/tinyodom/microcontrollers/arduino_base.py:557)
 parses memory in two stages:
 
 1. Primary: Arduino CLI `Sketch uses ...` output.
@@ -410,7 +410,7 @@ If a board does not print `Sketch uses ...`:
 
 ### Upload Error Notes
 
-[`arduino_base.upload_sketch(...)`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/arduino_base.py:678)
+[`arduino_base.upload_sketch(...)`]( src/tinyodom/microcontrollers/arduino_base.py:678)
 appends Linux DFU permission guidance for known `LIBUSB_ERROR_ACCESS` patterns.
 
 If your board uses DFU on Linux:
@@ -486,7 +486,7 @@ The current backend assumes:
 3. ST Edge AI generated outputs with the expected filenames.
 4. An ST-LINK based load flow via GDB server + GDB.
 5. A serial runtime protocol compatible with
-   [`stm32_runtime.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/stm32_runtime.py:439).
+   [`stm32_runtime.py`]( src/tinyodom/microcontrollers/stm32_runtime.py:439).
 6. Optional harness-assisted energy measurement when `harness_serial_port` is
    configured during HIL runs.
 
@@ -498,13 +498,13 @@ board bring-up. You are defining a new STM backend shape.
 Today, the practical path is:
 
 1. Treat
-   [`stm32_nucleo_n657x0.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/stm32_nucleo_n657x0.py:1386)
+   [`stm32_nucleo_n657x0.py`]( src/tinyodom/microcontrollers/stm32_nucleo_n657x0.py:1386)
    as the reference implementation.
 2. Reuse
-   [`stm32_cube_clt.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/stm32_cube_clt.py:121)
+   [`stm32_cube_clt.py`]( src/tinyodom/microcontrollers/stm32_cube_clt.py:121)
    if your board still uses the same Cube/ST-LINK workflow.
 3. Reuse
-   [`stm32_runtime.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/stm32_runtime.py:439)
+   [`stm32_runtime.py`]( src/tinyodom/microcontrollers/stm32_runtime.py:439)
    only if your firmware emits the same runtime tokens.
 4. Add a new concrete STM backend module when the board-specific differences are
    too large to express as metadata only.
@@ -524,9 +524,9 @@ You are building a new backend, not adding a board definition.
 
 1. A new module that implements `DeviceInterface`.
 2. A registry entry in
-   [`src/tinyodom/microcontrollers/__init__.py`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/__init__.py:7).
+   [`src/tinyodom/microcontrollers/__init__.py`]( src/tinyodom/microcontrollers/__init__.py:7).
 3. An option resolver in
-   [`resolve_device_options(...)`](/home/joe/Projects/tinyodom-ex/src/tinyodom/microcontrollers/__init__.py:133)
+   [`resolve_device_options(...)`]( src/tinyodom/microcontrollers/__init__.py:133)
    when the backend needs config-owned options.
 4. A candidate preparation path.
 5. A compile/build path and size parser.

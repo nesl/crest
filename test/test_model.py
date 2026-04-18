@@ -421,6 +421,41 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertIsNone(metrics["cadenced_rtc_clock_source"])
         self.assertEqual(metrics["cadenced_error_code"], -1)
 
+    def test_collect_metrics_normalizes_runtime_mode_from_backend_payload(self) -> None:
+        """Runtime mode should be normalized and default invalid values safely."""
+
+        cases = [
+            ("CADENCED", "cadenced"),
+            ("  back_to_back  ", "back_to_back"),
+            (None, "back_to_back"),
+            ("", "back_to_back"),
+            ("unexpected", "back_to_back"),
+        ]
+
+        for raw_runtime_mode, expected_runtime_mode in cases:
+            with self.subTest(raw_runtime_mode=raw_runtime_mode):
+                def fake_controller(run_hil: bool, **kwargs):
+                    del kwargs
+                    self.assertTrue(run_hil)
+                    return (1024, 8192, 0.025, 4096, 0, {"runtime_mode": raw_runtime_mode})
+
+                with patch("tinyodom.model.HIL_controller", fake_controller):
+                    request = CollectMetricsRequest(
+                        hil_enabled=True,
+                        energy_aware=False,
+                        flops=5_000_000,
+                        device_name="STM32_NUCLEO_N657X0_Q",
+                        window_size=128,
+                        input_dim=6,
+                        dirpath=Path("tinyodom_tcn"),
+                        latency_proxy_max_flops=20_000_000,
+                        serial_port="ttyACM0",
+                        latency_budget_ms=200.0,
+                    )
+                    metrics = collect_metrics(request)
+
+                self.assertEqual(metrics["runtime_mode"], expected_runtime_mode)
+
     def test_energy_aware_harness_fields_forwarded_to_controller(self) -> None:
         """Energy-aware requests should forward harness settings to HIL_controller."""
 
