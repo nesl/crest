@@ -149,9 +149,9 @@ see
    - `serial_port`: set to your board’s serial device (e.g. `/dev/cu.usbmodem*` on macOS, `/dev/ttyACM*` on Linux).
    - `hil`: keep `true` for full hardware-in-the-loop, or set `false` to run latency/energy proxies without talking to a board.
    - `measured_inference_runs`: number of on-device inference invokes averaged into one measured HIL attempt; defaults to `10`.
-   - Board subtrees such as `device.portenta.*` and `device.stm32.*` remain for board-specific knobs, while `device.measured_inference_runs` is shared across supported HIL backends.
-   - STM32-specific runtime knobs now live under `device.stm32.*`.
-     - `runtime_mode`: `back_to_back` by default, or `cadenced` to run the canonical STM32 back-to-back pass followed by a second cadenced pass.
+   - Shared device keys include `device.measured_inference_runs` and `device.runtime_mode`, while board subtrees such as `device.portenta.*` and `device.stm32.*` remain for board-specific knobs.
+   - `runtime_mode`: set under `device.runtime_mode`; `back_to_back` by default, or `cadenced` to run the canonical STM32 back-to-back pass followed by a second cadenced pass.
+   - STM32-specific timing knobs live under `device.stm32.*`.
      - `wake_margin_us`: cadenced wake-up guard band before each release time.
      - `min_sleep_us`: cadenced minimum Stop-mode sleep request.
 - **Data block (`data.*`)**
