@@ -694,6 +694,20 @@ def _run_gdb_load(
         # GDB to stop responding once execution is transferred. The timeout path
         # is therefore treated as success unless the partial output clearly
         # contains a failure signature.
+        def _expected_post_jump_disconnect(output: str) -> bool:
+            lowered = output.lower()
+            loaded_ok = (
+                "loading section" in lowered
+                and "start address" in lowered
+                and "transfer rate" in lowered
+            )
+            disconnected_after_jump = (
+                "remote connection closed" in lowered
+                or "lost target connection" in lowered
+                or "target disconnected" in lowered
+            )
+            return loaded_ok and disconnected_after_jump
+
         proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
             stdout, _ = proc.communicate(timeout=GDB_JUMP_TIMEOUT_S)
@@ -704,6 +718,8 @@ def _run_gdb_load(
             proc.kill()
             remaining_stdout, _ = proc.communicate()
             stdout = partial_stdout + (remaining_stdout or "")
+            if _expected_post_jump_disconnect(stdout):
+                return stdout
             lowered = stdout.lower()
             for indicator in (
                 "error",
@@ -724,6 +740,8 @@ def _run_gdb_load(
                     )
             return stdout
         if proc.returncode != 0:
+            if _expected_post_jump_disconnect(stdout):
+                return stdout
             detail = stdout.strip() if stdout.strip() else "No GDB output captured."
             raise WorkflowError(
                 "GDB load/run failed before the jump timeout elapsed.\n\n"

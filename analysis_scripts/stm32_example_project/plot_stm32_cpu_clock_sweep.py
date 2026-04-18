@@ -27,11 +27,11 @@ EXTERNAL_FLASH_MODE = "external_flash"
 
 BACK_TO_BACK_TIME_FILENAME = "back_to_back_inference_time_vs_cpu_frequency.png"
 BACK_TO_BACK_ENERGY_FILENAME = "back_to_back_inference_energy_vs_cpu_frequency.png"
-CADENCED_BOX_FILENAME = "cadenced_energy_per_window_vs_cpu_frequency.png"
-CADENCED_BOX_SPLIT_FILENAME = "cadenced_energy_per_window_vs_cpu_frequency_by_mode.png"
-CADENCED_BOX_FILTERED_FILENAME = "cadenced_energy_per_window_vs_cpu_frequency_filtered.png"
-CADENCED_BOX_FILTERED_SPLIT_FILENAME = "cadenced_energy_per_window_vs_cpu_frequency_filtered_by_mode.png"
-CADENCED_SCATTER_FILENAME = "cadenced_inference_time_vs_window_energy.png"
+CADENCED_BOX_FILENAME = "cadenced_energy_per_inference_vs_cpu_frequency.png"
+CADENCED_BOX_SPLIT_FILENAME = "cadenced_energy_per_inference_vs_cpu_frequency_by_mode.png"
+CADENCED_BOX_FILTERED_FILENAME = "cadenced_energy_per_inference_vs_cpu_frequency_filtered.png"
+CADENCED_BOX_FILTERED_SPLIT_FILENAME = "cadenced_energy_per_inference_vs_cpu_frequency_filtered_by_mode.png"
+CADENCED_SCATTER_FILENAME = "cadenced_inference_time_vs_inference_energy.png"
 
 MODE_LABELS = {
     EMBEDDED_MODE: "Embedded",
@@ -250,7 +250,7 @@ def _scaled_mad_bounds(
 def _collect_cadenced_filtered_energy(
     rows: list[dict[str, str]],
 ) -> dict[str, dict[int, list[float]]]:
-    """Collect cadenced window energy excluding timing and energy outliers.
+    """Collect cadenced inference energy excluding timing and energy outliers.
 
     Parameters
     ----------
@@ -273,7 +273,7 @@ def _collect_cadenced_filtered_energy(
         if not _is_successful_row(row):
             continue
         frequency = _safe_int(row.get("cpu_clock_mhz_requested"))
-        energy = _safe_float(row.get("energy_mj_per_window"))
+        energy = _safe_float(row.get("energy_mj_per_inference"))
         window_latency = _safe_float(row.get("window_latency_ms"))
         rtc_sleep = _safe_float(row.get("rtc_sleep_ms"))
         if frequency is None or energy is None or window_latency is None or rtc_sleep is None:
@@ -312,7 +312,7 @@ def _collect_cadenced_filtered_energy(
 def _collect_cadenced_scatter_points(
     rows: list[dict[str, str]],
 ) -> dict[str, dict[int, list[tuple[float, float]]]]:
-    """Collect cadenced inference-time versus window-energy points by mode and frequency.
+    """Collect cadenced inference-time versus inference-energy points by mode and frequency.
 
     Parameters
     ----------
@@ -323,7 +323,7 @@ def _collect_cadenced_scatter_points(
     -------
     dict[str, dict[int, list[tuple[float, float]]]]
         Mapping from storage mode to CPU frequency to ``(inference_time_ms,
-        window_energy_mj)`` point pairs for successful cadenced runs.
+        inference_energy_mj)`` point pairs for successful cadenced runs.
     """
     grouped: dict[str, dict[int, list[tuple[float, float]]]] = {}
     for row in rows:
@@ -336,12 +336,12 @@ def _collect_cadenced_scatter_points(
             continue
         frequency = _safe_int(row.get("cpu_clock_mhz_requested"))
         inference_time_ms = _safe_float(row.get("active_inference_latency_ms"))
-        window_energy_mj = _safe_float(row.get("energy_mj_per_window"))
-        if frequency is None or inference_time_ms is None or window_energy_mj is None:
+        inference_energy_mj = _safe_float(row.get("energy_mj_per_inference"))
+        if frequency is None or inference_time_ms is None or inference_energy_mj is None:
             continue
-        if inference_time_ms < 0.0 or window_energy_mj < 0.0:
+        if inference_time_ms < 0.0 or inference_energy_mj < 0.0:
             continue
-        grouped.setdefault(mode, {}).setdefault(frequency, []).append((inference_time_ms, window_energy_mj))
+        grouped.setdefault(mode, {}).setdefault(frequency, []).append((inference_time_ms, inference_energy_mj))
     return {mode: {freq: grouped[mode][freq] for freq in sorted(grouped[mode])} for mode in sorted(grouped)}
 
 
@@ -664,7 +664,7 @@ def _write_cadenced_scatter(
     output_path: Path,
     scatter_points: dict[str, dict[int, list[tuple[float, float]]]],
 ) -> None:
-    """Write the cadenced inference-time versus window-energy scatter plot.
+    """Write the cadenced inference-time versus inference-energy scatter plot.
 
     Parameters
     ----------
@@ -672,7 +672,7 @@ def _write_cadenced_scatter(
         Destination PNG path.
     scatter_points : dict[str, dict[int, list[tuple[float, float]]]]
         Mapping from storage mode to frequency to ``(inference_time_ms,
-        window_energy_mj)`` point pairs.
+        inference_energy_mj)`` point pairs.
     """
     plt = _import_plotting()
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -698,8 +698,8 @@ def _write_cadenced_scatter(
             )
 
     ax.set_xlabel("Inference Time (ms)")
-    ax.set_ylabel("Window Energy (mJ)")
-    ax.set_title("Cadenced Inference Time vs Window Energy")
+    ax.set_ylabel("Inference Energy (mJ / inference)")
+    ax.set_title("Cadenced Inference Time vs Inference Energy")
     ax.grid(True, linestyle="--", alpha=0.3)
     ax.legend(title="Mode / CPU Frequency", loc="best")
 
@@ -716,7 +716,7 @@ def _write_cadenced_split_pointplot(
     filtered: bool = False,
     filtered_label_by_mode: dict[str, str] | None = None,
 ) -> None:
-    """Write vertical subplots for cadenced window energy by storage mode.
+    """Write vertical subplots for cadenced inference energy by storage mode.
 
     Parameters
     ----------
@@ -746,12 +746,12 @@ def _write_cadenced_split_pointplot(
             jitters = _even_jitter(len(metric_values), span=0.24)
             x_values = [base_x + jitter for jitter in jitters]
             axis.scatter(x_values, metric_values, color=color, s=44, alpha=0.75)
-        axis.set_ylabel("Window Energy (mJ / window)")
+        axis.set_ylabel("Inference Energy (mJ / inference)")
         if filtered:
             label = filtered_label_by_mode.get(mode, "0.0% dropped")
-            axis.set_title(f"Cadenced Window Energy (Filtered, {label}) - {MODE_LABELS[mode]}")
+            axis.set_title(f"Cadenced Inference Energy (Filtered, {label}) - {MODE_LABELS[mode]}")
         else:
-            axis.set_title(f"Cadenced Window Energy - {MODE_LABELS[mode]}")
+            axis.set_title(f"Cadenced Inference Energy - {MODE_LABELS[mode]}")
         axis.grid(True, axis="y", linestyle="--", alpha=0.3)
 
     axes[-1].set_xticks(list(range(len(frequencies))))
@@ -818,13 +818,13 @@ def generate_plots(results_dir: Path) -> list[Path]:
         EMBEDDED_MODE: _collect_metric_series(
             rows,
             phase=CADENCED_PHASE,
-            metric="energy_mj_per_window",
+            metric="energy_mj_per_inference",
             weight_storage_mode=EMBEDDED_MODE,
         ),
         EXTERNAL_FLASH_MODE: _collect_metric_series(
             rows,
             phase=CADENCED_PHASE,
-            metric="energy_mj_per_window",
+            metric="energy_mj_per_inference",
             weight_storage_mode=EXTERNAL_FLASH_MODE,
         ),
     }
@@ -857,9 +857,9 @@ def generate_plots(results_dir: Path) -> list[Path]:
     has_back_to_back_time = bool(back_to_back_time[EMBEDDED_MODE] or back_to_back_time[EXTERNAL_FLASH_MODE])
     has_back_to_back_energy = bool(back_to_back_energy[EMBEDDED_MODE] or back_to_back_energy[EXTERNAL_FLASH_MODE])
     if not cadenced_energy[EMBEDDED_MODE] and not cadenced_energy[EXTERNAL_FLASH_MODE]:
-        raise RuntimeError("No successful cadenced rows with window-energy data were found.")
+        raise RuntimeError("No successful cadenced rows with inference-energy data were found.")
     if not cadenced_scatter:
-        raise RuntimeError("No successful cadenced rows with inference-time/window-energy data were found.")
+        raise RuntimeError("No successful cadenced rows with inference-time/inference-energy data were found.")
 
     output_paths: list[Path] = []
 
@@ -889,8 +889,8 @@ def generate_plots(results_dir: Path) -> list[Path]:
         cadenced_box_path,
         frequencies,
         cadenced_energy,
-        title="Cadenced Window Energy by CPU Frequency",
-        ylabel="Window Energy (mJ / window)",
+        title="Cadenced Inference Energy by CPU Frequency",
+        ylabel="Inference Energy (mJ / inference)",
     )
     output_paths.append(cadenced_box_path)
 
@@ -904,8 +904,8 @@ def generate_plots(results_dir: Path) -> list[Path]:
             cadenced_filtered_path,
             frequencies,
             cadenced_energy_filtered,
-            title=f"Cadenced Window Energy by CPU Frequency (Filtered, {filtered_drop_label_all})",
-            ylabel="Window Energy (mJ / window)",
+            title=f"Cadenced Inference Energy by CPU Frequency (Filtered, {filtered_drop_label_all})",
+            ylabel="Inference Energy (mJ / inference)",
         )
         output_paths.append(cadenced_filtered_path)
 
