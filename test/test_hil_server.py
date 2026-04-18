@@ -17,6 +17,7 @@ if str(SRC_DIR) not in sys.path:
 
 import hil_server as hil_server_module  # noqa: E402
 from hil_server import HILServer  # noqa: E402
+from tinyodom.errors import HIL_ERROR_OK  # noqa: E402
 from tinyodom.model import CollectMetricsRequest  # noqa: E402
 
 
@@ -141,6 +142,107 @@ class DetermineMetricsTests(HILServerTestCase):
             request.latency_budget_ms,
             (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000,
         )
+
+    def test_collect_metrics_uses_device_latency_budget_override(self) -> None:
+        server = self.build_server()
+        self.config.device.latency_budget_ms = 75.0
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.build_tinyodom_model"), patch(
+            "hil_server.collect_metrics", return_value={"ok": True}
+        ) as collect_mock:
+            server.determine_metrics(Dict(flops=999, input_dim=3))
+
+        request = collect_mock.call_args.args[0]
+        self.assertEqual(request.latency_budget_ms, 75.0)
+
+    def test_determine_metrics_runs_arduino_cadenced_second_pass_after_successful_base_run(self) -> None:
+        server = self.build_server()
+        self.config.device.name = "ARDUINO_NANO_33_BLE_SENSE"
+        self.config.device.runtime_mode = "cadenced"
+        self.config.training.energy_aware = True
+        self.config.training.input_mode = "uniform"
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.supports_energy_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.evaluate.return_value = SimpleNamespace(
+            error_code=HIL_ERROR_OK,
+            power_metrics={"energy_mj_per_inference": 1.5},
+        )
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.build_tinyodom_model"), patch(
+            "hil_server.collect_metrics",
+            return_value={
+                "error_code": HIL_ERROR_OK,
+                "arena_bytes": 4096,
+                "runtime_mode": "back_to_back",
+                "cadenced_error_code": -1,
+                "cadenced_error_label": None,
+                "cadenced_active_inference_latency_ms": -1.0,
+                "cadenced_energy_mj_per_inference": -1.0,
+                "cadenced_energy_mj_per_window": -1.0,
+            },
+        ):
+            metrics = server.determine_metrics(Dict(flops=123, input_dim=6))
+
+        fake_device.set_input_mode.assert_called_once()
+        self.assertEqual(fake_device.set_input_mode.call_args.kwargs["runtime_phase"], "cadenced")
+        fake_device.evaluate.assert_called_once()
+        self.assertEqual(metrics["runtime_mode"], "cadenced")
+        self.assertEqual(metrics["cadenced_error_code"], HIL_ERROR_OK)
+        self.assertAlmostEqual(metrics["cadenced_energy_mj_per_inference"], 1.5)
+        self.assertAlmostEqual(metrics["cadenced_energy_mj_per_window"], 15.0)
+
+    def test_determine_metrics_discards_arduino_cadenced_second_pass_latency(self) -> None:
+        server = self.build_server()
+        self.config.device.name = "ARDUINO_NANO_33_BLE_SENSE"
+        self.config.device.runtime_mode = "cadenced"
+        self.config.training.energy_aware = True
+        self.config.training.input_mode = "uniform"
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.supports_energy_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.evaluate.return_value = SimpleNamespace(
+            error_code=HIL_ERROR_OK,
+            latency_s=0.2,
+            power_metrics={"energy_mj_per_inference": 2.0},
+        )
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.build_tinyodom_model"), patch(
+            "hil_server.collect_metrics",
+            return_value={
+                "error_code": HIL_ERROR_OK,
+                "arena_bytes": 4096,
+                "runtime_mode": "back_to_back",
+                "cadenced_error_code": -1,
+                "cadenced_error_label": None,
+                "cadenced_active_inference_latency_ms": -1.0,
+                "cadenced_energy_mj_per_inference": -1.0,
+                "cadenced_energy_mj_per_window": -1.0,
+            },
+        ):
+            metrics = server.determine_metrics(Dict(flops=123, input_dim=6))
+
+        self.assertEqual(metrics["cadenced_active_inference_latency_ms"], -1.0)
 
     def test_determine_metrics_uses_override_clock_for_runtime_options_only(self) -> None:
         server = self.build_server()
@@ -643,6 +745,18 @@ class SketchVariantTests(unittest.TestCase):
             self.assertTrue(out_path.exists())
             self.assertIn("uniform_shared", out_path.read_text())
 
+    def test_selects_cadenced_uniform_sketch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            self._write_sketch(sketches / "tinyodom_tcn_energy_cadenced.ino", "cadenced_shared")
+            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="uniform")
+
+            out_path = server.set_input_mode("uniform", runtime_phase="cadenced")
+
+            self.assertTrue(out_path.exists())
+            self.assertIn("cadenced_shared", out_path.read_text())
+
     def test_selects_uniform_energy_sketch_for_portenta_cm7(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
@@ -738,6 +852,21 @@ class SketchVariantTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 server._sync_sketch_variant()
+
+    def test_cadenced_runtime_requires_uniform_input_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            self._write_sketch(
+                sketches / "analysis_sketches/tinyodom_tcn_energy_representative.ino",
+                "representative",
+            )
+            header = sketches / "analysis_sketches/tinyodom_tcn_input_data.h"
+            header.write_text("// header\n")
+            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="representative")
+
+            with self.assertRaises(ValueError):
+                server.set_input_mode("representative", runtime_phase="cadenced")
 
     def test_portenta_uniform_requires_target_core(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

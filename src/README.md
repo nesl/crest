@@ -107,18 +107,32 @@ Built-in metrics that can be referenced directly from `nas.score.params.objectiv
 - `energy_mj_per_inference`
   - Measured energy in millijoules consumed by one inference attempt.
 - `cadenced_active_inference_latency_ms`
-  - STM32-only active compute time for one inference during the second
-    cadenced pass. This excludes the intentional sleep/idle time used to hold
-    the release schedule. Only available when `runtime_mode` is set to `cadenced`
+  - Active compute time for one inference during the second cadenced pass.
+    This excludes the intentional sleep/idle time used to hold the release
+    schedule. Currently populated by STM32 only. Available when
+    `device.runtime_mode` is set to `cadenced`.
+- `cadenced_window_latency_ms`
+  - Full scheduled cadenced-window duration from the second pass. Currently
+    populated by STM32 only. Available when `device.runtime_mode` is set to
+    `cadenced`.
 - `cadenced_energy_mj_per_inference`
-  - STM32-only average energy per cadenced slot, including the cadenced
-    sleep/wake overhead amortized into each scheduled inference. Only available 
-    when `runtime_mode` is set to `cadenced`
+  - Average energy per cadenced slot from the second runtime pass. Available
+    when `device.runtime_mode` is set to `cadenced`.
+  - Important semantic difference:
+    - STM32 reports active cadenced-slot inference energy.
+    - Arduino backends report average cadenced-slot energy including the
+      intentional wait/sleep window.
 - `cadenced_energy_mj_per_window`
-  - STM32-only total energy for the full cadenced measurement window. This is
-    computed in backend code as `cadenced_energy_mj_per_inference *`
-    `measured_inference_runs`. Only available when `runtime_mode` is set 
-    to `cadenced`
+  - Total energy for the full cadenced measurement window. This is computed in
+    backend code as `cadenced_energy_mj_per_inference *`
+    `measured_inference_runs`. Available when `device.runtime_mode` is set to
+    `cadenced`.
+- `cadenced_rtc_sleep_ms`
+  - Total RTC-driven sleep time accumulated during the cadenced window.
+    Currently populated by STM32 only.
+- `cadenced_deadline_miss_count`
+  - Number of missed cadenced release slots during the second pass. Currently
+    populated by STM32 only.
 - `avg_power_mw`
   - Average DUT power during the measured inference window, in milliwatts.
 - `avg_current_ma`
@@ -147,31 +161,54 @@ Notes:
 - `energy_mj_per_inference` is usually only available when HIL and energy-aware
   measurement are both enabled.
 - `latency_ms` is unavailable in non-HIL proxy runs.
-- The cadenced STM32 policy metrics are only available when
-  `device.stm32.runtime_mode: cadenced`.
+- Cadenced policy metrics are only available when
+  `device.runtime_mode: cadenced`.
 - `cadenced_active_inference_latency_ms` and
   `cadenced_energy_mj_per_inference` are per-slot metrics from the second
-  cadenced STM32 pass. Only available when `runtime_mode` is set  to `cadenced`
+  cadenced pass. STM32 exposes the richer timing subset; Portenta H7 and
+  Nano 33 BLE v1 only expose the minimal cadenced energy/error subset.
+- `cadenced_window_latency_ms` is the full second-pass window duration and is
+  currently STM32-only.
 - `cadenced_energy_mj_per_window` is a whole-window metric, not a per-slot
-  metric. Only available when `runtime_mode` is set to `cadenced`
+  metric. It is the better cross-board comparison metric for cadenced runs.
 - `cpu_clock_mhz_requested` is optional and backend-dependent.
 - `weight_storage_mode` is logged as trial metadata, but it is not part of the
   numeric scoring/pruning metric registry.
 - If you disable HIL, avoid score terms and prune rules that reference
-  `latency_ms`, `energy_mj_per_inference`, or the STM32 cadenced policy
-  metrics.
+  `latency_ms`, `energy_mj_per_inference`, or the cadenced policy metrics.
 
-### STM32 cadenced runtime mode
+### Cadenced Runtime Mode
 
-The STM32 backend exposes an optional dual-phase mode under `device.stm32`:
+Cadenced runtime is controlled by the shared top-level `device.runtime_mode`
+setting:
 
-- `runtime_mode: back_to_back`
-  - Default behavior. TinyODOM runs one STM32 HIL session and returns the
-    standard canonical metrics.
-- `runtime_mode: cadenced`
-  - TinyODOM runs two STM32 HIL sessions in order:
-    1. a canonical `back_to_back` pass
-    2. a second `cadenced` pass
+- `device.runtime_mode: back_to_back`
+  - Default behavior. TinyODOM runs one canonical HIL session and returns the
+    standard metrics.
+- `device.runtime_mode: cadenced`
+  - TinyODOM runs a canonical `back_to_back` pass first, then a second
+    cadenced pass.
+
+Optional shared cadence-budget override:
+
+- `device.latency_budget_ms`
+  - Overrides the default cadence budget used during HIL evaluation.
+  - When omitted, TinyODOM derives the budget from
+    `data.stride / data.sampling_rate_hz * 1000`.
+
+Board support:
+
+- STM32
+  - Exposes the full current cadenced timing/energy subset.
+- Portenta H7 and Arduino Nano 33 BLE Sense
+  - Use a minimal v1 cadenced second pass.
+  - Only `training.input_mode: uniform` is supported in cadenced mode.
+  - Only these user-facing cadenced fields are guaranteed:
+    - `runtime_mode`
+    - `cadenced_error_code`
+    - `cadenced_error_label`
+    - `cadenced_energy_mj_per_inference`
+    - `cadenced_energy_mj_per_window`
 
 Important semantics:
 
@@ -179,12 +216,17 @@ Important semantics:
 - `cadenced_active_inference_latency_ms` is not the same thing as
   `latency_ms`. It measures only the active inference compute time inside a
   cadenced slot and excludes the intentional wait/sleep time between releases.
+- `cadenced_window_latency_ms` is the total scheduled window length for the
+  cadenced pass, not a per-slot active-compute metric.
 - `energy_mj_per_inference` remains the canonical `back_to_back` per-inference
   energy metric.
-- `cadenced_energy_mj_per_inference` is the average energy per cadenced slot,
-  so it includes sleep/wake overhead amortized into each scheduled inference.
+- `cadenced_energy_mj_per_inference` is not semantically identical across
+  backends:
+  - STM32 reports active cadenced-slot inference energy.
+  - Arduino backends report average cadenced-slot energy including the
+    intentional wait/sleep window.
 - `cadenced_energy_mj_per_window` is the total energy for the full cadenced
-  measurement window.
+  measurement window and is the better cross-board comparison metric.
 
 Additional STM32 knobs:
 
@@ -196,16 +238,20 @@ Additional STM32 knobs:
 
 Export behavior:
 
-- The main trial CSV only includes the small user-facing cadenced subset:
+- The main trial CSV includes the small user-facing cadenced subset:
   - `runtime_mode`
   - `cadenced_active_inference_latency_ms`
+  - `cadenced_window_latency_ms`
   - `cadenced_energy_mj_per_inference`
+  - `cadenced_energy_mj_per_window`
   - `cadenced_rtc_sleep_ms`
   - `cadenced_deadline_miss_count`
   - `cadenced_error_code`
   - `cadenced_error_label`
-- The full cadenced STM32 diagnostics remain available in normalized metrics
-  and Optuna trial attrs.
+- STM32 still exposes the fuller cadenced diagnostics in normalized metrics and
+  Optuna trial attrs.
+- Portenta H7 and Nano 33 BLE Sense v1 leave unsupported cadenced fields at
+  their sentinel defaults for schema stability.
 - When `runtime_mode: back_to_back`, the cadenced fields are still present for
   schema stability. Numeric fields use negative sentinels and string fields are
   `None`.

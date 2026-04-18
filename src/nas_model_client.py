@@ -130,6 +130,18 @@ class NASModelClient:
     >>> client.run_scoring_nas(study_name="tinyodom_nas_study")
     """
     def __init__(self, config_path: Path=DEFAULT_CONFIG_PATH):
+        """Initialize NAS state, datasets, and the HIL client socket.
+
+        Parameters
+        ----------
+        config_path : Path, optional
+            Configuration file used to load dataset paths, NAS settings, and
+            network endpoints.
+
+        Returns
+        -------
+        None
+        """
         self.config_path = Path(config_path)
         self.config = load_config(self.config_path)
         
@@ -784,6 +796,13 @@ class NASModelClient:
             )
 
         def _trial_counts():
+            """Count completed, pruned, and failed Optuna trials.
+
+            Returns
+            -------
+            tuple[int, int, int]
+                Counts for complete, pruned, and failed trials in that order.
+            """
             completed = sum(1 for t in study.trials if t.state == TrialState.COMPLETE)
             pruned = sum(1 for t in study.trials if t.state == TrialState.PRUNED)
             failed = sum(1 for t in study.trials if t.state == TrialState.FAIL)
@@ -1296,6 +1315,24 @@ class NASModelClient:
         samples_per_window = max((window_size - stride) / stride, 1)
 
         def integrate_track(vx, vy, start_x, start_y):
+            """Integrate velocity samples into absolute XY positions.
+
+            Parameters
+            ----------
+            vx : array-like of float
+                X velocity samples for one trajectory.
+            vy : array-like of float
+                Y velocity samples for one trajectory.
+            start_x : float
+                Initial x position.
+            start_y : float
+                Initial y position.
+
+            Returns
+            -------
+            tuple[np.ndarray, np.ndarray]
+                Integrated x and y coordinates for the trajectory.
+            """
             xs = []
             ys = []
             x = start_x
@@ -1445,6 +1482,12 @@ class NASModelClient:
         return summary_path
 
     def close(self):
+        """Close the ZeroMQ socket and terminate its context.
+
+        Returns
+        -------
+        None
+        """
         self.socket.close(linger=0)
         self.context.term()
 

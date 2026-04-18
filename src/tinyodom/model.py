@@ -82,6 +82,12 @@ NONNEGATIVE_METRICS = {
     "clock_hz",
     "latency_budget_ms",
     "arena_bytes",
+    "cadenced_active_inference_latency_ms",
+    "cadenced_window_latency_ms",
+    "cadenced_energy_mj_per_inference",
+    "cadenced_energy_mj_per_window",
+    "cadenced_rtc_sleep_ms",
+    "cadenced_deadline_miss_count",
 }
 BUILTIN_SCORE_METRICS = {
     "rmse_vel_x",
@@ -104,20 +110,17 @@ BUILTIN_SCORE_METRICS = {
     "arena_bytes",
     "error_code",
     "cadenced_active_inference_latency_ms",
+    "cadenced_window_latency_ms",
     "cadenced_energy_mj_per_inference",
     "cadenced_energy_mj_per_window",
+    "cadenced_rtc_sleep_ms",
+    "cadenced_deadline_miss_count",
 }
-NONNEGATIVE_METRICS.update(
-    {
-        "cadenced_active_inference_latency_ms",
-        "cadenced_energy_mj_per_inference",
-        "cadenced_energy_mj_per_window",
-    }
-)
 
 CADENCED_NUMERIC_FIELD_DEFAULTS = {
     "cadenced_error_code": -1,
     "cadenced_active_inference_latency_ms": -1.0,
+    "cadenced_window_latency_ms": -1.0,
     "cadenced_energy_mj_per_inference": -1.0,
     "cadenced_energy_mj_per_window": -1.0,
     "cadenced_avg_power_mw": -1.0,
@@ -147,7 +150,9 @@ CADENCED_ALL_FIELDS = (
 CADENCED_CSV_FIELDS = (
     "runtime_mode",
     "cadenced_active_inference_latency_ms",
+    "cadenced_window_latency_ms",
     "cadenced_energy_mj_per_inference",
+    "cadenced_energy_mj_per_window",
     "cadenced_rtc_sleep_ms",
     "cadenced_deadline_miss_count",
     "cadenced_error_code",
@@ -159,6 +164,19 @@ class TrialLike(Protocol):
     """Minimal Optuna Trial interface used by log_trial."""
 
     def set_user_attr(self, key: str, value: Any) -> None:
+        """Attach auxiliary metadata to a trial.
+
+        Parameters
+        ----------
+        key : str
+            Attribute name to store.
+        value : Any
+            JSON-serializable value associated with ``key``.
+
+        Returns
+        -------
+        None
+        """
         ...
 
 
@@ -732,12 +750,46 @@ def _evaluate_score_config(
     context["flops"] = hyperparams["flops"]
 
     def _resolve_score_metric(metric_name: str) -> float:
+        """Resolve one configured metric and normalize evaluation errors.
+
+        Parameters
+        ----------
+        metric_name : str
+            Metric name requested by the score config.
+
+        Returns
+        -------
+        float
+            Resolved metric value from the current evaluation context.
+
+        Raises
+        ------
+        ScoreConfigEvaluationError
+            If the metric cannot be resolved for the current context.
+        """
         try:
             return _resolve_metric_value(metric_name, context, score_config)
         except ValueError as exc:
             raise ScoreConfigEvaluationError(str(exc)) from exc
 
     def _resolve_score_reference(reference: Dict) -> float:
+        """Resolve a typed score reference and normalize evaluation errors.
+
+        Parameters
+        ----------
+        reference : Dict
+            Typed reference specification from the score config.
+
+        Returns
+        -------
+        float
+            Reference value derived from the current evaluation context.
+
+        Raises
+        ------
+        ScoreConfigEvaluationError
+            If the reference cannot be evaluated for the current context.
+        """
         try:
             return _typed_reference_value(reference, context, score_config)
         except ValueError as exc:
@@ -892,6 +944,18 @@ def score_config_uses_training_metrics(score_config: Dict) -> bool:
     score_metrics = getattr(score_config, "metrics", Dict())
 
     def _reference_depends_on_training(reference: Any) -> bool:
+        """Check whether a typed reference reads a training-derived metric.
+
+        Parameters
+        ----------
+        reference : Any
+            Typed metric reference from the score config.
+
+        Returns
+        -------
+        bool
+            ``True`` when ``reference`` depends on a training-only metric.
+        """
         return (
             reference is not None
             and getattr(reference, "type", None) == "metric"
@@ -1288,6 +1352,63 @@ def load_config(
 
     device = config.device
 
+    def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
+        """Read a value from mapping-like or namespace-like config objects.
+
+        Parameters
+        ----------
+        container : Any
+            Config subtree or namespace to inspect.
+        key : str
+            Field name to resolve.
+        default : Any, optional
+            Fallback value when the field is missing.
+
+        Returns
+        -------
+        Any
+            Resolved field value or ``default``.
+        """
+        getter = getattr(container, "get", None)
+        if callable(getter):
+            return getter(key, default)
+        return getattr(container, key, default)
+
+    runtime_mode = str(device.get("runtime_mode", "back_to_back")).strip().lower()
+    if runtime_mode not in {"back_to_back", "cadenced"}:
+        raise ValueError("device.runtime_mode must be one of: back_to_back, cadenced.")
+    device.runtime_mode = runtime_mode
+
+    latency_budget_override_raw = device.get("latency_budget_ms", None)
+    if latency_budget_override_raw in (None, ""):
+        device.latency_budget_ms = None
+    else:
+        if isinstance(latency_budget_override_raw, bool):
+            raise ValueError("device.latency_budget_ms must be a positive number or null.")
+        try:
+            device.latency_budget_ms = float(latency_budget_override_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("device.latency_budget_ms must be a positive number or null.") from exc
+        if device.latency_budget_ms <= 0.0:
+            raise ValueError("device.latency_budget_ms must be a positive number or null.")
+
+    if normalized_device_name == "STM32_NUCLEO_N657X0_Q":
+        stm32_cfg = device.get("stm32", None)
+        if _cfg_get(stm32_cfg, "runtime_mode", None) not in (None, ""):
+            raise ValueError(
+                "device.stm32.runtime_mode is no longer supported. Use device.runtime_mode instead."
+            )
+
+    if (
+        normalized_device_name in {"PORTENTA_H7", "ARDUINO_NANO_33_BLE_SENSE"}
+        and device.runtime_mode == "cadenced"
+        and training.input_mode != "uniform"
+    ):
+        raise ValueError(
+            "Cadenced runtime for Portenta H7 and Arduino Nano 33 BLE Sense only supports "
+            "training.input_mode='uniform'."
+        )
+
     measured_inference_runs_raw = device.get("measured_inference_runs", 10)
     if isinstance(measured_inference_runs_raw, bool):
         raise ValueError("device.measured_inference_runs must be an integer >= 1.")
@@ -1466,10 +1587,9 @@ def build_collect_metrics_request(
     normalized_device_name = str(config.device.name).strip().upper()
     effective_hil_enabled = bool(config.device.hil) if hil_enabled is None else bool(hil_enabled)
     request_device_options = None if device_options is None else dict(device_options)
-    if normalized_device_name == "STM32_NUCLEO_N657X0_Q":
-        if request_device_options is None:
-            request_device_options = {}
-        request_device_options["latency_budget_ms"] = float(latency_budget_ms)
+    if request_device_options is None:
+        request_device_options = {}
+    request_device_options["latency_budget_ms"] = float(latency_budget_ms)
 
     runtime_mode = "direct_serial"
     if effective_hil_enabled:

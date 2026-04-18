@@ -367,6 +367,25 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
                            inputs_orig=X_orig)
 
 def abs_heading(cur_x, cur_y, prev_x, prev_y):
+        """Compute the absolute heading angle between two planar positions.
+
+        Parameters
+        ----------
+        cur_x : float
+            Current x-coordinate.
+        cur_y : float
+            Current y-coordinate.
+        prev_x : float
+            Previous x-coordinate.
+        prev_y : float
+            Previous y-coordinate.
+
+        Returns
+        -------
+        float
+            Heading angle in degrees using the repository's ``atan2(delx, dely)``
+            convention.
+        """
         dely = (cur_y - prev_y)
         delx = (cur_x - prev_x)
         delh= atan2(delx,dely)*57.2958
@@ -440,6 +459,21 @@ def abs_heading_sin_cos(cur_x, cur_y, prev_x, prev_y, eps=1e-4):
 
 
 def random_rotate(input,useMagnetometer=True):
+    """Apply one random 3D rotation to every sample window in a batch.
+
+    Parameters
+    ----------
+    input : np.ndarray
+        Batched IMU windows with accelerometer and gyroscope channels, and
+        optionally magnetometer channels.
+    useMagnetometer : bool, optional
+        Whether the input includes magnetometer channels in columns 6:9.
+
+    Returns
+    -------
+    np.ndarray
+        Rotated copy of ``input`` with the same shape.
+    """
     output = np.copy(input)
     euler = np.random.uniform(0, np.pi, size=3)
     for i in range(0, input.shape[0]):
@@ -458,6 +492,19 @@ def random_rotate(input,useMagnetometer=True):
     return output
 
 def orientation_to_angles(ori):
+    """Convert quaternions into continuous Euler-angle trajectories.
+
+    Parameters
+    ----------
+    ori : np.ndarray | quaternion.quaternion
+        Quaternion samples as either quaternion dtype values or float arrays
+        convertible with ``quaternion.from_float_array``.
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape ``(n, 3)`` containing continuous Euler angles.
+    """
     if ori.dtype != quaternion.quaternion:
         ori = quaternion.from_float_array(ori)
 
@@ -471,6 +518,19 @@ def orientation_to_angles(ori):
 
 
 def adjust_angle_array(angles):
+    """Unwrap an angle sequence by selecting equivalent values modulo ``2π``.
+
+    Parameters
+    ----------
+    angles : np.ndarray
+        Input angle sequence in radians.
+
+    Returns
+    -------
+    np.ndarray
+        Copy of ``angles`` with discontinuities reduced across successive
+        elements.
+    """
     new_angle = np.copy(angles)
     angle_diff = angles[1:] - angles[:-1]
 

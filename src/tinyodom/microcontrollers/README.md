@@ -227,11 +227,12 @@ That path:
 
 Runtime sketch selection is handled by
 [`_sync_arduino_sketch_variant_for_config(...)`](/home/joe/Projects/tinyodom-ex/src/tinyodom/devices.py:584)
-and uses this layout:
+and uses a `runtime_phase` selector plus this layout:
 
 1. Shared uniform variants:
    - `sketches/tinyodom_tcn_energy.ino`
    - `sketches/tinyodom_tcn_no_energy.ino`
+   - `sketches/tinyodom_tcn_energy_cadenced.ino`
 2. Shared analysis variants:
    - `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino`
    - `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino`
@@ -243,6 +244,11 @@ and uses this layout:
 
 Board/core behavior should be selected in Python wrappers and compile-time
 defines, not by duplicating the shared uniform sketch sources.
+
+Cadenced Arduino runs are intentionally staged as a second pass above arena
+search. The base pass keeps using `runtime_phase="back_to_back"`, then the
+prepared candidate directory is restaged via `set_input_mode(...,
+runtime_phase="cadenced")` before one extra fixed-arena evaluation.
 
 ### STM32 Candidate Staging
 
@@ -440,12 +446,15 @@ Supported STM options today:
 1. Shared runtime knob: `device.measured_inference_runs` controls how many on-device
    inference invokes are averaged into one measured HIL attempt. This is not an
    STM-only board option.
-2. `template_root` or legacy `project_root` for the canonical FSBL template.
-3. `cpu_clock_mhz` fixed presets: `200`, `300`, `400`, `600`, `800`.
-4. `weight_storage_mode`: `embedded` or `external_flash`.
-5. `weights_flash_address`, `weights_memory_pool`, and optional
+2. Shared cadence/runtime knobs:
+   - `device.runtime_mode`: `back_to_back` or `cadenced`
+   - `device.latency_budget_ms`: optional cadence-budget override
+3. `template_root` or legacy `project_root` for the canonical FSBL template.
+4. `cpu_clock_mhz` fixed presets: `200`, `300`, `400`, `600`, `800`.
+5. `weight_storage_mode`: `embedded` or `external_flash`.
+6. `weights_flash_address`, `weights_memory_pool`, and optional
    `weights_external_loader` for external flash mode.
-6. Optional tool overrides:
+7. Optional tool overrides:
    - `gdbserver`
    - `gdb`
    - `cubeprog_bin`

@@ -251,9 +251,10 @@ class DeviceInterface(ABC):
         outputs_dir: Path,
         config: Any,
         sketches_dir: Path | None = None,
+        runtime_phase: str = "back_to_back",
     ) -> Path | None:
         """Apply an input-mode change when the backend uses that concept."""
-        del input_mode, outputs_dir, config, sketches_dir
+        del input_mode, outputs_dir, config, sketches_dir, runtime_phase
         return None
 
     @property
@@ -586,13 +587,26 @@ def _sync_arduino_sketch_variant_for_config(
     outputs_dir: Path,
     *,
     sketches_dir: Path | None = None,
+    runtime_phase: str = "back_to_back",
 ) -> Path:
     """Copy the Arduino sketch variant selected by config into ``outputs_dir``."""
     repo_root = Path(__file__).resolve().parents[2]
     sketch_variants_dir = (repo_root / "sketches") if sketches_dir is None else Path(sketches_dir)
     normalized_device_name = str(_cfg_get(_cfg_get(config, "device", None), "name", "")).strip().upper()
+    normalized_runtime_phase = str(runtime_phase).strip().lower() or "back_to_back"
+    if normalized_runtime_phase not in {"back_to_back", "cadenced"}:
+        raise ValueError(
+            f"Unsupported runtime_phase '{runtime_phase}'. Expected 'back_to_back' or 'cadenced'."
+        )
 
     def _resolve_uniform_variant_dir() -> Path:
+        """Resolve the directory containing uniform-input Arduino sketches.
+
+        Returns
+        -------
+        Path
+            Sketch variant directory compatible with the active device config.
+        """
         if normalized_device_name == "PORTENTA_H7":
             portenta_cfg = _cfg_get(_cfg_get(config, "device", None), "portenta", None)
             _normalize_portenta_target_core(
@@ -602,11 +616,18 @@ def _sync_arduino_sketch_variant_for_config(
 
     training_cfg = _cfg_get(config, "training", None)
     energy_aware = bool(_cfg_get(training_cfg, "energy_aware", False))
-    if not energy_aware:
+    input_mode = str(_cfg_get(training_cfg, "input_mode", "uniform")).lower()
+    if normalized_runtime_phase == "cadenced":
+        if input_mode != "uniform":
+            raise ValueError(
+                "Arduino cadenced runtime only supports training.input_mode='uniform'."
+            )
+        variant_dir = _resolve_uniform_variant_dir()
+        variant_name = "tinyodom_tcn_energy_cadenced.ino"
+    elif not energy_aware:
         variant_dir = _resolve_uniform_variant_dir()
         variant_name = "tinyodom_tcn_no_energy.ino"
     else:
-        input_mode = str(_cfg_get(training_cfg, "input_mode", "uniform")).lower()
         variants = {
             "uniform": ("tinyodom_tcn_energy.ino", _resolve_uniform_variant_dir()),
             "representative": (
@@ -766,6 +787,7 @@ class ArduinoDevice(DeviceInterface):
         outputs_dir: Path,
         config: Any,
         sketches_dir: Path | None = None,
+        runtime_phase: str = "back_to_back",
     ) -> Path | None:
         """Update Arduino input mode and resynchronize the active sketch."""
         config.training.input_mode = str(input_mode).lower()
@@ -773,6 +795,7 @@ class ArduinoDevice(DeviceInterface):
             config,
             outputs_dir,
             sketches_dir=sketches_dir,
+            runtime_phase=runtime_phase,
         )
 
     def _resolve_board_options(
@@ -807,7 +830,13 @@ class ArduinoDevice(DeviceInterface):
             "ArduinoDevice.compile: patching constants and compiling sketch at %s",
             sketch_path,
         )
-        arduino_base._patch_sketch_constants(sketch_path, arena_kb, window_size, num_channels)
+        arduino_base._patch_sketch_constants(
+            sketch_path,
+            arena_kb,
+            window_size,
+            num_channels,
+            latency_budget_ms=self._device_options.get("latency_budget_ms"),
+        )
         result = arduino_base.compile_sketch(
             sketch_path=sketch_path,
             fqbn=self._spec.fqbn,
@@ -992,6 +1021,14 @@ class ArduinoDevice(DeviceInterface):
         measure_result: MeasureResult
 
         def _upload_error_metrics() -> DeviceMetrics:
+            """Build a metric payload representing an upload failure.
+
+            Returns
+            -------
+            DeviceMetrics
+                Metrics object populated with compile-time usage and an upload
+                failure code.
+            """
             return DeviceMetrics(
                 ram_bytes=compile_result.ram_bytes or -1,
                 flash_bytes=compile_result.flash_bytes or -1,

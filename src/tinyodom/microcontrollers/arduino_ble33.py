@@ -86,6 +86,6 @@ class ArduinoBLE33Device(ArduinoDevice):
         super().__init__(
             BOARD_NAME,
             serial_port=serial_port,
-            device_options=resolved_options,
+            device_options=dict(device_options or {}),
             spec_override=build_ble33_spec(resolved_options),
         )

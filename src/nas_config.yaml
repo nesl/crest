@@ -2,6 +2,8 @@
 device:
   name: STM32_NUCLEO_N657X0_Q
   hil: true
+  runtime_mode: cadenced                     # Shared runtime control: `back_to_back` or `cadenced`.
+  # latency_budget_ms: 200.0                # Optional shared cadence-budget override. Defaults to stride / sampling_rate_hz * 1000.
   serial_port: "/dev/ttyACM0"
   measured_inference_runs: 10                # Number of on-device inference invokes averaged into one measured HIL attempt.
   dut_ready_timeout_s: 5.0                     # Time to wait for STM32_AI_INIT / DUT READY before sending START.
@@ -16,7 +18,6 @@ device:
   harness_done_timeout_s: 5.0
   stm32:
     project_root: "sketches/stm32/tinyodom_tcn_stm32/FSBL"
-    runtime_mode: cadenced  #"back_to_back"              # Use `cadenced` to run back_to_back first, then a second cadenced STM32 pass.
     wake_margin_us: 5000                      # Cadenced wake-up guard band before each release time.
     min_sleep_us: 5000                        # Cadenced minimum Stop-mode sleep request.
     weight_storage_mode: "external_flash"          # Set to external_flash to stage weights into NOR flash.

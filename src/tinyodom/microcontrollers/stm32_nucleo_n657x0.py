@@ -54,6 +54,7 @@ DEFAULT_MAX_EXTERNAL_FLASH_BYTES = 67_108_864
 # Default fixed CPU clock preset written into the generated STM runtime config.
 DEFAULT_CPU_CLOCK_MHZ = 600
 DEFAULT_RUNTIME_MODE = "back_to_back"
+DEFAULT_LATENCY_BUDGET_MS = 200.0
 DEFAULT_WAKE_MARGIN_US = 5000
 DEFAULT_MIN_SLEEP_US = 5000
 # Weight placement mode used when callers do not override STM storage policy.
@@ -374,7 +375,7 @@ def resolve_stm32_nucleo_n657x0_q_options(
     runtime_mode = _resolve_runtime_mode(options.get("runtime_mode"))
     latency_budget_ms = _coerce_float_with_default(
         options.get("latency_budget_ms"),
-        1.0,
+        DEFAULT_LATENCY_BUDGET_MS,
     )
     if latency_budget_ms <= 0.0:
         raise ValueError("STM latency_budget_ms must be a positive value.")
@@ -529,7 +530,7 @@ def _write_phase_config_header(
     project_root: Path,
     cpu_clock_mhz: int,
     selected_phase: str = DEFAULT_RUNTIME_MODE,
-    latency_budget_ms: float = 1.0,
+    latency_budget_ms: float = DEFAULT_LATENCY_BUDGET_MS,
     measured_runs: int = 10,
     wake_margin_us: int = DEFAULT_WAKE_MARGIN_US,
     min_sleep_us: int = DEFAULT_MIN_SLEEP_US,
@@ -544,7 +545,7 @@ def _write_phase_config_header(
         Requested fixed CPU clock preset.
     selected_phase : str, default="back_to_back"
         Runtime phase written into the generated header.
-    latency_budget_ms : float, default=1.0
+    latency_budget_ms : float, default=200.0
         Cadence budget written into the generated header.
     measured_runs : int, default=10
         Measured-run count written into the staged DUT phase configuration.
@@ -1657,6 +1658,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         outputs_dir: Path,
         config: Any,
         sketches_dir: Path | None = None,
+        runtime_phase: str = "back_to_back",
     ) -> Path | None:
         """STM32 ignores input-mode selection and returns the canonical template.
 
@@ -1676,7 +1678,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         pathlib.Path | None
             Canonical STM32 template root.
         """
-        del input_mode, outputs_dir, config, sketches_dir
+        del input_mode, outputs_dir, config, sketches_dir, runtime_phase
         return self._options.project_root
 
     def cleanup_prepared_candidate(self, prepared_dir: Path | None) -> None:
@@ -2478,10 +2480,16 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             else -1.0
         )
         harness_latency_s = _safe_float(power_metrics.get("harness_latency_s", -1.0))
+        window_latency_s = _safe_float(power_metrics.get("timer_per_window_s", -1.0))
         return {
             "cadenced_error_code": int(phase_result.error_code),
             "cadenced_active_inference_latency_ms": (
                 phase_result.latency_s * 1000.0 if phase_result.latency_s >= 0.0 else -1.0
+            ),
+            "cadenced_window_latency_ms": (
+                window_latency_s * 1000.0
+                if window_latency_s >= 0.0
+                else -1.0
             ),
             "cadenced_energy_mj_per_inference": energy_per_inference,
             "cadenced_energy_mj_per_window": energy_per_window,

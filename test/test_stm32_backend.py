@@ -573,7 +573,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
     def test_evaluate_cadenced_runtime_mode_merges_second_pass_metrics(self) -> None:
         device = STM32NucleoN657X0QDevice(
             serial_port="/dev/ttyACM0",
-            device_options={"runtime_mode": "cadenced"},
+            device_options={"runtime_mode": "cadenced", "latency_budget_ms": 200.0},
         )
         base_result = DeviceMetrics(
             ram_bytes=1111,
@@ -599,6 +599,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                 "harness_latency_s": 0.2,
                 "clock_hz": 600000000.0,
                 "dwt_cycles_per_inference": 120000.0,
+                "timer_per_window_s": 20.0,
                 "rtc_sleep_total_ms": 1500.0,
                 "deadline_miss_count": 0,
                 "wake_recovery_us": 1200.0,
@@ -630,13 +631,14 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         self.assertEqual(metrics.power_metrics["runtime_mode"], "cadenced")
         self.assertEqual(metrics.power_metrics["cadenced_error_code"], HIL_ERROR_OK)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_active_inference_latency_ms"], 80.0)
+        self.assertAlmostEqual(metrics.power_metrics["cadenced_window_latency_ms"], 20000.0)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_energy_mj_per_window"], 12.5)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_rtc_sleep_ms"], 1500.0)
 
     def test_evaluate_cadenced_runtime_mode_reports_back_to_back_when_second_phase_never_runs(self) -> None:
         device = STM32NucleoN657X0QDevice(
             serial_port="/dev/ttyACM0",
-            device_options={"runtime_mode": "cadenced"},
+            device_options={"runtime_mode": "cadenced", "latency_budget_ms": 200.0},
         )
         failed_base_result = DeviceMetrics(
             ram_bytes=1111,
@@ -668,7 +670,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
     def test_cadenced_energy_window_uses_stable_sentinel_when_energy_is_unavailable(self) -> None:
         device = STM32NucleoN657X0QDevice(
             serial_port="/dev/ttyACM0",
-            device_options={"runtime_mode": "cadenced"},
+            device_options={"runtime_mode": "cadenced", "latency_budget_ms": 200.0},
         )
         phase_result = DeviceMetrics(
             ram_bytes=1111,
@@ -676,11 +678,12 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             latency_s=0.080,
             arena_bytes=4096,
             error_code=HIL_ERROR_OK,
-            power_metrics={"runs": 10, "energy_mj_per_inference": -1.0},
+            power_metrics={"runs": 10, "energy_mj_per_inference": -1.0, "timer_per_window_s": 20.0},
         )
 
         metrics = device._cadenced_power_metrics_from_phase_result(phase_result)
 
+        self.assertEqual(metrics["cadenced_window_latency_ms"], 20000.0)
         self.assertEqual(metrics["cadenced_energy_mj_per_inference"], -1.0)
         self.assertEqual(metrics["cadenced_energy_mj_per_window"], -1.0)
 
