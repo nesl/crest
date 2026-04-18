@@ -148,7 +148,6 @@ CADENCED_CSV_FIELDS = (
     "runtime_mode",
     "cadenced_active_inference_latency_ms",
     "cadenced_energy_mj_per_inference",
-    "cadenced_energy_mj_per_window",
     "cadenced_rtc_sleep_ms",
     "cadenced_deadline_miss_count",
     "cadenced_error_code",
