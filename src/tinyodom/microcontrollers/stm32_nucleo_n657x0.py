@@ -372,10 +372,20 @@ def _resolve_runtime_mode(raw_value: object | None) -> str:
 def _resolve_project_layout(raw_value: object | None, *, project_root: Path | None) -> str:
     """Validate and normalize the requested STM project layout."""
     if raw_value in (None, ""):
-        if project_root is None or Path(project_root).expanduser().resolve() == DEFAULT_TEMPLATE_ROOT:
+        if project_root is None:
             return DEFAULT_PROJECT_LAYOUT
+        resolved_root = Path(project_root).expanduser().resolve()
+        if resolved_root == DEFAULT_TEMPLATE_ROOT:
+            return DEFAULT_PROJECT_LAYOUT
+        for layout in ("lrun_dev_boot", "fsbl_legacy"):
+            try:
+                _resolve_workspace_paths(project_root=resolved_root, project_layout=layout)
+            except stm32_cube_clt.WorkflowError:
+                continue
+            return layout
         raise ValueError(
-            "STM project_layout must be provided when overriding the default STM project_root."
+            "STM project_layout could not be inferred from project_root "
+            f"{resolved_root}. Set project_layout to 'fsbl_legacy' or 'lrun_dev_boot'."
         )
     layout = str(raw_value).strip().lower()
     if layout not in {"fsbl_legacy", "lrun_dev_boot"}:
@@ -2658,7 +2668,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         serial_port: Optional[str],
         baud_rate: int,
         serial_timeout_s: float,
-        measured_inference_runs: int = 10,
+        measured_inference_runs: int | None = None,
         dut_ready_timeout_s: Optional[float] = None,
         harness_serial_port: Optional[str] = None,
         harness_fqbn: Optional[str] = None,
@@ -2769,7 +2779,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         run_hil: bool = True,
         baud_rate: int = 115200,
         serial_timeout_s: float = 12.0,
-        measured_inference_runs: int = 10,
+        measured_inference_runs: int | None = None,
         dut_ready_timeout_s: Optional[float] = None,
         harness_serial_port: Optional[str] = None,
         harness_fqbn: Optional[str] = None,
@@ -2839,18 +2849,41 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         del arena_kb
         project_root = Path(dirpath).expanduser().resolve()
         paths: STM32WorkspacePaths | None = None
-        effective_measured_runs = max(1, int(measured_inference_runs))
+        normalized_phase = _resolve_runtime_mode(phase)
         try:
             paths = self._resolve_paths(project_root)
         except stm32_cube_clt.WorkflowError:
             if project_root.exists():
                 raise
+        if measured_inference_runs is None:
+            if paths is None:
+                effective_measured_runs = 10
+            else:
+                try:
+                    effective_measured_runs = _read_phase_config_measured_runs(paths)
+                except stm32_cube_clt.WorkflowError:
+                    effective_measured_runs = 10
+        else:
+            effective_measured_runs = max(1, int(measured_inference_runs))
         if paths is not None:
-            self._write_runtime_phase_config(
-                paths=paths,
-                selected_phase=phase,
-                measured_runs=effective_measured_runs,
+            phase_header_path = paths.inc_dir / "tcn_dut_phase_config.h"
+            phase_header_text = (
+                phase_header_path.read_text(encoding="utf-8")
+                if phase_header_path.is_file()
+                else ""
             )
+            selected_phase_macro = (
+                "TCN_DUT_PHASE_CADENCED"
+                if normalized_phase == "cadenced"
+                else "TCN_DUT_PHASE_BACK_TO_BACK"
+            )
+            expected_phase = f"#define TCN_DUT_SELECTED_PHASE {selected_phase_macro}"
+            if measured_inference_runs is not None or expected_phase not in phase_header_text:
+                self._write_runtime_phase_config(
+                    paths=paths,
+                    selected_phase=phase,
+                    measured_runs=effective_measured_runs,
+                )
         try:
             storage_metrics = self._storage_power_metrics(paths if paths is not None else project_root)
         except stm32_cube_clt.WorkflowError:
@@ -3337,7 +3370,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         run_hil: bool = True,
         baud_rate: int = 115200,
         serial_timeout_s: float = 12.0,
-        measured_inference_runs: int = 10,
+        measured_inference_runs: int | None = None,
         dut_ready_timeout_s: Optional[float] = None,
         harness_serial_port: Optional[str] = None,
         harness_fqbn: Optional[str] = None,
@@ -3371,8 +3404,10 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             Serial baud rate retained for interface compatibility.
         serial_timeout_s : float, default=12.0
             Serial timeout retained for interface compatibility.
-        measured_inference_runs : int, default=10
-            Requested on-device run count.
+        measured_inference_runs : int | None, optional
+            Requested on-device run count. When omitted, staged workspaces keep
+            their existing configured value and unstaged evaluation falls back
+            to ``10``.
         dut_ready_timeout_s : float | None, optional
             DUT-ready timeout retained for interface compatibility.
         harness_serial_port : str | None, optional

@@ -982,6 +982,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             resolved = resolve_device_options(str(config.device.name), config.device)
 
         self.assertEqual(resolved["project_root"], template_root.resolve())
+        self.assertEqual(resolved["project_layout"], "fsbl_legacy")
         self.assertEqual(resolved["gdb_port"], 61235)
         self.assertEqual(resolved["apid"], 2)
         self.assertEqual(resolved["server_ready_timeout_s"], 20.0)
@@ -991,6 +992,66 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertEqual(resolved["weights_memory_pool"], weights_memory_pool.resolve())
         self.assertEqual(resolved["weights_external_loader"], weights_external_loader.resolve())
         self.assertEqual(resolved["max_external_flash_bytes"], 123456)
+
+    def test_resolve_device_options_rejects_ambiguous_custom_stm_root_without_layout(self) -> None:
+        """Ensure custom roots still fail clearly when layout inference is impossible."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            ambiguous_root = tmp_path / "stm32_project"
+            ambiguous_root.mkdir(parents=True)
+            config = Dict(
+                training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+                device=Dict(
+                    hil=False,
+                    name="STM32_NUCLEO_N657X0_Q",
+                    stm32=Dict(project_root=ambiguous_root),
+                ),
+                data=Dict(window_size=128),
+                outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            )
+
+            with self.assertRaisesRegex(ValueError, "could not be inferred"):
+                resolve_device_options(str(config.device.name), config.device)
+
+    def test_resolve_device_options_normalizes_custom_lrun_project_root_without_layout(self) -> None:
+        """Ensure custom LRUN roots infer the dev-boot layout automatically."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            project_root = tmp_path / "tinyodom_tcn_stm32_lrun"
+            for required_dir in (
+                project_root / "FSBL",
+                project_root / "Appli",
+                project_root / "STM32CubeIDE" / "Boot" / "Debug",
+                project_root / "STM32CubeIDE" / "AppS" / "Debug",
+            ):
+                required_dir.mkdir(parents=True)
+            (project_root / "STM32CubeIDE" / "Boot" / "Debug" / "makefile").write_text(
+                "# makefile\n",
+                encoding="utf-8",
+            )
+            (project_root / "STM32CubeIDE" / "AppS" / "Debug" / "makefile").write_text(
+                "# makefile\n",
+                encoding="utf-8",
+            )
+            config = Dict(
+                training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+                device=Dict(
+                    hil=False,
+                    name="STM32_NUCLEO_N657X0_Q",
+                    stm32=Dict(
+                        project_root=project_root,
+                        gdb_port=61235,
+                    ),
+                ),
+                data=Dict(window_size=128),
+                outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            )
+
+            resolved = resolve_device_options(str(config.device.name), config.device)
+
+        self.assertEqual(resolved["project_root"], project_root.resolve())
+        self.assertEqual(resolved["project_layout"], "lrun_dev_boot")
+        self.assertEqual(resolved["gdb_port"], 61235)
 
 
 class TrainAndScoreTests(unittest.TestCase):
@@ -2064,6 +2125,7 @@ class LoadSettingsTests(unittest.TestCase):
             resolved = resolve_device_options(str(settings.device.name), settings.device)
 
             self.assertEqual(resolved["project_root"], project_root.resolve())
+            self.assertEqual(resolved["project_layout"], "fsbl_legacy")
             self.assertEqual(resolved["gdb_port"], 61235)
             self.assertEqual(resolved["apid"], 2)
             self.assertEqual(resolved["server_ready_timeout_s"], 20.0)
