@@ -27,6 +27,7 @@ EXTERNAL_FLASH_MODE = "external_flash"
 
 BACK_TO_BACK_TIME_FILENAME = "back_to_back_inference_time_vs_cpu_frequency.png"
 BACK_TO_BACK_ENERGY_FILENAME = "back_to_back_inference_energy_vs_cpu_frequency.png"
+CADENCED_TIME_FILENAME = "cadenced_inference_time_vs_cpu_frequency.png"
 CADENCED_BOX_FILENAME = "cadenced_energy_per_inference_vs_cpu_frequency.png"
 CADENCED_BOX_SPLIT_FILENAME = "cadenced_energy_per_inference_vs_cpu_frequency_by_mode.png"
 CADENCED_BOX_FILTERED_FILENAME = "cadenced_energy_per_inference_vs_cpu_frequency_filtered.png"
@@ -828,6 +829,20 @@ def generate_plots(results_dir: Path) -> list[Path]:
             weight_storage_mode=EXTERNAL_FLASH_MODE,
         ),
     }
+    cadenced_time = {
+        EMBEDDED_MODE: _collect_metric_series(
+            rows,
+            phase=CADENCED_PHASE,
+            metric="active_inference_latency_ms",
+            weight_storage_mode=EMBEDDED_MODE,
+        ),
+        EXTERNAL_FLASH_MODE: _collect_metric_series(
+            rows,
+            phase=CADENCED_PHASE,
+            metric="active_inference_latency_ms",
+            weight_storage_mode=EXTERNAL_FLASH_MODE,
+        ),
+    }
     cadenced_energy_filtered = _collect_cadenced_filtered_energy(rows)
     cadenced_scatter = _collect_cadenced_scatter_points(rows)
     filtered_drop_label_by_mode = {
@@ -845,6 +860,8 @@ def generate_plots(results_dir: Path) -> list[Path]:
     frequencies = sorted(
         set(back_to_back_time[EMBEDDED_MODE])
         | set(back_to_back_time[EXTERNAL_FLASH_MODE])
+        | set(cadenced_time[EMBEDDED_MODE])
+        | set(cadenced_time[EXTERNAL_FLASH_MODE])
         | set(cadenced_energy[EMBEDDED_MODE])
         | set(cadenced_energy[EXTERNAL_FLASH_MODE])
         | set(cadenced_energy_filtered.get(EMBEDDED_MODE, {}))
@@ -856,6 +873,7 @@ def generate_plots(results_dir: Path) -> list[Path]:
         raise RuntimeError(f"No successful runs with plot-ready metrics found in {results_dir / SUMMARY_FILENAME}")
     has_back_to_back_time = bool(back_to_back_time[EMBEDDED_MODE] or back_to_back_time[EXTERNAL_FLASH_MODE])
     has_back_to_back_energy = bool(back_to_back_energy[EMBEDDED_MODE] or back_to_back_energy[EXTERNAL_FLASH_MODE])
+    has_cadenced_time = bool(cadenced_time[EMBEDDED_MODE] or cadenced_time[EXTERNAL_FLASH_MODE])
     if not cadenced_energy[EMBEDDED_MODE] and not cadenced_energy[EXTERNAL_FLASH_MODE]:
         raise RuntimeError("No successful cadenced rows with inference-energy data were found.")
     if not cadenced_scatter:
@@ -883,6 +901,17 @@ def generate_plots(results_dir: Path) -> list[Path]:
             ylabel="Inference Energy (mJ / inference)",
         )
         output_paths.append(back_to_back_energy_path)
+
+    if has_cadenced_time:
+        cadenced_time_path = results_dir / CADENCED_TIME_FILENAME
+        _write_grouped_pointplot(
+            cadenced_time_path,
+            frequencies,
+            cadenced_time,
+            title="Cadenced Inference Time by CPU Frequency",
+            ylabel="Inference Time (ms)",
+        )
+        output_paths.append(cadenced_time_path)
 
     cadenced_box_path = results_dir / CADENCED_BOX_FILENAME
     _write_grouped_pointplot(

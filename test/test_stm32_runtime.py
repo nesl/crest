@@ -89,6 +89,10 @@ class STM32RuntimeParserTests(unittest.TestCase):
         self.assertEqual(telemetry.power_metrics["runs"], 10)
         self.assertAlmostEqual(telemetry.power_metrics["clock_hz"], 600000000.0)
         self.assertAlmostEqual(telemetry.power_metrics["dwt_cycles_per_inference"], 120000.0)
+        self.assertEqual(telemetry.power_metrics["wake_recovery_us"], -1.0)
+        self.assertEqual(telemetry.power_metrics["wake_overshoot_us"], -1.0)
+        self.assertEqual(telemetry.power_metrics["rtc_sleep_total_ms"], -1.0)
+        self.assertEqual(telemetry.power_metrics["deadline_miss_count"], -1)
 
     def test_parse_runtime_lines_rejects_fail_tokens(self) -> None:
         with self.assertRaises(stm32_runtime.STM32RuntimeProtocolError) as context:

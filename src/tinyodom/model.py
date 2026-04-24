@@ -43,8 +43,7 @@ STM32_DEFAULT_PROJECT_ROOT = (
     REPO_ROOT
     / "sketches"
     / "stm32"
-    / "tinyodom_tcn_stm32"
-    / "FSBL"
+    / "tinyodom_tcn_stm32_lrun"
 )
 MIN_TCN_LAYERS = 3
 MAX_TCN_LAYERS = 8

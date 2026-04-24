@@ -6,7 +6,7 @@ device:
   # latency_budget_ms: 200.0                # Optional shared cadence-budget override. Defaults to stride / sampling_rate_hz * 1000.
   serial_port: "/dev/ttyACM0"
   measured_inference_runs: 10                # Number of on-device inference invokes averaged into one measured HIL attempt.
-  dut_ready_timeout_s: 5.0                     # Time to wait for STM32_AI_INIT / DUT READY before sending START.
+  dut_ready_timeout_s: 12.0                    # Time to wait for STM32_AI_INIT / DUT READY before sending START.
   serial_timeout_s: 12.0                       # Time to wait for the measured runtime pass after START.
   cpu_clock_mhz_options: [200, 300, 400, 600, 800]  # Optional per-trial CPU presets for boards that support runtime clock selection.
   harness_serial_port: "/dev/ttyACM1"
@@ -17,7 +17,9 @@ device:
   harness_active_timeout_s: 30.0
   harness_done_timeout_s: 5.0
   stm32:
-    project_root: "sketches/stm32/tinyodom_tcn_stm32/FSBL"
+    project_root: "sketches/stm32/tinyodom_tcn_stm32_lrun"
+    project_layout: "lrun_dev_boot"
+    appli_flash_address: "0x70100000"
     wake_margin_us: 5000                      # Cadenced wake-up guard band before each release time.
     min_sleep_us: 5000                        # Cadenced minimum Stop-mode sleep request.
     weight_storage_mode: "external_flash"          # Set to external_flash to stage weights into NOR flash.

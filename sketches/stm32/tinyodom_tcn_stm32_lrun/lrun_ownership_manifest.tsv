@@ -1,0 +1,48 @@
+# category	relative_path	vendor_source_relative_to_STM32CubeN6
+# This manifest describes the committed LRUN overlay plus a small set of named
+# vendor-copy files that must be materialized deterministically. The broader
+# LRUN vendor workspace is setup-managed and tracked in setup state, not in git.
+
+tinyodom_owned	Appli/Inc/tcn_dut_runner.h	
+tinyodom_owned	Appli/Src/tcn_dut_runner.c	
+tinyodom_owned	lrun_ownership_manifest.tsv	
+
+vendor_derived	Appli/Inc/stm32n6xx_hal_conf.h	
+vendor_derived	Appli/Inc/stm32n6xx_nucleo_conf.h	
+vendor_derived	Appli/Src/main.c	
+vendor_derived	Appli/Src/stm32n6xx_hal_msp.c	
+vendor_derived	Appli/Src/stm32n6xx_it.c	
+vendor_derived	STM32CubeIDE/AppS/STM32N657XX_LRUN.ld	
+vendor_derived	STM32CubeIDE/Boot/STM32N657XX_AXISRAM2_fsbl.ld	
+vendor_derived	README.md	
+
+vendor_copy	Appli/Src/secure_nsc.c	Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_LRUN/Appli/Src/secure_nsc.c
+vendor_copy	FSBL/Inc/stm32_extmem_conf.h	Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_LRUN/FSBL/Inc/stm32_extmem_conf.h
+
+generated	Appli/Inc/network.h	
+generated	Appli/Inc/network_config.h	
+generated	Appli/Inc/network_data.h	
+generated	Appli/Inc/network_data_params.h	
+generated	Appli/Inc/tcn_dut_phase_config.h	
+generated	Appli/Src/network.c	
+generated	Appli/Src/network_data.c	
+generated	Appli/Src/network_data_params.c	
+
+build_recipe	STM32CubeIDE/AppS/Debug/makefile	
+build_recipe	STM32CubeIDE/AppS/Debug/objects.mk	
+build_recipe	STM32CubeIDE/AppS/Debug/objects.list	
+build_recipe	STM32CubeIDE/AppS/Debug/sources.mk	
+build_recipe	STM32CubeIDE/AppS/Debug/stedgeai.mk	
+build_recipe	STM32CubeIDE/AppS/Debug/Src/subdir.mk	
+build_recipe	STM32CubeIDE/AppS/Debug/Startup/subdir.mk	
+build_recipe	STM32CubeIDE/Boot/Debug/makefile	
+build_recipe	STM32CubeIDE/Boot/Debug/objects.mk	
+build_recipe	STM32CubeIDE/Boot/Debug/objects.list	
+build_recipe	STM32CubeIDE/Boot/Debug/sources.mk	
+build_recipe	STM32CubeIDE/Boot/Debug/Src/subdir.mk	
+build_recipe	STM32CubeIDE/Boot/Debug/Startup/subdir.mk	
+build_recipe	STM32CubeIDE/Boot/Debug/Drivers/STM32N6xx_HAL_Driver/subdir.mk	
+build_recipe	STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/subdir.mk	
+build_recipe	STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/SAL/subdir.mk	
+build_recipe	STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/NOR_SFDP/subdir.mk	
+build_recipe	STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/Boot/subdir.mk	

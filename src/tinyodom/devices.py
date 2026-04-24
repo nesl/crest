@@ -122,6 +122,20 @@ class CompileResult:
         External flash bytes consumed by staged weight blobs when the backend
         uses separate weight storage.
         Not used by all boards.
+    boot_build_dir : pathlib.Path | None, optional
+        STM32-only Boot-project build directory when the backend produces
+        separate boot and application artifacts.
+    boot_elf_path : pathlib.Path | None, optional
+        STM32-only Boot-project ELF path used for debug loading.
+    app_build_dir : pathlib.Path | None, optional
+        STM32-only App-project build directory when the backend produces
+        separate boot and application artifacts.
+    app_elf_path : pathlib.Path | None, optional
+        STM32-only App-project ELF path.
+    signed_app_bin_path : pathlib.Path | None, optional
+        STM32-only trusted application image path emitted after signing.
+    fsbl_copy_window_bytes : int | None, optional
+        STM32 LRUN copy-window size compiled into the bootloader.
     """
 
     success: bool
@@ -134,6 +148,12 @@ class CompileResult:
     heap_bytes: Optional[int] = None
     stack_bytes: Optional[int] = None
     external_flash_bytes: Optional[int] = None
+    boot_build_dir: Optional[Path] = None
+    boot_elf_path: Optional[Path] = None
+    app_build_dir: Optional[Path] = None
+    app_elf_path: Optional[Path] = None
+    signed_app_bin_path: Optional[Path] = None
+    fsbl_copy_window_bytes: Optional[int] = None
 
 
 @dataclass(frozen=True)

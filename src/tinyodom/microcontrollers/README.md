@@ -258,7 +258,7 @@ The current backend in
 [`stm32_nucleo_n657x0.py`]( src/tinyodom/microcontrollers/stm32_nucleo_n657x0.py:1386)
 instead:
 
-1. Copies a canonical FSBL template into a candidate-specific staging root.
+1. Copies a canonical STM32 workspace overlay into a candidate-specific staging root.
 2. Exports the Keras model to TFLite.
 3. Runs ST Edge AI analyze/generate steps.
 4. Stages generated outputs into the project.
@@ -434,12 +434,22 @@ device:
   serial_port: /dev/ttyACM0
   measured_inference_runs: 10
   stm32:
-    template_root: sketches/stm32/tinyodom_tcn_stm32/FSBL
+    project_root: sketches/stm32/tinyodom_tcn_stm32_lrun
+    project_layout: lrun_dev_boot
     cpu_clock_mhz: 600
     weight_storage_mode: external_flash
     weights_flash_address: 0x71000000
     weights_memory_pool: analysis_scripts/stm32_example_project/nucleo_mypool.json
 ```
+
+Current default behavior:
+
+1. If `device.stm32.project_root` is omitted, the backend defaults to
+   `sketches/stm32/tinyodom_tcn_stm32_lrun`.
+2. If `device.stm32.project_layout` is omitted for that default root, the
+   backend defaults to `lrun_dev_boot`.
+3. `fsbl_legacy` is still supported for the older single-project FSBL layout,
+   but it is no longer the default STM32 path.
 
 Supported STM options today:
 
@@ -449,7 +459,7 @@ Supported STM options today:
 2. Shared cadence/runtime knobs:
    - `device.runtime_mode`: `back_to_back` or `cadenced`
    - `device.latency_budget_ms`: optional cadence-budget override
-3. `template_root` or legacy `project_root` for the canonical FSBL template.
+3. `project_root` and optional `project_layout` for the canonical STM32 workspace.
 4. `cpu_clock_mhz` fixed presets: `200`, `300`, `400`, `600`, `800`.
 5. `weight_storage_mode`: `embedded` or `external_flash`.
 6. `weights_flash_address`, `weights_memory_pool`, and optional
