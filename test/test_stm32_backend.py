@@ -1551,6 +1551,18 @@ class STM32HelperTests(unittest.TestCase):
         )
         self.assertEqual(classification, "flash")
 
+    def test_classify_build_failure_treats_lrun_code_image_budget_as_flash(self) -> None:
+        """Ensure LRUN trusted-App budget overflows map to flash overflow semantics.
+
+        Returns
+        -------
+        None
+        """
+        classification = stm32_cube_clt.classify_build_failure(
+            "STM trusted App image exceeds available LRUN code-image budget (130321 > 65536)."
+        )
+        self.assertEqual(classification, "flash")
+
     def test_run_command_wraps_host_os_errors_in_workflow_error(self) -> None:
         """Ensure host-side command launch failures are normalized.
 
@@ -2449,6 +2461,60 @@ class STM32HelperTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertIn("LRUN copy window overlaps the weights region.", result.log)
+
+    def test_compile_lrun_classifies_trusted_app_budget_overflow_as_flash(self) -> None:
+        """Ensure LRUN trusted-App budget failures surface as flash overflow."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                }
+            )
+
+            def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                del jobs, clean
+                debug_dir = project_root / "Debug"
+                if project_root.name == "AppS":
+                    elf_path = debug_dir / "Template_LRUN_AppS.elf"
+                    _write_text(debug_dir / "Template_LRUN_AppS.bin", "appbin")
+                else:
+                    elf_path = debug_dir / "Template_LRUN_FSBL.elf"
+                _write_text(elf_path, "elf")
+                return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
+
+            def _fake_size(elf_path: Path):
+                if "AppS" in elf_path.name:
+                    return stm32_cube_clt.SizeResult(elf_flash_bytes=120000, ram_bytes=64000, raw_output="app")
+                return stm32_cube_clt.SizeResult(elf_flash_bytes=32000, ram_bytes=12000, raw_output="boot")
+
+            def _fake_sign(**kwargs):
+                output_bin = Path(kwargs["output_bin"])
+                output_bin.parent.mkdir(parents=True, exist_ok=True)
+                output_bin.write_bytes(b"x" * (device.spec.max_flash_bytes + 1))
+                return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                side_effect=_fake_build,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                side_effect=_fake_size,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                side_effect=_fake_sign,
+            ):
+                result = device.compile(
+                    sketch_path=staged_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.overflow_kind, "flash")
+        self.assertIn("exceeds available LRUN code-image budget", result.log)
 
     def test_compile_lrun_flash_accounting_excludes_debug_loaded_boot(self) -> None:
         """Ensure LRUN flash accounting only tracks the trusted App image."""

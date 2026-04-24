@@ -677,6 +677,7 @@ def classify_build_failure(log_text: str) -> Optional[str]:
         ".text will not fit",
         "internal flash image exceeds available internal flash",
         "external weight blob exceeds available external flash",
+        "exceeds available lrun code-image budget",
     )
     if any(indicator in lowered for indicator in flash_indicators):
         return "flash"

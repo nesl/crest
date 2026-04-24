@@ -89,11 +89,13 @@ void HAL_RTC_MspInit(RTC_HandleTypeDef *hrtc)
   __HAL_RCC_RTC_CLK_SLEEP_ENABLE();
   __HAL_RCC_RTCAPB_CLK_SLEEP_ENABLE();
 
-  s_rtc_exti.Line = EXTI_CONFIG;
   exti_config.Line = EXTI_LINE_17;
   exti_config.Mode = EXTI_MODE_INTERRUPT;
   exti_config.Trigger = EXTI_TRIGGER_RISING;
-  HAL_EXTI_SetConfigLine(&s_rtc_exti, &exti_config);
+  if (HAL_EXTI_SetConfigLine(&s_rtc_exti, &exti_config) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
   HAL_NVIC_SetPriority(RTC_S_IRQn, 0U, 0U);
   HAL_NVIC_EnableIRQ(RTC_S_IRQn);

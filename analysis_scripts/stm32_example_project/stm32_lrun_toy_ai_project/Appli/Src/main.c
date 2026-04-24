@@ -157,11 +157,11 @@ int main(void)
   BSP_LED_Init(LED_GREEN);
   BSP_LED_Init(LED_BLUE);
 
-  /* USER CODE END 2 */
   DebugCom_Init();
   DWT_Init();
   toy_ai_harness_gpio_init();
   toy_ai_run_once();
+  /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */

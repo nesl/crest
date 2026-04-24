@@ -24,7 +24,6 @@ from stm32_lrun_common import (
     DEFAULT_WEIGHTS_FLASH_ADDRESS,
     DEFAULT_WEIGHTS_MEMORY_POOL,
     EXPECTED_OUTPUTS,
-    read_staging_manifest,
     resolve_stedgeai_cli,
     stage_generated_outputs,
     verify_generate_outputs,

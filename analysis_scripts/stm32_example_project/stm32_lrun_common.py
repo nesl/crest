@@ -510,7 +510,6 @@ def reset_target(
 def validate_flash_layout(
     *,
     appli_trusted_size: int,
-    weights_blob_size: int,
     appli_flash_address: str,
     weights_flash_address: str,
 ) -> None:

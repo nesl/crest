@@ -530,7 +530,6 @@ def main() -> int:
         external_loader = resolve_weights_external_loader(args.cubeprog_bin, args.weights_external_loader)
         validate_flash_layout(
             appli_trusted_size=app_trusted.stat().st_size,
-            weights_blob_size=weights_blob_size,
             appli_flash_address=args.appli_flash_address,
             weights_flash_address=args.weights_flash_address,
         )

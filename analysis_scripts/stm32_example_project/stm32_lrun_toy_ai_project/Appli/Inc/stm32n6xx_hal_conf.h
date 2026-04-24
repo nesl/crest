@@ -316,10 +316,6 @@ extern "C" {
 #include "stm32n6xx_hal_gfxtim.h"
 #endif /* HAL_GFXTIM_MODULE_ENABLED */
 
-#ifdef HAL_GPIO_MODULE_ENABLED
-#include "stm32n6xx_hal_gpio.h"
-#endif /* HAL_GPIO_MODULE_ENABLED */
-
 #ifdef HAL_GPU2D_MODULE_ENABLED
 #include "stm32n6xx_hal_gpu2d.h"
 #endif /* HAL_GPU2D_MODULE_ENABLED */
