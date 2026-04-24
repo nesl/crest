@@ -81,10 +81,11 @@ NONNEGATIVE_METRICS = {
     "clock_hz",
     "latency_budget_ms",
     "arena_bytes",
+    "cadenced_error_code",
     "cadenced_active_inference_latency_ms",
     "cadenced_window_latency_ms",
-    "cadenced_energy_mj_per_inference",
     "cadenced_energy_mj_per_window",
+    "cadenced_energy_mj_per_trial",
     "cadenced_rtc_sleep_ms",
     "cadenced_deadline_miss_count",
 }
@@ -108,10 +109,11 @@ BUILTIN_SCORE_METRICS = {
     "latency_budget_ms",
     "arena_bytes",
     "error_code",
+    "cadenced_error_code",
     "cadenced_active_inference_latency_ms",
     "cadenced_window_latency_ms",
-    "cadenced_energy_mj_per_inference",
     "cadenced_energy_mj_per_window",
+    "cadenced_energy_mj_per_trial",
     "cadenced_rtc_sleep_ms",
     "cadenced_deadline_miss_count",
 }
@@ -120,8 +122,8 @@ CADENCED_NUMERIC_FIELD_DEFAULTS = {
     "cadenced_error_code": -1,
     "cadenced_active_inference_latency_ms": -1.0,
     "cadenced_window_latency_ms": -1.0,
-    "cadenced_energy_mj_per_inference": -1.0,
     "cadenced_energy_mj_per_window": -1.0,
+    "cadenced_energy_mj_per_trial": -1.0,
     "cadenced_avg_power_mw": -1.0,
     "cadenced_avg_current_ma": -1.0,
     "cadenced_bus_voltage_v": -1.0,
@@ -150,8 +152,8 @@ CADENCED_CSV_FIELDS = (
     "runtime_mode",
     "cadenced_active_inference_latency_ms",
     "cadenced_window_latency_ms",
-    "cadenced_energy_mj_per_inference",
     "cadenced_energy_mj_per_window",
+    "cadenced_energy_mj_per_trial",
     "cadenced_rtc_sleep_ms",
     "cadenced_deadline_miss_count",
     "cadenced_error_code",
@@ -361,7 +363,10 @@ def apply_cadenced_metric_defaults(
         except (TypeError, ValueError):
             metrics[field_name] = default_value
     if metrics["cadenced_error_code"] >= 0:
-        metrics["cadenced_error_label"] = describe_error_code(metrics["cadenced_error_code"])
+        metrics["cadenced_error_label"] = describe_error_code(
+            metrics["cadenced_error_code"],
+            prefer_master=False,
+        )
     else:
         metrics["cadenced_error_label"] = None
     for field_name in CADENCED_STRING_FIELDS[1:]:

@@ -298,7 +298,10 @@ class HILServer:
 
         base_metrics["runtime_mode"] = "cadenced"
         base_metrics["cadenced_error_code"] = int(cadenced_result.error_code)
-        base_metrics["cadenced_error_label"] = describe_error_code(int(cadenced_result.error_code))
+        base_metrics["cadenced_error_label"] = describe_error_code(
+            int(cadenced_result.error_code),
+            prefer_master=False,
+        )
         if int(cadenced_result.error_code) != HIL_ERROR_OK:
             return base_metrics
 
@@ -311,8 +314,8 @@ class HILServer:
             except (AttributeError, TypeError, ValueError):
                 raw_energy = -1.0
         energy_per_slot = raw_energy if math.isfinite(raw_energy) and raw_energy >= 0.0 else -1.0
-        base_metrics["cadenced_energy_mj_per_inference"] = energy_per_slot
-        base_metrics["cadenced_energy_mj_per_window"] = (
+        base_metrics["cadenced_energy_mj_per_window"] = energy_per_slot
+        base_metrics["cadenced_energy_mj_per_trial"] = (
             energy_per_slot * float(request_metrics_args.measured_inference_runs)
             if energy_per_slot >= 0.0
             else -1.0

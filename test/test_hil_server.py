@@ -192,8 +192,8 @@ class DetermineMetricsTests(HILServerTestCase):
                 "cadenced_error_code": -1,
                 "cadenced_error_label": None,
                 "cadenced_active_inference_latency_ms": -1.0,
-                "cadenced_energy_mj_per_inference": -1.0,
                 "cadenced_energy_mj_per_window": -1.0,
+                "cadenced_energy_mj_per_trial": -1.0,
             },
         ):
             metrics = server.determine_metrics(Dict(flops=123, input_dim=6))
@@ -203,8 +203,8 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.evaluate.assert_called_once()
         self.assertEqual(metrics["runtime_mode"], "cadenced")
         self.assertEqual(metrics["cadenced_error_code"], HIL_ERROR_OK)
-        self.assertAlmostEqual(metrics["cadenced_energy_mj_per_inference"], 1.5)
-        self.assertAlmostEqual(metrics["cadenced_energy_mj_per_window"], 15.0)
+        self.assertAlmostEqual(metrics["cadenced_energy_mj_per_window"], 1.5)
+        self.assertAlmostEqual(metrics["cadenced_energy_mj_per_trial"], 15.0)
 
     def test_determine_metrics_discards_arduino_cadenced_second_pass_latency(self) -> None:
         server = self.build_server()
@@ -236,8 +236,8 @@ class DetermineMetricsTests(HILServerTestCase):
                 "cadenced_error_code": -1,
                 "cadenced_error_label": None,
                 "cadenced_active_inference_latency_ms": -1.0,
-                "cadenced_energy_mj_per_inference": -1.0,
                 "cadenced_energy_mj_per_window": -1.0,
+                "cadenced_energy_mj_per_trial": -1.0,
             },
         ):
             metrics = server.determine_metrics(Dict(flops=123, input_dim=6))

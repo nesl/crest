@@ -3319,8 +3319,8 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 if window_latency_s >= 0.0
                 else -1.0
             ),
-            "cadenced_energy_mj_per_inference": energy_per_inference,
-            "cadenced_energy_mj_per_window": energy_per_window,
+            "cadenced_energy_mj_per_window": energy_per_inference,
+            "cadenced_energy_mj_per_trial": energy_per_window,
             "cadenced_avg_power_mw": _safe_float(power_metrics.get("avg_power_mw", -1.0)),
             "cadenced_avg_current_ma": _safe_float(power_metrics.get("avg_current_ma", -1.0)),
             "cadenced_bus_voltage_v": _safe_float(power_metrics.get("bus_voltage_v", -1.0)),

@@ -361,8 +361,8 @@ class CollectMetricsTests(unittest.TestCase):
                     "cadenced_error_code": 0,
                     "cadenced_active_inference_latency_ms": 80.0,
                     "cadenced_window_latency_ms": 20000.0,
-                    "cadenced_energy_mj_per_inference": 1.25,
-                    "cadenced_energy_mj_per_window": 12.5,
+                    "cadenced_energy_mj_per_window": 1.25,
+                    "cadenced_energy_mj_per_trial": 12.5,
                     "cadenced_rtc_sleep_ms": 1500.0,
                     "cadenced_deadline_miss_count": 0,
                     "cadenced_rtc_clock_source": "LSE",
@@ -389,9 +389,10 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["runtime_mode"], "cadenced")
         self.assertAlmostEqual(metrics["cadenced_active_inference_latency_ms"], 80.0)
         self.assertAlmostEqual(metrics["cadenced_window_latency_ms"], 20000.0)
-        self.assertAlmostEqual(metrics["cadenced_energy_mj_per_window"], 12.5)
+        self.assertAlmostEqual(metrics["cadenced_energy_mj_per_window"], 1.25)
+        self.assertAlmostEqual(metrics["cadenced_energy_mj_per_trial"], 12.5)
         self.assertEqual(metrics["cadenced_deadline_miss_count"], 0)
-        self.assertEqual(metrics["cadenced_error_label"], "HIL_MASTER_PENDING")
+        self.assertEqual(metrics["cadenced_error_label"], "HIL_ERROR_OK")
 
     def test_collect_metrics_back_to_back_mode_emits_cadenced_sentinels(self) -> None:
         """Single-pass mode should keep cadenced keys present with sentinel values."""
@@ -614,8 +615,8 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["error_code"], 0)
 
     def test_metric_unavailable_treats_negative_cadenced_sentinel_as_missing(self) -> None:
-        self.assertTrue(_metric_unavailable("cadenced_energy_mj_per_window", -1.0))
-        self.assertFalse(_metric_unavailable("cadenced_energy_mj_per_window", 0.0))
+        self.assertTrue(_metric_unavailable("cadenced_energy_mj_per_trial", -1.0))
+        self.assertFalse(_metric_unavailable("cadenced_energy_mj_per_trial", 0.0))
         self.assertTrue(_metric_unavailable("cadenced_rtc_sleep_ms", -1.0))
         self.assertTrue(_metric_unavailable("cadenced_deadline_miss_count", -1))
         self.assertTrue(_metric_unavailable("cadenced_window_latency_ms", -1.0))
@@ -1926,6 +1927,77 @@ class LoadSettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.nas.prune.rules[0].metric, "cadenced_deadline_miss_count")
 
+    def test_load_settings_accepts_cadenced_error_code_in_score_terms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: cadenced_error_code",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules: []",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.score.params.terms[0].metric, "cadenced_error_code")
+
+    def test_load_settings_accepts_cadenced_error_code_in_prune_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: latency_ms",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: cadenced_phase_ok",
+                        "        metric: cadenced_error_code",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0",
+                        "        reason: cadenced phase failed",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.prune.rules[0].metric, "cadenced_error_code")
+
     def test_load_settings_missing_file(self) -> None:
         """Nonexistent config paths should raise FileNotFoundError."""
         with self.assertRaises(FileNotFoundError):
@@ -2188,8 +2260,8 @@ class LogTrialTests(unittest.TestCase):
             "cadenced_error_label": None,
             "cadenced_active_inference_latency_ms": -1.0,
             "cadenced_window_latency_ms": -1.0,
-            "cadenced_energy_mj_per_inference": -1.0,
             "cadenced_energy_mj_per_window": -1.0,
+            "cadenced_energy_mj_per_trial": -1.0,
             "cadenced_rtc_sleep_ms": -1.0,
             "cadenced_deadline_miss_count": -1,
         }
@@ -2285,6 +2357,7 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(rows[1][header_index["runtime_mode"]], "back_to_back")
             self.assertEqual(rows[1][header_index["cadenced_window_latency_ms"]], "-1.0")
             self.assertEqual(rows[1][header_index["cadenced_energy_mj_per_window"]], "-1.0")
+            self.assertEqual(rows[1][header_index["cadenced_energy_mj_per_trial"]], "-1.0")
             self.assertEqual(rows[1][header_index["cadenced_error_code"]], "-1")
             self.assertEqual(
                 fake_trial.attrs["cadenced_window_latency_ms"],
@@ -2293,6 +2366,10 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(
                 fake_trial.attrs["cadenced_energy_mj_per_window"],
                 metrics["cadenced_energy_mj_per_window"],
+            )
+            self.assertEqual(
+                fake_trial.attrs["cadenced_energy_mj_per_trial"],
+                metrics["cadenced_energy_mj_per_trial"],
             )
 
             self.assertEqual(fake_trial.attrs["ram_bytes"], metrics["ram_bytes"])

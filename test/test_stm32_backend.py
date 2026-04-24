@@ -757,7 +757,8 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         self.assertEqual(metrics.power_metrics["cadenced_error_code"], HIL_ERROR_OK)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_active_inference_latency_ms"], 80.0)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_window_latency_ms"], 20000.0)
-        self.assertAlmostEqual(metrics.power_metrics["cadenced_energy_mj_per_window"], 12.5)
+        self.assertAlmostEqual(metrics.power_metrics["cadenced_energy_mj_per_window"], 1.25)
+        self.assertAlmostEqual(metrics.power_metrics["cadenced_energy_mj_per_trial"], 12.5)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_rtc_sleep_ms"], 1500.0)
 
     def test_evaluate_cadenced_runtime_mode_reports_back_to_back_when_second_phase_never_runs(self) -> None:
@@ -790,7 +791,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
         phase_mock.assert_called_once()
         self.assertEqual(metrics.power_metrics["runtime_mode"], "back_to_back")
-        self.assertNotIn("cadenced_energy_mj_per_window", metrics.power_metrics)
+        self.assertNotIn("cadenced_energy_mj_per_trial", metrics.power_metrics)
 
     def test_cadenced_energy_window_uses_stable_sentinel_when_energy_is_unavailable(self) -> None:
         device = STM32NucleoN657X0QDevice(
@@ -809,8 +810,8 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         metrics = device._cadenced_power_metrics_from_phase_result(phase_result)
 
         self.assertEqual(metrics["cadenced_window_latency_ms"], 20000.0)
-        self.assertEqual(metrics["cadenced_energy_mj_per_inference"], -1.0)
         self.assertEqual(metrics["cadenced_energy_mj_per_window"], -1.0)
+        self.assertEqual(metrics["cadenced_energy_mj_per_trial"], -1.0)
 
     def test_evaluate_run_hil_runtime_failure_maps_to_latency_error(self) -> None:
         """Ensure protocol failures become ``HIL_ERROR_LATENCY`` with backend detail.

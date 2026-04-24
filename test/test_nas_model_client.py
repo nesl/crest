@@ -233,7 +233,7 @@ class ObjectiveTests(unittest.TestCase):
 
         logged_metrics = self.mock_log.call_args.kwargs["metrics"]
         self.assertEqual(logged_metrics["runtime_mode"], "back_to_back")
-        self.assertEqual(logged_metrics["cadenced_energy_mj_per_window"], -1.0)
+        self.assertEqual(logged_metrics["cadenced_energy_mj_per_trial"], -1.0)
         self.assertEqual(logged_metrics["cadenced_error_code"], -1)
         self.assertIsNone(logged_metrics["cadenced_error_label"])
 
