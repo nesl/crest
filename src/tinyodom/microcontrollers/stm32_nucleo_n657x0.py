@@ -1329,20 +1329,17 @@ def _update_lrun_copy_window(
 
 def _validate_lrun_flash_layout(
     *,
-    appli_trusted_size: int,
-    weights_blob_size: int,
+    copy_window_bytes: int,
     appli_flash_address: str,
     weights_flash_address: str,
 ) -> None:
-    """Validate that the trusted app does not overlap the weights region."""
+    """Validate that the LRUN boot copy window does not overlap the weights region."""
     appli_addr = int(appli_flash_address, 16)
     weights_addr = int(weights_flash_address, 16)
     if appli_addr >= weights_addr:
         raise stm32_cube_clt.WorkflowError("Flash layout must satisfy Appli < weights addresses.")
-    if appli_addr + appli_trusted_size > weights_addr:
-        raise stm32_cube_clt.WorkflowError("Trusted Appli image overlaps the weights region.")
-    if weights_blob_size > 0 and weights_addr + weights_blob_size <= weights_addr:
-        raise stm32_cube_clt.WorkflowError("Invalid external-weights flash range.")
+    if appli_addr + copy_window_bytes > weights_addr:
+        raise stm32_cube_clt.WorkflowError("LRUN copy window overlaps the weights region.")
 
 
 def _resolve_bin_artifact(elf_path: Path) -> Path:
@@ -2475,16 +2472,10 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 boot_build_log = boot_build.log.strip()
             assert boot_elf_path is not None
             boot_size = stm32_cube_clt.parse_size_output(boot_elf_path)
-            flash_bytes = boot_size.elf_flash_bytes + trusted_app_size
-            if flash_bytes > self._spec.max_flash_bytes:
-                raise stm32_cube_clt.WorkflowError(
-                    "STM LRUN code images exceed available code-image budget "
-                    f"({flash_bytes} > {self._spec.max_flash_bytes})."
-                )
+            flash_bytes = trusted_app_size
             arena_bytes = _parse_arena_bytes(paths.inc_dir / "network_data_params.h")
             _validate_lrun_flash_layout(
-                appli_trusted_size=trusted_app_size,
-                weights_blob_size=0 if external_flash_bytes is None else int(external_flash_bytes),
+                copy_window_bytes=copy_window_bytes,
                 appli_flash_address=self._options.appli_flash_address,
                 weights_flash_address=self._options.weights_flash_address,
             )
@@ -2848,17 +2839,13 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         del arena_kb
         project_root = Path(dirpath).expanduser().resolve()
         paths: STM32WorkspacePaths | None = None
-        effective_measured_runs = measured_inference_runs
+        effective_measured_runs = max(1, int(measured_inference_runs))
         try:
             paths = self._resolve_paths(project_root)
         except stm32_cube_clt.WorkflowError:
             if project_root.exists():
                 raise
         if paths is not None:
-            try:
-                effective_measured_runs = _read_phase_config_measured_runs(paths)
-            except stm32_cube_clt.WorkflowError:
-                effective_measured_runs = measured_inference_runs
             self._write_runtime_phase_config(
                 paths=paths,
                 selected_phase=phase,
@@ -3002,11 +2989,6 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         harness_enabled = bool(harness_serial_port)
         if harness_enabled:
             try:
-                measured_runs = (
-                    _read_phase_config_measured_runs(paths)
-                    if paths is not None
-                    else effective_measured_runs
-                )
                 arduino_base.ensure_harness_firmware(
                     harness_serial_port=str(harness_serial_port),
                     harness_fqbn="arduino:mbed_nano:nano33ble"
@@ -3032,7 +3014,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                             0,
                             int(round((30.0 if harness_active_timeout_s is None else float(harness_active_timeout_s)) * 1000.0)),
                         ),
-                        "TINYODOM_INFERENCE_RUNS": measured_runs,
+                        "TINYODOM_INFERENCE_RUNS": effective_measured_runs,
                     },
                 )
             except (RuntimeError, stm32_cube_clt.WorkflowError) as exc:

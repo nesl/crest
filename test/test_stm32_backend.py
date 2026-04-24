@@ -1861,6 +1861,7 @@ class STM32HelperTests(unittest.TestCase):
                     num_channels=6,
                     serial_port="/dev/ttyACM0",
                     run_hil=True,
+                    measured_inference_runs=5,
                     harness_serial_port="/dev/ttyACM1",
                 )
 
@@ -2172,7 +2173,9 @@ class STM32HelperTests(unittest.TestCase):
             result.signed_app_bin_path,
             staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS-trusted.bin",
         )
+        self.assertEqual(result.flash_bytes, 130321)
         self.assertEqual(result.fsbl_copy_window_bytes, 131072)
+        self.assertIn("boot", result.log)
 
     def test_compile_lrun_reuses_unchanged_artifacts(self) -> None:
         """Ensure repeated LRUN compile skips rebuild/sign when inputs are unchanged."""
@@ -2390,6 +2393,117 @@ class STM32HelperTests(unittest.TestCase):
 
             self.assertTrue(second.success, msg=second.log)
             self.assertEqual(build_calls, [("Boot", True)])
+
+    def test_compile_lrun_rejects_copy_window_overlap_with_weights_region(self) -> None:
+        """Ensure LRUN validates the aligned Boot copy window, not the raw signed App size."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                    "appli_flash_address": "0x70FFFF00",
+                }
+            )
+
+            def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                del jobs, clean
+                debug_dir = project_root / "Debug"
+                if project_root.name == "AppS":
+                    elf_path = debug_dir / "Template_LRUN_AppS.elf"
+                    _write_text(debug_dir / "Template_LRUN_AppS.bin", "appbin")
+                else:
+                    elf_path = debug_dir / "Template_LRUN_FSBL.elf"
+                _write_text(elf_path, "elf")
+                return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
+
+            def _fake_size(elf_path: Path):
+                if "AppS" in elf_path.name:
+                    return stm32_cube_clt.SizeResult(elf_flash_bytes=256, ram_bytes=64000, raw_output="app")
+                return stm32_cube_clt.SizeResult(elf_flash_bytes=32000, ram_bytes=12000, raw_output="boot")
+
+            def _fake_sign(**kwargs):
+                output_bin = Path(kwargs["output_bin"])
+                output_bin.parent.mkdir(parents=True, exist_ok=True)
+                output_bin.write_bytes(b"x" * 128)
+                return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                side_effect=_fake_build,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                side_effect=_fake_size,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                side_effect=_fake_sign,
+            ):
+                result = device.compile(
+                    sketch_path=staged_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                )
+
+        self.assertFalse(result.success)
+        self.assertIn("LRUN copy window overlaps the weights region.", result.log)
+
+    def test_compile_lrun_flash_accounting_excludes_debug_loaded_boot(self) -> None:
+        """Ensure LRUN flash accounting only tracks the trusted App image."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                }
+            )
+
+            def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                del jobs, clean
+                debug_dir = project_root / "Debug"
+                if project_root.name == "AppS":
+                    elf_path = debug_dir / "Template_LRUN_AppS.elf"
+                    _write_text(debug_dir / "Template_LRUN_AppS.bin", "appbin")
+                else:
+                    elf_path = debug_dir / "Template_LRUN_FSBL.elf"
+                _write_text(elf_path, "elf")
+                return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
+
+            def _fake_size(elf_path: Path):
+                if "AppS" in elf_path.name:
+                    return stm32_cube_clt.SizeResult(elf_flash_bytes=4096, ram_bytes=64000, raw_output="app")
+                return stm32_cube_clt.SizeResult(
+                    elf_flash_bytes=device.spec.max_flash_bytes,
+                    ram_bytes=12000,
+                    raw_output="boot",
+                )
+
+            def _fake_sign(**kwargs):
+                output_bin = Path(kwargs["output_bin"])
+                output_bin.parent.mkdir(parents=True, exist_ok=True)
+                output_bin.write_bytes(b"x" * 4096)
+                return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                side_effect=_fake_build,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                side_effect=_fake_size,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                side_effect=_fake_sign,
+            ):
+                result = device.compile(
+                    sketch_path=staged_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                )
+
+        self.assertTrue(result.success, msg=result.log)
+        self.assertEqual(result.flash_bytes, 4096)
 
     def test_read_storage_manifest_rejects_workspace_root_mismatch(self) -> None:
         """Ensure staged manifests cannot be reused from another workspace root."""
@@ -2857,6 +2971,127 @@ class STM32HelperTests(unittest.TestCase):
 
         self.assertEqual(metrics.error_code, HIL_ERROR_OK)
         self.assertEqual(observed["boot_timeout_s"], stm32_n657_backend.DEFAULT_LRUN_BOOT_TIMEOUT_S)
+
+    def test_evaluate_lrun_honors_requested_measured_runs_for_header_and_harness(self) -> None:
+        """Ensure LRUN evaluate uses the request run count, not the stale staged header value."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
+            _write_text(
+                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h",
+                "#define TCN_DUT_MEASURED_RUNS 1\n",
+            )
+            device = STM32NucleoN657X0QDevice(
+                serial_port="/dev/ttyACM0",
+                device_options={"project_root": str(project_root), "project_layout": "lrun_dev_boot"},
+            )
+            compile_result = type(
+                "CompileResultDouble",
+                (),
+                {
+                    "success": True,
+                    "log": "ok",
+                    "flash_bytes": 2222,
+                    "ram_bytes": 1111,
+                    "overflow_kind": None,
+                    "build_dir": project_root / "STM32CubeIDE" / "Boot" / "Debug",
+                    "boot_elf_path": project_root
+                    / "STM32CubeIDE"
+                    / "Boot"
+                    / "Debug"
+                    / "Template_LRUN_FSBL.elf",
+                    "arena_bytes": 4096,
+                    "external_flash_bytes": None,
+                    "signed_app_bin_path": project_root
+                    / "STM32CubeIDE"
+                    / "AppS"
+                    / "Debug"
+                    / "Template_LRUN_AppS-trusted.bin",
+                },
+            )()
+            telemetry = stm32_runtime.STM32RuntimeTelemetry(
+                latency_s=0.003,
+                serial_log=["STM32_AI_INIT=OK", "DUT READY", "STM32_AI_RUN=OK"],
+                power_metrics={
+                    "clock_hz": 600000000.0,
+                    "sequence": 1.0,
+                    "runs": 7,
+                    "phase": "back_to_back",
+                },
+            )
+
+            with patch.object(device, "compile", return_value=compile_result), patch.object(
+                device,
+                "_storage_power_metrics",
+                return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
+            ), patch.object(
+                device,
+                "_program_runtime_images",
+                return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
+            ) as harness_mock, patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                _FakeSerialMonitor,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
+                return_value=_FakeHarnessSerial(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
+                return_value=type(
+                    "PrimeResult",
+                    (),
+                    {"harness_ready": True, "harness_log": ["HARNESS READY"], "error": None},
+                )(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
+                return_value=type(
+                    "DoneResult",
+                    (),
+                    {
+                        "harness_done": True,
+                        "runs_harness": 7,
+                        "harness_log": [
+                            "HARNESS READY",
+                            "runs: 7",
+                            "energy output: 1.25",
+                            "avg power output: 2.5",
+                            "avg current output: 0.5",
+                            "bus voltage output: 5.0",
+                            "idle power baseline: 0.1",
+                            "harness timer output: 0.003",
+                            "DONE",
+                        ],
+                        "error": None,
+                    },
+                )(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                return_value="upload ok",
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                return_value=telemetry,
+            ):
+                metrics = device.evaluate(
+                    dirpath=project_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                    serial_port="/dev/ttyACM0",
+                    run_hil=True,
+                    measured_inference_runs=7,
+                    harness_serial_port="/dev/ttyACM1",
+                )
+
+            header_text = (
+                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h"
+            ).read_text(encoding="utf-8")
+
+        self.assertEqual(metrics.error_code, HIL_ERROR_OK)
+        self.assertIn("TCN_DUT_MEASURED_RUNS 7", header_text)
+        self.assertEqual(
+            harness_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"],
+            7,
+        )
 
     def test_canonical_lrun_linkers_use_safe_heap_and_stack_floors(self) -> None:
         """Ensure the checked-in canonical LRUN linkers reserve safe heap/stack floors."""
