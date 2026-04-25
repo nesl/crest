@@ -1094,25 +1094,25 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         self.assertEqual(resolved["weights_external_loader"], weights_external_loader.resolve())
         self.assertEqual(resolved["max_external_flash_bytes"], 123456)
 
-    def test_resolve_device_options_rejects_non_lrun_custom_stm_root(self) -> None:
-        """Ensure custom roots fail clearly when they are not LRUN-shaped workspaces."""
+    def test_resolve_device_options_accepts_unmaterialized_custom_stm_root(self) -> None:
+        """Ensure custom STM roots resolve before the LRUN workspace is materialized."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            ambiguous_root = tmp_path / "stm32_project"
-            ambiguous_root.mkdir(parents=True)
+            unresolved_root = tmp_path / "stm32_project"
             config = Dict(
                 training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
                 device=Dict(
                     hil=False,
                     name="STM32_NUCLEO_N657X0_Q",
-                    stm32=Dict(project_root=ambiguous_root),
+                    stm32=Dict(project_root=unresolved_root),
                 ),
                 data=Dict(window_size=128),
                 outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
             )
 
-            with self.assertRaisesRegex(ValueError, "must point to an LRUN workspace root"):
-                resolve_device_options(str(config.device.name), config.device)
+            resolved = resolve_device_options(str(config.device.name), config.device)
+
+        self.assertEqual(resolved["project_root"], unresolved_root.resolve())
 
     def test_resolve_device_options_normalizes_custom_lrun_project_root_without_layout(self) -> None:
         """Ensure custom LRUN roots infer the dev-boot layout automatically."""

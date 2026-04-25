@@ -21,6 +21,7 @@ declare -a LRUN_MANIFEST_PATHS=()
 declare -A LRUN_CATEGORY_BY_PATH=()
 declare -A LRUN_SOURCE_BY_PATH=()
 declare -a LRUN_OVERLAY_PATHS=(
+  "Appli/Inc/mx25um51245g_conf.h"
   "Appli/Inc/stm32n6xx_hal_conf.h"
   "Appli/Inc/stm32n6xx_nucleo_conf.h"
   "Appli/Inc/tcn_dut_runner.h"
@@ -356,6 +357,7 @@ validate_lrun_overlay_manifest() {
 
 validate_lrun_workspace_structure() {
   require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/FSBL/Inc/stm32_extmem_conf.h"
+  require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/mx25um51245g_conf.h"
   require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/stm32n6xx_hal_conf.h"
   require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/tcn_dut_runner.h"
   require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Src/system_stm32n6xx_s.c"

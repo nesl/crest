@@ -400,11 +400,6 @@ def resolve_stm32_nucleo_n657x0_q_options(
     options = dict(device_options or {})
     raw_template_root = options.get("template_root")
     raw_project_root = options.get("project_root")
-    root_option_name = (
-        "template_root"
-        if raw_template_root not in (None, "")
-        else "project_root"
-    )
     if raw_template_root not in (None, ""):
         warnings.warn(
             "STM32 device option 'template_root' is deprecated; use 'project_root' instead.",
@@ -421,12 +416,7 @@ def resolve_stm32_nucleo_n657x0_q_options(
             "STM32 device option 'project_layout' is no longer supported for "
             f"{BOARD_NAME}; LRUN dev_boot is implicit."
         )
-    try:
-        project_root = _resolve_workspace_paths(project_root=project_root).root
-    except stm32_cube_clt.WorkflowError as exc:
-        raise ValueError(
-            f"STM32 device option '{root_option_name}' must point to an LRUN workspace root."
-        ) from exc
+    project_root = Path(project_root).expanduser().resolve()
     gdbserver = _resolve_optional_path(options.get("gdbserver"))
     gdb = _resolve_optional_path(options.get("gdb"))
     cubeprog_bin = _resolve_optional_path(options.get("cubeprog_bin"))

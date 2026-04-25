@@ -57,6 +57,7 @@ def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
 
+
 def _build_lrun_project_tree(root: Path) -> Path:
     """Build a minimal STM32 LRUN workspace for unit tests."""
     _write_text(root / "FSBL" / "Inc" / "stm32_extmem_conf.h", "#define EXTMEM_LRUN_SOURCE_SIZE 0x00020000\n")
@@ -332,17 +333,28 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                         (),
                         {
                             "stm32": type(
-                            "STMConfigDouble",
-                            (),
-                            {
-                                "template_root": str(template_root),
-                            },
+                                "STMConfigDouble",
+                                (),
+                                {
+                                    "template_root": str(template_root),
+                                },
                             )()
                         },
                     )(),
                 )
         self.assertEqual(resolved["project_root"], template_root.resolve())
         self.assertTrue(any(issubclass(item.category, DeprecationWarning) for item in caught))
+
+    def test_resolve_device_options_defaults_without_materialized_lrun_workspace(self) -> None:
+        """Ensure default STM option resolution does not require setup-generated paths."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing_root = Path(tmpdir) / "tinyodom_tcn_stm32_lrun"
+            with patch.object(stm32_n657_backend, "DEFAULT_TEMPLATE_ROOT", missing_root):
+                resolved = resolve_device_options(
+                    "STM32_NUCLEO_N657X0_Q",
+                    type("DeviceConfigDouble", (), {})(),
+                )
+        self.assertEqual(resolved["project_root"], missing_root.resolve())
 
     def test_resolve_device_options_accepts_custom_lrun_root(self) -> None:
         """Ensure custom STM roots resolve when they match the LRUN workspace shape."""
