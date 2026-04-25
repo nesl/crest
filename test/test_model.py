@@ -24,6 +24,7 @@ from tinyodom.model import (
     CollectMetricsRequest,
     DROP_RATE_CHOICES,
     HarnessConfig,
+    _minimum_stm32_serial_timeout_s,
     _metric_unavailable,
     ScoringResult,
     ScoreConfigEvaluationError,
@@ -632,6 +633,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         config: Dict,
         hyperparams: Dict,
         *,
+        latency_budget_ms: float = 200.0,
         dirpath: Path | None = None,
         device_options: dict | None | object = ...,
         hil_enabled: bool | None = None,
@@ -646,7 +648,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         return build_collect_metrics_request(
             config,
             hyperparams,
-            latency_budget_ms=200.0,
+            latency_budget_ms=latency_budget_ms,
             dirpath=self._DEFAULT_DIRPATH if dirpath is None else dirpath,
             device_options=resolved_options,
             hil_enabled=hil_enabled,
@@ -708,7 +710,107 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"},
         )
 
-        self.assertEqual(request.serial_timeout_s, 12.0)
+        self.assertEqual(request.serial_timeout_s, 30.0)
+
+    def test_build_request_scales_stm_serial_timeout_for_cadenced_runs(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=True,
+                name="STM32_NUCLEO_N657X0_Q",
+                runtime_mode="cadenced",
+                serial_port="ttyACM0",
+                measured_inference_runs=100,
+                latency_budget_ms=2000.0,
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL")),
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = self._build_request(
+            config,
+            hyperparams,
+            latency_budget_ms=2000.0,
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"},
+        )
+
+        self.assertEqual(request.serial_timeout_s, 210.0)
+
+    def test_build_request_preserves_larger_stm_serial_timeout(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=True,
+                name="STM32_NUCLEO_N657X0_Q",
+                runtime_mode="back_to_back",
+                serial_port="ttyACM0",
+                serial_timeout_s=120.0,
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL")),
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = self._build_request(
+            config,
+            hyperparams,
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"},
+        )
+
+        self.assertEqual(request.serial_timeout_s, 120.0)
+
+
+class Stm32TimeoutHelperTests(unittest.TestCase):
+    _DEFAULT_DIRPATH = Path("tinyodom_tcn")
+
+    def _build_request(
+        self,
+        config: Dict,
+        hyperparams: Dict,
+        *,
+        latency_budget_ms: float = 200.0,
+        dirpath: Path | None = None,
+        device_options: dict | None | object = ...,
+        hil_enabled: bool | None = None,
+        energy_aware: bool | None = None,
+    ) -> CollectMetricsRequest:
+        resolved_options = (
+            resolve_device_options(str(config.device.name), config.device)
+            if device_options is ...
+            else device_options
+        )
+        return build_collect_metrics_request(
+            config,
+            hyperparams,
+            latency_budget_ms=latency_budget_ms,
+            dirpath=self._DEFAULT_DIRPATH if dirpath is None else dirpath,
+            device_options=resolved_options,
+            hil_enabled=hil_enabled,
+            energy_aware=energy_aware,
+        )
+
+    def test_minimum_stm32_serial_timeout_is_30s_for_back_to_back(self) -> None:
+        self.assertEqual(
+            _minimum_stm32_serial_timeout_s(
+                runtime_mode="back_to_back",
+                latency_budget_ms=200.0,
+                measured_inference_runs=10,
+            ),
+            30.0,
+        )
+
+    def test_minimum_stm32_serial_timeout_scales_for_cadenced(self) -> None:
+        self.assertEqual(
+            _minimum_stm32_serial_timeout_s(
+                runtime_mode="cadenced",
+                latency_budget_ms=2000.0,
+                measured_inference_runs=100,
+            ),
+            210.0,
+        )
 
     def test_energy_aware_populates_harness(self) -> None:
         config = Dict(

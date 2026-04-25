@@ -161,6 +161,37 @@ CADENCED_CSV_FIELDS = (
 )
 
 
+def _minimum_stm32_serial_timeout_s(
+    *,
+    runtime_mode: str,
+    latency_budget_ms: float,
+    measured_inference_runs: int,
+) -> float:
+    """Return the minimum practical STM32 serial timeout for one HIL attempt.
+
+    Parameters
+    ----------
+    runtime_mode : str
+        Configured STM32 runtime mode, usually ``"back_to_back"`` or
+        ``"cadenced"``.
+    latency_budget_ms : float
+        Per-slot cadence budget in milliseconds.
+    measured_inference_runs : int
+        Number of measured on-device runs in the attempt.
+
+    Returns
+    -------
+    float
+        Minimum timeout in seconds that should be allowed for the STM32 HIL
+        attempt.
+    """
+    normalized_runtime_mode = str(runtime_mode).strip().lower()
+    safe_runs = max(1, int(measured_inference_runs))
+    if normalized_runtime_mode == "cadenced":
+        return max(30.0, (float(latency_budget_ms) * safe_runs) / 1000.0 + 10.0)
+    return 30.0
+
+
 class TrialLike(Protocol):
     """Minimal Optuna Trial interface used by log_trial."""
 
@@ -1642,9 +1673,20 @@ def build_collect_metrics_request(
     dut_ready_timeout = _cfg_get(config.device, "dut_ready_timeout_s", 5.0)
     if dut_ready_timeout is None:
         dut_ready_timeout = 5.0
+    measured_inference_runs = int(_cfg_get(config.device, "measured_inference_runs", 10))
     serial_timeout = _cfg_get(config.device, "serial_timeout_s", 12.0)
     if serial_timeout is None:
         serial_timeout = 12.0
+    configured_runtime_mode = _cfg_get(config.device, "runtime_mode", "back_to_back")
+    if effective_hil_enabled and normalized_device_name == "STM32_NUCLEO_N657X0_Q":
+        serial_timeout = max(
+            float(serial_timeout),
+            _minimum_stm32_serial_timeout_s(
+                runtime_mode=str(configured_runtime_mode),
+                latency_budget_ms=float(latency_budget_ms),
+                measured_inference_runs=measured_inference_runs,
+            ),
+        )
 
     return CollectMetricsRequest(
         hil_enabled=effective_hil_enabled,
@@ -1659,7 +1701,7 @@ def build_collect_metrics_request(
         latency_budget_ms=latency_budget_ms,
         dut_ready_timeout_s=float(dut_ready_timeout),
         serial_timeout_s=float(serial_timeout),
-        measured_inference_runs=int(_cfg_get(config.device, "measured_inference_runs", 10)),
+        measured_inference_runs=measured_inference_runs,
         harness=harness,
         device_options=request_device_options,
     )
