@@ -164,9 +164,15 @@ nas:
 # Note: Pruning is not supported for multi objective studies in Optuna, so the 
 # `prune.rules` list is left empty here.
 #
-# In this example:
+# When used with `device.runtime_mode: cadenced`, cadenced overload remains
+# telemetry in this mode. Trials with `cadenced_deadline_miss_count > 0` or
+# `cadenced_active_inference_latency_ms > latency_budget_ms` can still appear
+# on the Pareto frontier and should be post-filtered if schedulability is a hard
+# requirement.
+#
+# Example cadenced Pareto setup:
 # - objective 1 minimizes total RMSE
-# - objective 2 minimizes on-device latency
+# - objective 2 minimizes cadenced energy per window
 #
 # nas:
 #   score:
@@ -177,12 +183,89 @@ nas:
 #         # `rmse_total` is the built-in aggregate `rmse_vel_x + rmse_vel_y`.
 #         - metric: rmse_total
 #           direction: minimize
-#         # Objective 2: minimize on-device latency.
-#         # This gives Optuna a Pareto tradeoff between model quality and runtime.
-#         - metric: latency_ms
+#         # Objective 2: minimize cadenced energy per scheduled window.
+#         # This gives Optuna a Pareto tradeoff between model quality and energy.
+#         - metric: cadenced_energy_mj_per_window
 #           direction: minimize
 #   prune:
 #     rules: []
+
+# Alternative scalar cadenced-feasibility example.
+# Uncomment and adapt this shape if you want cadenced schedulability to be a
+# hard gate before training. This is the config-level version of "deadline
+# misses are infeasible".
+#
+# nas:
+#   score:
+#     type: scoring-function
+#     metrics:
+#       total_flash_bytes:
+#         type: add
+#         metrics:
+#           - flash_bytes
+#           - external_flash_bytes
+#       energy_budget_mj:
+#         type: energy-budget-from-power
+#         power_mw:
+#           type: literal
+#           value: 100.0
+#         duration_ms:
+#           type: metric
+#           metric: latency_budget_ms
+#     params:
+#       terms:
+#         - type: weighted
+#           metric: rmse_total
+#           weight: -1.0
+#         - type: normalized-weighted
+#           metric: ram_bytes
+#           weight: 0.01
+#           reference:
+#             type: metric
+#             metric: max_ram_bytes
+#         - type: normalized-weighted
+#           metric: total_flash_bytes
+#           weight: 0.01
+#           reference:
+#             type: metric
+#             metric: max_flash_bytes
+#         - type: target
+#           metric: cadenced_energy_mj_per_window
+#           weight: 0.15
+#           reference:
+#             type: metric
+#             metric: energy_budget_mj
+#   prune:
+#     rules:
+#       - rule: latency_budget
+#         metric: latency_ms
+#         condition: gt
+#         reference:
+#           type: metric
+#           metric: latency_budget_ms
+#         reason: "Latency exceeds deployment budget"
+#       - rule: cadenced_deadline_budget
+#         metric: cadenced_deadline_miss_count
+#         condition: gt
+#         reference:
+#           type: literal
+#           value: 0
+#         reason: "Cadenced deadline missed"
+#       - rule: cadenced_active_latency_budget
+#         metric: cadenced_active_inference_latency_ms
+#         condition: gt
+#         reference:
+#           type: metric
+#           metric: latency_budget_ms
+#         reason: "Cadenced active inference exceeds slot budget"
+#       # Optional backend-local cadenced error gate.
+#       # - rule: cadenced_phase_ok
+#       #   metric: cadenced_error_code
+#       #   condition: gt
+#       #   reference:
+#       #     type: literal
+#       #     value: 0
+#       #   reason: "Cadenced phase failed"
 
 # Alternative non-HIL scalar example.
 # Uncomment and adapt this shape if you want `device.hil: false` and do not

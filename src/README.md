@@ -227,6 +227,15 @@ Important semantics:
   cadenced slot.
 - `cadenced_energy_mj_per_trial` is the total energy for the full cadenced
   measurement trial.
+- In `multi-objective` NAS, cadenced overload is currently surfaced as
+  telemetry, not as an automatic feasibility failure. For example, STM32 may
+  report `cadenced_deadline_miss_count > 0` or
+  `cadenced_active_inference_latency_ms > latency_budget_ms` while the trial
+  still completes successfully and remains visible on the Pareto frontier.
+- If you want cadenced schedulability to be a hard pre-training gate, switch to
+  `nas.score.type: scoring-function` and express that policy with
+  `nas.prune.rules`. Multi-objective configs intentionally do not support prune
+  rules today.
 
 Additional STM32 knobs:
 
@@ -481,6 +490,12 @@ nas:
   prune:
     rules: []
 ```
+
+When this example is used with `device.runtime_mode: cadenced`, treat
+cadenced-overload metrics such as `cadenced_deadline_miss_count` and
+`cadenced_active_inference_latency_ms` as feasibility telemetry that you
+post-filter after the run. They do not automatically exclude trials from the
+Pareto frontier.
 
 Scalar scoring example:
 
