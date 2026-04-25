@@ -208,9 +208,11 @@ def resolve_device_options(
         raw_options = {
             "template_root": _cfg_get(stm32_cfg, "template_root", None) if stm32_cfg is not None else None,
             "project_root": _cfg_get(stm32_cfg, "project_root", None) if stm32_cfg is not None else None,
+            "project_layout": _cfg_get(stm32_cfg, "project_layout", None) if stm32_cfg is not None else None,
             "gdbserver": _cfg_get(stm32_cfg, "gdbserver", None) if stm32_cfg is not None else None,
             "gdb": _cfg_get(stm32_cfg, "gdb", None) if stm32_cfg is not None else None,
             "cubeprog_bin": _cfg_get(stm32_cfg, "cubeprog_bin", None) if stm32_cfg is not None else None,
+            "signing_tool": _cfg_get(stm32_cfg, "signing_tool", None) if stm32_cfg is not None else None,
             "gdb_port": _cfg_get(stm32_cfg, "gdb_port", None) if stm32_cfg is not None else None,
             "apid": _cfg_get(stm32_cfg, "apid", None) if stm32_cfg is not None else None,
             "server_ready_timeout_s": _cfg_get(stm32_cfg, "server_ready_timeout_s", None)
@@ -227,6 +229,9 @@ def resolve_device_options(
             "weight_storage_mode": _cfg_get(stm32_cfg, "weight_storage_mode", None)
             if stm32_cfg is not None
             else None,
+            "appli_flash_address": _cfg_get(stm32_cfg, "appli_flash_address", None)
+            if stm32_cfg is not None
+            else None,
             "weights_flash_address": _cfg_get(stm32_cfg, "weights_flash_address", None)
             if stm32_cfg is not None
             else None,
@@ -234,6 +239,12 @@ def resolve_device_options(
             if stm32_cfg is not None
             else None,
             "weights_external_loader": _cfg_get(stm32_cfg, "weights_external_loader", None)
+            if stm32_cfg is not None
+            else None,
+            "signing_load_offset": _cfg_get(stm32_cfg, "signing_load_offset", None)
+            if stm32_cfg is not None
+            else None,
+            "signing_header_version": _cfg_get(stm32_cfg, "signing_header_version", None)
             if stm32_cfg is not None
             else None,
             "max_external_flash_bytes": _cfg_get(stm32_cfg, "max_external_flash_bytes", None)

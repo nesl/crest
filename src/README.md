@@ -115,16 +115,15 @@ Built-in metrics that can be referenced directly from `nas.score.params.objectiv
   - Full scheduled cadenced-window duration from the second pass. Currently
     populated by STM32 only. Available when `device.runtime_mode` is set to
     `cadenced`.
-- `cadenced_energy_mj_per_inference`
-  - Average energy per cadenced slot from the second runtime pass. Available
-    when `device.runtime_mode` is set to `cadenced`.
-  - Important semantic difference:
-    - STM32 reports active cadenced-slot inference energy.
-    - Arduino backends report average cadenced-slot energy including the
-      intentional wait/sleep window.
 - `cadenced_energy_mj_per_window`
-  - Total energy for the full cadenced measurement window. This is computed in
-    backend code as `cadenced_energy_mj_per_inference *`
+  - Average energy for one cadenced release window from the second runtime
+    pass. Available when `device.runtime_mode` is set to `cadenced`.
+  - This is the total cadenced measurement energy divided by
+    `measured_inference_runs`, so it represents one scheduled cadence slot
+    rather than the full second-pass run.
+- `cadenced_energy_mj_per_trial`
+  - Total energy for the full cadenced measurement trial. This is computed in
+    backend code as `cadenced_energy_mj_per_window *`
     `measured_inference_runs`. Available when `device.runtime_mode` is set to
     `cadenced`.
 - `cadenced_rtc_sleep_ms`
@@ -133,6 +132,10 @@ Built-in metrics that can be referenced directly from `nas.score.params.objectiv
 - `cadenced_deadline_miss_count`
   - Number of missed cadenced release slots during the second pass. Currently
     populated by STM32 only.
+- `cadenced_error_code`
+  - Numeric phase-local result code for the cadenced second pass.
+  - This can be referenced directly from score terms or prune rules when you
+    want cadenced-pass failures to affect NAS selection.
 - `avg_power_mw`
   - Average DUT power during the measured inference window, in milliwatts.
 - `avg_current_ma`
@@ -164,13 +167,13 @@ Notes:
 - Cadenced policy metrics are only available when
   `device.runtime_mode: cadenced`.
 - `cadenced_active_inference_latency_ms` and
-  `cadenced_energy_mj_per_inference` are per-slot metrics from the second
+  `cadenced_energy_mj_per_window` are per-slot metrics from the second
   cadenced pass. STM32 exposes the richer timing subset; Portenta H7 and
   Nano 33 BLE v1 only expose the minimal cadenced energy/error subset.
 - `cadenced_window_latency_ms` is the full second-pass window duration and is
   currently STM32-only.
-- `cadenced_energy_mj_per_window` is a whole-window metric, not a per-slot
-  metric. It is the better cross-board comparison metric for cadenced runs.
+- `cadenced_energy_mj_per_trial` is a whole-trial metric, not a per-slot
+  metric.
 - `cpu_clock_mhz_requested` is optional and backend-dependent.
 - `weight_storage_mode` is logged as trial metadata, but it is not part of the
   numeric scoring/pruning metric registry.
@@ -207,8 +210,8 @@ Board support:
     - `runtime_mode`
     - `cadenced_error_code`
     - `cadenced_error_label`
-    - `cadenced_energy_mj_per_inference`
     - `cadenced_energy_mj_per_window`
+    - `cadenced_energy_mj_per_trial`
 
 Important semantics:
 
@@ -220,13 +223,19 @@ Important semantics:
   cadenced pass, not a per-slot active-compute metric.
 - `energy_mj_per_inference` remains the canonical `back_to_back` per-inference
   energy metric.
-- `cadenced_energy_mj_per_inference` is not semantically identical across
-  backends:
-  - STM32 reports active cadenced-slot inference energy.
-  - Arduino backends report average cadenced-slot energy including the
-    intentional wait/sleep window.
-- `cadenced_energy_mj_per_window` is the total energy for the full cadenced
-  measurement window and is the better cross-board comparison metric.
+- `cadenced_energy_mj_per_window` is the average energy for one scheduled
+  cadenced slot.
+- `cadenced_energy_mj_per_trial` is the total energy for the full cadenced
+  measurement trial.
+- In `multi-objective` NAS, cadenced overload is currently surfaced as
+  telemetry, not as an automatic feasibility failure. For example, STM32 may
+  report `cadenced_deadline_miss_count > 0` or
+  `cadenced_active_inference_latency_ms > latency_budget_ms` while the trial
+  still completes successfully and remains visible on the Pareto frontier.
+- If you want cadenced schedulability to be a hard pre-training gate, switch to
+  `nas.score.type: scoring-function` and express that policy with
+  `nas.prune.rules`. Multi-objective configs intentionally do not support prune
+  rules today.
 
 Additional STM32 knobs:
 
@@ -242,8 +251,8 @@ Export behavior:
   - `runtime_mode`
   - `cadenced_active_inference_latency_ms`
   - `cadenced_window_latency_ms`
-  - `cadenced_energy_mj_per_inference`
   - `cadenced_energy_mj_per_window`
+  - `cadenced_energy_mj_per_trial`
   - `cadenced_rtc_sleep_ms`
   - `cadenced_deadline_miss_count`
   - `cadenced_error_code`
@@ -481,6 +490,12 @@ nas:
   prune:
     rules: []
 ```
+
+When this example is used with `device.runtime_mode: cadenced`, treat
+cadenced-overload metrics such as `cadenced_deadline_miss_count` and
+`cadenced_active_inference_latency_ms` as feasibility telemetry that you
+post-filter after the run. They do not automatically exclude trials from the
+Pareto frontier.
 
 Scalar scoring example:
 

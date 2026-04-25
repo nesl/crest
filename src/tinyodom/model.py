@@ -43,8 +43,7 @@ STM32_DEFAULT_PROJECT_ROOT = (
     REPO_ROOT
     / "sketches"
     / "stm32"
-    / "tinyodom_tcn_stm32"
-    / "FSBL"
+    / "tinyodom_tcn_stm32_lrun"
 )
 MIN_TCN_LAYERS = 3
 MAX_TCN_LAYERS = 8
@@ -82,10 +81,11 @@ NONNEGATIVE_METRICS = {
     "clock_hz",
     "latency_budget_ms",
     "arena_bytes",
+    "cadenced_error_code",
     "cadenced_active_inference_latency_ms",
     "cadenced_window_latency_ms",
-    "cadenced_energy_mj_per_inference",
     "cadenced_energy_mj_per_window",
+    "cadenced_energy_mj_per_trial",
     "cadenced_rtc_sleep_ms",
     "cadenced_deadline_miss_count",
 }
@@ -109,10 +109,11 @@ BUILTIN_SCORE_METRICS = {
     "latency_budget_ms",
     "arena_bytes",
     "error_code",
+    "cadenced_error_code",
     "cadenced_active_inference_latency_ms",
     "cadenced_window_latency_ms",
-    "cadenced_energy_mj_per_inference",
     "cadenced_energy_mj_per_window",
+    "cadenced_energy_mj_per_trial",
     "cadenced_rtc_sleep_ms",
     "cadenced_deadline_miss_count",
 }
@@ -121,8 +122,8 @@ CADENCED_NUMERIC_FIELD_DEFAULTS = {
     "cadenced_error_code": -1,
     "cadenced_active_inference_latency_ms": -1.0,
     "cadenced_window_latency_ms": -1.0,
-    "cadenced_energy_mj_per_inference": -1.0,
     "cadenced_energy_mj_per_window": -1.0,
+    "cadenced_energy_mj_per_trial": -1.0,
     "cadenced_avg_power_mw": -1.0,
     "cadenced_avg_current_ma": -1.0,
     "cadenced_bus_voltage_v": -1.0,
@@ -151,13 +152,44 @@ CADENCED_CSV_FIELDS = (
     "runtime_mode",
     "cadenced_active_inference_latency_ms",
     "cadenced_window_latency_ms",
-    "cadenced_energy_mj_per_inference",
     "cadenced_energy_mj_per_window",
+    "cadenced_energy_mj_per_trial",
     "cadenced_rtc_sleep_ms",
     "cadenced_deadline_miss_count",
     "cadenced_error_code",
     "cadenced_error_label",
 )
+
+
+def _minimum_stm32_serial_timeout_s(
+    *,
+    runtime_mode: str,
+    latency_budget_ms: float,
+    measured_inference_runs: int,
+) -> float:
+    """Return the minimum practical STM32 serial timeout for one HIL attempt.
+
+    Parameters
+    ----------
+    runtime_mode : str
+        Configured STM32 runtime mode, usually ``"back_to_back"`` or
+        ``"cadenced"``.
+    latency_budget_ms : float
+        Per-slot cadence budget in milliseconds.
+    measured_inference_runs : int
+        Number of measured on-device runs in the attempt.
+
+    Returns
+    -------
+    float
+        Minimum timeout in seconds that should be allowed for the STM32 HIL
+        attempt.
+    """
+    normalized_runtime_mode = str(runtime_mode).strip().lower()
+    safe_runs = max(1, int(measured_inference_runs))
+    if normalized_runtime_mode == "cadenced":
+        return max(30.0, (float(latency_budget_ms) * safe_runs) / 1000.0 + 10.0)
+    return 30.0
 
 
 class TrialLike(Protocol):
@@ -362,7 +394,10 @@ def apply_cadenced_metric_defaults(
         except (TypeError, ValueError):
             metrics[field_name] = default_value
     if metrics["cadenced_error_code"] >= 0:
-        metrics["cadenced_error_label"] = describe_error_code(metrics["cadenced_error_code"])
+        metrics["cadenced_error_label"] = describe_error_code(
+            metrics["cadenced_error_code"],
+            prefer_master=False,
+        )
     else:
         metrics["cadenced_error_label"] = None
     for field_name in CADENCED_STRING_FIELDS[1:]:
@@ -1638,9 +1673,20 @@ def build_collect_metrics_request(
     dut_ready_timeout = _cfg_get(config.device, "dut_ready_timeout_s", 5.0)
     if dut_ready_timeout is None:
         dut_ready_timeout = 5.0
+    measured_inference_runs = int(_cfg_get(config.device, "measured_inference_runs", 10))
     serial_timeout = _cfg_get(config.device, "serial_timeout_s", 12.0)
     if serial_timeout is None:
         serial_timeout = 12.0
+    configured_runtime_mode = _cfg_get(config.device, "runtime_mode", "back_to_back")
+    if effective_hil_enabled and normalized_device_name == "STM32_NUCLEO_N657X0_Q":
+        serial_timeout = max(
+            float(serial_timeout),
+            _minimum_stm32_serial_timeout_s(
+                runtime_mode=str(configured_runtime_mode),
+                latency_budget_ms=float(latency_budget_ms),
+                measured_inference_runs=measured_inference_runs,
+            ),
+        )
 
     return CollectMetricsRequest(
         hil_enabled=effective_hil_enabled,
@@ -1655,7 +1701,7 @@ def build_collect_metrics_request(
         latency_budget_ms=latency_budget_ms,
         dut_ready_timeout_s=float(dut_ready_timeout),
         serial_timeout_s=float(serial_timeout),
-        measured_inference_runs=int(_cfg_get(config.device, "measured_inference_runs", 10)),
+        measured_inference_runs=measured_inference_runs,
         harness=harness,
         device_options=request_device_options,
     )

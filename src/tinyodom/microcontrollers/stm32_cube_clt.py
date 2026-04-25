@@ -35,6 +35,8 @@ DEFAULT_PROGRAMMER_FREQ_KHZ = "500"
 DEFAULT_RECOVERY_MODE = "powerdown"
 # Recovery APID targets the boot-side access port used during board bring-up.
 DEFAULT_RECOVERY_APID = "0"
+DEFAULT_SIGNING_HEADER_VERSION = "2.3"
+DEFAULT_SIGNING_LOAD_OFFSET = "0x80000000"
 SIZE_RE = re.compile(
     r"^\s*(?P<text>\d+)\s+(?P<data>\d+)\s+(?P<bss>\d+)\s+(?P<dec>\d+)\s+(?P<hex>[0-9a-fA-F]+)\s+",
     re.MULTILINE,
@@ -50,9 +52,13 @@ class WorkflowError(RuntimeError):
     """
 
 
+class SigningWorkflowError(WorkflowError):
+    """Raised when trusted STM32 binary signing fails."""
+
+
 @dataclass(frozen=True)
 class BuildResult:
-    """Build result for one STM32 FSBL project.
+    """Build result for one STM32 subproject.
 
     Parameters
     ----------
@@ -88,6 +94,22 @@ class SizeResult:
     raw_output: str
 
 
+@dataclass(frozen=True)
+class SignedBinaryResult:
+    """Result of producing one STM32 trusted binary image.
+
+    Parameters
+    ----------
+    log : str
+        Combined signing-tool output.
+    output_bin : pathlib.Path
+        Trusted binary emitted by the signing tool.
+    """
+
+    log: str
+    output_bin: Path
+
+
 def which_path(name: str) -> Optional[Path]:
     """Return a ``Path`` for an executable found on ``PATH``.
 
@@ -116,6 +138,41 @@ def default_cubeprog_bin() -> Optional[Path]:
     """
     cli = which_path("STM32_Programmer_CLI")
     return cli.parent if cli is not None else None
+
+
+def resolve_signing_tool(path: Path | str | None = None) -> Path:
+    """Resolve the STM32 signing-tool executable.
+
+    Parameters
+    ----------
+    path : pathlib.Path | str | None, optional
+        Explicit signing-tool path when callers provide one.
+
+    Returns
+    -------
+    pathlib.Path
+        Resolved signing-tool executable path.
+
+    Raises
+    ------
+    WorkflowError
+        If the signing tool cannot be resolved.
+    """
+    if path is not None:
+        return resolve_required_tool_path(
+            path,
+            label="STM32 signing tool",
+            hint="STM32_SigningTool_CLI",
+        )
+    for hint in ("STM32_SigningTool_CLI", "STM32TrustedPackageCreator_CLI"):
+        candidate = which_path(hint)
+        if candidate is not None:
+            return candidate
+    raise WorkflowError(
+        "STM32 signing tool was not provided.\n"
+        "Install STM32CubeCLT and ensure `STM32_SigningTool_CLI` or "
+        "`STM32TrustedPackageCreator_CLI` is on PATH."
+    )
 
 
 def resolve_required_tool_path(
@@ -163,12 +220,12 @@ def resolve_required_tool_path(
 
 
 def validate_project_root(project_root: Path | str) -> Path:
-    """Validate an STM32 FSBL project root and return the resolved path.
+    """Validate an STM32 CubeIDE project root and return the resolved path.
 
     Parameters
     ----------
     project_root : pathlib.Path | str
-        Expected root directory of the STM32 FSBL project.
+        Expected root directory of the STM32 subproject.
 
     Returns
     -------
@@ -245,7 +302,7 @@ def build_project(
     jobs: int | None = None,
     clean: bool = False,
 ) -> BuildResult:
-    """Build the STM32 FSBL project and resolve the produced ELF.
+    """Build an STM32 subproject and resolve the produced ELF.
 
     Parameters
     ----------
@@ -410,6 +467,7 @@ def program_external_flash_blob(
     weights_blob_path: Path | str,
     weights_flash_address: str,
     external_loader: Path | str,
+    recover_first: bool = True,
 ) -> str:
     """Program a staged external-weight blob through STM32CubeProgrammer.
 
@@ -426,6 +484,8 @@ def program_external_flash_blob(
         Absolute external flash address where the blob is programmed.
     external_loader : pathlib.Path | str
         Path to the `.stldr` external loader for the mounted NOR flash device.
+    recover_first : bool, default=True
+        Whether to run the conservative recovery attach before programming.
 
     Returns
     -------
@@ -436,6 +496,112 @@ def program_external_flash_blob(
     ------
     WorkflowError
         If recovery or programming fails.
+    """
+    return program_external_image(
+        cubeprog_bin=cubeprog_bin,
+        apid=apid,
+        image_path=weights_blob_path,
+        flash_address=weights_flash_address,
+        external_loader=external_loader,
+        programmer_mode=DEFAULT_PROGRAMMER_MODE,
+        freq_khz=DEFAULT_PROGRAMMER_FREQ_KHZ,
+        recover_first=recover_first,
+    )
+
+
+def sign_binary(
+    *,
+    signing_tool: Path | str | None,
+    input_bin: Path | str,
+    output_bin: Path | str,
+    load_offset: str = DEFAULT_SIGNING_LOAD_OFFSET,
+    header_version: str = DEFAULT_SIGNING_HEADER_VERSION,
+) -> SignedBinaryResult:
+    """Produce a trusted STM32 binary image.
+
+    Parameters
+    ----------
+    signing_tool : pathlib.Path | str | None
+        Optional explicit signing-tool path.
+    input_bin : pathlib.Path | str
+        Unsigned binary to sign.
+    output_bin : pathlib.Path | str
+        Trusted output path to write.
+    load_offset : str, default="0x80000000"
+        Load offset forwarded to the ST signing tool.
+    header_version : str, default="2.3"
+        Header version forwarded to the ST signing tool.
+
+    Returns
+    -------
+    SignedBinaryResult
+        Signing log and trusted output path.
+    """
+    resolved_tool = resolve_signing_tool(signing_tool)
+    resolved_input = resolve_required_file_path(input_bin, label="STM32 unsigned binary")
+    resolved_output = Path(output_bin).expanduser().resolve()
+    if resolved_output.exists():
+        resolved_output.unlink()
+    base_cmd = [
+        str(resolved_tool),
+        "-bin",
+        str(resolved_input),
+        "-nk",
+        "-of",
+        str(load_offset),
+        "-t",
+        "fsbl",
+        "-o",
+        str(resolved_output),
+        "-hv",
+        str(header_version),
+    ]
+    try:
+        try:
+            log = _run_command(base_cmd + ["-align"])
+        except WorkflowError:
+            log = _run_command(base_cmd)
+    except WorkflowError as exc:
+        raise SigningWorkflowError(f"STM32 binary signing failed.\n\n{exc}") from exc
+    return SignedBinaryResult(log=log, output_bin=resolved_output)
+
+
+def program_external_image(
+    *,
+    cubeprog_bin: Path | str | None,
+    apid: int,
+    image_path: Path | str,
+    flash_address: str,
+    external_loader: Path | str,
+    programmer_mode: str = DEFAULT_PROGRAMMER_MODE,
+    freq_khz: str = DEFAULT_PROGRAMMER_FREQ_KHZ,
+    recover_first: bool = True,
+) -> str:
+    """Program one image into external flash.
+
+    Parameters
+    ----------
+    cubeprog_bin : pathlib.Path | str | None
+        Optional STM32CubeProgrammer ``bin`` directory.
+    apid : int
+        Access-port identifier used for the normal programming attach.
+    image_path : pathlib.Path | str
+        Binary image to write.
+    flash_address : str
+        Destination external-flash address.
+    external_loader : pathlib.Path | str
+        Required `.stldr` loader for the target flash part.
+    programmer_mode : str, default="hotplug"
+        Normal-programming connect mode.
+    freq_khz : str, default="500"
+        SWD frequency forwarded to the programmer.
+    recover_first : bool, default=True
+        Whether to run the conservative recovery attach before programming.
+
+    Returns
+    -------
+    str
+        Combined programmer log text.
     """
     cubeprog_dir = (
         default_cubeprog_bin()
@@ -453,38 +619,39 @@ def program_external_flash_blob(
         label="STM32_Programmer_CLI",
         hint="STM32_Programmer_CLI",
     )
-    blob_path = resolve_required_file_path(weights_blob_path, label="STM32 weights blob")
-    loader_path = resolve_required_file_path(external_loader, label="STM32 external loader")
-
-    recovery_cmd = [
-        str(programmer),
-        "-q",
-        "-c",
-        "port=SWD",
-        f"mode={DEFAULT_RECOVERY_MODE}",
-        f"freq={DEFAULT_PROGRAMMER_FREQ_KHZ}",
-        f"ap={DEFAULT_RECOVERY_APID}",
-    ]
+    resolved_image = resolve_required_file_path(image_path, label="STM32 external image")
+    resolved_loader = resolve_required_file_path(external_loader, label="STM32 external loader")
+    log_parts: list[str] = []
+    if recover_first:
+        recovery_cmd = [
+            str(programmer),
+            "-q",
+            "-c",
+            "port=SWD",
+            f"mode={DEFAULT_RECOVERY_MODE}",
+            f"freq={freq_khz}",
+            f"ap={DEFAULT_RECOVERY_APID}",
+        ]
+        log_parts.append(_run_command(recovery_cmd).strip())
+        time.sleep(1.0)
     program_cmd = [
         str(programmer),
         "-q",
         "-c",
         "port=SWD",
-        f"mode={DEFAULT_PROGRAMMER_MODE}",
-        f"freq={DEFAULT_PROGRAMMER_FREQ_KHZ}",
+        f"mode={programmer_mode}",
+        f"freq={freq_khz}",
         f"ap={int(apid)}",
         "-halt",
         "-el",
-        str(loader_path),
+        str(resolved_loader),
         "-d",
-        str(blob_path),
-        str(weights_flash_address),
+        str(resolved_image),
+        str(flash_address),
         "-v",
     ]
-    recovery_log = _run_command(recovery_cmd)
-    time.sleep(1.0)
-    program_log = _run_command(program_cmd)
-    return "\n".join(text for text in (recovery_log.strip(), program_log.strip()) if text)
+    log_parts.append(_run_command(program_cmd).strip())
+    return "\n".join(text for text in log_parts if text)
 
 
 def classify_build_failure(log_text: str) -> Optional[str]:
@@ -510,6 +677,7 @@ def classify_build_failure(log_text: str) -> Optional[str]:
         ".text will not fit",
         "internal flash image exceeds available internal flash",
         "external weight blob exceeds available external flash",
+        "exceeds available lrun code-image budget",
     )
     if any(indicator in lowered for indicator in flash_indicators):
         return "flash"
@@ -694,6 +862,20 @@ def _run_gdb_load(
         # GDB to stop responding once execution is transferred. The timeout path
         # is therefore treated as success unless the partial output clearly
         # contains a failure signature.
+        def _expected_post_jump_disconnect(output: str) -> bool:
+            lowered = output.lower()
+            loaded_ok = (
+                "loading section" in lowered
+                and "start address" in lowered
+                and "transfer rate" in lowered
+            )
+            disconnected_after_jump = (
+                "remote connection closed" in lowered
+                or "lost target connection" in lowered
+                or "target disconnected" in lowered
+            )
+            return loaded_ok and disconnected_after_jump
+
         proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
             stdout, _ = proc.communicate(timeout=GDB_JUMP_TIMEOUT_S)
@@ -704,6 +886,8 @@ def _run_gdb_load(
             proc.kill()
             remaining_stdout, _ = proc.communicate()
             stdout = partial_stdout + (remaining_stdout or "")
+            if _expected_post_jump_disconnect(stdout):
+                return stdout
             lowered = stdout.lower()
             for indicator in (
                 "error",
@@ -724,6 +908,8 @@ def _run_gdb_load(
                     )
             return stdout
         if proc.returncode != 0:
+            if _expected_post_jump_disconnect(stdout):
+                return stdout
             detail = stdout.strip() if stdout.strip() else "No GDB output captured."
             raise WorkflowError(
                 "GDB load/run failed before the jump timeout elapsed.\n\n"

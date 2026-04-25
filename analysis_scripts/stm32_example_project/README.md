@@ -28,6 +28,141 @@ backend surface.
   wrappers in this directory remain example-only unless they are explicitly
   promoted into the backend/config surface later.
 
+## What To Keep Here
+
+The useful long-lived contents of this directory are:
+
+- repo-local STM32 project workspaces that are needed to reproduce builds and
+  measurements:
+  - `stm32_toy_ai_project/`
+  - `stm32_cadenced_toy_ai_project/`
+  - `stm32_lrun_toy_ai_project/`
+- thin Python entrypoints that run a specific hardware-backed flow:
+  - `run_*_hil.py`
+  - `smoke_test_*.py`
+  - `generate_and_stage_*.py`
+  - sweep / comparison wrappers that call the main runners
+- shared helpers that encode build / signing / staging behavior:
+  - `stm32_phase2_candidate.py`
+  - `stm32_lrun_common.py`
+- plotting and summary scripts that consume saved sweep results
+
+Things that should stay out of the committed source surface:
+
+- `out/` run products
+- ad hoc `results/` archives that only preserve past experiments
+- one-off scratch notes and temporary debugging scripts
+- generated ST Edge AI `network*` sources and weight blobs
+
+For the LRUN track specifically, the durable value is:
+
+- the `Appli` memory map and larger runtime RAM budget
+- the unattended `dev_boot` measurement flow
+
+The removed manual external-flash boot validation flow is intentionally not
+part of the long-lived NAS path.
+
+## Recommended Reorganization
+
+This folder has grown into a mix of project workspaces, runners, plotting, and
+experiment archives. The next cleanup should group it by responsibility rather
+than by historical order.
+
+Target structure:
+
+- `projects/`
+  - `stm32_toy_ai_project/`
+  - `stm32_cadenced_toy_ai_project/`
+  - `stm32_lrun_toy_ai_project/`
+- `runners/`
+  - build / stage / smoke / HIL entrypoints
+- `analysis/`
+  - sweep wrappers
+  - comparison wrappers
+  - plotting scripts
+- `results/`
+  - ignored local outputs and optional archived exports
+- `README.md`
+  - top-level usage and project-selection guide
+
+Practical migration order:
+
+1. Keep the STM32 project directories where they are until the runners are
+   stable; moving the CubeIDE workspaces first creates churn for little value.
+2. Move Python entrypoints into `runners/` and update shared path constants in
+   one pass.
+3. Move sweep/comparison/plotting scripts into `analysis/`.
+4. Move archived CSV/PNG exports out of the repo or into a clearly ignored
+   `results/archive/` location.
+5. Leave only active docs and active source in the top level.
+
+Until that cleanup happens, treat this directory as having four logical groups:
+
+- board/project workspaces
+- execution wrappers
+- analysis/post-processing scripts
+- ignored outputs and archives
+
+## Parallel LRUN Track
+
+This directory now also carries a parallel LRUN example track under:
+
+- `analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/`
+
+This LRUN path is separate from the existing FSBL-only analysis scripts. It is
+meant to exercise the ST `Template_FSBL_LRUN` application layout without
+changing the production backend in `src/tinyodom/microcontrollers`.
+
+Important LRUN facts:
+
+- Run LRUN commands from the `tinyodomex` conda environment.
+- LRUN in this directory now supports only the unattended `dev_boot` flow.
+- The point of the LRUN toy project is the `Appli` memory layout and RAM budget:
+  about `2047K` linker-visible runtime RAM at `0x34000400`, not deployment-style
+  external-flash boot validation.
+- In LRUN `dev_boot`, the signed `Appli` image is programmed into external
+  flash first, optional external weights are programmed separately, then the
+  `FSBL` ELF is debug-loaded into RAM and copies the trusted app into AXISRAM.
+- The old manual external-flash validation path was removed because it depended on
+  manual BOOT strap changes and reset sequencing, which is not compatible with
+  unattended NAS on the stock board.
+- The repo-local LRUN project contains ST-derived files and ships copied
+  license material:
+  - `stm32_lrun_toy_ai_project/LICENSE.md`
+  - `stm32_lrun_toy_ai_project/LICENSE.STM32N6xx_HAL_Driver.md`
+  - `stm32_lrun_toy_ai_project/LICENSE.CMSIS.txt`
+
+Main LRUN commands:
+
+```bash
+# Stub-only LRUN sanity pass, no harness required:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_lrun_toy_ai_hil.py \
+  --project-root analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project \
+  --stub-only \
+  --skip-harness
+
+# Real LRUN run in development-boot mode:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_lrun_toy_ai_hil.py \
+  --project-root analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project
+
+# LRUN smoke test: stub pass first, then real pass:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/smoke_test_stm32_lrun_toy_ai.py \
+  --project-root analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project
+
+# LRUN generation + staging only:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/generate_and_stage_stm32_lrun_toy_ai.py \
+  --project-root analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project \
+  --clean
+
+# LRUN CPU sweep:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_lrun_cpu_clock_sweep.py \
+  --project-root analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project
+
+# LRUN back-to-back vs cadenced comparison:
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_lrun_cadenced_comparison.py \
+  --project-root analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project
+```
+
 ## Current Status
 
 - The project builds successfully from the committed `FSBL/Debug` makefiles.
@@ -555,7 +690,5 @@ After `make stm32-setup`, they build from their local `FSBL/Drivers/...` trees.
 
 ## First Run Notes
 
-- Use development boot mode:
-  - `BOOT1 = 2-3`
-  - `BOOT0` does not matter for this debug flow
+- Use the board's standard development-boot strap setting for this debug flow
 - Start with the debug-load flow, not the external-flash boot flow

@@ -1,8 +1,10 @@
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,6 +29,7 @@ from tinyodom.microcontrollers import stm32_nucleo_n657x0 as stm32_n657_backend 
 from tinyodom.microcontrollers import stm32_runtime  # noqa: E402
 from tinyodom.microcontrollers.stm32_nucleo_n657x0 import (  # noqa: E402
     BOARD_NAME,
+    DEFAULT_FSBL_TEMPLATE_ROOT,
     DEFAULT_WEIGHTS_EXTERNAL_LOADER_NAME,
     DEFAULT_MAX_EXTERNAL_FLASH_BYTES,
     DEFAULT_TEMPLATE_ROOT,
@@ -88,6 +91,87 @@ def _build_project_tree(root: Path) -> Path:
             ]
         ),
     )
+    return root
+
+
+def _build_lrun_project_tree(root: Path) -> Path:
+    """Build a minimal STM32 LRUN workspace for unit tests."""
+    _write_text(root / "FSBL" / "Inc" / "stm32_extmem_conf.h", "#define EXTMEM_LRUN_SOURCE_SIZE 0x00020000\n")
+    _write_text(root / "Secure_nsclib" / "secure_nsc.h", "#pragma once\n")
+    _write_text(root / "Drivers" / "STM32N6xx_HAL_Driver" / "Src" / "vendor.c", "void vendor(void) {}\n")
+    _write_text(root / "Drivers" / "STM32N6xx_HAL_Driver" / "Inc" / "vendor.h", "#pragma once\n")
+    _write_text(
+        root / "Middlewares" / "ST" / "STM32_ExtMem_Manager" / "boot_stub.c",
+        "void extmem_boot_stub(void) {}\n",
+    )
+    _write_text(root / "Appli" / "Inc" / "main.h", "#pragma once\n")
+    _write_text(root / "Appli" / "Src" / "main.c", "int main(void) { return 0; }\n")
+    _write_text(root / "Appli" / "Src" / "secure_nsc.c", "void SecureGateway(void) {}\n")
+    _write_text(root / "Appli" / "Src" / "system_stm32n6xx_s.c", "void SystemInit(void) {}\n")
+    _write_text(root / "Appli" / "Inc" / "stm32n6xx_hal_conf.h", "#pragma once\n")
+    _write_text(root / "Appli" / "Inc" / "stm32n6xx_nucleo_conf.h", "#pragma once\n")
+    _write_text(root / "Appli" / "Inc" / "partition_stm32n657xx.h", "#pragma once\n")
+    _write_text(root / "Appli" / "Inc" / "tcn_dut_runner.h", "#pragma once\n")
+    _write_text(
+        root / "Appli" / "Inc" / "network_data_params.h",
+        "#define AI_NETWORK_DATA_ACTIVATIONS_SIZE (16384)\n",
+    )
+    _write_text(
+        root / "STM32CubeIDE" / "AppS" / "STM32N657XX_LRUN.ld",
+        "\n".join(
+            [
+                "_Min_Heap_Size = 0x2000;",
+                "_Min_Stack_Size = 0x4000;",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        root / "STM32CubeIDE" / "Boot" / "STM32N657XX_AXISRAM2_fsbl.ld",
+        "\n".join(
+            [
+                "_Min_Heap_Size = 0x2000;",
+                "_Min_Stack_Size = 0x4000;",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        root / "STM32CubeIDE" / "AppS" / "Debug" / "makefile",
+        "\n".join(
+            [
+                "BUILD_ARTIFACT_NAME := Template_LRUN_AppS",
+                "Template_LRUN_AppS.elf:",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        root / "STM32CubeIDE" / "Boot" / "Debug" / "makefile",
+        "\n".join(
+            [
+                "BUILD_ARTIFACT_NAME := Template_LRUN_FSBL",
+                "Template_LRUN_FSBL.elf:",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        root / "STM32CubeIDE" / "Boot" / "Debug" / "Src" / "subdir.mk",
+        "arm-none-eabi-gcc -I../../../FSBL/Inc\n",
+    )
+    _write_text(
+        root / "STM32CubeIDE" / "AppS" / "Debug" / "Src" / "subdir.mk",
+        "\n".join(
+            [
+                "C_SRCS += \\",
+                "../../../Appli/Src/secure_nsc.c",
+                "",
+            ]
+        ),
+    )
+    _write_text(root / "STM32CubeIDE" / "Boot" / "Debug" / "objects.list", "obj\n")
+    _write_text(root / "STM32CubeIDE" / "AppS" / "Debug" / "objects.list", "obj\n")
     return root
 
 
@@ -267,8 +351,8 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         self.assertIsNone(resolved["weights_external_loader"])
         self.assertEqual(resolved["max_external_flash_bytes"], DEFAULT_MAX_EXTERNAL_FLASH_BYTES)
 
-    def test_resolve_device_options_accepts_template_root_override(self) -> None:
-        """Ensure the new ``template_root`` override is accepted.
+    def test_resolve_device_options_warns_for_template_root_override(self) -> None:
+        """Ensure the deprecated ``template_root`` override emits a warning.
 
         Returns
         -------
@@ -276,18 +360,30 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             template_root = _build_project_tree(Path(tmpdir) / "template")
-            resolved = resolve_device_options(
-                "STM32_NUCLEO_N657X0_Q",
-                type(
-                    "DeviceConfigDouble",
-                    (),
-                    {"stm32": type("STMConfigDouble", (), {"template_root": str(template_root)})()},
-                )(),
-            )
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                resolved = resolve_device_options(
+                    "STM32_NUCLEO_N657X0_Q",
+                    type(
+                        "DeviceConfigDouble",
+                        (),
+                        {
+                            "stm32": type(
+                                "STMConfigDouble",
+                                (),
+                                {
+                                    "template_root": str(template_root),
+                                    "project_layout": "fsbl_legacy",
+                                },
+                            )()
+                        },
+                    )(),
+                )
         self.assertEqual(resolved["project_root"], template_root.resolve())
+        self.assertTrue(any(issubclass(item.category, DeprecationWarning) for item in caught))
 
-    def test_resolve_device_options_accepts_legacy_project_root_alias(self) -> None:
-        """Ensure the legacy ``project_root`` alias still resolves cleanly.
+    def test_resolve_device_options_infers_layout_for_custom_root(self) -> None:
+        """Ensure custom STM roots infer the legacy layout when shape is unambiguous.
 
         Returns
         -------
@@ -303,6 +399,28 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                     {"stm32": type("STMConfigDouble", (), {"project_root": str(template_root)})()},
                 )(),
             )
+
+        self.assertEqual(resolved["project_root"], template_root.resolve())
+        self.assertEqual(resolved["project_layout"], "fsbl_legacy")
+
+    def test_resolve_device_options_accepts_project_root_with_explicit_layout(self) -> None:
+        """Ensure custom STM roots still resolve when the layout is explicit."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            template_root = _build_project_tree(Path(tmpdir) / "template")
+            resolved = resolve_device_options(
+                "STM32_NUCLEO_N657X0_Q",
+                type(
+                    "DeviceConfigDouble",
+                    (),
+                    {
+                        "stm32": type(
+                            "STMConfigDouble",
+                            (),
+                            {"project_root": str(template_root), "project_layout": "fsbl_legacy"},
+                        )()
+                    },
+                )(),
+            )
         self.assertEqual(resolved["project_root"], template_root.resolve())
 
     def test_compile_success_parses_ram_flash_and_arena_from_staged_path(self) -> None:
@@ -314,7 +432,9 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_project_tree(Path(tmpdir) / "staged")
-            device = STM32NucleoN657X0QDevice(device_options={"project_root": str(staged_root)})
+            device = STM32NucleoN657X0QDevice(
+                device_options={"project_root": str(staged_root), "project_layout": "fsbl_legacy"}
+            )
             with patch(
                 "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project"
             ) as build_mock, patch(
@@ -359,7 +479,9 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_project_tree(Path(tmpdir) / "staged")
-            device = STM32NucleoN657X0QDevice(device_options={"project_root": str(staged_root)})
+            device = STM32NucleoN657X0QDevice(
+                device_options={"project_root": str(staged_root), "project_layout": "fsbl_legacy"}
+            )
             with patch(
                 "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
                 side_effect=stm32_cube_clt.WorkflowError("region `FLASH' overflowed by 100 bytes"),
@@ -394,7 +516,9 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                     ]
                 ),
             )
-            device = STM32NucleoN657X0QDevice(device_options={"project_root": str(staged_root)})
+            device = STM32NucleoN657X0QDevice(
+                device_options={"project_root": str(staged_root), "project_layout": "fsbl_legacy"}
+            )
             result = device.compile(
                 sketch_path=staged_root,
                 arena_kb=-1,
@@ -489,7 +613,10 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         None
             This test asserts that successful runtime telemetry reaches the caller.
         """
-        device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0")
+        device = STM32NucleoN657X0QDevice(
+            serial_port="/dev/ttyACM0",
+            device_options={"project_layout": "fsbl_legacy"},
+        )
         compile_result = type(
             "CompileResultDouble",
             (),
@@ -632,7 +759,8 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         self.assertEqual(metrics.power_metrics["cadenced_error_code"], HIL_ERROR_OK)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_active_inference_latency_ms"], 80.0)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_window_latency_ms"], 20000.0)
-        self.assertAlmostEqual(metrics.power_metrics["cadenced_energy_mj_per_window"], 12.5)
+        self.assertAlmostEqual(metrics.power_metrics["cadenced_energy_mj_per_window"], 1.25)
+        self.assertAlmostEqual(metrics.power_metrics["cadenced_energy_mj_per_trial"], 12.5)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_rtc_sleep_ms"], 1500.0)
 
     def test_evaluate_cadenced_runtime_mode_reports_back_to_back_when_second_phase_never_runs(self) -> None:
@@ -665,7 +793,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
         phase_mock.assert_called_once()
         self.assertEqual(metrics.power_metrics["runtime_mode"], "back_to_back")
-        self.assertNotIn("cadenced_energy_mj_per_window", metrics.power_metrics)
+        self.assertNotIn("cadenced_energy_mj_per_trial", metrics.power_metrics)
 
     def test_cadenced_energy_window_uses_stable_sentinel_when_energy_is_unavailable(self) -> None:
         device = STM32NucleoN657X0QDevice(
@@ -684,8 +812,8 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         metrics = device._cadenced_power_metrics_from_phase_result(phase_result)
 
         self.assertEqual(metrics["cadenced_window_latency_ms"], 20000.0)
-        self.assertEqual(metrics["cadenced_energy_mj_per_inference"], -1.0)
         self.assertEqual(metrics["cadenced_energy_mj_per_window"], -1.0)
+        self.assertEqual(metrics["cadenced_energy_mj_per_trial"], -1.0)
 
     def test_evaluate_run_hil_runtime_failure_maps_to_latency_error(self) -> None:
         """Ensure protocol failures become ``HIL_ERROR_LATENCY`` with backend detail.
@@ -843,6 +971,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             device = STM32NucleoN657X0QDevice(
                 device_options={
                     "template_root": str(template_root),
+                    "project_layout": "fsbl_legacy",
                     "cpu_clock_mhz": 400,
                 }
             )
@@ -952,8 +1081,9 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             self.assertTrue((candidate_root / "stedgeai_out").is_dir())
             manifest_path = staged_root / STAGED_MANIFEST_NAME
             self.assertTrue(manifest_path.is_file())
-            manifest_text = manifest_path.read_text(encoding="utf-8")
-            self.assertIn('"weight_storage_mode": "embedded"', manifest_text)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["weight_storage_mode"], "embedded")
+            self.assertEqual(manifest["staged_workspace_root"], str(staged_root.resolve()))
 
     def test_prepare_candidate_writes_configured_measured_inference_runs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -963,7 +1093,11 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             outputs_dir.mkdir()
             device = STM32NucleoN657X0QDevice(
                 serial_port="/dev/ttyACM0",
-                device_options={"project_root": str(template_root), "cpu_clock_mhz": 400},
+                device_options={
+                    "project_root": str(template_root),
+                    "project_layout": "fsbl_legacy",
+                    "cpu_clock_mhz": 400,
+                },
             )
             fake_model = object()
             fake_training_data = type("TrainingData", (), {"inputs": [[[0.0] * 6] * 4]})()
@@ -1034,6 +1168,92 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             )
             self.assertIn("TCN_DUT_MEASURED_RUNS 7", header_text)
 
+    def test_prepare_candidate_lrun_copies_workspace_and_stages_generated_outputs(self) -> None:
+        """Ensure LRUN candidate prep stages generated outputs into Appli paths."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            template_root = _build_lrun_project_tree(tmp_path / "tinyodom_tcn_stm32_lrun")
+            _write_text(template_root / "STM32CubeIDE" / "AppS" / "Debug" / "Src" / "stale.d", "old dep\n")
+            _write_text(template_root / "STM32CubeIDE" / "Boot" / "Debug" / "Src" / "stale.o", "old obj\n")
+            outputs_dir = tmp_path / "outputs"
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(template_root),
+                    "project_layout": "lrun_dev_boot",
+                    "cpu_clock_mhz": 400,
+                }
+            )
+
+            def _fake_generate(
+                *,
+                workspace_dir: Path,
+                output_dir: Path,
+                model_path: Path,
+                **kwargs,
+            ) -> None:
+                del kwargs
+                output_dir.mkdir(parents=True, exist_ok=True)
+                workspace_dir.mkdir(parents=True, exist_ok=True)
+                model_path.write_bytes(model_path.read_bytes())
+                for name in EXPECTED_GENERATED_OUTPUTS:
+                    target = output_dir / name
+                    if name.endswith(".h"):
+                        target.write_text(
+                            "#define AI_NETWORK_DATA_ACTIVATIONS_SIZE (32768)\n",
+                            encoding="utf-8",
+                        )
+                    else:
+                        target.write_text("/* generated */\n", encoding="utf-8")
+
+            fake_model = object()
+            fake_training_data = type("TrainingData", (), {"inputs": [[[0.0] * 6] * 4]})()
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0._ensure_staging_tools"
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_analyze"
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_generate",
+                side_effect=_fake_generate,
+            ):
+                def _write_tflite(*, output_name, **kwargs):
+                    del kwargs
+                    Path(output_name).write_bytes(b"tflite")
+
+                with patch("tinyodom.hardware.convert_to_tflite_model", side_effect=_write_tflite):
+                    staged_root = device.prepare_candidate(
+                        config=type(
+                            "Config",
+                            (),
+                            {
+                                "training": type("Training", (), {"quantization": True})(),
+                                "device": type("Device", (), {"measured_inference_runs": 9})(),
+                            },
+                        )(),
+                        hyperparams=None,
+                        model=fake_model,
+                        outputs_dir=outputs_dir,
+                        tflite_model_path=outputs_dir / "ignored.tflite",
+                        training_data=fake_training_data,
+                        model_variant="approx_trained",
+                        checkpoint_path=None,
+                    )
+
+            self.assertTrue(staged_root.is_dir())
+            self.assertEqual(staged_root.name, template_root.name)
+            self.assertTrue((staged_root / "Appli" / "Src" / "network.c").is_file())
+            self.assertTrue((staged_root / "Appli" / "Inc" / "network_data_params.h").is_file())
+            self.assertTrue((staged_root / "Appli" / "Inc" / "tcn_dut_phase_config.h").is_file())
+            self.assertFalse((staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Src" / "stale.d").exists())
+            self.assertFalse((staged_root / "STM32CubeIDE" / "Boot" / "Debug" / "Src" / "stale.o").exists())
+            manifest = json.loads((staged_root / STAGED_MANIFEST_NAME).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["project_layout"], "lrun_dev_boot")
+            self.assertEqual(manifest["staged_workspace_root"], str(staged_root.resolve()))
+            header_text = (
+                staged_root / "Appli" / "Inc" / "tcn_dut_phase_config.h"
+            ).read_text(encoding="utf-8")
+            self.assertIn("TCN_DUT_MEASURED_RUNS 9", header_text)
+
     def test_prepare_candidate_runs_analyze_before_generate(self) -> None:
         """Ensure ST Edge AI analyze preflights compatibility before generate.
 
@@ -1048,6 +1268,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             device = STM32NucleoN657X0QDevice(
                 device_options={
                     "template_root": str(template_root),
+                    "project_layout": "fsbl_legacy",
                 }
             )
             call_order: list[str] = []
@@ -1185,6 +1406,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             device = STM32NucleoN657X0QDevice(
                 device_options={
                     "template_root": str(template_root),
+                    "project_layout": "fsbl_legacy",
                 }
             )
             fake_training_data = type("TrainingData", (), {"inputs": [[[0.0] * 6] * 4]})()
@@ -1227,7 +1449,12 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         -------
         None
         """
-        device = STM32NucleoN657X0QDevice()
+        device = STM32NucleoN657X0QDevice(
+            device_options={
+                "project_root": str(DEFAULT_FSBL_TEMPLATE_ROOT),
+                "project_layout": "fsbl_legacy",
+            }
+        )
         with patch(
             "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project"
         ) as build_mock, patch(
@@ -1235,8 +1462,8 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         ) as size_mock:
             build_mock.return_value = stm32_cube_clt.BuildResult(
                 log="build ok",
-                debug_dir=DEFAULT_TEMPLATE_ROOT / "Debug",
-                elf_path=DEFAULT_TEMPLATE_ROOT / "Debug" / "tinyodom_tcn_stm32_fsbl.elf",
+                debug_dir=DEFAULT_FSBL_TEMPLATE_ROOT / "Debug",
+                elf_path=DEFAULT_FSBL_TEMPLATE_ROOT / "Debug" / "tinyodom_tcn_stm32_fsbl.elf",
             )
             size_mock.return_value = stm32_cube_clt.SizeResult(
                 elf_flash_bytes=1234,
@@ -1244,7 +1471,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                 raw_output="size output",
             )
             result = device.compile(
-                sketch_path=DEFAULT_TEMPLATE_ROOT,
+                sketch_path=DEFAULT_FSBL_TEMPLATE_ROOT,
                 arena_kb=-1,
                 window_size=200,
                 num_channels=6,
@@ -1252,7 +1479,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
         self.assertTrue(result.success, msg=result.log)
         build_mock.assert_called_once_with(
-            project_root=DEFAULT_TEMPLATE_ROOT.resolve(),
+            project_root=DEFAULT_FSBL_TEMPLATE_ROOT.resolve(),
             jobs=os.cpu_count() or 1,
             clean=True,
         )
@@ -1324,6 +1551,18 @@ class STM32HelperTests(unittest.TestCase):
         )
         self.assertEqual(classification, "flash")
 
+    def test_classify_build_failure_treats_lrun_code_image_budget_as_flash(self) -> None:
+        """Ensure LRUN trusted-App budget overflows map to flash overflow semantics.
+
+        Returns
+        -------
+        None
+        """
+        classification = stm32_cube_clt.classify_build_failure(
+            "STM trusted App image exceeds available LRUN code-image budget (130321 > 65536)."
+        )
+        self.assertEqual(classification, "flash")
+
     def test_run_command_wraps_host_os_errors_in_workflow_error(self) -> None:
         """Ensure host-side command launch failures are normalized.
 
@@ -1349,7 +1588,9 @@ class STM32HelperTests(unittest.TestCase):
             tmp_path = Path(tmpdir)
             template_root = _build_project_tree(tmp_path / "template")
             outputs_dir = tmp_path / "outputs"
-            device = STM32NucleoN657X0QDevice(device_options={"template_root": str(template_root)})
+            device = STM32NucleoN657X0QDevice(
+                device_options={"template_root": str(template_root), "project_layout": "fsbl_legacy"}
+            )
 
             def _write_tflite(*, output_name, **kwargs):
                 """Write a placeholder TFLite file for staging tests.
@@ -1455,7 +1696,10 @@ class STM32HelperTests(unittest.TestCase):
                     ]
                 ),
             )
-            device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0")
+            device = STM32NucleoN657X0QDevice(
+                serial_port="/dev/ttyACM0",
+                device_options={"project_root": str(project_root), "project_layout": "fsbl_legacy"},
+            )
             compile_result = type(
                 "CompileResultDouble",
                 (),
@@ -1595,7 +1839,7 @@ class STM32HelperTests(unittest.TestCase):
                 return_value={"weight_storage_mode": "external_flash", "external_flash_bytes": 4096.0},
             ), patch.object(
                 device,
-                "_program_external_weights_if_needed",
+                "_program_runtime_images",
                 side_effect=lambda *_args, **_kwargs: trace.append("program_external") or {
                     "weight_storage_mode": "external_flash",
                     "external_flash_bytes": 4096.0,
@@ -1631,6 +1875,7 @@ class STM32HelperTests(unittest.TestCase):
                     num_channels=6,
                     serial_port="/dev/ttyACM0",
                     run_hil=True,
+                    measured_inference_runs=5,
                     harness_serial_port="/dev/ttyACM1",
                 )
 
@@ -1682,7 +1927,10 @@ class STM32HelperTests(unittest.TestCase):
                 project_root / "Inc" / "tcn_dut_phase_config.h",
                 "#define TCN_DUT_MEASURED_RUNS 1\n",
             )
-            device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0")
+            device = STM32NucleoN657X0QDevice(
+                serial_port="/dev/ttyACM0",
+                device_options={"project_root": str(project_root), "project_layout": "fsbl_legacy"},
+            )
             compile_result = type(
                 "CompileResultDouble",
                 (),
@@ -1747,7 +1995,10 @@ class STM32HelperTests(unittest.TestCase):
                 project_root / "Inc" / "tcn_dut_phase_config.h",
                 "#define TCN_DUT_MEASURED_RUNS 5\n",
             )
-            device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0")
+            device = STM32NucleoN657X0QDevice(
+                serial_port="/dev/ttyACM0",
+                device_options={"project_root": str(project_root), "project_layout": "fsbl_legacy"},
+            )
             compile_result = type(
                 "CompileResultDouble",
                 (),
@@ -1779,7 +2030,7 @@ class STM32HelperTests(unittest.TestCase):
                 return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
             ), patch.object(
                 device,
-                "_program_external_weights_if_needed",
+                "_program_runtime_images",
                 return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
             ), patch(
                 "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
@@ -1853,6 +2104,7 @@ class STM32HelperTests(unittest.TestCase):
             device = STM32NucleoN657X0QDevice(
                 device_options={
                     "template_root": str(project_root),
+                    "project_layout": "fsbl_legacy",
                     "weight_storage_mode": "external_flash",
                     "max_external_flash_bytes": 4096,
                 }
@@ -1869,7 +2121,1369 @@ class STM32HelperTests(unittest.TestCase):
         self.assertEqual(result.overflow_kind, "flash")
         self.assertEqual(result.external_flash_bytes, 4097)
 
-    def test_program_external_weights_autodiscovers_loader_when_manifest_omits_it(self) -> None:
+    def test_compile_success_lrun_returns_artifacts_and_copy_window(self) -> None:
+        """Ensure LRUN compile reports app/boot artifacts and copy-window metadata."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                }
+            )
+
+            def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                del jobs, clean
+                debug_dir = project_root / "Debug"
+                if project_root.name == "AppS":
+                    elf_path = debug_dir / "Template_LRUN_AppS.elf"
+                    _write_text(debug_dir / "Template_LRUN_AppS.bin", "appbin")
+                else:
+                    elf_path = debug_dir / "Template_LRUN_FSBL.elf"
+                _write_text(elf_path, "elf")
+                return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
+
+            def _fake_size(elf_path: Path):
+                if "AppS" in elf_path.name:
+                    return stm32_cube_clt.SizeResult(elf_flash_bytes=120000, ram_bytes=64000, raw_output="app")
+                return stm32_cube_clt.SizeResult(elf_flash_bytes=32000, ram_bytes=12000, raw_output="boot")
+
+            def _fake_sign(**kwargs):
+                output_bin = Path(kwargs["output_bin"])
+                output_bin.parent.mkdir(parents=True, exist_ok=True)
+                output_bin.write_bytes(b"x" * 130321)
+                return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                side_effect=_fake_build,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                side_effect=_fake_size,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                side_effect=_fake_sign,
+            ):
+                result = device.compile(
+                    sketch_path=staged_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.heap_bytes, 0x2000)
+        self.assertEqual(result.stack_bytes, 0x4000)
+        self.assertEqual(result.build_dir, staged_root / "STM32CubeIDE" / "Boot" / "Debug")
+        self.assertEqual(
+            result.boot_elf_path,
+            staged_root / "STM32CubeIDE" / "Boot" / "Debug" / "Template_LRUN_FSBL.elf",
+        )
+        self.assertEqual(
+            result.app_elf_path,
+            staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS.elf",
+        )
+        self.assertEqual(
+            result.signed_app_bin_path,
+            staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS-trusted.bin",
+        )
+        self.assertEqual(result.flash_bytes, 130321)
+        self.assertEqual(result.fsbl_copy_window_bytes, 131072)
+        self.assertIn("boot", result.log)
+
+    def test_compile_lrun_reuses_unchanged_artifacts(self) -> None:
+        """Ensure repeated LRUN compile skips rebuild/sign when inputs are unchanged."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            manifest_path = staged_root / STAGED_MANIFEST_NAME
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "candidate_root": str(staged_root.parent),
+                        "generated_output_dir": str(staged_root / "generated"),
+                        "project_layout": "lrun_dev_boot",
+                        "weight_storage_mode": "embedded",
+                        "staged_workspace_root": str(staged_root.resolve()),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                }
+            )
+
+            def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                del jobs, clean
+                debug_dir = project_root / "Debug"
+                if project_root.name == "AppS":
+                    elf_path = debug_dir / "Template_LRUN_AppS.elf"
+                    _write_text(debug_dir / "Template_LRUN_AppS.bin", "appbin")
+                else:
+                    elf_path = debug_dir / "Template_LRUN_FSBL.elf"
+                _write_text(elf_path, "elf")
+                return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
+
+            def _fake_size(elf_path: Path):
+                if "AppS" in elf_path.name:
+                    return stm32_cube_clt.SizeResult(elf_flash_bytes=120000, ram_bytes=64000, raw_output="app")
+                return stm32_cube_clt.SizeResult(elf_flash_bytes=32000, ram_bytes=12000, raw_output="boot")
+
+            def _fake_sign(**kwargs):
+                output_bin = Path(kwargs["output_bin"])
+                output_bin.parent.mkdir(parents=True, exist_ok=True)
+                output_bin.write_bytes(b"x" * 130321)
+                return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                side_effect=_fake_build,
+            ) as build_mock, patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                side_effect=_fake_size,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                side_effect=_fake_sign,
+            ) as sign_mock:
+                first = device.compile(
+                    sketch_path=staged_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                )
+
+            self.assertTrue(first.success, msg=first.log)
+            self.assertEqual(build_mock.call_count, 2)
+            self.assertEqual(sign_mock.call_count, 1)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                side_effect=AssertionError("build should be reused"),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                side_effect=_fake_size,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                side_effect=AssertionError("sign should be reused"),
+            ):
+                second = device.compile(
+                    sketch_path=staged_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                )
+
+            self.assertTrue(second.success, msg=second.log)
+            self.assertIn("AppS build reused", second.log)
+            self.assertIn("signed App reused", second.log)
+            self.assertIn("Boot build reused", second.log)
+
+    def test_lrun_build_input_hashes_include_setup_managed_vendor_trees(self) -> None:
+        """Ensure LRUN reuse invalidates when setup-managed vendor inputs change."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            paths = stm32_n657_backend._resolve_workspace_paths(
+                project_root=staged_root,
+                project_layout="lrun_dev_boot",
+            )
+
+            app_hash_before = stm32_n657_backend._lrun_app_build_input_hash(paths)
+            boot_hash_before = stm32_n657_backend._lrun_boot_build_input_hash(paths)
+
+            _write_text(staged_root / "Secure_nsclib" / "secure_nsc.h", "#define SECURE_GATEWAY 1\n")
+            _write_text(
+                staged_root / "Middlewares" / "ST" / "STM32_ExtMem_Manager" / "boot_stub.c",
+                "void extmem_boot_stub(void) { int updated = 1; }\n",
+            )
+
+            app_hash_after = stm32_n657_backend._lrun_app_build_input_hash(paths)
+            boot_hash_after = stm32_n657_backend._lrun_boot_build_input_hash(paths)
+
+            self.assertNotEqual(app_hash_before, app_hash_after)
+            self.assertNotEqual(boot_hash_before, boot_hash_after)
+
+    def test_compile_lrun_rebuilds_boot_cleanly_when_boot_inputs_change(self) -> None:
+        """Ensure Boot rebuilds cleanly when Boot inputs change without a copy-window change."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            manifest_path = staged_root / STAGED_MANIFEST_NAME
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "candidate_root": str(staged_root.parent),
+                        "generated_output_dir": str(staged_root / "generated"),
+                        "project_layout": "lrun_dev_boot",
+                        "weight_storage_mode": "embedded",
+                        "staged_workspace_root": str(staged_root.resolve()),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                }
+            )
+
+            def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                del jobs, clean
+                debug_dir = project_root / "Debug"
+                if project_root.name == "AppS":
+                    elf_path = debug_dir / "Template_LRUN_AppS.elf"
+                    _write_text(debug_dir / "Template_LRUN_AppS.bin", "appbin")
+                else:
+                    elf_path = debug_dir / "Template_LRUN_FSBL.elf"
+                _write_text(elf_path, "elf")
+                return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
+
+            def _fake_size(elf_path: Path):
+                if "AppS" in elf_path.name:
+                    return stm32_cube_clt.SizeResult(elf_flash_bytes=120000, ram_bytes=64000, raw_output="app")
+                return stm32_cube_clt.SizeResult(elf_flash_bytes=32000, ram_bytes=12000, raw_output="boot")
+
+            def _fake_sign(**kwargs):
+                output_bin = Path(kwargs["output_bin"])
+                output_bin.parent.mkdir(parents=True, exist_ok=True)
+                output_bin.write_bytes(b"x" * 130321)
+                return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                side_effect=_fake_build,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                side_effect=_fake_size,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                side_effect=_fake_sign,
+            ):
+                first = device.compile(
+                    sketch_path=staged_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                )
+
+            self.assertTrue(first.success, msg=first.log)
+            _write_text(
+                staged_root / "FSBL" / "Inc" / "stm32_extmem_conf.h",
+                "#define EXTMEM_LRUN_SOURCE_SIZE 0x00020000\n/* boot source changed */\n",
+            )
+
+            build_calls: list[tuple[str, bool]] = []
+
+            def _second_build(*, project_root: Path, jobs: int, clean: bool):
+                del jobs
+                build_calls.append((project_root.name, clean))
+                elf_path = project_root / "Debug" / "Template_LRUN_FSBL.elf"
+                _write_text(elf_path, "elf")
+                return stm32_cube_clt.BuildResult(
+                    log="boot rebuilt",
+                    debug_dir=project_root / "Debug",
+                    elf_path=elf_path,
+                )
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                side_effect=_second_build,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                side_effect=_fake_size,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                side_effect=AssertionError("sign should be reused"),
+            ):
+                second = device.compile(
+                    sketch_path=staged_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                )
+
+            self.assertTrue(second.success, msg=second.log)
+            self.assertEqual(build_calls, [("Boot", True)])
+
+    def test_compile_lrun_rejects_copy_window_overlap_with_weights_region(self) -> None:
+        """Ensure LRUN validates the aligned Boot copy window, not the raw signed App size."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                    "appli_flash_address": "0x70FFFF00",
+                }
+            )
+
+            def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                del jobs, clean
+                debug_dir = project_root / "Debug"
+                if project_root.name == "AppS":
+                    elf_path = debug_dir / "Template_LRUN_AppS.elf"
+                    _write_text(debug_dir / "Template_LRUN_AppS.bin", "appbin")
+                else:
+                    elf_path = debug_dir / "Template_LRUN_FSBL.elf"
+                _write_text(elf_path, "elf")
+                return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
+
+            def _fake_size(elf_path: Path):
+                if "AppS" in elf_path.name:
+                    return stm32_cube_clt.SizeResult(elf_flash_bytes=256, ram_bytes=64000, raw_output="app")
+                return stm32_cube_clt.SizeResult(elf_flash_bytes=32000, ram_bytes=12000, raw_output="boot")
+
+            def _fake_sign(**kwargs):
+                output_bin = Path(kwargs["output_bin"])
+                output_bin.parent.mkdir(parents=True, exist_ok=True)
+                output_bin.write_bytes(b"x" * 128)
+                return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                side_effect=_fake_build,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                side_effect=_fake_size,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                side_effect=_fake_sign,
+            ):
+                result = device.compile(
+                    sketch_path=staged_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                )
+
+        self.assertFalse(result.success)
+        self.assertIn("LRUN copy window overlaps the weights region.", result.log)
+
+    def test_compile_lrun_classifies_trusted_app_budget_overflow_as_flash(self) -> None:
+        """Ensure LRUN trusted-App budget failures surface as flash overflow."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                }
+            )
+
+            def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                del jobs, clean
+                debug_dir = project_root / "Debug"
+                if project_root.name == "AppS":
+                    elf_path = debug_dir / "Template_LRUN_AppS.elf"
+                    _write_text(debug_dir / "Template_LRUN_AppS.bin", "appbin")
+                else:
+                    elf_path = debug_dir / "Template_LRUN_FSBL.elf"
+                _write_text(elf_path, "elf")
+                return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
+
+            def _fake_size(elf_path: Path):
+                if "AppS" in elf_path.name:
+                    return stm32_cube_clt.SizeResult(elf_flash_bytes=120000, ram_bytes=64000, raw_output="app")
+                return stm32_cube_clt.SizeResult(elf_flash_bytes=32000, ram_bytes=12000, raw_output="boot")
+
+            def _fake_sign(**kwargs):
+                output_bin = Path(kwargs["output_bin"])
+                output_bin.parent.mkdir(parents=True, exist_ok=True)
+                output_bin.write_bytes(b"x" * (device.spec.max_flash_bytes + 1))
+                return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                side_effect=_fake_build,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                side_effect=_fake_size,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                side_effect=_fake_sign,
+            ):
+                result = device.compile(
+                    sketch_path=staged_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.overflow_kind, "flash")
+        self.assertIn("exceeds available LRUN code-image budget", result.log)
+
+    def test_compile_lrun_flash_accounting_excludes_debug_loaded_boot(self) -> None:
+        """Ensure LRUN flash accounting only tracks the trusted App image."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                }
+            )
+
+            def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                del jobs, clean
+                debug_dir = project_root / "Debug"
+                if project_root.name == "AppS":
+                    elf_path = debug_dir / "Template_LRUN_AppS.elf"
+                    _write_text(debug_dir / "Template_LRUN_AppS.bin", "appbin")
+                else:
+                    elf_path = debug_dir / "Template_LRUN_FSBL.elf"
+                _write_text(elf_path, "elf")
+                return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
+
+            def _fake_size(elf_path: Path):
+                if "AppS" in elf_path.name:
+                    return stm32_cube_clt.SizeResult(elf_flash_bytes=4096, ram_bytes=64000, raw_output="app")
+                return stm32_cube_clt.SizeResult(
+                    elf_flash_bytes=device.spec.max_flash_bytes,
+                    ram_bytes=12000,
+                    raw_output="boot",
+                )
+
+            def _fake_sign(**kwargs):
+                output_bin = Path(kwargs["output_bin"])
+                output_bin.parent.mkdir(parents=True, exist_ok=True)
+                output_bin.write_bytes(b"x" * 4096)
+                return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                side_effect=_fake_build,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                side_effect=_fake_size,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                side_effect=_fake_sign,
+            ):
+                result = device.compile(
+                    sketch_path=staged_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                )
+
+        self.assertTrue(result.success, msg=result.log)
+        self.assertEqual(result.flash_bytes, 4096)
+
+    def test_read_storage_manifest_rejects_workspace_root_mismatch(self) -> None:
+        """Ensure staged manifests cannot be reused from another workspace root."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            wrong_root = Path(tmpdir) / "other-staged-root"
+            (staged_root / STAGED_MANIFEST_NAME).write_text(
+                json.dumps(
+                    {
+                        "project_layout": "lrun_dev_boot",
+                        "staged_workspace_root": str(wrong_root.resolve()),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                }
+            )
+
+            with self.assertRaises(stm32_cube_clt.WorkflowError):
+                device._read_storage_manifest(staged_root)
+
+    def test_read_storage_manifest_requires_workspace_root_for_lrun(self) -> None:
+        """Ensure LRUN staged manifests always declare their staged workspace root."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            (staged_root / STAGED_MANIFEST_NAME).write_text(
+                json.dumps(
+                    {
+                        "project_layout": "lrun_dev_boot",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                }
+            )
+
+            with self.assertRaises(stm32_cube_clt.WorkflowError):
+                device._read_storage_manifest(staged_root)
+
+    def test_program_runtime_images_skips_reprogramming_when_artifacts_are_unchanged(self) -> None:
+        """Ensure repeated LRUN upload skips unchanged signed-app and weight programming."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            signed_app = staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS-trusted.bin"
+            signed_app.parent.mkdir(parents=True, exist_ok=True)
+            signed_app.write_bytes(b"signed-app")
+            weights_blob = Path(tmpdir) / "network_data.bin"
+            weights_blob.write_bytes(b"weights")
+            cubeprog_bin = Path(tmpdir) / "cubeprog" / "bin"
+            loader_path = cubeprog_bin / "ExternalLoader" / DEFAULT_WEIGHTS_EXTERNAL_LOADER_NAME
+            _write_text(loader_path, "loader")
+            manifest_path = staged_root / STAGED_MANIFEST_NAME
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "candidate_root": str(staged_root.parent),
+                        "generated_output_dir": str(staged_root / "generated"),
+                        "project_layout": "lrun_dev_boot",
+                        "staged_workspace_root": str(staged_root.resolve()),
+                        "weight_storage_mode": "external_flash",
+                        "appli_signed_image_path": str(signed_app),
+                        "signed_app_sha256": stm32_n657_backend._sha256_file(signed_app),
+                        "appli_flash_address": stm32_n657_backend.DEFAULT_APPLI_FLASH_ADDRESS,
+                        "weights_blob_path": str(weights_blob),
+                        "weights_blob_size": weights_blob.stat().st_size,
+                        "weights_blob_sha256": stm32_n657_backend._sha256_file(weights_blob),
+                        "weights_flash_address": DEFAULT_WEIGHTS_FLASH_ADDRESS,
+                        "weights_external_loader": str(loader_path),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                    "cubeprog_bin": str(cubeprog_bin),
+                    "weight_storage_mode": "external_flash",
+                }
+            )
+            compile_result = stm32_n657_backend.CompileResult(
+                success=True,
+                log="ok",
+                flash_bytes=None,
+                ram_bytes=None,
+                overflow_kind=None,
+                build_dir=staged_root / "STM32CubeIDE" / "Boot" / "Debug",
+                signed_app_bin_path=signed_app,
+            )
+            paths = device._resolve_paths(staged_root)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_image",
+                return_value="app programmed",
+            ) as app_program_mock, patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_flash_blob",
+                return_value="weights programmed",
+            ) as weight_program_mock:
+                first = device._program_runtime_images(paths, compile_result=compile_result)
+
+            self.assertTrue(first["appli_programmed"])
+            self.assertTrue(first["weights_programmed"])
+            self.assertEqual(app_program_mock.call_count, 1)
+            self.assertEqual(weight_program_mock.call_count, 1)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_image",
+                side_effect=AssertionError("signed app should not be reprogrammed"),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_flash_blob",
+                side_effect=AssertionError("weights should not be reprogrammed"),
+            ):
+                second = device._program_runtime_images(paths, compile_result=compile_result)
+
+            self.assertFalse(second["appli_programmed"])
+            self.assertFalse(second["weights_programmed"])
+
+    def test_program_runtime_images_skip_path_does_not_resolve_loader(self) -> None:
+        """Ensure repeated LRUN uploads do not require loader resolution on no-op skips."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            signed_app = staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS-trusted.bin"
+            signed_app.parent.mkdir(parents=True, exist_ok=True)
+            signed_app.write_bytes(b"signed-app")
+            weights_blob = Path(tmpdir) / "network_data.bin"
+            weights_blob.write_bytes(b"weights")
+            manifest_path = staged_root / STAGED_MANIFEST_NAME
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "candidate_root": str(staged_root.parent),
+                        "generated_output_dir": str(staged_root / "generated"),
+                        "project_layout": "lrun_dev_boot",
+                        "staged_workspace_root": str(staged_root.resolve()),
+                        "weight_storage_mode": "external_flash",
+                        "appli_signed_image_path": str(signed_app),
+                        "signed_app_sha256": stm32_n657_backend._sha256_file(signed_app),
+                        "appli_flash_address": stm32_n657_backend.DEFAULT_APPLI_FLASH_ADDRESS,
+                        "last_programmed_appli_sha256": stm32_n657_backend._sha256_file(signed_app),
+                        "last_programmed_appli_flash_address": stm32_n657_backend.DEFAULT_APPLI_FLASH_ADDRESS,
+                        "weights_blob_path": str(weights_blob),
+                        "weights_blob_size": weights_blob.stat().st_size,
+                        "weights_blob_sha256": stm32_n657_backend._sha256_file(weights_blob),
+                        "weights_flash_address": DEFAULT_WEIGHTS_FLASH_ADDRESS,
+                        "last_programmed_weights_sha256": stm32_n657_backend._sha256_file(weights_blob),
+                        "last_programmed_weights_flash_address": DEFAULT_WEIGHTS_FLASH_ADDRESS,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                    "cubeprog_bin": str(Path(tmpdir) / "missing-cubeprog"),
+                    "weight_storage_mode": "external_flash",
+                }
+            )
+            compile_result = stm32_n657_backend.CompileResult(
+                success=True,
+                log="ok",
+                flash_bytes=None,
+                ram_bytes=None,
+                overflow_kind=None,
+                build_dir=staged_root / "STM32CubeIDE" / "Boot" / "Debug",
+                signed_app_bin_path=signed_app,
+            )
+            paths = device._resolve_paths(staged_root)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0._resolve_weights_external_loader",
+                side_effect=AssertionError("loader resolution should be skipped"),
+            ):
+                metrics = device._program_runtime_images(paths, compile_result=compile_result)
+
+            self.assertFalse(metrics["appli_programmed"])
+            self.assertFalse(metrics["weights_programmed"])
+
+    def test_program_runtime_images_uses_manifest_loader_for_signed_app_programming(self) -> None:
+        """Ensure signed-App programming honors the loader path staged in the manifest."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            signed_app = staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS-trusted.bin"
+            signed_app.parent.mkdir(parents=True, exist_ok=True)
+            signed_app.write_bytes(b"signed-app")
+            weights_blob = Path(tmpdir) / "network_data.bin"
+            weights_blob.write_bytes(b"weights")
+            loader_path = Path(tmpdir) / "cubeprog" / "bin" / "ExternalLoader" / DEFAULT_WEIGHTS_EXTERNAL_LOADER_NAME
+            _write_text(loader_path, "loader")
+            manifest_path = staged_root / STAGED_MANIFEST_NAME
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "candidate_root": str(staged_root.parent),
+                        "generated_output_dir": str(staged_root / "generated"),
+                        "project_layout": "lrun_dev_boot",
+                        "staged_workspace_root": str(staged_root.resolve()),
+                        "weight_storage_mode": "embedded",
+                        "appli_signed_image_path": str(signed_app),
+                        "appli_flash_address": stm32_n657_backend.DEFAULT_APPLI_FLASH_ADDRESS,
+                        "weights_external_loader": str(loader_path),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                    "cubeprog_bin": str(Path(tmpdir) / "missing-cubeprog"),
+                }
+            )
+            compile_result = stm32_n657_backend.CompileResult(
+                success=True,
+                log="ok",
+                flash_bytes=None,
+                ram_bytes=None,
+                overflow_kind=None,
+                build_dir=staged_root / "STM32CubeIDE" / "Boot" / "Debug",
+                signed_app_bin_path=signed_app,
+            )
+            paths = device._resolve_paths(staged_root)
+
+            with patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0._resolve_weights_external_loader",
+                side_effect=AssertionError("manifest loader should be used directly"),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_image",
+                return_value="app programmed",
+            ) as app_program_mock:
+                metrics = device._program_runtime_images(paths, compile_result=compile_result)
+
+            self.assertTrue(metrics["appli_programmed"])
+            self.assertEqual(app_program_mock.call_args.kwargs["external_loader"], loader_path.resolve())
+
+    def test_evaluate_lrun_external_flash_programs_app_then_weights_then_boot(self) -> None:
+        """Ensure LRUN happy-path upload order is app, weights, then Boot ELF load."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            signed_app = staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS-trusted.bin"
+            signed_app.parent.mkdir(parents=True, exist_ok=True)
+            signed_app.write_bytes(b"signed-app")
+            boot_elf = staged_root / "STM32CubeIDE" / "Boot" / "Debug" / "Template_LRUN_FSBL.elf"
+            _write_text(boot_elf, "boot-elf")
+            weights_blob = Path(tmpdir) / "network_data.bin"
+            weights_blob.write_bytes(b"weights")
+            cubeprog_bin = Path(tmpdir) / "cubeprog" / "bin"
+            loader_path = cubeprog_bin / "ExternalLoader" / DEFAULT_WEIGHTS_EXTERNAL_LOADER_NAME
+            _write_text(loader_path, "loader")
+            manifest_path = staged_root / STAGED_MANIFEST_NAME
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "candidate_root": str(staged_root.parent),
+                        "generated_output_dir": str(staged_root / "generated"),
+                        "project_layout": "lrun_dev_boot",
+                        "staged_workspace_root": str(staged_root.resolve()),
+                        "weight_storage_mode": "external_flash",
+                        "appli_signed_image_path": str(signed_app),
+                        "appli_flash_address": stm32_n657_backend.DEFAULT_APPLI_FLASH_ADDRESS,
+                        "weights_blob_path": str(weights_blob),
+                        "weights_blob_size": weights_blob.stat().st_size,
+                        "weights_flash_address": DEFAULT_WEIGHTS_FLASH_ADDRESS,
+                        "weights_external_loader": str(loader_path),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            device = STM32NucleoN657X0QDevice(
+                serial_port="/dev/ttyACM0",
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                    "cubeprog_bin": str(cubeprog_bin),
+                    "weight_storage_mode": "external_flash",
+                },
+            )
+            compile_result = stm32_n657_backend.CompileResult(
+                success=True,
+                log="ok",
+                flash_bytes=None,
+                ram_bytes=None,
+                overflow_kind=None,
+                build_dir=staged_root / "STM32CubeIDE" / "Boot" / "Debug",
+                boot_elf_path=boot_elf,
+                signed_app_bin_path=signed_app,
+            )
+            telemetry = stm32_runtime.STM32RuntimeTelemetry(
+                latency_s=0.003,
+                serial_log=["STM32_AI_INIT=OK", "DUT READY", "STM32_AI_RUN=OK"],
+                power_metrics={"clock_hz": 600000000.0, "sequence": 1.0, "runs": 1, "phase": "back_to_back"},
+            )
+            trace: list[str] = []
+
+            with patch.object(device, "compile", return_value=compile_result), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_image",
+                side_effect=lambda **kwargs: trace.append("app") or "app programmed",
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_flash_blob",
+                side_effect=lambda **kwargs: trace.append("weights") or "weights programmed",
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                _FakeSerialMonitor,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                side_effect=lambda **kwargs: trace.append("boot") or "upload ok",
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                side_effect=lambda *args, **kwargs: trace.append("runtime") or telemetry,
+            ):
+                metrics = device.evaluate(
+                    dirpath=staged_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                    serial_port="/dev/ttyACM0",
+                    run_hil=True,
+                )
+
+            self.assertEqual(trace, ["app", "weights", "boot", "runtime"])
+            self.assertEqual(metrics.error_code, HIL_ERROR_OK)
+
+    def test_compile_lrun_requires_boot_include_path_for_copy_window_updates(self) -> None:
+        """Ensure LRUN compile fails if Boot recipes stop including FSBL headers."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
+            _write_text(
+                staged_root / "STM32CubeIDE" / "Boot" / "Debug" / "Src" / "subdir.mk",
+                "arm-none-eabi-gcc -I../Inc\n",
+            )
+            device = STM32NucleoN657X0QDevice(
+                device_options={
+                    "project_root": str(staged_root),
+                    "project_layout": "lrun_dev_boot",
+                }
+            )
+
+            result = device.compile(
+                sketch_path=staged_root,
+                arena_kb=-1,
+                window_size=200,
+                num_channels=6,
+            )
+
+        self.assertFalse(result.success)
+        self.assertIn("FSBL include path", result.log)
+
+    def test_classify_signing_failure_returns_binary_signing(self) -> None:
+        """Ensure signing failures are classified separately from generic toolchain errors."""
+        exc = stm32_cube_clt.SigningWorkflowError("STM32 binary signing failed.")
+        self.assertEqual(stm32_n657_backend.classify_stm32_backend_error(exc), "binary_signing")
+
+    def test_classify_lrun_specific_failures_returns_stable_kinds(self) -> None:
+        """Ensure LRUN-specific failure strings map to stable backend error kinds."""
+        self.assertEqual(
+            stm32_n657_backend.classify_stm32_backend_error(
+                "Could not update EXTMEM_LRUN_SOURCE_SIZE in /tmp/stm32_extmem_conf.h"
+            ),
+            "boot_copy_window_update",
+        )
+        self.assertEqual(
+            stm32_n657_backend.classify_stm32_backend_error(
+                "STM32 LRUN Boot recipes no longer reference the FSBL include path; EXTMEM_LRUN_SOURCE_SIZE updates would not affect the build."
+            ),
+            "boot_include_path",
+        )
+        self.assertEqual(
+            stm32_n657_backend.classify_stm32_backend_error("STM32_RTC_INIT=FAIL"),
+            "rtc_init",
+        )
+        self.assertEqual(
+            stm32_n657_backend.classify_stm32_backend_error("STM32_XSPI_INIT=FAIL stage=init"),
+            "external_weight_mapping",
+        )
+
+    def test_evaluate_uses_lrun_default_boot_timeout(self) -> None:
+        """Ensure LRUN evaluation uses a safer default boot timeout when unspecified."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
+            _write_text(
+                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h",
+                "#define TCN_DUT_MEASURED_RUNS 1\n",
+            )
+            device = STM32NucleoN657X0QDevice(
+                serial_port="/dev/ttyACM0",
+                device_options={"project_root": str(project_root), "project_layout": "lrun_dev_boot"},
+            )
+            compile_result = type(
+                "CompileResultDouble",
+                (),
+                {
+                    "success": True,
+                    "log": "ok",
+                    "flash_bytes": 2222,
+                    "ram_bytes": 1111,
+                    "overflow_kind": None,
+                    "build_dir": project_root / "STM32CubeIDE" / "Boot" / "Debug",
+                    "boot_elf_path": project_root
+                    / "STM32CubeIDE"
+                    / "Boot"
+                    / "Debug"
+                    / "Template_LRUN_FSBL.elf",
+                    "arena_bytes": 4096,
+                    "external_flash_bytes": None,
+                    "signed_app_bin_path": project_root
+                    / "STM32CubeIDE"
+                    / "AppS"
+                    / "Debug"
+                    / "Template_LRUN_AppS-trusted.bin",
+                },
+            )()
+            telemetry = stm32_runtime.STM32RuntimeTelemetry(
+                latency_s=0.003,
+                serial_log=["STM32_AI_INIT=OK", "DUT READY", "STM32_AI_RUN=OK"],
+                power_metrics={"clock_hz": 600000000.0, "sequence": 1.0, "runs": 1, "phase": "back_to_back"},
+            )
+            observed: dict[str, float] = {}
+
+            def _runtime_session(*args, **kwargs):
+                del args
+                observed["boot_timeout_s"] = kwargs["boot_timeout_s"]
+                return telemetry
+
+            with patch.object(device, "compile", return_value=compile_result), patch.object(
+                device,
+                "_storage_power_metrics",
+                return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
+            ), patch.object(
+                device,
+                "_program_runtime_images",
+                return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                _FakeSerialMonitor,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                return_value="upload ok",
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                side_effect=_runtime_session,
+            ):
+                metrics = device.evaluate(
+                    dirpath=project_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                    serial_port="/dev/ttyACM0",
+                    run_hil=True,
+                    dut_ready_timeout_s=None,
+                )
+
+        self.assertEqual(metrics.error_code, HIL_ERROR_OK)
+        self.assertEqual(observed["boot_timeout_s"], stm32_n657_backend.DEFAULT_LRUN_BOOT_TIMEOUT_S)
+
+    def test_evaluate_lrun_honors_requested_measured_runs_for_header_and_harness(self) -> None:
+        """Ensure LRUN evaluate uses the request run count, not the stale staged header value."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
+            _write_text(
+                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h",
+                "#define TCN_DUT_MEASURED_RUNS 1\n",
+            )
+            device = STM32NucleoN657X0QDevice(
+                serial_port="/dev/ttyACM0",
+                device_options={"project_root": str(project_root), "project_layout": "lrun_dev_boot"},
+            )
+            compile_result = type(
+                "CompileResultDouble",
+                (),
+                {
+                    "success": True,
+                    "log": "ok",
+                    "flash_bytes": 2222,
+                    "ram_bytes": 1111,
+                    "overflow_kind": None,
+                    "build_dir": project_root / "STM32CubeIDE" / "Boot" / "Debug",
+                    "boot_elf_path": project_root
+                    / "STM32CubeIDE"
+                    / "Boot"
+                    / "Debug"
+                    / "Template_LRUN_FSBL.elf",
+                    "arena_bytes": 4096,
+                    "external_flash_bytes": None,
+                    "signed_app_bin_path": project_root
+                    / "STM32CubeIDE"
+                    / "AppS"
+                    / "Debug"
+                    / "Template_LRUN_AppS-trusted.bin",
+                },
+            )()
+            telemetry = stm32_runtime.STM32RuntimeTelemetry(
+                latency_s=0.003,
+                serial_log=["STM32_AI_INIT=OK", "DUT READY", "STM32_AI_RUN=OK"],
+                power_metrics={
+                    "clock_hz": 600000000.0,
+                    "sequence": 1.0,
+                    "runs": 7,
+                    "phase": "back_to_back",
+                },
+            )
+
+            with patch.object(device, "compile", return_value=compile_result), patch.object(
+                device,
+                "_storage_power_metrics",
+                return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
+            ), patch.object(
+                device,
+                "_program_runtime_images",
+                return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
+            ) as harness_mock, patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                _FakeSerialMonitor,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
+                return_value=_FakeHarnessSerial(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
+                return_value=type(
+                    "PrimeResult",
+                    (),
+                    {"harness_ready": True, "harness_log": ["HARNESS READY"], "error": None},
+                )(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
+                return_value=type(
+                    "DoneResult",
+                    (),
+                    {
+                        "harness_done": True,
+                        "runs_harness": 7,
+                        "harness_log": [
+                            "HARNESS READY",
+                            "runs: 7",
+                            "energy output: 1.25",
+                            "avg power output: 2.5",
+                            "avg current output: 0.5",
+                            "bus voltage output: 5.0",
+                            "idle power baseline: 0.1",
+                            "harness timer output: 0.003",
+                            "DONE",
+                        ],
+                        "error": None,
+                    },
+                )(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                return_value="upload ok",
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                return_value=telemetry,
+            ):
+                metrics = device.evaluate(
+                    dirpath=project_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                    serial_port="/dev/ttyACM0",
+                    run_hil=True,
+                    measured_inference_runs=7,
+                    harness_serial_port="/dev/ttyACM1",
+                )
+
+            header_text = (
+                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h"
+            ).read_text(encoding="utf-8")
+
+        self.assertEqual(metrics.error_code, HIL_ERROR_OK)
+        self.assertIn("TCN_DUT_MEASURED_RUNS 7", header_text)
+        self.assertEqual(
+            harness_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"],
+            7,
+        )
+
+    def test_evaluate_lrun_preserves_staged_measured_runs_when_override_is_omitted(self) -> None:
+        """Ensure staged LRUN measured runs are preserved when evaluate omits an override."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
+            _write_text(
+                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h",
+                "\n".join(
+                    [
+                        "#ifndef TCN_DUT_PHASE_CONFIG_H",
+                        "#define TCN_DUT_PHASE_CONFIG_H",
+                        "#define TCN_DUT_PHASE_BACK_TO_BACK 0",
+                        "#define TCN_DUT_PHASE_CADENCED 1",
+                        "#define TCN_DUT_SELECTED_PHASE TCN_DUT_PHASE_BACK_TO_BACK",
+                        "#define TCN_DUT_MEASURED_RUNS 4",
+                        "#endif",
+                        "",
+                    ]
+                ),
+            )
+            device = STM32NucleoN657X0QDevice(
+                serial_port="/dev/ttyACM0",
+                device_options={"project_root": str(project_root), "project_layout": "lrun_dev_boot"},
+            )
+            compile_result = type(
+                "CompileResultDouble",
+                (),
+                {
+                    "success": True,
+                    "log": "ok",
+                    "flash_bytes": 2222,
+                    "ram_bytes": 1111,
+                    "overflow_kind": None,
+                    "build_dir": project_root / "STM32CubeIDE" / "Boot" / "Debug",
+                    "boot_elf_path": project_root
+                    / "STM32CubeIDE"
+                    / "Boot"
+                    / "Debug"
+                    / "Template_LRUN_FSBL.elf",
+                    "arena_bytes": 4096,
+                    "external_flash_bytes": None,
+                    "signed_app_bin_path": project_root
+                    / "STM32CubeIDE"
+                    / "AppS"
+                    / "Debug"
+                    / "Template_LRUN_AppS-trusted.bin",
+                },
+            )()
+            telemetry = stm32_runtime.STM32RuntimeTelemetry(
+                latency_s=0.003,
+                serial_log=["STM32_AI_INIT=OK", "DUT READY", "STM32_AI_RUN=OK"],
+                power_metrics={
+                    "clock_hz": 600000000.0,
+                    "sequence": 1.0,
+                    "runs": 4,
+                    "phase": "back_to_back",
+                },
+            )
+
+            with patch.object(device, "compile", return_value=compile_result), patch.object(
+                device,
+                "_storage_power_metrics",
+                return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
+            ), patch.object(
+                device,
+                "_program_runtime_images",
+                return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
+            ) as harness_mock, patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                _FakeSerialMonitor,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
+                return_value=_FakeHarnessSerial(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
+                return_value=type(
+                    "PrimeResult",
+                    (),
+                    {"harness_ready": True, "harness_log": ["HARNESS READY"], "error": None},
+                )(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
+                return_value=type(
+                    "DoneResult",
+                    (),
+                    {
+                        "harness_done": True,
+                        "runs_harness": 4,
+                        "harness_log": [
+                            "HARNESS READY",
+                            "runs: 4",
+                            "energy output: 1.25",
+                            "avg power output: 2.5",
+                            "avg current output: 0.5",
+                            "bus voltage output: 5.0",
+                            "idle power baseline: 0.1",
+                            "harness timer output: 0.003",
+                            "DONE",
+                        ],
+                        "error": None,
+                    },
+                )(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                return_value="upload ok",
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                return_value=telemetry,
+            ):
+                metrics = device.evaluate(
+                    dirpath=project_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                    serial_port="/dev/ttyACM0",
+                    run_hil=True,
+                    harness_serial_port="/dev/ttyACM1",
+                )
+
+            header_text = (
+                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h"
+            ).read_text(encoding="utf-8")
+
+        self.assertEqual(metrics.error_code, HIL_ERROR_OK)
+        self.assertIn("TCN_DUT_MEASURED_RUNS 4", header_text)
+        self.assertEqual(
+            harness_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"],
+            4,
+        )
+
+    def test_evaluate_without_staged_paths_defaults_omitted_measured_runs_to_ten(self) -> None:
+        """Ensure omitted measured runs still fall back to 10 for non-staged evaluation paths."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            template_root = _build_project_tree(tmp_path / "template")
+            build_dir = tmp_path / "build" / "Debug"
+            build_dir.mkdir(parents=True)
+            boot_elf_path = build_dir / "Template_LRUN_FSBL.elf"
+            boot_elf_path.write_text("elf", encoding="utf-8")
+            missing_root = tmp_path / "missing-staged-root"
+            device = STM32NucleoN657X0QDevice(
+                serial_port="/dev/ttyACM0",
+                device_options={"project_root": str(template_root), "project_layout": "fsbl_legacy"},
+            )
+            compile_result = type(
+                "CompileResultDouble",
+                (),
+                {
+                    "success": True,
+                    "log": "ok",
+                    "flash_bytes": 2222,
+                    "ram_bytes": 1111,
+                    "overflow_kind": None,
+                    "build_dir": build_dir,
+                    "boot_elf_path": boot_elf_path,
+                    "arena_bytes": 4096,
+                    "external_flash_bytes": None,
+                    "signed_app_bin_path": None,
+                },
+            )()
+            telemetry = stm32_runtime.STM32RuntimeTelemetry(
+                latency_s=0.003,
+                serial_log=["STM32_AI_INIT=OK", "DUT READY", "STM32_AI_RUN=OK"],
+                power_metrics={
+                    "clock_hz": 600000000.0,
+                    "sequence": 1.0,
+                    "runs": 10,
+                    "phase": "back_to_back",
+                },
+            )
+
+            with patch.object(device, "compile", return_value=compile_result), patch.object(
+                device,
+                "_storage_power_metrics",
+                return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
+            ) as harness_mock, patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                _FakeSerialMonitor,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
+                return_value=_FakeHarnessSerial(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
+                return_value=type(
+                    "PrimeResult",
+                    (),
+                    {"harness_ready": True, "harness_log": ["HARNESS READY"], "error": None},
+                )(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
+                return_value=type(
+                    "DoneResult",
+                    (),
+                    {
+                        "harness_done": True,
+                        "runs_harness": 10,
+                        "harness_log": [
+                            "HARNESS READY",
+                            "runs: 10",
+                            "energy output: 1.25",
+                            "avg power output: 2.5",
+                            "avg current output: 0.5",
+                            "bus voltage output: 5.0",
+                            "idle power baseline: 0.1",
+                            "harness timer output: 0.003",
+                            "DONE",
+                        ],
+                        "error": None,
+                    },
+                )(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                return_value="upload ok",
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                return_value=telemetry,
+            ):
+                metrics = device.evaluate(
+                    dirpath=missing_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                    serial_port="/dev/ttyACM0",
+                    run_hil=True,
+                    harness_serial_port="/dev/ttyACM1",
+                )
+
+        self.assertEqual(metrics.error_code, HIL_ERROR_OK)
+        self.assertEqual(
+            harness_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"],
+            10,
+        )
+
+    def test_canonical_lrun_linkers_use_safe_heap_and_stack_floors(self) -> None:
+        """Ensure the checked-in canonical LRUN linkers reserve safe heap/stack floors."""
+        app_reservations = stm32_n657_backend._parse_linker_reservations(
+            ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun" / "STM32CubeIDE" / "AppS" / "STM32N657XX_LRUN.ld"
+        )
+        boot_reservations = stm32_n657_backend._parse_linker_reservations(
+            ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun" / "STM32CubeIDE" / "Boot" / "STM32N657XX_AXISRAM2_fsbl.ld"
+        )
+        self.assertEqual(app_reservations["heap_bytes"], 0x2000)
+        self.assertEqual(app_reservations["stack_bytes"], 0x4000)
+        self.assertEqual(boot_reservations["heap_bytes"], 0x2000)
+        self.assertEqual(boot_reservations["stack_bytes"], 0x4000)
+
+    def test_real_lrun_template_parsers_match_checked_in_files(self) -> None:
+        """Ensure LRUN path resolution and parser expectations match the checked-in workspace."""
+        canonical_root = ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            staged_root = Path(tmpdir) / canonical_root.name
+            shutil.copytree(canonical_root, staged_root)
+            _write_text(
+                staged_root / "Appli" / "Inc" / "network_data_params.h",
+                "#define AI_NETWORK_DATA_ACTIVATIONS_SIZE (47688)\n",
+            )
+            paths = stm32_n657_backend._resolve_workspace_paths(
+                project_root=staged_root,
+                project_layout="lrun_dev_boot",
+            )
+            validated = stm32_n657_backend._validate_project_structure(paths)
+
+            self.assertEqual(validated.layout, "lrun_dev_boot")
+            self.assertEqual(
+                stm32_n657_backend._find_linker_script(paths).name,
+                "STM32N657XX_LRUN.ld",
+            )
+            self.assertEqual(
+                stm32_n657_backend._find_boot_linker_script(paths).name,
+                "STM32N657XX_AXISRAM2_fsbl.ld",
+            )
+            self.assertEqual(
+                stm32_n657_backend._parse_arena_bytes(staged_root / "Appli" / "Inc" / "network_data_params.h"),
+                47688,
+            )
+
+    def test_canonical_lrun_app_recipe_includes_secure_nsc(self) -> None:
+        """Ensure the checked-in AppS recipe compiles secure_nsc.c with its header path."""
+        recipe = (
+            ROOT_DIR
+            / "sketches"
+            / "stm32"
+            / "tinyodom_tcn_stm32_lrun"
+            / "STM32CubeIDE"
+            / "AppS"
+            / "Debug"
+            / "Src"
+            / "subdir.mk"
+        ).read_text(encoding="utf-8")
+        self.assertIn("../../../Appli/Src/secure_nsc.c", recipe)
+        self.assertIn("-I../../../Secure_nsclib", recipe)
+
+    def test_canonical_lrun_xspi2_irq_uses_second_hal_handle(self) -> None:
+        """Ensure the checked-in LRUN IRQ file dispatches XSPI2 to hxspi_nor[1]."""
+        irq_text = (
+            ROOT_DIR
+            / "sketches"
+            / "stm32"
+            / "tinyodom_tcn_stm32_lrun"
+            / "Appli"
+            / "Src"
+            / "stm32n6xx_it.c"
+        ).read_text(encoding="utf-8")
+        self.assertIn("void XSPI2_IRQHandler(void)", irq_text)
+        self.assertIn("HAL_XSPI_IRQHandler(&hxspi_nor[1]);", irq_text)
+
+    def test_canonical_lrun_runner_fails_cadenced_init_on_rtc_selftest(self) -> None:
+        """Ensure the checked-in LRUN runner treats cadenced RTC self-test failures as init failures."""
+        runner_text = (
+            ROOT_DIR
+            / "sketches"
+            / "stm32"
+            / "tinyodom_tcn_stm32_lrun"
+            / "Appli"
+            / "Src"
+            / "tcn_dut_runner.c"
+        ).read_text(encoding="utf-8")
+        self.assertIn('emit_line("STM32_AI_INIT=FAIL reason=rtc_wakeup_selftest");', runner_text)
+
+    def test_program_weight_blob_autodiscovers_loader_when_manifest_omits_it(self) -> None:
         """Ensure runtime external-flash programming can recover without a stored loader path.
 
         Returns
@@ -1900,6 +3514,7 @@ class STM32HelperTests(unittest.TestCase):
             device = STM32NucleoN657X0QDevice(
                 device_options={
                     "template_root": str(project_root),
+                    "project_layout": "fsbl_legacy",
                     "weight_storage_mode": "external_flash",
                     "cubeprog_bin": str(cubeprog_bin),
                 }
@@ -1909,7 +3524,7 @@ class STM32HelperTests(unittest.TestCase):
                 "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_flash_blob",
                 return_value="program ok",
             ) as program_mock:
-                metrics = device._program_external_weights_if_needed(project_root)
+                metrics = device._program_weight_blob_if_needed(project_root)
 
         self.assertEqual(metrics["weight_storage_mode"], "external_flash")
         self.assertEqual(program_mock.call_args.kwargs["external_loader"], loader_path.resolve())

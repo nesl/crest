@@ -61,7 +61,7 @@ CSV_COLUMNS = [
     "timing_sanity_warning",
     "back_to_back_energy_mj_per_inference",
     "back_to_back_latency_ms_per_window",
-    "cadenced_energy_mj_per_window",
+    "cadenced_energy_mj_per_trial",
     "cadenced_latency_ms_per_window",
 ]
 
@@ -183,7 +183,7 @@ def _build_attempt_record(
         "timing_sanity_warning": metrics.get("timing_sanity_warning"),
         "back_to_back_energy_mj_per_inference": "",
         "back_to_back_latency_ms_per_window": "",
-        "cadenced_energy_mj_per_window": "",
+        "cadenced_energy_mj_per_trial": "",
         "cadenced_latency_ms_per_window": "",
     }
     if phase == "back_to_back":
@@ -192,7 +192,7 @@ def _build_attempt_record(
             record["window_latency_ms"] if record["window_latency_ms"] >= 0.0 else record["latency_ms"]
         )
     else:
-        record["cadenced_energy_mj_per_window"] = record["energy_mj_per_window"]
+        record["cadenced_energy_mj_per_trial"] = record["energy_mj_per_window"]
         record["cadenced_latency_ms_per_window"] = (
             record["window_latency_ms"] if record["window_latency_ms"] >= 0.0 else record["latency_ms"]
         )

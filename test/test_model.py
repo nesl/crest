@@ -24,6 +24,7 @@ from tinyodom.model import (
     CollectMetricsRequest,
     DROP_RATE_CHOICES,
     HarnessConfig,
+    _minimum_stm32_serial_timeout_s,
     _metric_unavailable,
     ScoringResult,
     ScoreConfigEvaluationError,
@@ -361,8 +362,8 @@ class CollectMetricsTests(unittest.TestCase):
                     "cadenced_error_code": 0,
                     "cadenced_active_inference_latency_ms": 80.0,
                     "cadenced_window_latency_ms": 20000.0,
-                    "cadenced_energy_mj_per_inference": 1.25,
-                    "cadenced_energy_mj_per_window": 12.5,
+                    "cadenced_energy_mj_per_window": 1.25,
+                    "cadenced_energy_mj_per_trial": 12.5,
                     "cadenced_rtc_sleep_ms": 1500.0,
                     "cadenced_deadline_miss_count": 0,
                     "cadenced_rtc_clock_source": "LSE",
@@ -389,9 +390,10 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["runtime_mode"], "cadenced")
         self.assertAlmostEqual(metrics["cadenced_active_inference_latency_ms"], 80.0)
         self.assertAlmostEqual(metrics["cadenced_window_latency_ms"], 20000.0)
-        self.assertAlmostEqual(metrics["cadenced_energy_mj_per_window"], 12.5)
+        self.assertAlmostEqual(metrics["cadenced_energy_mj_per_window"], 1.25)
+        self.assertAlmostEqual(metrics["cadenced_energy_mj_per_trial"], 12.5)
         self.assertEqual(metrics["cadenced_deadline_miss_count"], 0)
-        self.assertEqual(metrics["cadenced_error_label"], "HIL_MASTER_PENDING")
+        self.assertEqual(metrics["cadenced_error_label"], "HIL_ERROR_OK")
 
     def test_collect_metrics_back_to_back_mode_emits_cadenced_sentinels(self) -> None:
         """Single-pass mode should keep cadenced keys present with sentinel values."""
@@ -614,8 +616,8 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["error_code"], 0)
 
     def test_metric_unavailable_treats_negative_cadenced_sentinel_as_missing(self) -> None:
-        self.assertTrue(_metric_unavailable("cadenced_energy_mj_per_window", -1.0))
-        self.assertFalse(_metric_unavailable("cadenced_energy_mj_per_window", 0.0))
+        self.assertTrue(_metric_unavailable("cadenced_energy_mj_per_trial", -1.0))
+        self.assertFalse(_metric_unavailable("cadenced_energy_mj_per_trial", 0.0))
         self.assertTrue(_metric_unavailable("cadenced_rtc_sleep_ms", -1.0))
         self.assertTrue(_metric_unavailable("cadenced_deadline_miss_count", -1))
         self.assertTrue(_metric_unavailable("cadenced_window_latency_ms", -1.0))
@@ -631,6 +633,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         config: Dict,
         hyperparams: Dict,
         *,
+        latency_budget_ms: float = 200.0,
         dirpath: Path | None = None,
         device_options: dict | None | object = ...,
         hil_enabled: bool | None = None,
@@ -645,7 +648,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         return build_collect_metrics_request(
             config,
             hyperparams,
-            latency_budget_ms=200.0,
+            latency_budget_ms=latency_budget_ms,
             dirpath=self._DEFAULT_DIRPATH if dirpath is None else dirpath,
             device_options=resolved_options,
             hil_enabled=hil_enabled,
@@ -707,7 +710,107 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"},
         )
 
-        self.assertEqual(request.serial_timeout_s, 12.0)
+        self.assertEqual(request.serial_timeout_s, 30.0)
+
+    def test_build_request_scales_stm_serial_timeout_for_cadenced_runs(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=True,
+                name="STM32_NUCLEO_N657X0_Q",
+                runtime_mode="cadenced",
+                serial_port="ttyACM0",
+                measured_inference_runs=100,
+                latency_budget_ms=2000.0,
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL")),
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = self._build_request(
+            config,
+            hyperparams,
+            latency_budget_ms=2000.0,
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"},
+        )
+
+        self.assertEqual(request.serial_timeout_s, 210.0)
+
+    def test_build_request_preserves_larger_stm_serial_timeout(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(
+                hil=True,
+                name="STM32_NUCLEO_N657X0_Q",
+                runtime_mode="back_to_back",
+                serial_port="ttyACM0",
+                serial_timeout_s=120.0,
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL")),
+            ),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = self._build_request(
+            config,
+            hyperparams,
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"},
+        )
+
+        self.assertEqual(request.serial_timeout_s, 120.0)
+
+
+class Stm32TimeoutHelperTests(unittest.TestCase):
+    _DEFAULT_DIRPATH = Path("tinyodom_tcn")
+
+    def _build_request(
+        self,
+        config: Dict,
+        hyperparams: Dict,
+        *,
+        latency_budget_ms: float = 200.0,
+        dirpath: Path | None = None,
+        device_options: dict | None | object = ...,
+        hil_enabled: bool | None = None,
+        energy_aware: bool | None = None,
+    ) -> CollectMetricsRequest:
+        resolved_options = (
+            resolve_device_options(str(config.device.name), config.device)
+            if device_options is ...
+            else device_options
+        )
+        return build_collect_metrics_request(
+            config,
+            hyperparams,
+            latency_budget_ms=latency_budget_ms,
+            dirpath=self._DEFAULT_DIRPATH if dirpath is None else dirpath,
+            device_options=resolved_options,
+            hil_enabled=hil_enabled,
+            energy_aware=energy_aware,
+        )
+
+    def test_minimum_stm32_serial_timeout_is_30s_for_back_to_back(self) -> None:
+        self.assertEqual(
+            _minimum_stm32_serial_timeout_s(
+                runtime_mode="back_to_back",
+                latency_budget_ms=200.0,
+                measured_inference_runs=10,
+            ),
+            30.0,
+        )
+
+    def test_minimum_stm32_serial_timeout_scales_for_cadenced(self) -> None:
+        self.assertEqual(
+            _minimum_stm32_serial_timeout_s(
+                runtime_mode="cadenced",
+                latency_budget_ms=2000.0,
+                measured_inference_runs=100,
+            ),
+            210.0,
+        )
 
     def test_energy_aware_populates_harness(self) -> None:
         config = Dict(
@@ -981,6 +1084,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             resolved = resolve_device_options(str(config.device.name), config.device)
 
         self.assertEqual(resolved["project_root"], template_root.resolve())
+        self.assertEqual(resolved["project_layout"], "fsbl_legacy")
         self.assertEqual(resolved["gdb_port"], 61235)
         self.assertEqual(resolved["apid"], 2)
         self.assertEqual(resolved["server_ready_timeout_s"], 20.0)
@@ -990,6 +1094,66 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertEqual(resolved["weights_memory_pool"], weights_memory_pool.resolve())
         self.assertEqual(resolved["weights_external_loader"], weights_external_loader.resolve())
         self.assertEqual(resolved["max_external_flash_bytes"], 123456)
+
+    def test_resolve_device_options_rejects_ambiguous_custom_stm_root_without_layout(self) -> None:
+        """Ensure custom roots still fail clearly when layout inference is impossible."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            ambiguous_root = tmp_path / "stm32_project"
+            ambiguous_root.mkdir(parents=True)
+            config = Dict(
+                training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+                device=Dict(
+                    hil=False,
+                    name="STM32_NUCLEO_N657X0_Q",
+                    stm32=Dict(project_root=ambiguous_root),
+                ),
+                data=Dict(window_size=128),
+                outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            )
+
+            with self.assertRaisesRegex(ValueError, "could not be inferred"):
+                resolve_device_options(str(config.device.name), config.device)
+
+    def test_resolve_device_options_normalizes_custom_lrun_project_root_without_layout(self) -> None:
+        """Ensure custom LRUN roots infer the dev-boot layout automatically."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            project_root = tmp_path / "tinyodom_tcn_stm32_lrun"
+            for required_dir in (
+                project_root / "FSBL",
+                project_root / "Appli",
+                project_root / "STM32CubeIDE" / "Boot" / "Debug",
+                project_root / "STM32CubeIDE" / "AppS" / "Debug",
+            ):
+                required_dir.mkdir(parents=True)
+            (project_root / "STM32CubeIDE" / "Boot" / "Debug" / "makefile").write_text(
+                "# makefile\n",
+                encoding="utf-8",
+            )
+            (project_root / "STM32CubeIDE" / "AppS" / "Debug" / "makefile").write_text(
+                "# makefile\n",
+                encoding="utf-8",
+            )
+            config = Dict(
+                training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+                device=Dict(
+                    hil=False,
+                    name="STM32_NUCLEO_N657X0_Q",
+                    stm32=Dict(
+                        project_root=project_root,
+                        gdb_port=61235,
+                    ),
+                ),
+                data=Dict(window_size=128),
+                outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            )
+
+            resolved = resolve_device_options(str(config.device.name), config.device)
+
+        self.assertEqual(resolved["project_root"], project_root.resolve())
+        self.assertEqual(resolved["project_layout"], "lrun_dev_boot")
+        self.assertEqual(resolved["gdb_port"], 61235)
 
 
 class TrainAndScoreTests(unittest.TestCase):
@@ -1926,6 +2090,77 @@ class LoadSettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.nas.prune.rules[0].metric, "cadenced_deadline_miss_count")
 
+    def test_load_settings_accepts_cadenced_error_code_in_score_terms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: cadenced_error_code",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules: []",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.score.params.terms[0].metric, "cadenced_error_code")
+
+    def test_load_settings_accepts_cadenced_error_code_in_prune_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: latency_ms",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: cadenced_phase_ok",
+                        "        metric: cadenced_error_code",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0",
+                        "        reason: cadenced phase failed",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.prune.rules[0].metric, "cadenced_error_code")
+
     def test_load_settings_missing_file(self) -> None:
         """Nonexistent config paths should raise FileNotFoundError."""
         with self.assertRaises(FileNotFoundError):
@@ -1992,6 +2227,7 @@ class LoadSettingsTests(unittest.TestCase):
             resolved = resolve_device_options(str(settings.device.name), settings.device)
 
             self.assertEqual(resolved["project_root"], project_root.resolve())
+            self.assertEqual(resolved["project_layout"], "fsbl_legacy")
             self.assertEqual(resolved["gdb_port"], 61235)
             self.assertEqual(resolved["apid"], 2)
             self.assertEqual(resolved["server_ready_timeout_s"], 20.0)
@@ -2188,8 +2424,8 @@ class LogTrialTests(unittest.TestCase):
             "cadenced_error_label": None,
             "cadenced_active_inference_latency_ms": -1.0,
             "cadenced_window_latency_ms": -1.0,
-            "cadenced_energy_mj_per_inference": -1.0,
             "cadenced_energy_mj_per_window": -1.0,
+            "cadenced_energy_mj_per_trial": -1.0,
             "cadenced_rtc_sleep_ms": -1.0,
             "cadenced_deadline_miss_count": -1,
         }
@@ -2285,6 +2521,7 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(rows[1][header_index["runtime_mode"]], "back_to_back")
             self.assertEqual(rows[1][header_index["cadenced_window_latency_ms"]], "-1.0")
             self.assertEqual(rows[1][header_index["cadenced_energy_mj_per_window"]], "-1.0")
+            self.assertEqual(rows[1][header_index["cadenced_energy_mj_per_trial"]], "-1.0")
             self.assertEqual(rows[1][header_index["cadenced_error_code"]], "-1")
             self.assertEqual(
                 fake_trial.attrs["cadenced_window_latency_ms"],
@@ -2293,6 +2530,10 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(
                 fake_trial.attrs["cadenced_energy_mj_per_window"],
                 metrics["cadenced_energy_mj_per_window"],
+            )
+            self.assertEqual(
+                fake_trial.attrs["cadenced_energy_mj_per_trial"],
+                metrics["cadenced_energy_mj_per_trial"],
             )
 
             self.assertEqual(fake_trial.attrs["ram_bytes"], metrics["ram_bytes"])
