@@ -337,6 +337,10 @@ sketches/stm32/tinyodom_tcn_stm32_lrun/**
 sketches/stm32/tinyodom_tcn_stm32/FSBL/Inc/network*.h
 sketches/stm32/tinyodom_tcn_stm32/FSBL/Src/network*.c
 sketches/stm32/tinyodom_tcn_stm32/FSBL/Inc/tcn_dut_phase_config.h
+analysis_scripts/stm32_example_project/stm32_toy_ai_project/FSBL/Inc/network*.h
+analysis_scripts/stm32_example_project/stm32_toy_ai_project/FSBL/Src/network*.c
+analysis_scripts/stm32_example_project/stm32_cadenced_toy_ai_project/FSBL/Inc/network*.h
+analysis_scripts/stm32_example_project/stm32_cadenced_toy_ai_project/FSBL/Src/network*.c
 analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/Appli/Inc/network*.h
 analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/Appli/Src/network*.c
 analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/Appli/Inc/toy_ai_phase_config.h
