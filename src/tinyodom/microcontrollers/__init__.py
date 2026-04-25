@@ -208,6 +208,7 @@ def resolve_device_options(
         raw_options = {
             "template_root": _cfg_get(stm32_cfg, "template_root", None) if stm32_cfg is not None else None,
             "project_root": _cfg_get(stm32_cfg, "project_root", None) if stm32_cfg is not None else None,
+            "project_layout": _cfg_get(stm32_cfg, "project_layout", None) if stm32_cfg is not None else None,
             "gdbserver": _cfg_get(stm32_cfg, "gdbserver", None) if stm32_cfg is not None else None,
             "gdb": _cfg_get(stm32_cfg, "gdb", None) if stm32_cfg is not None else None,
             "cubeprog_bin": _cfg_get(stm32_cfg, "cubeprog_bin", None) if stm32_cfg is not None else None,

@@ -2820,6 +2820,154 @@ class STM32HelperTests(unittest.TestCase):
             4,
         )
 
+    def test_evaluate_lrun_rewrites_stale_phase_config_fields_when_override_is_omitted(self) -> None:
+        """Ensure staged LRUN evaluation refreshes generated phase-config macros."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
+            _write_text(
+                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h",
+                "\n".join(
+                    [
+                        "#ifndef TCN_DUT_PHASE_CONFIG_H",
+                        "#define TCN_DUT_PHASE_CONFIG_H",
+                        "",
+                        "#define TCN_DUT_PHASE_BACK_TO_BACK 0",
+                        "#define TCN_DUT_PHASE_CADENCED 1",
+                        "",
+                        "#define TCN_DUT_SELECTED_PHASE TCN_DUT_PHASE_BACK_TO_BACK",
+                        "#define TCN_DUT_LATENCY_BUDGET_MS 999",
+                        "#define TCN_DUT_MEASURED_RUNS 4",
+                        "#define TCN_DUT_CPU_CLOCK_MHZ 200",
+                        "#define TCN_DUT_WAKE_MARGIN_US 111",
+                        "#define TCN_DUT_MIN_SLEEP_US 222",
+                        "",
+                        "#endif /* TCN_DUT_PHASE_CONFIG_H */",
+                        "",
+                    ]
+                ),
+            )
+            device = STM32NucleoN657X0QDevice(
+                serial_port="/dev/ttyACM0",
+                device_options={
+                    "project_root": str(project_root),
+                    "cpu_clock_mhz": 400,
+                    "latency_budget_ms": 321.0,
+                    "wake_margin_us": 4321,
+                    "min_sleep_us": 5432,
+                },
+            )
+            compile_result = type(
+                "CompileResultDouble",
+                (),
+                {
+                    "success": True,
+                    "log": "ok",
+                    "flash_bytes": 2222,
+                    "ram_bytes": 1111,
+                    "overflow_kind": None,
+                    "build_dir": project_root / "STM32CubeIDE" / "Boot" / "Debug",
+                    "boot_elf_path": project_root
+                    / "STM32CubeIDE"
+                    / "Boot"
+                    / "Debug"
+                    / "Template_LRUN_FSBL.elf",
+                    "arena_bytes": 4096,
+                    "external_flash_bytes": None,
+                    "signed_app_bin_path": project_root
+                    / "STM32CubeIDE"
+                    / "AppS"
+                    / "Debug"
+                    / "Template_LRUN_AppS-trusted.bin",
+                },
+            )()
+            telemetry = stm32_runtime.STM32RuntimeTelemetry(
+                latency_s=0.003,
+                serial_log=["STM32_AI_INIT=OK", "DUT READY", "STM32_AI_RUN=OK"],
+                power_metrics={
+                    "clock_hz": 400000000.0,
+                    "sequence": 1.0,
+                    "runs": 4,
+                    "phase": "back_to_back",
+                },
+            )
+
+            with patch.object(device, "compile", return_value=compile_result), patch.object(
+                device,
+                "_storage_power_metrics",
+                return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
+            ), patch.object(
+                device,
+                "_program_runtime_images",
+                return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
+            ) as harness_mock, patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                _FakeSerialMonitor,
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
+                return_value=_FakeHarnessSerial(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
+                return_value=type(
+                    "PrimeResult",
+                    (),
+                    {"harness_ready": True, "harness_log": ["HARNESS READY"], "error": None},
+                )(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
+                return_value=type(
+                    "DoneResult",
+                    (),
+                    {
+                        "harness_done": True,
+                        "runs_harness": 4,
+                        "harness_log": [
+                            "HARNESS READY",
+                            "runs: 4",
+                            "energy output: 1.25",
+                            "avg power output: 2.5",
+                            "avg current output: 0.5",
+                            "bus voltage output: 5.0",
+                            "idle power baseline: 0.1",
+                            "harness timer output: 0.003",
+                            "DONE",
+                        ],
+                        "error": None,
+                    },
+                )(),
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                return_value="upload ok",
+            ), patch(
+                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                return_value=telemetry,
+            ):
+                metrics = device.evaluate(
+                    dirpath=project_root,
+                    arena_kb=-1,
+                    window_size=200,
+                    num_channels=6,
+                    serial_port="/dev/ttyACM0",
+                    run_hil=True,
+                    harness_serial_port="/dev/ttyACM1",
+                )
+
+            header_text = (
+                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h"
+            ).read_text(encoding="utf-8")
+
+        self.assertEqual(metrics.error_code, HIL_ERROR_OK)
+        self.assertIn("#define TCN_DUT_MEASURED_RUNS 4", header_text)
+        self.assertIn("#define TCN_DUT_LATENCY_BUDGET_MS 321", header_text)
+        self.assertIn("#define TCN_DUT_CPU_CLOCK_MHZ 400", header_text)
+        self.assertIn("#define TCN_DUT_WAKE_MARGIN_US 4321", header_text)
+        self.assertIn("#define TCN_DUT_MIN_SLEEP_US 5432", header_text)
+        self.assertEqual(
+            harness_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"],
+            4,
+        )
+
     def test_evaluate_without_staged_paths_defaults_omitted_measured_runs_to_ten(self) -> None:
         """Ensure omitted measured runs still fall back to 10 for non-staged evaluation paths."""
         with tempfile.TemporaryDirectory() as tmpdir:

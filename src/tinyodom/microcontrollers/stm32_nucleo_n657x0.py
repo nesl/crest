@@ -400,6 +400,11 @@ def resolve_stm32_nucleo_n657x0_q_options(
     options = dict(device_options or {})
     raw_template_root = options.get("template_root")
     raw_project_root = options.get("project_root")
+    root_option_name = (
+        "template_root"
+        if raw_template_root not in (None, "")
+        else "project_root"
+    )
     if raw_template_root not in (None, ""):
         warnings.warn(
             "STM32 device option 'template_root' is deprecated; use 'project_root' instead.",
@@ -416,6 +421,12 @@ def resolve_stm32_nucleo_n657x0_q_options(
             "STM32 device option 'project_layout' is no longer supported for "
             f"{BOARD_NAME}; LRUN dev_boot is implicit."
         )
+    try:
+        project_root = _resolve_workspace_paths(project_root=project_root).root
+    except stm32_cube_clt.WorkflowError as exc:
+        raise ValueError(
+            f"STM32 device option '{root_option_name}' must point to an LRUN workspace root."
+        ) from exc
     gdbserver = _resolve_optional_path(options.get("gdbserver"))
     gdb = _resolve_optional_path(options.get("gdb"))
     cubeprog_bin = _resolve_optional_path(options.get("cubeprog_bin"))
@@ -2744,24 +2755,11 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         else:
             effective_measured_runs = max(1, int(measured_inference_runs))
         if paths is not None:
-            phase_header_path = paths.inc_dir / "tcn_dut_phase_config.h"
-            phase_header_text = (
-                phase_header_path.read_text(encoding="utf-8")
-                if phase_header_path.is_file()
-                else ""
+            self._write_runtime_phase_config(
+                paths=paths,
+                selected_phase=phase,
+                measured_runs=effective_measured_runs,
             )
-            selected_phase_macro = (
-                "TCN_DUT_PHASE_CADENCED"
-                if normalized_phase == "cadenced"
-                else "TCN_DUT_PHASE_BACK_TO_BACK"
-            )
-            expected_phase = f"#define TCN_DUT_SELECTED_PHASE {selected_phase_macro}"
-            if measured_inference_runs is not None or expected_phase not in phase_header_text:
-                self._write_runtime_phase_config(
-                    paths=paths,
-                    selected_phase=phase,
-                    measured_runs=effective_measured_runs,
-                )
         try:
             storage_metrics = self._storage_power_metrics(paths if paths is not None else project_root)
         except stm32_cube_clt.WorkflowError:
