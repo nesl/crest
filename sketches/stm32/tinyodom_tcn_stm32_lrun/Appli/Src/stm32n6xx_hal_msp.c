@@ -15,6 +15,22 @@
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
   ******************************************************************************
+  *
+  * Local modifications for TinyODOM-Ex:
+  * Modifications Copyright (c) 2026 Joseph Zales.
+  *
+  * Upstream base:
+  *   STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_LRUN/
+  *   Appli/Src/stm32n6xx_hal_msp.c
+  *
+  * Local changes:
+  *   - Added RTC MSP initialization and de-initialization hooks.
+  *   - Added RTC EXTI line configuration and RTC_S interrupt wiring for the
+  *     cadenced wake path used by TinyODOM-Ex HIL runs.
+  *
+  * Licensing note:
+  *   - The underlying file remains subject to the upstream STMicroelectronics
+  *     license terms; this notice covers local modifications only.
   */
 /* USER CODE END Header */
 

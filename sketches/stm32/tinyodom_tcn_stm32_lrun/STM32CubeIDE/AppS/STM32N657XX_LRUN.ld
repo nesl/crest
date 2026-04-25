@@ -31,6 +31,25 @@
 ******************************************************************************
 */
 
+/*
+ * Local modifications for TinyODOM-Ex:
+ * Modifications Copyright (c) 2026 Joseph Zales.
+ *
+ * Upstream base:
+ *   STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_LRUN/
+ *   STM32CubeIDE/AppS/STM32N657XX_LRUN.ld
+ *
+ * Local changes:
+ *   - Increased heap and stack reservations for the TinyODOM-Ex LRUN app.
+ *   - Documented and asserted the dev_boot requirement that .data is loaded
+ *     directly into RAM.
+ *   - Corrected the noncacheable end-of-section comment for clarity.
+ *
+ * Licensing note:
+ *   - The underlying file remains subject to the upstream STMicroelectronics
+ *     license terms; this notice covers local modifications only.
+ */
+
 /* Entry Point */
 ENTRY(Reset_Handler)
 

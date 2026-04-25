@@ -18,6 +18,23 @@
   ******************************************************************************
   */
 
+  /*
+  * Local modifications for TinyODOM-Ex:
+  * Modifications Copyright (c) 2026 Joseph Zales.
+  *
+  * Upstream base:
+  *   STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_LRUN/
+  *   Appli/Inc/stm32n6xx_nucleo_conf.h
+  *
+  * Local changes:
+  *   - Enabled USE_COM_LOG so TinyODOM-Ex HIL runs can emit DUT status and fault
+  *     logs over the board debug COM port.
+  *
+  * Licensing note:
+  *   - The underlying file remains subject to the upstream STMicroelectronics
+  *     license terms; this notice covers local modifications only.
+  */
+
 /* Define to prevent recursive inclusion -------------------------------------*/
 #ifndef STM32N6XX_NUCLEO_CONF_H
 #define STM32N6XX_NUCLEO_CONF_H

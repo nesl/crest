@@ -13,6 +13,15 @@
 #include "stm32n6xx_nucleo_xspi.h"
 #include "tcn_dut_phase_config.h"
 
+/*
+ * This module owns the DUT-side HIL protocol for the TinyODOM-Ex LRUN app.
+ * It performs three jobs:
+ *   - bootstraps the generated ST Edge AI network and optional external weights
+ *   - speaks the host-visible START/READY/result text protocol over debug COM
+ *   - runs either back-to-back or cadenced measurement loops and emits timing
+ *     telemetry in a parseable format for the HIL harness
+ */
+
 AI_ALIGNED(4)
 static ai_u8 s_network_activations[AI_NETWORK_DATA_ACTIVATIONS_SIZE];
 
@@ -61,6 +70,7 @@ static bool s_external_weight_mapping_initialized = false;
 
 void SystemClock_Config(void);
 
+/* Convert a requested stop-sleep interval into the RTC wakeup counter domain. */
 static uint32_t wakeup_counter_for_sleep_us(uint32_t sleep_us)
 {
   uint64_t rtc_clock_hz = (uint64_t)s_rtc_clock_hz_nominal;
@@ -80,6 +90,7 @@ static uint32_t wakeup_counter_for_sleep_us(uint32_t sleep_us)
   return (uint32_t)counter;
 }
 
+/* All host-facing protocol output is line-oriented and flushed immediately. */
 static void flush_stdout(void)
 {
   fflush(stdout);
@@ -91,6 +102,7 @@ static void emit_line(const char *line)
   flush_stdout();
 }
 
+/* Emit the HIL harness telemetry fields in the exact textual format it parses. */
 static void emit_float_scaled_line(const char *label, uint64_t scaled_1e6, bool valid)
 {
   if (!valid)
@@ -151,6 +163,7 @@ static bool weights_use_external_flash(void)
   return (weights_addr >= kExternalWeightsStart) && (weights_addr < kExternalWeightsEnd);
 }
 
+/* Bring up XSPI2 only when ST Edge AI placed weights in the external-flash map. */
 static bool configure_external_weight_xspi2_clocking(void)
 {
   RCC_PeriphCLKInitTypeDef periph_clk_init = {0};
@@ -173,6 +186,11 @@ static bool configure_external_weight_xspi2_clocking(void)
   return true;
 }
 
+/*
+ * The generated network exposes a weights pointer but does not guarantee that
+ * the NOR memory-mapped view is already active. Probe and enable that mapping
+ * once before the first inference when external weights are in use.
+ */
 static bool ensure_external_weight_mapping_ready(void)
 {
   BSP_XSPI_NOR_Init_t xspi_init = {0};

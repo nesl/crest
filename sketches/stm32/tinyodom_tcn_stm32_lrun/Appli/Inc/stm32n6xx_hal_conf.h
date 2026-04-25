@@ -15,6 +15,21 @@
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
   ******************************************************************************
+  *
+  * Local modifications for TinyODOM-Ex:
+  * Modifications Copyright (c) 2026 Joseph Zales.
+  *
+  * Upstream base:
+  *   STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_LRUN/
+  *   Appli/Inc/stm32n6xx_hal_conf.h
+  *
+  * Local changes:
+  *   - Enabled HAL_RTC_MODULE_ENABLED for the TinyODOM-Ex LRUN RTC wake path.
+  *   - Enabled HAL_XSPI_MODULE_ENABLED for external flash access in dev_boot.
+  *
+  * Licensing note:
+  *   - The underlying file remains subject to the upstream STMicroelectronics
+  *     license terms; this notice covers local modifications only.
   */
 /* USER CODE END Header */
 

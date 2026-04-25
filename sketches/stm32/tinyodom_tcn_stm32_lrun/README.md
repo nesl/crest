@@ -3,7 +3,31 @@
 This is the canonical repo-local LRUN `dev_boot` workspace for the STM32
 NUCLEO-N657X0-Q production backend.
 
-It mirrors the ST `Template_FSBL_LRUN` project shape:
+## Upstream Base And Local Modifications
+
+This workspace is derived from the ST `Template_FSBL_LRUN` project for the
+STM32 NUCLEO-N657X0-Q board.
+
+Modifications Copyright (c) 2026 Joseph Zales.
+
+Local changes in this repo-owned README:
+
+- Replaced the stock ST template README with TinyODOM-Ex-specific `dev_boot`,
+  NAS, and HIL workflow documentation.
+- Documented the repo-local overlay model instead of the upstream full-project
+  distribution model.
+- Documented which artifacts are staged/generated versus intentionally
+  committed.
+
+Licensing note:
+
+- The upstream ST template and copied STM32 workspace content remain subject to
+  their original STMicroelectronics license terms.
+- This README documents local modifications and workspace usage; it does not
+  replace the upstream license terms for the underlying vendor-derived project.
+
+It mirrors the ST `Template_FSBL_LRUN` project shape and keeps both halves of
+the LRUN handoff in one workspace:
 
 - `FSBL/`
 - `Appli/`
@@ -27,6 +51,10 @@ The supported flow is:
 - optional external weights blob is programmed at `0x71000000`
 - `FSBL` ELF is debug-loaded into RAM
 - `FSBL` copies the trusted app into AXISRAM and jumps to it
+
+Because that flow always starts in the FSBL and only then transfers control to
+the trusted app, FSBL startup/linker/build files live in this LRUN workspace on
+purpose; they are not a separate, unrelated project tree.
 
 Manual BOOT strap changes and reset sequencing are intentionally out of scope
 for this workspace because they are not usable for unattended NAS/HIL loops on

@@ -14,6 +14,23 @@
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
   ******************************************************************************
+  *
+  * Local modifications for TinyODOM-Ex:
+  * Modifications Copyright (c) 2026 Joseph Zales.
+  *
+  * Upstream base:
+  *   STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_LRUN/
+  *   Appli/Src/stm32n6xx_it.c
+  *
+  * Local changes:
+  *   - Added TinyODOM fault-reporting traps that emit debug COM diagnostics
+  *     before halting.
+  *   - Added DUT-runner and XSPI integration needed by the TinyODOM-Ex LRUN app.
+  *   - Added runtime interrupt handling beyond the stock template example.
+  *
+  * Licensing note:
+  *   - The underlying file remains subject to the upstream STMicroelectronics
+  *     license terms; this notice covers local modifications only.
   */
 /* USER CODE END Header */
 

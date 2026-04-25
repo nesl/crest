@@ -14,6 +14,24 @@
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
   ******************************************************************************
+  *
+  * Local modifications for TinyODOM-Ex:
+  * Modifications Copyright (c) 2026 Joseph Zales.
+  *
+  * Upstream base:
+  *   STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_LRUN/
+  *   Appli/Src/main.c
+  *
+  * Local changes:
+  *   - Replaced the stock example loop with TinyODOM-Ex DUT bootstrap and runtime
+  *     control flow.
+  *   - Added DWT cycle-counter setup for device-side timing support.
+  *   - Added debug COM initialization for HIL status and fault logging.
+  *   - Added TinyODOM phase-config and DUT-runner integration.
+  *
+  * Licensing note:
+  *   - The underlying file remains subject to the upstream STMicroelectronics
+  *     license terms; this notice covers local modifications only.
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
