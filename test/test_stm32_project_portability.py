@@ -6,21 +6,25 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STM32_ROOT = REPO_ROOT / "analysis_scripts" / "stm32_example_project"
-CANONICAL_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"
+CANONICAL_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"
 
 
 class Stm32ProjectPortabilityTests(unittest.TestCase):
-    def test_all_committed_stm_makefiles_avoid_tools_checkout_paths(self):
+    def test_canonical_lrun_makefiles_avoid_tools_checkout_paths(self):
         paths = [
-            CANONICAL_ROOT / "Debug" / "Src" / "subdir.mk",
-            STM32_ROOT / "stm32_blink_example_project" / "FSBL" / "Debug" / "Src" / "subdir.mk",
-            STM32_ROOT / "stm32_toy_ai_project" / "FSBL" / "Debug" / "Src" / "subdir.mk",
-            STM32_ROOT / "stm32_cadenced_toy_ai_project" / "FSBL" / "Debug" / "Src" / "subdir.mk",
+            CANONICAL_ROOT / "STM32CubeIDE" / "AppS" / "Debug" / "Src" / "subdir.mk",
+            CANONICAL_ROOT / "STM32CubeIDE" / "Boot" / "Debug" / "Src" / "subdir.mk",
         ]
         for path in paths:
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("tools/stm32/STM32CubeN6", text, path)
-            self.assertIn("../Drivers/STM32N6xx_HAL_Driver/Inc", text, path)
+            self.assertIn("../../../Drivers/STM32N6xx_HAL_Driver/Inc", text, path)
+
+    def test_canonical_lrun_app_recipe_includes_repo_relative_secure_nsclib(self):
+        path = CANONICAL_ROOT / "STM32CubeIDE" / "AppS" / "Debug" / "Src" / "subdir.mk"
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("../../../Secure_nsclib", text, path)
+        self.assertIn("../../../Appli/Src/secure_nsc.c", text, path)
 
     def test_toy_projects_no_longer_pin_stedgeai_version_in_makefiles(self):
         paths = [
@@ -46,7 +50,7 @@ class Stm32ProjectPortabilityTests(unittest.TestCase):
             self.assertIn("NetworkRuntime1200_CM55_GCC.a", text, path)
             self.assertIn("Middlewares/ST/AI/Inc", text, path)
 
-    def test_cubeide_metadata_files_are_removed(self):
+    def test_cubeide_metadata_files_are_removed_from_examples(self):
         paths = [
             STM32_ROOT / "stm32_blink_example_project" / ".project",
             STM32_ROOT / "stm32_blink_example_project" / "FSBL" / ".project",

@@ -41,21 +41,16 @@ from . import stm32_runtime
 BOARD_NAME = "STM32_NUCLEO_N657X0_Q"
 # Repository root used to resolve checked-in STM32 templates and helper assets.
 REPO_ROOT = Path(__file__).resolve().parents[3]
-# Canonical project roots copied into a per-candidate staging directory.
-DEFAULT_FSBL_TEMPLATE_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"
-DEFAULT_LRUN_TEMPLATE_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"
-DEFAULT_TEMPLATE_ROOT = DEFAULT_LRUN_TEMPLATE_ROOT
-# Internal project-layout selector used during the STM32 staged migration.
-DEFAULT_PROJECT_LAYOUT = "lrun_dev_boot"
+# Canonical project root copied into a per-candidate staging directory.
+DEFAULT_TEMPLATE_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"
+# Internal STM32 workspace layout for the production N657X0 backend.
+LRUN_PROJECT_LAYOUT = "lrun_dev_boot"
 # ST STM32N657X0 product docs describe the part as having 4.2-Mbyte contiguous
 # SRAM.
 DEFAULT_MAX_RAM_BYTES = 4_194_304
-# Legacy FSBL path used an 8 MiB ceiling during the original bring-up. The LRUN
-# path uses Boot at 0x70000000 and Appli before the weights region at
+# The LRUN path uses Boot at 0x70000000 and Appli before the weights region at
 # 0x71000000, leaving 16 MiB for code images.
-DEFAULT_MAX_FLASH_BYTES_FSBL = 8_388_608
-DEFAULT_MAX_FLASH_BYTES_LRUN = 16_777_216
-DEFAULT_MAX_FLASH_BYTES = DEFAULT_MAX_FLASH_BYTES_LRUN
+DEFAULT_MAX_FLASH_BYTES = 16_777_216
 # ST UM3417 section 7.10 says the NUCLEO-N657X0-Q carries 512-Mbit Octo-SPI
 # flash, which is 64 MiB usable capacity.
 DEFAULT_MAX_EXTERNAL_FLASH_BYTES = 67_108_864
@@ -80,14 +75,10 @@ DEFAULT_WEIGHTS_MEMORY_POOL = (
 )
 # Supported fixed clock presets accepted by the STM staging pipeline.
 SUPPORTED_CPU_CLOCK_MHZ = frozenset({200, 300, 400, 600, 800})
-# Matches the checked-in FSBL linker script's `_Min_Heap_Size` reservation.
-MIN_HEAP_BYTES_FSBL = 0x2000
-# Matches the checked-in FSBL linker script's `_Min_Stack_Size` reservation.
-MIN_STACK_BYTES_FSBL = 0x4000
 # Matches the checked-in LRUN AppS linker's `_Min_Heap_Size` reservation.
-MIN_HEAP_BYTES_LRUN = 0x2000
+MIN_HEAP_BYTES = 0x2000
 # Matches the checked-in LRUN AppS linker's `_Min_Stack_Size` reservation.
-MIN_STACK_BYTES_LRUN = 0x4000
+MIN_STACK_BYTES = 0x4000
 # Safer default timeout for LRUN dev_boot, where the bootloader must copy the
 # trusted app into AXISRAM before control transfers to the application.
 DEFAULT_LRUN_BOOT_TIMEOUT_S = 12.0
@@ -147,8 +138,6 @@ class STM32NucleoN657X0QOptions:
     project_root : pathlib.Path
         Canonical STM32 template/workspace root. The backend copies this root
         into a per-candidate staging directory before build/upload.
-    project_layout : str
-        Internal project-layout selector (`fsbl_legacy` or `lrun_dev_boot`).
     gdbserver : pathlib.Path | None
         Optional explicit path to ``ST-LINK_gdbserver``.
     gdb : pathlib.Path | None
@@ -206,8 +195,6 @@ class STM32NucleoN657X0QOptions:
     signing_load_offset: str
     signing_header_version: str
     max_external_flash_bytes: int
-
-    project_layout: str
 
 
 @dataclass(frozen=True)
@@ -369,33 +356,6 @@ def _resolve_runtime_mode(raw_value: object | None) -> str:
     return runtime_mode
 
 
-def _resolve_project_layout(raw_value: object | None, *, project_root: Path | None) -> str:
-    """Validate and normalize the requested STM project layout."""
-    if raw_value in (None, ""):
-        if project_root is None:
-            return DEFAULT_PROJECT_LAYOUT
-        resolved_root = Path(project_root).expanduser().resolve()
-        if resolved_root == DEFAULT_TEMPLATE_ROOT:
-            return DEFAULT_PROJECT_LAYOUT
-        for layout in ("lrun_dev_boot", "fsbl_legacy"):
-            try:
-                _resolve_workspace_paths(project_root=resolved_root, project_layout=layout)
-            except stm32_cube_clt.WorkflowError:
-                continue
-            return layout
-        raise ValueError(
-            "STM project_layout could not be inferred from project_root "
-            f"{resolved_root}. Set project_layout to 'fsbl_legacy' or 'lrun_dev_boot'."
-        )
-    layout = str(raw_value).strip().lower()
-    if layout not in {"fsbl_legacy", "lrun_dev_boot"}:
-        raise ValueError(
-            "Unsupported STM project layout "
-            f"{layout!r}. Expected 'fsbl_legacy' or 'lrun_dev_boot'."
-        )
-    return layout
-
-
 def _resolve_cubeprog_cli_path(cubeprog_bin: Path | None) -> Path:
     """Resolve the STM32CubeProgrammer CLI executable path.
 
@@ -451,7 +411,11 @@ def resolve_stm32_nucleo_n657x0_q_options(
         project_root = _resolve_optional_path(raw_project_root)
     if project_root is None:
         project_root = DEFAULT_TEMPLATE_ROOT
-    project_layout = _resolve_project_layout(options.get("project_layout"), project_root=project_root)
+    if options.get("project_layout") not in (None, ""):
+        raise ValueError(
+            "STM32 device option 'project_layout' is no longer supported for "
+            f"{BOARD_NAME}; LRUN dev_boot is implicit."
+        )
     gdbserver = _resolve_optional_path(options.get("gdbserver"))
     gdb = _resolve_optional_path(options.get("gdb"))
     cubeprog_bin = _resolve_optional_path(options.get("cubeprog_bin"))
@@ -495,7 +459,6 @@ def resolve_stm32_nucleo_n657x0_q_options(
     )
     return STM32NucleoN657X0QOptions(
         project_root=project_root,
-        project_layout=project_layout,
         gdbserver=gdbserver,
         gdb=gdb,
         cubeprog_bin=cubeprog_bin,
@@ -539,11 +502,7 @@ def build_stm32_nucleo_n657x0_q_spec(
         name=BOARD_NAME,
         arena_sizes_kb=[-1],
         max_ram_bytes=DEFAULT_MAX_RAM_BYTES,
-        max_flash_bytes=(
-            DEFAULT_MAX_FLASH_BYTES_FSBL
-            if options is not None and options.project_layout == "fsbl_legacy"
-            else DEFAULT_MAX_FLASH_BYTES_LRUN
-        ),
+        max_flash_bytes=DEFAULT_MAX_FLASH_BYTES,
         max_external_flash_bytes=(
             DEFAULT_MAX_EXTERNAL_FLASH_BYTES
             if options is None
@@ -556,59 +515,40 @@ def build_stm32_nucleo_n657x0_q_spec(
 def _resolve_workspace_paths(
     *,
     project_root: Path | str,
-    project_layout: str,
 ) -> STM32WorkspacePaths:
-    """Resolve layout-aware STM32 workspace paths."""
+    """Resolve STM32 LRUN workspace paths."""
     root = Path(project_root).expanduser().resolve()
-    if project_layout == "fsbl_legacy":
-        resolved = stm32_cube_clt.validate_project_root(root)
-        return STM32WorkspacePaths(
-            layout=project_layout,
-            root=resolved,
-            manifest_root=resolved,
-            source_root=resolved,
-            inc_dir=resolved / "Inc",
-            src_dir=resolved / "Src",
-            linker_project_root=resolved,
-            boot_project_root=resolved,
-            app_project_root=resolved,
-            boot_debug_dir=resolved / "Debug",
-            app_debug_dir=resolved / "Debug",
-            boot_elf_path=resolved / "Debug" / "app.elf",
-            app_elf_path=resolved / "Debug" / "app.elf",
-            signed_app_bin_path=None,
-            boot_copy_window_header=None,
-        )
-    if project_layout == "lrun_dev_boot":
-        resolved_root = root
-        for required_dir in (
-            resolved_root / "FSBL",
-            resolved_root / "Appli",
-            resolved_root / "STM32CubeIDE" / "Boot",
-            resolved_root / "STM32CubeIDE" / "AppS",
-        ):
-            if not required_dir.is_dir():
-                raise stm32_cube_clt.WorkflowError(f"Missing LRUN workspace path: {required_dir}")
-        boot_project_root = stm32_cube_clt.validate_project_root(resolved_root / "STM32CubeIDE" / "Boot")
-        app_project_root = stm32_cube_clt.validate_project_root(resolved_root / "STM32CubeIDE" / "AppS")
-        return STM32WorkspacePaths(
-            layout=project_layout,
-            root=resolved_root,
-            manifest_root=resolved_root,
-            source_root=resolved_root / "Appli",
-            inc_dir=resolved_root / "Appli" / "Inc",
-            src_dir=resolved_root / "Appli" / "Src",
-            linker_project_root=app_project_root,
-            boot_project_root=boot_project_root,
-            app_project_root=app_project_root,
-            boot_debug_dir=boot_project_root / "Debug",
-            app_debug_dir=app_project_root / "Debug",
-            boot_elf_path=boot_project_root / "Debug" / "Template_LRUN_FSBL.elf",
-            app_elf_path=app_project_root / "Debug" / "Template_LRUN_AppS.elf",
-            signed_app_bin_path=app_project_root / "Debug" / "Template_LRUN_AppS-trusted.bin",
-            boot_copy_window_header=resolved_root / "FSBL" / "Inc" / "stm32_extmem_conf.h",
-        )
-    raise stm32_cube_clt.WorkflowError(f"Unsupported STM32 project layout: {project_layout}")
+    resolved_root = root
+    for required_dir in (
+        resolved_root / "FSBL",
+        resolved_root / "Appli",
+        resolved_root / "STM32CubeIDE" / "Boot",
+        resolved_root / "STM32CubeIDE" / "AppS",
+    ):
+        if not required_dir.is_dir():
+            raise stm32_cube_clt.WorkflowError(
+                "STM32 project_root must point to the LRUN workspace; "
+                f"missing required path: {required_dir}"
+            )
+    boot_project_root = stm32_cube_clt.validate_project_root(resolved_root / "STM32CubeIDE" / "Boot")
+    app_project_root = stm32_cube_clt.validate_project_root(resolved_root / "STM32CubeIDE" / "AppS")
+    return STM32WorkspacePaths(
+        layout=LRUN_PROJECT_LAYOUT,
+        root=resolved_root,
+        manifest_root=resolved_root,
+        source_root=resolved_root / "Appli",
+        inc_dir=resolved_root / "Appli" / "Inc",
+        src_dir=resolved_root / "Appli" / "Src",
+        linker_project_root=app_project_root,
+        boot_project_root=boot_project_root,
+        app_project_root=app_project_root,
+        boot_debug_dir=boot_project_root / "Debug",
+        app_debug_dir=app_project_root / "Debug",
+        boot_elf_path=boot_project_root / "Debug" / "Template_LRUN_FSBL.elf",
+        app_elf_path=app_project_root / "Debug" / "Template_LRUN_AppS.elf",
+        signed_app_bin_path=app_project_root / "Debug" / "Template_LRUN_AppS-trusted.bin",
+        boot_copy_window_header=resolved_root / "FSBL" / "Inc" / "stm32_extmem_conf.h",
+    )
 
 
 def _find_linker_script(paths: STM32WorkspacePaths) -> Path:
@@ -1112,23 +1052,22 @@ def _write_staged_manifest(
     manifest: dict[str, object] = dict(existing_manifest or {})
     manifest.update(
         {
-        "staged_workspace_root": str(paths.root.resolve()),
-        "candidate_root": str(candidate_root.resolve()),
-        "generated_output_dir": str(generated_output_dir.resolve()),
-        "project_layout": paths.layout,
-        "weight_storage_mode": str(weight_storage_mode),
-        "appli_signed_image_path": (
-            str(appli_signed_image_path.resolve()) if appli_signed_image_path is not None else None
-        ),
-        "boot_elf_path": str(boot_elf_path.resolve()) if boot_elf_path is not None else None,
-        "fsbl_copy_window_bytes": fsbl_copy_window_bytes,
-        "appli_flash_address": str(appli_flash_address),
-        "weights_blob_path": str(weights_blob_path.resolve()) if weights_blob_path is not None else None,
-        "weights_blob_size": weights_blob_path.stat().st_size if weights_blob_path is not None else None,
-        "weights_flash_address": str(weights_flash_address),
-        "weights_external_loader": (
-            str(weights_external_loader.resolve()) if weights_external_loader is not None else None
-        ),
+            "staged_workspace_root": str(paths.root.resolve()),
+            "candidate_root": str(candidate_root.resolve()),
+            "generated_output_dir": str(generated_output_dir.resolve()),
+            "weight_storage_mode": str(weight_storage_mode),
+            "appli_signed_image_path": (
+                str(appli_signed_image_path.resolve()) if appli_signed_image_path is not None else None
+            ),
+            "boot_elf_path": str(boot_elf_path.resolve()) if boot_elf_path is not None else None,
+            "fsbl_copy_window_bytes": fsbl_copy_window_bytes,
+            "appli_flash_address": str(appli_flash_address),
+            "weights_blob_path": str(weights_blob_path.resolve()) if weights_blob_path is not None else None,
+            "weights_blob_size": weights_blob_path.stat().st_size if weights_blob_path is not None else None,
+            "weights_flash_address": str(weights_flash_address),
+            "weights_external_loader": (
+                str(weights_external_loader.resolve()) if weights_external_loader is not None else None
+            ),
         }
     )
     if extra_fields:
@@ -1173,7 +1112,7 @@ def _read_staged_manifest(paths: STM32WorkspacePaths) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise stm32_cube_clt.WorkflowError(f"Unexpected STM staged manifest payload: {manifest_path}")
     stored_workspace_root = payload.get("staged_workspace_root")
-    if paths.layout == "lrun_dev_boot" and stored_workspace_root in (None, ""):
+    if stored_workspace_root in (None, ""):
         raise stm32_cube_clt.WorkflowError(
             "STM LRUN staged manifest is missing the required staged_workspace_root field."
         )
@@ -1210,27 +1149,23 @@ def _validate_project_structure(paths: STM32WorkspacePaths) -> STM32WorkspacePat
     for candidate in (paths.src_dir, paths.inc_dir):
         if not candidate.is_dir():
             raise stm32_cube_clt.WorkflowError(f"STM32 project is missing required directory: {candidate}")
-    required_makefiles = {paths.app_debug_dir / "makefile"}
-    if paths.layout == "lrun_dev_boot":
-        required_makefiles.add(paths.boot_debug_dir / "makefile")
+    required_makefiles = {paths.app_debug_dir / "makefile", paths.boot_debug_dir / "makefile"}
     for makefile in required_makefiles:
         if not makefile.is_file():
             raise stm32_cube_clt.WorkflowError(
                 f"STM32 project is missing required CubeIDE makefile: {makefile}"
             )
     required_headers = ["stm32n6xx_hal_conf.h", "stm32n6xx_nucleo_conf.h", "tcn_dut_runner.h"]
-    if paths.layout == "lrun_dev_boot":
-        required_headers.append("main.h")
+    required_headers.append("main.h")
     for required_header in required_headers:
         candidate = paths.inc_dir / required_header
         if not candidate.is_file():
             raise stm32_cube_clt.WorkflowError(f"STM32 project is missing required CubeN6 header: {candidate}")
-    if paths.layout == "lrun_dev_boot":
-        system_init = paths.src_dir / "system_stm32n6xx_s.c"
-        if not system_init.is_file():
-            raise stm32_cube_clt.WorkflowError(
-                f"STM32 LRUN Appli is missing the required system init file: {system_init}"
-            )
+    system_init = paths.src_dir / "system_stm32n6xx_s.c"
+    if not system_init.is_file():
+        raise stm32_cube_clt.WorkflowError(
+            f"STM32 LRUN Appli is missing the required system init file: {system_init}"
+        )
     _find_linker_script(paths)
     return paths
 
@@ -1253,15 +1188,10 @@ def _validate_memory_reservations(paths: STM32WorkspacePaths) -> tuple[int, int]
     tinyodom.microcontrollers.stm32_cube_clt.WorkflowError
         If the reservations cannot be parsed or fall below the accepted floor.
     """
-    min_heap_bytes = (
-        MIN_HEAP_BYTES_LRUN if paths.layout == "lrun_dev_boot" else MIN_HEAP_BYTES_FSBL
-    )
-    min_stack_bytes = (
-        MIN_STACK_BYTES_LRUN if paths.layout == "lrun_dev_boot" else MIN_STACK_BYTES_FSBL
-    )
+    min_heap_bytes = MIN_HEAP_BYTES
+    min_stack_bytes = MIN_STACK_BYTES
     linker_scripts = [_find_linker_script(paths)]
-    if paths.layout == "lrun_dev_boot":
-        linker_scripts.append(_find_boot_linker_script(paths))
+    linker_scripts.append(_find_boot_linker_script(paths))
 
     app_heap_bytes: int | None = None
     app_stack_bytes: int | None = None
@@ -1292,7 +1222,7 @@ def _validate_memory_reservations(paths: STM32WorkspacePaths) -> tuple[int, int]
 
 def _validate_lrun_boot_include_path(paths: STM32WorkspacePaths) -> None:
     """Ensure LRUN Boot recipes still include the FSBL header directory."""
-    if paths.layout != "lrun_dev_boot" or paths.boot_copy_window_header is None:
+    if paths.boot_copy_window_header is None:
         return
     mk_files = sorted(paths.boot_debug_dir.rglob("*.mk"))
     if not mk_files:
@@ -1766,7 +1696,6 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         return _validate_project_structure(
             _resolve_workspace_paths(
                 project_root=resolved_root,
-                project_layout=self._options.project_layout,
             )
         )
 
@@ -1996,8 +1925,6 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         compile_result: CompileResult,
     ) -> dict[str, Any]:
         """Program the LRUN signed app and optional weights before boot."""
-        if paths.layout != "lrun_dev_boot":
-            return self._program_weight_blob_if_needed(paths)
         signed_app_path = compile_result.signed_app_bin_path
         if signed_app_path is None:
             raise stm32_cube_clt.WorkflowError(
@@ -2126,9 +2053,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             )
 
         candidate_root = self._build_candidate_root(Path(outputs_dir), model_variant)
-        staged_dir_name = (
-            "FSBL" if canonical_paths.layout == "fsbl_legacy" else canonical_paths.root.name
-        )
+        staged_dir_name = canonical_paths.root.name
         staged_project_root = candidate_root / staged_dir_name
         model_dir = candidate_root / "model"
         analyze_workspace_dir = candidate_root / "stedgeai_analyze_ws"
@@ -2338,52 +2263,6 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 )
 
             jobs = os.cpu_count() or 1
-            if paths.layout == "fsbl_legacy":
-                build_result = stm32_cube_clt.build_project(
-                    project_root=paths.app_project_root,
-                    jobs=jobs,
-                    clean=True,
-                )
-                size_result = stm32_cube_clt.parse_size_output(build_result.elf_path)
-                if size_result.elf_flash_bytes > self._spec.max_flash_bytes:
-                    raise stm32_cube_clt.WorkflowError(
-                        "STM ELF flash image exceeds available internal flash "
-                        f"({size_result.elf_flash_bytes} > {self._spec.max_flash_bytes})."
-                    )
-                arena_bytes = _parse_arena_bytes(paths.inc_dir / "network_data_params.h")
-                diagnostics = (
-                    f"stm32_project_layout={paths.layout}\n"
-                    f"stm32_arena_bytes={arena_bytes}\n"
-                    f"stm32_heap_bytes={heap_bytes}\n"
-                    f"stm32_stack_bytes={stack_bytes}\n"
-                    f"stm32_weight_storage_mode={weight_storage_mode}\n"
-                    f"stm32_external_flash_bytes={external_flash_bytes if external_flash_bytes is not None else -1}"
-                )
-                return CompileResult(
-                    success=True,
-                    log="\n".join(
-                        text
-                        for text in (
-                            build_result.log.strip(),
-                            size_result.raw_output.strip(),
-                            diagnostics,
-                        )
-                        if text
-                    ),
-                    flash_bytes=size_result.elf_flash_bytes,
-                    ram_bytes=size_result.ram_bytes,
-                    overflow_kind=None,
-                    build_dir=build_result.debug_dir,
-                    boot_build_dir=build_result.debug_dir,
-                    boot_elf_path=build_result.elf_path,
-                    app_build_dir=build_result.debug_dir,
-                    app_elf_path=build_result.elf_path,
-                    arena_bytes=arena_bytes,
-                    heap_bytes=heap_bytes,
-                    stack_bytes=stack_bytes,
-                    external_flash_bytes=external_flash_bytes,
-                )
-
             candidate_root = (
                 Path(str(manifest.get("candidate_root")))
                 if manifest is not None and manifest.get("candidate_root")
@@ -2523,7 +2402,6 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 },
             )
             diagnostics = (
-                f"stm32_project_layout={paths.layout}\n"
                 f"stm32_arena_bytes={arena_bytes}\n"
                 f"stm32_heap_bytes={heap_bytes}\n"
                 f"stm32_stack_bytes={stack_bytes}\n"
@@ -2607,10 +2485,10 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             paths = self._resolve_paths(project_root)
             manifest = self._read_storage_manifest(paths)
             signed_app_path = None
-            if paths.layout == "lrun_dev_boot" and manifest.get("appli_signed_image_path"):
+            if manifest.get("appli_signed_image_path"):
                 signed_app_path = Path(str(manifest["appli_signed_image_path"])).expanduser().resolve()
             boot_elf_path = None
-            if paths.layout == "lrun_dev_boot" and manifest.get("boot_elf_path"):
+            if manifest.get("boot_elf_path"):
                 boot_elf_path = stm32_cube_clt.resolve_required_file_path(
                     manifest.get("boot_elf_path"),
                     label="STM32 Boot ELF",
@@ -3010,7 +2888,6 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         use_serial_port = self._serial_port if serial_port is None else serial_port
         if use_serial_port is None:
             raise ValueError("serial_port must be provided when running STM32 HIL uploads.")
-        active_layout = paths.layout if paths is not None else self._options.project_layout
         try:
             elf_path = (
                 getattr(compile_result, "boot_elf_path", None)
@@ -3103,7 +2980,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                             monitor,
                             boot_timeout_s=(
                                 DEFAULT_LRUN_BOOT_TIMEOUT_S
-                                if dut_ready_timeout_s is None and active_layout == "lrun_dev_boot"
+                                if dut_ready_timeout_s is None
                                 else (
                                     stm32_runtime.DEFAULT_BOOT_TIMEOUT_S
                                     if dut_ready_timeout_s is None
@@ -3192,7 +3069,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                     monitor,
                     boot_timeout_s=(
                         DEFAULT_LRUN_BOOT_TIMEOUT_S
-                        if dut_ready_timeout_s is None and active_layout == "lrun_dev_boot"
+                        if dut_ready_timeout_s is None
                         else (
                             stm32_runtime.DEFAULT_BOOT_TIMEOUT_S
                             if dut_ready_timeout_s is None

@@ -18,7 +18,6 @@ device:
   harness_done_timeout_s: 5.0
   stm32:
     project_root: "sketches/stm32/tinyodom_tcn_stm32_lrun"
-    project_layout: "lrun_dev_boot"
     appli_flash_address: "0x70100000"
     wake_margin_us: 5000                      # Cadenced wake-up guard band before each release time.
     min_sleep_us: 5000                        # Cadenced minimum Stop-mode sleep request.

@@ -6,27 +6,17 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS_DIR="$PROJECT_ROOT/tools"
 STM32_TOOLS_DIR="$TOOLS_DIR/stm32"
 FIRMWARE_DIR="$STM32_TOOLS_DIR/STM32CubeN6"
-CANONICAL_TEMPLATE_ROOT="$PROJECT_ROOT/sketches/stm32/tinyodom_tcn_stm32/FSBL"
-OWNERSHIP_MANIFEST="$PROJECT_ROOT/sketches/stm32/tinyodom_tcn_stm32/fsbl_ownership_manifest.tsv"
 CANONICAL_LRUN_TEMPLATE_ROOT="$PROJECT_ROOT/sketches/stm32/tinyodom_tcn_stm32_lrun"
 LRUN_OWNERSHIP_MANIFEST="$CANONICAL_LRUN_TEMPLATE_ROOT/lrun_ownership_manifest.tsv"
 LRUN_UPSTREAM_TEMPLATE_ROOT_REL="Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_LRUN"
 FIRMWARE_REPO_URL="https://github.com/STMicroelectronics/STM32CubeN6.git"
 PINNED_TAG="v1.3.0"
 CLT_INSTALL_URL="https://www.st.com/en/development-tools/stm32cubeclt.html"
-declare -a EXTRA_TEMPLATE_ROOTS=(
-  "$PROJECT_ROOT/analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL"
-  "$PROJECT_ROOT/analysis_scripts/stm32_example_project/stm32_toy_ai_project/FSBL"
-  "$PROJECT_ROOT/analysis_scripts/stm32_example_project/stm32_cadenced_toy_ai_project/FSBL"
-)
 GDBSERVER_BIN=""
 GDB_BIN=""
 CUBEPROG_CLI_BIN=""
 CUBEPROG_BIN_DIR=""
 SIGNING_TOOL_BIN=""
-declare -a MANIFEST_PATHS=()
-declare -A CATEGORY_BY_PATH=()
-declare -A SOURCE_BY_PATH=()
 declare -a LRUN_MANIFEST_PATHS=()
 declare -A LRUN_CATEGORY_BY_PATH=()
 declare -A LRUN_SOURCE_BY_PATH=()
@@ -137,11 +127,7 @@ prune_materialized_vendor_copy_files() {
 
   while IFS= read -r relative_path; do
     [[ -n "$relative_path" ]] || continue
-    if [[ "$template_root" == "$CANONICAL_LRUN_TEMPLATE_ROOT" ]]; then
-      current_category="${LRUN_CATEGORY_BY_PATH[$relative_path]:-}"
-    else
-      current_category="${CATEGORY_BY_PATH[$relative_path]:-}"
-    fi
+    current_category="${LRUN_CATEGORY_BY_PATH[$relative_path]:-}"
     if [[ -n "$current_category" && "$current_category" != "vendor_copy" ]]; then
       continue
     fi
@@ -149,51 +135,6 @@ prune_materialized_vendor_copy_files() {
     rm -f "$destination_path"
     prune_empty_template_dirs "$template_root" "$destination_path"
   done < "$state_file"
-}
-
-record_materialized_vendor_copy_files() {
-  local template_root="$1"
-  local state_file=""
-  local state_dir=""
-  local relative_path=""
-  local category=""
-
-  state_file="$(vendor_copy_state_file_for_root "$template_root")"
-  state_dir="$(dirname "$state_file")"
-  mkdir -p "$state_dir"
-
-  : > "$state_file"
-  for relative_path in "${MANIFEST_PATHS[@]}"; do
-    category="${CATEGORY_BY_PATH[$relative_path]}"
-    [[ "$category" == "vendor_copy" ]] || continue
-    printf '%s\n' "$relative_path" >> "$state_file"
-  done
-}
-
-materialize_vendor_copy_files() {
-  local template_root="$1"
-  local relative_path=""
-  local category=""
-  local source_path=""
-  local destination_path=""
-  local vendor_copy_count=0
-
-  mkdir -p "$template_root"
-  prune_materialized_vendor_copy_files "$template_root"
-
-  for relative_path in "${MANIFEST_PATHS[@]}"; do
-    category="${CATEGORY_BY_PATH[$relative_path]}"
-    [[ "$category" == "vendor_copy" ]] || continue
-
-    source_path="$FIRMWARE_DIR/${SOURCE_BY_PATH[$relative_path]}"
-    destination_path="$template_root/$relative_path"
-    mkdir -p "$(dirname "$destination_path")"
-    cp "$source_path" "$destination_path"
-    vendor_copy_count=$((vendor_copy_count + 1))
-  done
-
-  record_materialized_vendor_copy_files "$template_root"
-  printf '%s\n' "$vendor_copy_count"
 }
 
 require_file() {
@@ -305,58 +246,6 @@ sync_firmware_repo() {
   git -C "$FIRMWARE_DIR" submodule update --init --recursive
 }
 
-load_ownership_manifest() {
-  local category=""
-  local relative_path=""
-  local source_path=""
-
-  require_file "$OWNERSHIP_MANIFEST"
-
-  while IFS=$'\t' read -r category relative_path source_path; do
-    [[ -z "$category" || "${category:0:1}" == "#" ]] && continue
-
-    case "$category" in
-      vendor_copy|vendor_derived|tinyodom_owned|generated|build_recipe)
-        ;;
-      *)
-        echo "Unknown STM32 ownership category '$category' in $OWNERSHIP_MANIFEST" >&2
-        exit 1
-        ;;
-    esac
-
-    if [[ -z "$relative_path" ]]; then
-      echo "Ownership manifest entry is missing a relative path." >&2
-      exit 1
-    fi
-
-    if [[ -n "${CATEGORY_BY_PATH[$relative_path]:-}" ]]; then
-      echo "Duplicate STM32 ownership entry for '$relative_path'." >&2
-      exit 1
-    fi
-
-    if [[ "$category" == "vendor_copy" ]]; then
-      if [[ -z "$source_path" ]]; then
-        echo "Vendor-copy entry '$relative_path' is missing its CubeN6 source path." >&2
-        exit 1
-      fi
-    elif [[ -n "$source_path" ]]; then
-      echo "Only vendor-copy entries may declare a CubeN6 source path: $relative_path" >&2
-      exit 1
-    fi
-
-    MANIFEST_PATHS+=("$relative_path")
-    CATEGORY_BY_PATH["$relative_path"]="$category"
-    if [[ -n "$source_path" ]]; then
-      SOURCE_BY_PATH["$relative_path"]="$source_path"
-    fi
-  done < "$OWNERSHIP_MANIFEST"
-
-  if [[ "${#MANIFEST_PATHS[@]}" -eq 0 ]]; then
-    echo "STM32 ownership manifest is empty: $OWNERSHIP_MANIFEST" >&2
-    exit 1
-  fi
-}
-
 load_lrun_ownership_manifest() {
   local category=""
   local relative_path=""
@@ -407,66 +296,6 @@ load_lrun_ownership_manifest() {
     echo "STM32 LRUN ownership manifest is empty: $LRUN_OWNERSHIP_MANIFEST" >&2
     exit 1
   fi
-}
-
-validate_ownership_manifest() {
-  local relative_path=""
-  local category=""
-  local source_path=""
-  local canonical_path=""
-
-  for relative_path in "${MANIFEST_PATHS[@]}"; do
-    category="${CATEGORY_BY_PATH[$relative_path]}"
-    canonical_path="$CANONICAL_TEMPLATE_ROOT/$relative_path"
-
-    case "$category" in
-      vendor_copy)
-        source_path="$FIRMWARE_DIR/${SOURCE_BY_PATH[$relative_path]}"
-        require_file "$source_path"
-        ;;
-      vendor_derived|tinyodom_owned|build_recipe)
-        require_file "$canonical_path"
-        ;;
-      generated)
-        :
-        ;;
-    esac
-  done
-}
-
-validate_tracked_template_files() {
-  local canonical_prefix=""
-  local tracked_path=""
-  local relative_path=""
-  local category=""
-
-  case "$CANONICAL_TEMPLATE_ROOT" in
-    "$PROJECT_ROOT"/*)
-      canonical_prefix="${CANONICAL_TEMPLATE_ROOT#"$PROJECT_ROOT"/}"
-      ;;
-    *)
-      return 0
-      ;;
-  esac
-
-  while IFS= read -r tracked_path; do
-    [[ -f "$PROJECT_ROOT/$tracked_path" ]] || continue
-    relative_path="${tracked_path#"$canonical_prefix"/}"
-    category="${CATEGORY_BY_PATH[$relative_path]:-}"
-
-    case "$category" in
-      vendor_derived|tinyodom_owned|build_recipe)
-        ;;
-      vendor_copy|generated)
-        echo "Tracked canonical STM32 file must not live in git as '$category': $tracked_path" >&2
-        exit 1
-        ;;
-      *)
-        echo "Tracked canonical STM32 file is missing from the ownership manifest: $tracked_path" >&2
-        exit 1
-        ;;
-    esac
-  done < <(git -C "$PROJECT_ROOT" ls-files -- "$canonical_prefix")
 }
 
 validate_lrun_overlay_manifest() {
@@ -600,10 +429,6 @@ sync_lrun_support_tree() {
     "$FIRMWARE_DIR/Middlewares/ST/STM32_ExtMem_Manager/" \
     "$CANONICAL_LRUN_TEMPLATE_ROOT/Middlewares/ST/STM32_ExtMem_Manager/"
 
-  cp \
-    "$PROJECT_ROOT/sketches/stm32/tinyodom_tcn_stm32/FSBL/Inc/mx25um51245g_conf.h" \
-    "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/mx25um51245g_conf.h"
-
   for mapping in "${LRUN_APPLI_VENDOR_SOURCES[@]}"; do
     dest_name="${mapping%%::*}"
     source_rel="${mapping##*::}"
@@ -641,65 +466,18 @@ record_lrun_materialized_files() {
   done < <(find "$CANONICAL_LRUN_TEMPLATE_ROOT" -type f | sort)
 }
 
-assemble_canonical_template() {
-  local relative_path=""
-  local category=""
-  local destination_path=""
-  local -a missing_generated=()
-  local vendor_copy_count=0
-
-  vendor_copy_count="$(materialize_vendor_copy_files "$CANONICAL_TEMPLATE_ROOT")"
-
-  for relative_path in "${MANIFEST_PATHS[@]}"; do
-    category="${CATEGORY_BY_PATH[$relative_path]}"
-    destination_path="$CANONICAL_TEMPLATE_ROOT/$relative_path"
-    if [[ "$category" == "generated" && ! -f "$destination_path" ]]; then
-      missing_generated+=("$relative_path")
-    fi
-  done
-
-  if [[ "${#missing_generated[@]}" -gt 0 ]]; then
-    cat <<EOF
-STM32 canonical template assembled, but generated ST Edge AI files are absent:
-$(printf '  - %s\n' "${missing_generated[@]}")
-These files are intentionally not tracked. They may remain locally if already
-generated, or be restaged later by the backend/analysis flows before a build.
-EOF
-  fi
-
-  echo "Canonical STM32 template refreshed at $CANONICAL_TEMPLATE_ROOT"
-  echo "Vendor-copy files materialized: $vendor_copy_count"
-}
-
-refresh_example_templates() {
-  local template_root=""
-  local vendor_copy_count=0
-
-  for template_root in "${EXTRA_TEMPLATE_ROOTS[@]}"; do
-    vendor_copy_count="$(materialize_vendor_copy_files "$template_root")"
-
-    echo "Example STM32 template refreshed at $template_root"
-    echo "Vendor-copy files materialized: $vendor_copy_count"
-  done
-}
-
 main() {
   echo "Project root: $PROJECT_ROOT"
 
   require_command git
   validate_clt_tools
   sync_firmware_repo
-  load_ownership_manifest
   load_lrun_ownership_manifest
-  validate_ownership_manifest
-  validate_tracked_template_files
-  assemble_canonical_template
   sync_lrun_template
   sync_lrun_support_tree
   record_lrun_materialized_files
   validate_lrun_overlay_manifest
   validate_lrun_workspace_structure
-  refresh_example_templates
 
   local firmware_ref
   firmware_ref="$(git -C "$FIRMWARE_DIR" describe --tags --exact-match 2>/dev/null || git -C "$FIRMWARE_DIR" rev-parse --short HEAD)"
@@ -712,9 +490,7 @@ STM32 bootstrap complete.
 - STM32CubeProgrammer bin: $CUBEPROG_BIN_DIR
 - Firmware root: $FIRMWARE_DIR
 - Firmware ref: $firmware_ref
-- Canonical template: $CANONICAL_TEMPLATE_ROOT
 - Canonical LRUN template: $CANONICAL_LRUN_TEMPLATE_ROOT
-- Ownership manifest: $OWNERSHIP_MANIFEST
 - LRUN ownership manifest: $LRUN_OWNERSHIP_MANIFEST
 - LRUN signing tool: $SIGNING_TOOL_BIN
 EOF

@@ -435,7 +435,6 @@ device:
   measured_inference_runs: 10
   stm32:
     project_root: sketches/stm32/tinyodom_tcn_stm32_lrun
-    project_layout: lrun_dev_boot
     cpu_clock_mhz: 600
     weight_storage_mode: external_flash
     weights_flash_address: 0x71000000
@@ -446,10 +445,8 @@ Current default behavior:
 
 1. If `device.stm32.project_root` is omitted, the backend defaults to
    `sketches/stm32/tinyodom_tcn_stm32_lrun`.
-2. If `device.stm32.project_layout` is omitted for that default root, the
-   backend defaults to `lrun_dev_boot`.
-3. `fsbl_legacy` is still supported for the older single-project FSBL layout,
-   but it is no longer the default STM32 path.
+2. LRUN `dev_boot` is the only supported production layout for this board and
+   is implied automatically.
 
 Supported STM options today:
 
@@ -459,7 +456,7 @@ Supported STM options today:
 2. Shared cadence/runtime knobs:
    - `device.runtime_mode`: `back_to_back` or `cadenced`
    - `device.latency_budget_ms`: optional cadence-budget override
-3. `project_root` and optional `project_layout` for the canonical STM32 workspace.
+3. `project_root` for the canonical STM32 workspace.
 4. `cpu_clock_mhz` fixed presets: `200`, `300`, `400`, `600`, `800`.
 5. `weight_storage_mode`: `embedded` or `external_flash`.
 6. `weights_flash_address`, `weights_memory_pool`, and optional

@@ -697,7 +697,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 hil=True,
                 name="STM32_NUCLEO_N657X0_Q",
                 serial_port="ttyACM0",
-                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL")),
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
             ),
             data=Dict(window_size=128),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
@@ -707,7 +707,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         request = self._build_request(
             config,
             hyperparams,
-            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"},
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"},
         )
 
         self.assertEqual(request.serial_timeout_s, 30.0)
@@ -722,7 +722,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 serial_port="ttyACM0",
                 measured_inference_runs=100,
                 latency_budget_ms=2000.0,
-                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL")),
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
             ),
             data=Dict(window_size=128),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
@@ -733,7 +733,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             config,
             hyperparams,
             latency_budget_ms=2000.0,
-            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"},
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"},
         )
 
         self.assertEqual(request.serial_timeout_s, 210.0)
@@ -747,7 +747,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 runtime_mode="back_to_back",
                 serial_port="ttyACM0",
                 serial_timeout_s=120.0,
-                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL")),
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
             ),
             data=Dict(window_size=128),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
@@ -757,7 +757,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         request = self._build_request(
             config,
             hyperparams,
-            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32" / "FSBL"},
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"},
         )
 
         self.assertEqual(request.serial_timeout_s, 120.0)
@@ -1084,7 +1084,6 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
             resolved = resolve_device_options(str(config.device.name), config.device)
 
         self.assertEqual(resolved["project_root"], template_root.resolve())
-        self.assertEqual(resolved["project_layout"], "fsbl_legacy")
         self.assertEqual(resolved["gdb_port"], 61235)
         self.assertEqual(resolved["apid"], 2)
         self.assertEqual(resolved["server_ready_timeout_s"], 20.0)
@@ -1095,8 +1094,8 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         self.assertEqual(resolved["weights_external_loader"], weights_external_loader.resolve())
         self.assertEqual(resolved["max_external_flash_bytes"], 123456)
 
-    def test_resolve_device_options_rejects_ambiguous_custom_stm_root_without_layout(self) -> None:
-        """Ensure custom roots still fail clearly when layout inference is impossible."""
+    def test_resolve_device_options_rejects_non_lrun_custom_stm_root(self) -> None:
+        """Ensure custom roots fail clearly when they are not LRUN-shaped workspaces."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             ambiguous_root = tmp_path / "stm32_project"
@@ -1112,7 +1111,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
             )
 
-            with self.assertRaisesRegex(ValueError, "could not be inferred"):
+            with self.assertRaisesRegex(ValueError, "must point to an LRUN workspace root"):
                 resolve_device_options(str(config.device.name), config.device)
 
     def test_resolve_device_options_normalizes_custom_lrun_project_root_without_layout(self) -> None:
@@ -1152,7 +1151,6 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
             resolved = resolve_device_options(str(config.device.name), config.device)
 
         self.assertEqual(resolved["project_root"], project_root.resolve())
-        self.assertEqual(resolved["project_layout"], "lrun_dev_boot")
         self.assertEqual(resolved["gdb_port"], 61235)
 
 
@@ -2227,7 +2225,6 @@ class LoadSettingsTests(unittest.TestCase):
             resolved = resolve_device_options(str(settings.device.name), settings.device)
 
             self.assertEqual(resolved["project_root"], project_root.resolve())
-            self.assertEqual(resolved["project_layout"], "fsbl_legacy")
             self.assertEqual(resolved["gdb_port"], 61235)
             self.assertEqual(resolved["apid"], 2)
             self.assertEqual(resolved["server_ready_timeout_s"], 20.0)
