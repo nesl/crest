@@ -36,6 +36,7 @@ from tinyodom.microcontrollers import (
     resolve_device_options,
 )
 from tinyodom.builtin_components import ensure_builtin_components_registered
+from tinyodom.component_selection import cfg_get, resolve_component_selection
 from tinyodom.model import (
     ScoringResult,
     ScoreConfigEvaluationError,
@@ -244,24 +245,7 @@ class NASModelClient:
         dict[str, Any]
             Component names plus local configuration payloads.
         """
-        dataset_block = self._cfg_get(config, "dataset", None)
-        task_block = self._cfg_get(config, "task", None)
-        model_block = self._cfg_get(config, "model", None)
-        return {
-            "dataset_name": str(self._cfg_get(dataset_block, "name", "oxiod")),
-            "dataset_config": (
-                self._cfg_get(dataset_block, "params", None)
-                if dataset_block is not None
-                else self._cfg_get(config, "data", None)
-            ),
-            "task_name": str(self._cfg_get(task_block, "name", "odometry_regression")),
-            "task_config": self._cfg_get(task_block, "params", Dict()) if task_block is not None else Dict(),
-            "model_family_name": str(self._cfg_get(model_block, "family", "tinyodom_tcn")),
-            "model_config": SimpleNamespace(
-                params=self._cfg_get(model_block, "params", Dict()) if model_block is not None else Dict(),
-                search=self._cfg_get(model_block, "search", Dict()) if model_block is not None else Dict(),
-            ),
-        }
+        return resolve_component_selection(config)
 
     def _same_component_selection(
         self,
@@ -520,10 +504,7 @@ class NASModelClient:
         object
             Retrieved field value or ``default`` when unavailable.
         """
-        getter = getattr(container, "get", None)
-        if callable(getter):
-            return getter(key, default)
-        return getattr(container, key, default)
+        return cfg_get(container, key, default)
 
     def _score_is_multiobjective(self) -> bool:
         """Return whether the active config uses multi-objective scoring.

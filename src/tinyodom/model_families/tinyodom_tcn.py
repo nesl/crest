@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from typing import Any
 
 from addict import Dict
@@ -9,7 +11,14 @@ from tcn import TCN
 
 from ..interfaces import ModelFamilyABC
 from ..pipeline_types import ModelBuildContext
-from ..model import DILATION_CANDIDATES, DROP_RATE_CHOICES, build_tinyodom_model
+from ..model import (
+    DILATION_CANDIDATES,
+    DROP_RATE_CHOICES,
+    apply_combined_perturbation,
+    build_tinyodom_model,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class TinyOdomTCNFamily(ModelFamilyABC):
@@ -156,3 +165,57 @@ class TinyOdomTCNFamily(ModelFamilyABC):
         """
 
         return {"TCN": TCN}
+
+    def materialize_export_model(
+        self,
+        hparams: dict[str, Any],
+        ctx: ModelBuildContext,
+        config: Any,
+        *,
+        model_variant: str,
+        checkpoint_path: str | Path | None = None,
+    ) -> Any:
+        """Materialize one TinyODOM export model variant.
+
+        Parameters
+        ----------
+        hparams : dict[str, Any]
+            Normalized model-family hyperparameters.
+        ctx : ModelBuildContext
+            Normalized build-time context.
+        config : Any
+            Model-family configuration subtree.
+        model_variant : str
+            Requested export variant name.
+        checkpoint_path : str | None, optional
+            Checkpoint path required by trained variants.
+
+        Returns
+        -------
+        Any
+            Keras model ready for export preparation.
+        """
+
+        normalized_variant = str(model_variant).strip().lower()
+        if normalized_variant in {
+            "approx_trained",
+            "representative",
+            "bn_full_plus_non_bn_bias_perturbed",
+        }:
+            model = self.build_model(hparams, ctx, config)
+            bn_touched, bias_touched = apply_combined_perturbation(model=model, seed=1337)
+            logger.info(
+                "Materialized TinyODOM export variant '%s' with deterministic perturbation "
+                "(bn_layers=%s, non_bn_bias_layers=%s)",
+                model_variant,
+                bn_touched,
+                bias_touched,
+            )
+            return model
+        return super().materialize_export_model(
+            hparams,
+            ctx,
+            config,
+            model_variant=model_variant,
+            checkpoint_path=checkpoint_path,
+        )

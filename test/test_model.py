@@ -40,10 +40,14 @@ from tinyodom.model import (
     log_trial,
     score_config_uses_training_metrics,
     train_and_score,
+    validate_model_input_shape,
     validate_loaded_model_input_shape,
 )  # noqa: E402
 from tinyodom.hardware import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
 from tinyodom.microcontrollers import resolve_device_options  # noqa: E402
+import tinyodom.model_families.tinyodom_tcn as tinyodom_tcn_module  # noqa: E402
+from tinyodom.model_families.tinyodom_tcn import TinyOdomTCNFamily  # noqa: E402
+from tinyodom.pipeline_types import ModelBuildContext, TargetSpec  # noqa: E402
 
 try:  # Support both `python -m unittest test.test_*` and direct execution.
     from test.test_hardware import _cli_exists  # type: ignore  # noqa: E402
@@ -215,6 +219,79 @@ class ModelVariantHelperTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             validate_loaded_model_input_shape(model, hyperparams)
+
+    def test_validate_model_input_shape_accepts_matching_shape(self) -> None:
+        inputs = tf.keras.Input(shape=(20, 6))
+        outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
+        model = tf.keras.Model(inputs, outputs)
+
+        validate_model_input_shape(model, (20, 6))
+
+    def test_validate_model_input_shape_rejects_missing_expected_shape(self) -> None:
+        inputs = tf.keras.Input(shape=(20, 6))
+        outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
+        model = tf.keras.Model(inputs, outputs)
+
+        with self.assertRaises(ValueError):
+            validate_model_input_shape(model, None)
+
+
+class TinyOdomTCNFamilyExportTests(unittest.TestCase):
+    """Validate TinyODOM-family export materialization behavior."""
+
+    def setUp(self) -> None:
+        self.family = TinyOdomTCNFamily()
+        self.ctx = ModelBuildContext(
+            input_shape=(32, 6),
+            input_dtype="float32",
+            target_spec=TargetSpec(
+                task_type="regression",
+                output_names=["velx", "vely"],
+                output_shapes=[(1,), (1,)],
+                metadata={},
+            ),
+        )
+
+    def tearDown(self) -> None:
+        tf.keras.backend.clear_session()
+
+    def test_materialize_export_model_perturbs_approx_trained_variants(self) -> None:
+        fake_model = object()
+        model_config = Dict()
+
+        with patch.object(self.family, "build_model", return_value=fake_model) as build_mock, patch.object(
+            tinyodom_tcn_module,
+            "apply_combined_perturbation",
+            return_value=(2, 3),
+        ) as perturb_mock:
+            materialized = self.family.materialize_export_model(
+                {"nb_filters": 8},
+                self.ctx,
+                model_config,
+                model_variant="approx_trained",
+            )
+
+        build_mock.assert_called_once_with({"nb_filters": 8}, self.ctx, model_config)
+        perturb_mock.assert_called_once_with(model=fake_model, seed=1337)
+        self.assertIs(materialized, fake_model)
+
+    def test_materialize_export_model_trained_variant_delegates_to_loader(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "trained.keras"
+            checkpoint_path.write_text("placeholder", encoding="utf-8")
+            model_config = Dict()
+
+            with patch.object(self.family, "load_model", return_value="loaded-model") as load_mock:
+                materialized = self.family.materialize_export_model(
+                    {"nb_filters": 8},
+                    self.ctx,
+                    model_config,
+                    model_variant="trained",
+                    checkpoint_path=checkpoint_path,
+                )
+
+        load_mock.assert_called_once_with(checkpoint_path, self.ctx, model_config)
+        self.assertEqual(materialized, "loaded-model")
 
 
 class CollectMetricsTests(unittest.TestCase):
@@ -640,6 +717,8 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         device_options: dict | None | object = ...,
         hil_enabled: bool | None = None,
         energy_aware: bool | None = None,
+        window_size: int | None = None,
+        input_dim: int | None = None,
     ) -> CollectMetricsRequest:
         """Build a request with resolved backend options for test readability."""
         resolved_options = (
@@ -655,6 +734,8 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             device_options=resolved_options,
             hil_enabled=hil_enabled,
             energy_aware=energy_aware,
+            window_size=window_size,
+            input_dim=input_dim,
         )
 
     def test_non_energy_aware_sets_harness_none(self) -> None:
@@ -691,6 +772,25 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         request = self._build_request(config, hyperparams)
 
         self.assertEqual(request.measured_inference_runs, 7)
+
+    def test_explicit_window_size_and_input_dim_override_legacy_fallbacks(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = self._build_request(
+            config,
+            hyperparams,
+            window_size=32,
+            input_dim=3,
+        )
+
+        self.assertEqual(request.window_size, 32)
+        self.assertEqual(request.input_dim, 3)
 
     def test_build_request_defaults_stm_serial_timeout(self) -> None:
         config = Dict(

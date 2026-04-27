@@ -213,6 +213,35 @@ class InterfaceDefaultsTests(unittest.TestCase):
         load_mock.assert_called_once_with(str(model_path), custom_objects={})
         self.assertIs(loaded_model, sentinel.loaded_model)
 
+    def test_default_materialize_export_model_routes_trained_variant_through_load_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "trained.keras"
+            checkpoint_path.write_text("placeholder")
+
+            with patch.object(self.model_family, "load_model", return_value=sentinel.loaded_model) as load_mock:
+                loaded_model = self.model_family.materialize_export_model(
+                    {"width": 4},
+                    self.ctx,
+                    {},
+                    model_variant="trained",
+                    checkpoint_path=checkpoint_path,
+                )
+
+        load_mock.assert_called_once_with(checkpoint_path, self.ctx, {})
+        self.assertIs(loaded_model, sentinel.loaded_model)
+
+    def test_default_materialize_export_model_rejects_missing_trained_checkpoint(self) -> None:
+        missing_checkpoint = Path("/tmp/does-not-exist-trained.keras")
+
+        with self.assertRaises(FileNotFoundError):
+            self.model_family.materialize_export_model(
+                {"width": 4},
+                self.ctx,
+                {},
+                model_variant="trained",
+                checkpoint_path=missing_checkpoint,
+            )
+
     def test_default_count_flops_raises_not_implemented(self) -> None:
         with self.assertRaises(NotImplementedError):
             self.model_family.count_flops(sentinel.model, self.ctx, {})

@@ -407,6 +407,57 @@ def apply_cadenced_metric_defaults(
         metrics[field_name] = None if raw_value in (None, "") else str(raw_value)
 
 
+def validate_model_input_shape(
+    model: tf.keras.Model,
+    input_shape: tuple[int, ...] | None,
+) -> None:
+    """Validate that a model input shape matches HIL/export expectations.
+
+    Parameters
+    ----------
+    model : tf.keras.Model
+        Loaded or newly built Keras model.
+    input_shape : tuple[int, ...] | None
+        Expected logical input shape excluding the batch dimension.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    ValueError
+        If the model has an unexpected number of inputs or incompatible input
+        dimensions.
+    """
+    if input_shape is None or len(input_shape) != 2:
+        raise ValueError(f"Expected a 2D logical input shape, got {input_shape!r}.")
+
+    resolved_input_shape = model.input_shape
+    if isinstance(resolved_input_shape, list):
+        if len(resolved_input_shape) != 1:
+            raise ValueError(
+                f"Expected a single-input model but checkpoint exposes {len(resolved_input_shape)} inputs."
+            )
+        resolved_input_shape = resolved_input_shape[0]
+    if not isinstance(resolved_input_shape, tuple) or len(resolved_input_shape) != 3:
+        raise ValueError(f"Unexpected checkpoint input shape: {resolved_input_shape}")
+
+    expected_timesteps = int(input_shape[0])
+    expected_input_dim = int(input_shape[1])
+    actual_timesteps = resolved_input_shape[1]
+    actual_input_dim = resolved_input_shape[2]
+    if (
+        actual_timesteps not in (None, expected_timesteps)
+        or actual_input_dim not in (None, expected_input_dim)
+    ):
+        raise ValueError(
+            "Checkpoint input shape mismatch: "
+            f"expected (None, {expected_timesteps}, {expected_input_dim}), "
+            f"got {resolved_input_shape}."
+        )
+
+
 def validate_loaded_model_input_shape(model: tf.keras.Model, hyperparams: Dict) -> None:
     """Validate that a loaded checkpoint input shape matches HIL expectations.
 
@@ -428,29 +479,10 @@ def validate_loaded_model_input_shape(model: tf.keras.Model, hyperparams: Dict) 
         If the checkpoint has an unexpected number of inputs or incompatible
         input dimensions.
     """
-    input_shape = model.input_shape
-    if isinstance(input_shape, list):
-        if len(input_shape) != 1:
-            raise ValueError(
-                f"Expected a single-input model but checkpoint exposes {len(input_shape)} inputs."
-            )
-        input_shape = input_shape[0]
-    if not isinstance(input_shape, tuple) or len(input_shape) != 3:
-        raise ValueError(f"Unexpected checkpoint input shape: {input_shape}")
-
-    expected_timesteps = int(hyperparams.timesteps)
-    expected_input_dim = int(hyperparams.input_dim)
-    actual_timesteps = input_shape[1]
-    actual_input_dim = input_shape[2]
-    if (
-        actual_timesteps not in (None, expected_timesteps)
-        or actual_input_dim not in (None, expected_input_dim)
-    ):
-        raise ValueError(
-            "Checkpoint input shape mismatch: "
-            f"expected (None, {expected_timesteps}, {expected_input_dim}), "
-            f"got {input_shape}."
-        )
+    validate_model_input_shape(
+        model,
+        (int(hyperparams.timesteps), int(hyperparams.input_dim)),
+    )
 
 
 def iter_layers(model: tf.keras.Model) -> list[tf.keras.layers.Layer]:
@@ -1776,6 +1808,8 @@ def build_collect_metrics_request(
     device_options: dict[str, Any] | None,
     hil_enabled: bool | None = None,
     energy_aware: bool | None = None,
+    window_size: int | None = None,
+    input_dim: int | None = None,
 ) -> CollectMetricsRequest:
     """Build a :class:`CollectMetricsRequest` from full config and hyperparameters.
 
@@ -1784,7 +1818,8 @@ def build_collect_metrics_request(
     config : addict.Dict
         Loaded runtime configuration.
     hyperparams : addict.Dict
-        Trial/model hyperparameters containing at least ``flops`` and ``input_dim``.
+        Trial/model hyperparameters containing at least ``flops`` and, when
+        ``input_dim`` is not passed explicitly, ``input_dim``.
     latency_budget_ms : float
         Per-inference latency budget in milliseconds, derived from stride cadence.
 
@@ -1883,13 +1918,24 @@ def build_collect_metrics_request(
             ),
         )
 
+    resolved_window_size = (
+        int(config.data.window_size)
+        if window_size is None
+        else int(window_size)
+    )
+    resolved_input_dim = (
+        int(hyperparams.input_dim)
+        if input_dim is None
+        else int(input_dim)
+    )
+
     return CollectMetricsRequest(
         hil_enabled=effective_hil_enabled,
         energy_aware=effective_energy_aware,
         flops=hyperparams.flops,
         device_name=normalized_device_name,
-        window_size=config.data.window_size,
-        input_dim=hyperparams.input_dim,
+        window_size=resolved_window_size,
+        input_dim=resolved_input_dim,
         dirpath=Path(dirpath).resolve(),
         latency_proxy_max_flops=config.training.latency_proxy_max_flops,
         serial_port=_cfg_get(config.device, "serial_port", None),

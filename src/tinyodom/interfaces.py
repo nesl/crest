@@ -393,6 +393,64 @@ class ModelFamilyABC(ABC):
 
         return keras_load_model(str(path), custom_objects=self.custom_objects())
 
+    def materialize_export_model(
+        self,
+        hparams: dict[str, Any],
+        ctx: ModelBuildContext,
+        config: Any,
+        *,
+        model_variant: str,
+        checkpoint_path: str | Path | None = None,
+    ) -> tf.keras.Model:
+        """Materialize the model variant used for export-oriented workflows.
+
+        Parameters
+        ----------
+        hparams : dict[str, Any]
+            Normalized model-family hyperparameters.
+        ctx : ModelBuildContext
+            Normalized build-time context.
+        config : Any
+            Model-family configuration subtree.
+        model_variant : str
+            Requested export variant name.
+        checkpoint_path : str | Path | None, optional
+            Checkpoint path required by variants that load persisted models.
+
+        Returns
+        -------
+        tf.keras.Model
+            Model instance ready for export preparation.
+
+        Raises
+        ------
+        FileNotFoundError
+            If a trained variant points at a checkpoint path that does not
+            exist on disk.
+        ValueError
+            If ``model_variant`` is unsupported or if a trained variant is
+            requested without ``checkpoint_path``.
+        """
+
+        normalized_variant = str(model_variant).strip().lower()
+        if normalized_variant == "untrained":
+            return self.build_model(hparams, ctx, config)
+        if normalized_variant.startswith("trained"):
+            if checkpoint_path is None:
+                raise ValueError(
+                    f"model_variant '{model_variant}' requires checkpoint_path to be provided."
+                )
+            checkpoint = Path(checkpoint_path)
+            if not checkpoint.is_file():
+                raise FileNotFoundError(
+                    f"Checkpoint file not found for model_variant '{model_variant}': {checkpoint}"
+                )
+            return self.load_model(checkpoint, ctx, config)
+        raise ValueError(
+            f"Unsupported model_variant '{model_variant}'. "
+            "Use 'untrained' or a variant that starts with 'trained'."
+        )
+
     def custom_objects(self) -> dict[str, Any]:
         """Return custom objects required for model loading.
 

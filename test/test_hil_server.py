@@ -17,8 +17,132 @@ if str(SRC_DIR) not in sys.path:
 
 import hil_server as hil_server_module  # noqa: E402
 from hil_server import HILServer  # noqa: E402
+from tinyodom.devices import CandidatePrepareRequest  # noqa: E402
 from tinyodom.errors import HIL_ERROR_OK  # noqa: E402
 from tinyodom.model import CollectMetricsRequest  # noqa: E402
+from tinyodom.pipeline_types import DataSplit, DatasetBundle, TargetSpec  # noqa: E402
+
+
+class FakeDataset:
+    """Dataset double used to bootstrap ``HILServer`` tests."""
+
+    bundle: DatasetBundle | None = None
+    calibration_split_override = None
+    validate_calls: list[object] = []
+    load_calls: list[object] = []
+    calibration_calls: list[tuple[DatasetBundle, object]] = []
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.bundle = None
+        cls.calibration_split_override = None
+        cls.validate_calls = []
+        cls.load_calls = []
+        cls.calibration_calls = []
+
+    def validate_config(self, dataset_config: object) -> None:
+        type(self).validate_calls.append(dataset_config)
+
+    def load(self, dataset_config: object) -> DatasetBundle:
+        type(self).load_calls.append(dataset_config)
+        assert type(self).bundle is not None
+        return type(self).bundle
+
+    def make_calibration_data(
+        self,
+        bundle: DatasetBundle,
+        dataset_config: object,
+    ) -> DataSplit | None:
+        type(self).calibration_calls.append((bundle, dataset_config))
+        if type(self).calibration_split_override is not None:
+            return type(self).calibration_split_override
+        return bundle.calibration
+
+
+class FakeTask:
+    """Task double used to bootstrap ``HILServer`` tests."""
+
+    target_spec = TargetSpec(
+        task_type="regression",
+        output_names=["velx", "vely"],
+        output_shapes=[(1,), (1,)],
+        metadata={},
+    )
+    init_kwargs: list[dict[str, object]] = []
+    validate_calls: list[object] = []
+    build_target_spec_calls: list[tuple[DatasetBundle, object]] = []
+    validate_model_outputs_calls: list[tuple[object, TargetSpec]] = []
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.init_kwargs = []
+        cls.validate_calls = []
+        cls.build_target_spec_calls = []
+        cls.validate_model_outputs_calls = []
+
+    def __init__(
+        self,
+        checkpoint_path: Path | None = None,
+        early_stopping_patience: int = 40,
+    ) -> None:
+        type(self).init_kwargs.append(
+            {
+                "checkpoint_path": checkpoint_path,
+                "early_stopping_patience": early_stopping_patience,
+            }
+        )
+
+    def validate_config(self, task_config: object) -> None:
+        type(self).validate_calls.append(task_config)
+
+    def build_target_spec(
+        self,
+        bundle: DatasetBundle,
+        task_config: object,
+    ) -> TargetSpec:
+        type(self).build_target_spec_calls.append((bundle, task_config))
+        return type(self).target_spec
+
+    def validate_model_outputs(self, model: object, target_spec: TargetSpec) -> None:
+        type(self).validate_model_outputs_calls.append((model, target_spec))
+
+
+class FakeModelFamily:
+    """Model-family double used to bootstrap ``HILServer`` tests."""
+
+    model: object | None = None
+    validate_calls: list[object] = []
+    materialize_calls: list[dict[str, object]] = []
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.model = None
+        cls.validate_calls = []
+        cls.materialize_calls = []
+
+    def validate_config(self, model_config: object) -> None:
+        type(self).validate_calls.append(model_config)
+
+    def materialize_export_model(
+        self,
+        hparams: dict[str, object],
+        ctx: object,
+        config: object,
+        *,
+        model_variant: str,
+        checkpoint_path: Path | str | None = None,
+    ) -> object:
+        type(self).materialize_calls.append(
+            {
+                "hparams": dict(hparams),
+                "ctx": ctx,
+                "config": config,
+                "model_variant": model_variant,
+                "checkpoint_path": checkpoint_path,
+            }
+        )
+        assert type(self).model is not None
+        return type(self).model
 
 
 class HILServerTestCase(unittest.TestCase):
@@ -48,23 +172,60 @@ class HILServerTestCase(unittest.TestCase):
                 energy_aware=False,  # default sketch variant for unit tests
             ),
             device=SimpleNamespace(hil=True, name="TEST_DEVICE", serial_port="ttyACM0"),
-            outputs=SimpleNamespace(tflite_model_path=Path("model.tflite"), tcn_dir=Path("tinyodom_tcn")),
+            outputs=SimpleNamespace(
+                tflite_model_path=Path("model.tflite"),
+                tcn_dir=Path("tinyodom_tcn"),
+                checkpoint_path=Path("checkpoint.keras"),
+            ),
         )
 
-        # Create a dummy dataset with minimal data to simulate OxIODSplitData.
-        self.dataset = SimpleNamespace(inputs=np.zeros((1, 32, 6), dtype=np.float32))
+        self.train_split = DataSplit(
+            inputs=np.zeros((1, 32, 6), dtype=np.float32),
+            targets={"velx": np.zeros((1, 1), dtype=np.float32), "vely": np.zeros((1, 1), dtype=np.float32)},
+        )
+        self.calibration_split = DataSplit(
+            inputs=np.ones((1, 32, 6), dtype=np.float32),
+            targets={"velx": np.zeros((1, 1), dtype=np.float32), "vely": np.zeros((1, 1), dtype=np.float32)},
+        )
+        self.dataset_bundle = DatasetBundle(
+            train=self.train_split,
+            val=self.train_split,
+            test=self.train_split,
+            calibration=self.calibration_split,
+            input_shape=(32, 6),
+            input_dtype="float32",
+            metadata={"window_size": 32, "input_dim": 6},
+        )
+        self.fake_model = MagicMock()
+        self.fake_model.input_shape = (None, 32, 6)
 
-        # Patch expensive initialization hooks so we can observe the calls without
-        # touching disk or hardware.
+        FakeDataset.reset()
+        FakeDataset.bundle = self.dataset_bundle
+        FakeTask.reset()
+        FakeModelFamily.reset()
+        FakeModelFamily.model = self.fake_model
+
+        # Patch modular bootstrap seams so tests avoid the real registry-backed
+        # dataset/task/model components while still exercising HILServer's
+        # single-stage bootstrap behavior.
         self.load_settings_patcher = patch("hil_server.load_config", return_value=self.config)
-        self.dataset_patcher = patch("hil_server.import_oxiod_dataset", return_value=self.dataset)
+        self.register_patcher = patch("hil_server.ensure_builtin_components_registered")
+        self.dataset_registry_patcher = patch("hil_server.dataset_registry.get", return_value=FakeDataset)
+        self.task_registry_patcher = patch("hil_server.task_registry.get", return_value=FakeTask)
+        self.model_family_registry_patcher = patch(
+            "hil_server.model_family_registry.get",
+            return_value=FakeModelFamily,
+        )
         self.context = MagicMock()
         self.socket = MagicMock()
         self.context.socket.return_value = self.socket
         self.zmq_patcher = patch("hil_server.zmq.Context.instance", return_value=self.context)
 
         self.load_settings_mock = self.load_settings_patcher.start()
-        self.dataset_mock = self.dataset_patcher.start()
+        self.register_mock = self.register_patcher.start()
+        self.dataset_registry_mock = self.dataset_registry_patcher.start()
+        self.task_registry_mock = self.task_registry_patcher.start()
+        self.model_family_registry_mock = self.model_family_registry_patcher.start()
         self.zmq_mock = self.zmq_patcher.start()
 
     def tearDown(self) -> None:
@@ -91,6 +252,8 @@ class DetermineMetricsTests(HILServerTestCase):
         """Backend preparation should feed the request builder and metric collection."""
         server = self.build_server()
         fake_model = MagicMock()
+        fake_model.input_shape = (None, 32, 6)
+        server.model_family.materialize_export_model = MagicMock(return_value=fake_model)
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
@@ -101,17 +264,21 @@ class DetermineMetricsTests(HILServerTestCase):
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
-        ), patch("hil_server.build_tinyodom_model", return_value=fake_model) as build_mock, patch(
-            "hil_server.collect_metrics", return_value=fake_metrics
-        ) as collect_mock:
-            hyperparams = Dict(flops=123, input_dim=6)
+        ), patch("hil_server.collect_metrics", return_value=fake_metrics) as collect_mock:
+            hyperparams = Dict(flops=123, input_dim=6, nb_filters=8)
             result = server.determine_metrics(hyperparams)
 
-        build_mock.assert_called_once_with(hyperparams)
+        server.model_family.materialize_export_model.assert_called_once()
+        self.assertEqual(
+            server.model_family.materialize_export_model.call_args.args[0],
+            {"nb_filters": 8},
+        )
         fake_device.prepare_candidate.assert_called_once()
-        prepare_kwargs = fake_device.prepare_candidate.call_args.kwargs
-        self.assertIs(prepare_kwargs["model"], fake_model)
-        self.assertIs(prepare_kwargs["training_data"], self.dataset)
+        prepare_request = fake_device.prepare_candidate.call_args.kwargs["request"]
+        self.assertIsInstance(prepare_request, CandidatePrepareRequest)
+        self.assertIs(prepare_request.model, fake_model)
+        self.assertIs(prepare_request.calibration_split, self.calibration_split)
+        self.assertEqual(len(FakeTask.validate_model_outputs_calls), 1)
         collect_mock.assert_called_once()
         self.assertEqual(result, fake_metrics)
 
@@ -126,16 +293,14 @@ class DetermineMetricsTests(HILServerTestCase):
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
-        ), patch("hil_server.build_tinyodom_model"), patch(
-            "hil_server.collect_metrics", return_value={"ok": True}
-        ) as collect_mock:
+        ), patch("hil_server.collect_metrics", return_value={"ok": True}) as collect_mock:
             hyperparams = Dict(flops=999, input_dim=3)
             server.determine_metrics(hyperparams)
 
         # Verify that collect_metrics gets a normalized request object.
         request = collect_mock.call_args.args[0]
         self.assertEqual(request.flops, 999)
-        self.assertEqual(request.input_dim, 3)
+        self.assertEqual(request.input_dim, 6)
         self.assertEqual(request.device_name, self.config.device.name)
         self.assertEqual(request.dirpath, self.config.outputs.tcn_dir.resolve())
         self.assertAlmostEqual(
@@ -155,9 +320,7 @@ class DetermineMetricsTests(HILServerTestCase):
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
-        ), patch("hil_server.build_tinyodom_model"), patch(
-            "hil_server.collect_metrics", return_value={"ok": True}
-        ) as collect_mock:
+        ), patch("hil_server.collect_metrics", return_value={"ok": True}) as collect_mock:
             server.determine_metrics(Dict(flops=999, input_dim=3))
 
         request = collect_mock.call_args.args[0]
@@ -183,8 +346,7 @@ class DetermineMetricsTests(HILServerTestCase):
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
-        ), patch("hil_server.build_tinyodom_model"), patch(
-            "hil_server.collect_metrics",
+        ), patch("hil_server.collect_metrics",
             return_value={
                 "error_code": HIL_ERROR_OK,
                 "arena_bytes": 4096,
@@ -227,8 +389,7 @@ class DetermineMetricsTests(HILServerTestCase):
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
-        ), patch("hil_server.build_tinyodom_model"), patch(
-            "hil_server.collect_metrics",
+        ), patch("hil_server.collect_metrics",
             return_value={
                 "error_code": HIL_ERROR_OK,
                 "arena_bytes": 4096,
@@ -256,9 +417,7 @@ class DetermineMetricsTests(HILServerTestCase):
         with patch("hil_server.resolve_device_options", return_value={"cpu_clock_mhz": 600}), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
-        ) as device_mock, patch("hil_server.build_tinyodom_model"), patch(
-            "hil_server.collect_metrics", return_value=fake_metrics
-        ) as collect_mock:
+        ) as device_mock, patch("hil_server.collect_metrics", return_value=fake_metrics) as collect_mock:
             hyperparams = Dict(flops=123, input_dim=6)
             result = server.determine_metrics(
                 hyperparams,
@@ -282,9 +441,7 @@ class DetermineMetricsTests(HILServerTestCase):
         with patch("hil_server.resolve_device_options", return_value={"cpu_clock_mhz": 600}), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
-        ), patch("hil_server.build_tinyodom_model"), patch(
-            "hil_server.collect_metrics", return_value={"ram_bytes": 1024, "clock_hz": 600000000.0}
-        ):
+        ), patch("hil_server.collect_metrics", return_value={"ram_bytes": 1024, "clock_hz": 600000000.0}):
             metrics = server.determine_metrics(Dict(flops=1, input_dim=6))
 
         self.assertEqual(metrics["cpu_clock_mhz_requested"], -1)
@@ -376,10 +533,32 @@ class StartLoopTests(HILServerTestCase):
 
 
 class InitializationTests(HILServerTestCase):
-    """Ensure constructor wiring defers dataset loading until needed."""
+    """Ensure constructor wiring uses modular bootstrap and lazy calibration."""
 
-    def test_import_dataset_is_lazy_until_training_data_is_needed(self) -> None:
-        """Ensure the constructor does not eagerly load calibration data.
+    def test_constructor_uses_default_component_names_and_model_config_shape(self) -> None:
+        server = self.build_server()
+
+        self.dataset_registry_mock.assert_called_once_with("oxiod")
+        self.task_registry_mock.assert_called_once_with("odometry_regression")
+        self.model_family_registry_mock.assert_called_once_with("tinyodom_tcn")
+        self.assertEqual(server.model_config.params, Dict())
+        self.assertEqual(server.model_config.search, Dict())
+
+    def test_constructor_preserves_model_params_and_search_blocks(self) -> None:
+        self.config.model = SimpleNamespace(
+            family="custom_family",
+            params=Dict(width=8),
+            search=Dict(depth=[2, 3]),
+        )
+
+        server = HILServer(config=self.config)
+
+        self.model_family_registry_mock.assert_called_once_with("custom_family")
+        self.assertEqual(server.model_config.params.width, 8)
+        self.assertEqual(server.model_config.search.depth, [2, 3])
+
+    def test_calibration_resolution_is_lazy_until_backend_requires_it(self) -> None:
+        """Ensure the constructor does not eagerly resolve calibration data.
 
         Returns
         -------
@@ -392,28 +571,65 @@ class InitializationTests(HILServerTestCase):
         fake_device.supports_runtime_measurement.return_value = True
         fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
 
-        self.dataset_mock.assert_not_called()
+        self.assertEqual(FakeDataset.calibration_calls, [])
 
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
-        ), patch("hil_server.build_tinyodom_model"), patch(
-            "hil_server.collect_metrics", return_value={"ok": True}
-        ):
+        ), patch("hil_server.collect_metrics", return_value={"ok": True}):
             server.determine_metrics(Dict(flops=1, input_dim=6))
 
-        self.dataset_mock.assert_called_once()
-        kwargs = self.dataset_mock.call_args.kwargs
-        self.assertEqual(kwargs["type_flag"], 2)  # Training split
-        self.assertEqual(kwargs["dataset_folder"], self.config.data.directory)
-        self.assertEqual(
-            kwargs["sub_folders"],
-            ['handbag/', 'handheld/', 'pocket/', 'running/', 'slow_walking/', 'trolley/'],  # All subfolders
+        self.assertEqual(len(FakeDataset.calibration_calls), 1)
+
+    def test_preloaded_config_uses_single_stage_bootstrap(self) -> None:
+        """Ensure preloaded config bypasses ``load_config`` while still bootstrapping components."""
+        server = HILServer(config=self.config)
+
+        self.load_settings_mock.assert_not_called()
+        self.assertIs(server.dataset_bundle, self.dataset_bundle)
+        self.assertEqual(len(FakeTask.build_target_spec_calls), 1)
+
+    def test_require_calibration_split_raises_when_dataset_has_no_calibration_data(self) -> None:
+        server = self.build_server()
+        server.dataset_bundle = DatasetBundle(
+            train=self.train_split,
+            val=self.train_split,
+            test=self.train_split,
+            calibration=None,
+            input_shape=(32, 6),
+            input_dtype="float32",
+            metadata={"window_size": 32, "input_dim": 6},
         )
-        self.assertEqual(kwargs["sampling_rate"], self.config.data.sampling_rate_hz)
-        self.assertEqual(kwargs["window_size"], self.config.data.window_size)
-        self.assertEqual(kwargs["stride"], self.config.data.stride)
-        self.assertEqual(kwargs["max_windows"], self.config.data.calibration_windows)
+
+        with self.assertRaisesRegex(ValueError, "does not provide calibration data"):
+            server._require_calibration_split()
+
+    def test_determine_metrics_returns_config_error_when_calibration_data_is_missing(self) -> None:
+        server = self.build_server()
+        server.dataset_bundle = DatasetBundle(
+            train=self.train_split,
+            val=self.train_split,
+            test=self.train_split,
+            calibration=None,
+            input_shape=(32, 6),
+            input_dtype="float32",
+            metadata={"window_size": 32, "input_dim": 6},
+        )
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ):
+            metrics = server.determine_metrics(Dict(flops=1, input_dim=6))
+
+        self.assertEqual(metrics["error_code"], hil_server_module.HIL_MASTER_FATAL)
+        self.assertEqual(metrics["backend_error_kind"], "config")
+        self.assertIn("calibration data", metrics["backend_error_detail"])
+        fake_device.prepare_candidate.assert_not_called()
 
     def test_stm_runtime_backend_keeps_hil_enabled_when_supported(self) -> None:
         """Ensure STM runtime-capable backends keep HIL enabled.
@@ -438,7 +654,7 @@ class InitializationTests(HILServerTestCase):
         ), patch("hil_server.build_collect_metrics_request") as request_mock, patch(
             "hil_server.collect_metrics",
             return_value={"ok": True},
-        ) as collect_mock, patch("hil_server.build_tinyodom_model") as build_mock:
+        ) as collect_mock:
             request_mock.return_value = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -458,8 +674,7 @@ class InitializationTests(HILServerTestCase):
             result = server.determine_metrics(Dict(flops=1, input_dim=6))
 
         self.assertEqual(result, {"ok": True, "cpu_clock_mhz_requested": -1, "latency_budget_ms": 40.0})
-        self.dataset_mock.assert_called_once()
-        build_mock.assert_called_once()
+        self.assertEqual(len(FakeModelFamily.materialize_calls), 1)
         fake_device.prepare_candidate.assert_called_once()
         fake_device.cleanup_prepared_candidate.assert_called_once_with(Path("/tmp/stm_fsbl"))
         collect_mock.assert_called_once()
@@ -495,9 +710,7 @@ class InitializationTests(HILServerTestCase):
             return_value={"ok": True},
         ), patch(
             "hil_server.build_collect_metrics_request"
-        ) as request_mock, patch(
-            "hil_server.build_tinyodom_model"
-        ):
+        ) as request_mock:
             request_mock.return_value = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=True,
@@ -545,9 +758,7 @@ class InitializationTests(HILServerTestCase):
             with patch("hil_server.resolve_device_options", return_value=None), patch(
                 "hil_server.get_microcontroller_device",
                 return_value=fake_arduino_device,
-            ), patch("hil_server.build_tinyodom_model"), patch(
-                "hil_server.build_collect_metrics_request"
-            ) as arduino_request_mock, patch(
+            ), patch("hil_server.build_collect_metrics_request") as arduino_request_mock, patch(
                 "hil_server.collect_metrics",
                 return_value={"ok": True},
             ):
@@ -587,9 +798,7 @@ class InitializationTests(HILServerTestCase):
             ), patch(
                 "hil_server.get_microcontroller_device",
                 return_value=fake_stm_device,
-            ), patch("hil_server.build_tinyodom_model"), patch(
-                "hil_server.build_collect_metrics_request"
-            ) as stm_request_mock, patch(
+            ), patch("hil_server.build_collect_metrics_request") as stm_request_mock, patch(
                 "hil_server.collect_metrics",
                 return_value={"ok": True},
             ):
@@ -626,7 +835,7 @@ class InitializationTests(HILServerTestCase):
         with patch("hil_server.resolve_device_options", return_value={"project_root": Path("/tmp/stm_fsbl")}), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
-        ), patch("hil_server.build_tinyodom_model"):
+        ):
             metrics = server.determine_metrics(Dict(flops=1, input_dim=6))
 
         self.assertEqual(metrics["backend_error_kind"], "unsupported_model")
@@ -646,8 +855,7 @@ class InitializationTests(HILServerTestCase):
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
-        ), patch("hil_server.build_tinyodom_model"), patch(
-            "hil_server.build_collect_metrics_request",
+        ), patch("hil_server.build_collect_metrics_request",
             side_effect=RuntimeError(
                 "Set device.harness_serial_port when runtime measurement requires the harness."
             ),
