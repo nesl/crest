@@ -889,6 +889,44 @@ def _evaluate_score_config(
     )
 
 
+def evaluate_score_config(
+    *,
+    rmse_vel_x: float,
+    rmse_vel_y: float,
+    metrics: dict[str, Any],
+    hyperparams: Dict,
+    score_config: Dict,
+) -> ScoringResult:
+    """Evaluate one validated score configuration against runtime metrics.
+
+    Parameters
+    ----------
+    rmse_vel_x : float
+        Validation RMSE along X.
+    rmse_vel_y : float
+        Validation RMSE along Y.
+    metrics : dict[str, Any]
+        Runtime metrics collected for the trial.
+    hyperparams : Dict
+        Resolved hyperparameter payload used for HIL, logging, and scoring.
+    score_config : Dict
+        Validated score configuration tree.
+
+    Returns
+    -------
+    ScoringResult
+        Structured scalar or multi-objective score result.
+    """
+
+    return _evaluate_score_config(
+        rmse_vel_x=rmse_vel_x,
+        rmse_vel_y=rmse_vel_y,
+        metrics=metrics,
+        hyperparams=hyperparams,
+        score_config=score_config,
+    )
+
+
 def _validate_typed_reference(reference: Any, allowed_metrics: set[str], context_name: str) -> Dict:
     """Validate and normalize a typed reference entry.
 

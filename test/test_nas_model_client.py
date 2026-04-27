@@ -27,7 +27,16 @@ from tinyodom.hardware import (
     HIL_MASTER_FATAL,
     HIL_MASTER_SUCCESS,
 )  # noqa: E402
-from tinyodom.model import ScoringResult, ScoreConfigEvaluationError, train_and_score  # noqa: E402
+from tinyodom.model import ScoringResult, ScoreConfigEvaluationError  # noqa: E402
+from tinyodom.pipeline_types import (
+    DataSplit,
+    DatasetBundle,
+    EvaluationResult,
+    FitPlan,
+    ModelBuildContext,
+    TargetSpec,
+    TaskMetricContract,
+)  # noqa: E402
 
 
 def _make_scoring_result(
@@ -68,13 +77,88 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     window_size = 16
     input_dim = 3
     # Mimic the (batch, timesteps, dim) tensor structure Optuna expects.
-    dataset = SimpleNamespace(
+    legacy_dataset = SimpleNamespace(
         inputs=np.zeros((2, window_size, input_dim), dtype=np.float32),
         x_vel=np.zeros((2, 1), dtype=np.float32),
         y_vel=np.zeros((2, 1), dtype=np.float32),
         size_of_each=[2],
         x0=[0.0],
         y0=[0.0],
+    )
+    bundle = DatasetBundle(
+        train=DataSplit(
+            inputs=legacy_dataset.inputs,
+            targets={"velx": legacy_dataset.x_vel, "vely": legacy_dataset.y_vel},
+            metadata={"size_of_each": legacy_dataset.size_of_each, "x0": legacy_dataset.x0, "y0": legacy_dataset.y0},
+        ),
+        val=DataSplit(
+            inputs=legacy_dataset.inputs,
+            targets={"velx": legacy_dataset.x_vel, "vely": legacy_dataset.y_vel},
+            metadata={"size_of_each": legacy_dataset.size_of_each, "x0": legacy_dataset.x0, "y0": legacy_dataset.y0},
+        ),
+        test=DataSplit(
+            inputs=legacy_dataset.inputs,
+            targets={"velx": legacy_dataset.x_vel, "vely": legacy_dataset.y_vel},
+            metadata={"size_of_each": legacy_dataset.size_of_each, "x0": legacy_dataset.x0, "y0": legacy_dataset.y0},
+        ),
+        input_shape=(window_size, input_dim),
+        input_dtype="float32",
+        metadata={"input_dim": input_dim},
+    )
+    target_spec = TargetSpec(
+        task_type="regression",
+        output_names=["velx", "vely"],
+        output_shapes=[(1,), (1,)],
+        metadata={},
+    )
+    metric_contract = TaskMetricContract(
+        available_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
+        training_only_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
+        primary_metric_names={"rmse_total"},
+    )
+    fake_built_model = MagicMock()
+    fake_loaded_model = MagicMock()
+    task = SimpleNamespace(
+        validate_config=MagicMock(),
+        validate_model_outputs=MagicMock(),
+        compile_model=MagicMock(),
+        make_fit_plan=MagicMock(
+            return_value=FitPlan(
+                fit_kwargs={
+                    "x": bundle.train.inputs,
+                    "y": [bundle.train.targets["velx"], bundle.train.targets["vely"]],
+                    "validation_data": (
+                        bundle.val.inputs,
+                        [bundle.val.targets["velx"], bundle.val.targets["vely"]],
+                    ),
+                    "shuffle": True,
+                },
+                callbacks=["callback"],
+                monitor_metric="val_loss",
+            )
+        ),
+        evaluate=MagicMock(
+            return_value=EvaluationResult(
+                metrics={"rmse_vel_x": 0.1, "rmse_vel_y": 0.2, "rmse_total": 0.3},
+                predictions=[legacy_dataset.x_vel, legacy_dataset.y_vel],
+            )
+        ),
+    )
+    model_family = SimpleNamespace(
+        validate_config=MagicMock(),
+        sample_hparams=MagicMock(
+            return_value={
+                "nb_filters": 2,
+                "kernel_size": 2,
+                "dropout_rate": 0.1,
+                "use_skip_connections": True,
+                "norm_flag": True,
+                "dilations": [1, 2],
+            }
+        ),
+        validate_hparams=MagicMock(),
+        build_model=MagicMock(return_value=fake_built_model),
+        load_model=MagicMock(return_value=fake_loaded_model),
     )
 
     # Build a SimpleNamespace tree that mirrors the configuration object used in
@@ -122,9 +206,25 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     client.config.outputs.models_dir.mkdir(parents=True, exist_ok=True)
     client.config_path = base_dir / "config.yaml"
     # Reuse the placeholder dataset wherever the client expects training/val/test.
-    client.training_data = dataset
-    client.validation_data = dataset
-    client.test_data = dataset
+    client.training_data = legacy_dataset
+    client.validation_data = legacy_dataset
+    client.test_data = legacy_dataset
+    client.dataset = SimpleNamespace(validate_config=MagicMock())
+    client.task = task
+    client.model_family = model_family
+    client.dataset_bundle = bundle
+    client.target_spec = target_spec
+    client.metric_contract = metric_contract
+    client.model_build_context = ModelBuildContext(
+        input_shape=bundle.input_shape,
+        input_dtype=bundle.input_dtype,
+        target_spec=target_spec,
+        dataset_metadata=dict(bundle.metadata),
+        task_metadata=dict(target_spec.metadata),
+    )
+    client.dataset_config = client.config.data
+    client.task_config = Dict()
+    client.model_config = SimpleNamespace(params=Dict(), search=Dict())
     # Mirror the production default study name so log_trial calls succeed.
     client.study_name = "default_study"
     # Stub the ZMQ context/socket to avoid opening real network resources.
@@ -189,22 +289,123 @@ class HILRequestTests(unittest.TestCase):
         client.socket.send_json.assert_called_once()
 
 
+class InitializationTests(unittest.TestCase):
+    """Validate the Phase 4 bootstrap and component-selection helpers."""
+
+    def test_resolve_component_selection_uses_compatibility_defaults(self) -> None:
+        client = _build_test_client()
+
+        selection = client._resolve_component_selection(client.config)
+
+        self.assertEqual(selection["dataset_name"], "oxiod")
+        self.assertIs(selection["dataset_config"], client.config.data)
+        self.assertEqual(selection["task_name"], "odometry_regression")
+        self.assertEqual(selection["model_family_name"], "tinyodom_tcn")
+
+    def test_resolve_component_selection_honors_explicit_component_blocks(self) -> None:
+        client = _build_test_client()
+        client.config.dataset = SimpleNamespace(name="custom_dataset", params=Dict(root="custom"))
+        client.config.task = SimpleNamespace(name="custom_task", params=Dict(alpha=3))
+        client.config.model = SimpleNamespace(
+            family="custom_family",
+            params=Dict(width=8),
+            search=Dict(depth=[2, 3]),
+        )
+
+        selection = client._resolve_component_selection(client.config)
+
+        self.assertEqual(selection["dataset_name"], "custom_dataset")
+        self.assertEqual(selection["dataset_config"].root, "custom")
+        self.assertEqual(selection["task_name"], "custom_task")
+        self.assertEqual(selection["task_config"].alpha, 3)
+        self.assertEqual(selection["model_family_name"], "custom_family")
+        self.assertEqual(selection["model_config"].params.width, 8)
+        self.assertEqual(selection["model_config"].search.depth, [2, 3])
+
+    def test_init_reuses_preliminary_bundle_when_dataset_selection_matches(self) -> None:
+        base = Path(tempfile.mkdtemp())
+        config = SimpleNamespace(
+            network=SimpleNamespace(host="localhost", port=5555, recv_timeout_sec=5, send_timeout_sec=5),
+            device=SimpleNamespace(hil=True, name="TEST_DEVICE"),
+            nas=SimpleNamespace(score=Dict(type="scoring-function", metrics=Dict(), params=Dict(terms=[]))),
+            data=SimpleNamespace(directory="data", sampling_rate_hz=100, window_size=16, stride=1),
+            outputs=SimpleNamespace(
+                models_dir=base / "models",
+                checkpoint_path=base / "model.keras",
+                log_file_name="log.csv",
+            ),
+        )
+        fake_bundle = DatasetBundle(
+            train=DataSplit(inputs=np.zeros((1, 16, 3)), targets={"velx": np.zeros((1, 1)), "vely": np.zeros((1, 1))}),
+            val=DataSplit(inputs=np.zeros((1, 16, 3)), targets={"velx": np.zeros((1, 1)), "vely": np.zeros((1, 1))}),
+            test=DataSplit(inputs=np.zeros((1, 16, 3)), targets={"velx": np.zeros((1, 1)), "vely": np.zeros((1, 1))}),
+            input_shape=(16, 3),
+            input_dtype="float32",
+        )
+        target_spec = TargetSpec(
+            task_type="regression",
+            output_names=["velx", "vely"],
+            output_shapes=[(1,), (1,)],
+            metadata={},
+        )
+        metric_contract = TaskMetricContract(
+            available_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
+            training_only_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
+            primary_metric_names={"rmse_total"},
+        )
+        fake_task = SimpleNamespace(
+            build_target_spec=MagicMock(return_value=target_spec),
+            metric_contract=MagicMock(return_value=metric_contract),
+        )
+        fake_socket = MagicMock()
+        fake_context = MagicMock()
+        fake_context.socket.return_value = fake_socket
+
+        with patch("nas_model_client.ensure_builtin_components_registered"), patch(
+            "nas_model_client.load_config",
+            side_effect=[config, config],
+        ) as mock_load_config, patch.object(
+            NASModelClient,
+            "_load_dataset_bundle",
+            return_value=fake_bundle,
+        ) as mock_load_bundle, patch.object(
+            NASModelClient,
+            "_instantiate_task",
+            return_value=fake_task,
+        ), patch.object(
+            NASModelClient,
+            "_initialize_component_state",
+        ), patch(
+            "nas_model_client.zmq.Context.instance",
+            return_value=fake_context,
+        ):
+            client = NASModelClient(base / "config.yaml")
+
+        self.assertIsInstance(client, NASModelClient)
+        self.assertEqual(mock_load_bundle.call_count, 1)
+        self.assertEqual(mock_load_config.call_count, 2)
+        self.assertEqual(
+            mock_load_config.call_args_list[1].kwargs["task_metric_names"],
+            metric_contract.available_metric_names,
+        )
+        self.assertEqual(
+            mock_load_config.call_args_list[1].kwargs["training_only_task_metric_names"],
+            metric_contract.training_only_metric_names,
+        )
+        fake_socket.connect.assert_called_once()
+
+
 class ObjectiveTests(unittest.TestCase):
     """Exercise Optuna objective branches with lightweight stubs."""
 
     def setUp(self) -> None:
         self.client = _build_test_client()
 
-        # Patch the heavy TensorFlow / hardware helpers to keep tests fast.
-        self.build_patcher = patch("nas_model_client.build_tinyodom_model", return_value=MagicMock(compile=MagicMock()))
         self.count_patcher = patch("nas_model_client.count_flops", return_value=1234)
-        self.train_patcher = patch("nas_model_client.train_and_score", return_value=_make_scoring_result())
         self.hw_specs_patcher = patch("nas_model_client.return_hardware_specs", return_value=(2048, 4096))
         self.log_patcher = patch("nas_model_client.log_trial")
 
-        self.mock_build = self.build_patcher.start()
         self.mock_count = self.count_patcher.start()
-        self.mock_train = self.train_patcher.start()
         self.mock_hw_specs = self.hw_specs_patcher.start()
         self.mock_log = self.log_patcher.start()
 
@@ -221,7 +422,7 @@ class ObjectiveTests(unittest.TestCase):
 
         self.mock_log.assert_called_once()
         self.assertEqual(trial.report_calls, [(-float("inf"), 0)])
-        self.mock_train.assert_not_called()
+        self.client.task.make_fit_plan.assert_not_called()
 
     def test_objective_prune_logging_populates_cadenced_sentinels(self) -> None:
         """Early-pruned trials should still log stable cadenced metric defaults."""
@@ -247,7 +448,7 @@ class ObjectiveTests(unittest.TestCase):
 
         self.mock_log.assert_called_once()
         self.assertEqual(trial.report_calls, [(-float("inf"), 0)])
-        self.mock_train.assert_not_called()
+        self.client.task.make_fit_plan.assert_not_called()
 
     def test_objective_raises_on_device_not_found(self) -> None:
         """Device-not-found errors should abort the NAS run instead of pruning every trial."""
@@ -258,7 +459,7 @@ class ObjectiveTests(unittest.TestCase):
             self.client.objective(trial)
 
         self.mock_log.assert_not_called()
-        self.mock_train.assert_not_called()
+        self.client.task.make_fit_plan.assert_not_called()
 
     def test_objective_handles_resource_failure(self) -> None:
         """Exceeding estimated resources should skip training and log a fatal code."""
@@ -275,7 +476,7 @@ class ObjectiveTests(unittest.TestCase):
         with self.assertRaises(optuna.TrialPruned):
             self.client.objective(trial)
 
-        self.mock_train.assert_not_called()
+        self.client.task.make_fit_plan.assert_not_called()
         self.assertEqual(trial.report_calls, [(-float("inf"), 0)])
 
 
@@ -294,8 +495,9 @@ class ObjectiveTests(unittest.TestCase):
         result = self.client.objective(trial)
 
         self.mock_count.assert_called_once()
-        self.mock_train.assert_called_once()
-        self.assertEqual(result, 0.3)
+        self.client.task.make_fit_plan.assert_called_once()
+        self.client.task.evaluate.assert_called_once()
+        self.assertEqual(result, -0.3)
         self.mock_log.assert_called_once()
 
     def test_objective_prunes_before_training_on_config_rule(self) -> None:
@@ -328,7 +530,7 @@ class ObjectiveTests(unittest.TestCase):
         with self.assertRaises(optuna.TrialPruned):
             self.client.objective(trial)
 
-        self.mock_train.assert_not_called()
+        self.client.task.make_fit_plan.assert_not_called()
         self.mock_log.assert_called_once()
         self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "latency_budget")
         self.assertEqual(
@@ -366,7 +568,7 @@ class ObjectiveTests(unittest.TestCase):
         with self.assertRaises(optuna.TrialPruned):
             self.client.objective(trial)
 
-        self.mock_train.assert_not_called()
+        self.client.task.make_fit_plan.assert_not_called()
         self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "rule_0")
         self.assertIn("Configured prune metric unavailable", self.mock_log.call_args.kwargs["prune_reason"])
 
@@ -409,7 +611,7 @@ class ObjectiveTests(unittest.TestCase):
         self.client._hil_request = MagicMock(return_value=metrics)
         trial = DummyTrial()
 
-        with patch("nas_model_client.train_and_score", side_effect=ValueError("bad shape")):
+        with patch.object(self.client.task, "make_fit_plan", side_effect=ValueError("bad shape")):
             with self.assertRaisesRegex(ValueError, "bad shape"):
                 self.client.objective(trial)
 
@@ -432,7 +634,7 @@ class ObjectiveTests(unittest.TestCase):
         trial = DummyTrial()
 
         with patch(
-            "nas_model_client.train_and_score",
+            "nas_model_client.evaluate_score_config",
             side_effect=ScoreConfigEvaluationError("Metric 'latency_ms' is unavailable for scoring."),
         ):
             with self.assertRaises(optuna.TrialPruned):
@@ -504,8 +706,8 @@ class ObjectiveTests(unittest.TestCase):
 
         result = self.client.objective(trial)
 
-        self.mock_train.assert_called_once()
-        self.assertEqual(result, 0.3)
+        self.client.task.make_fit_plan.assert_called_once()
+        self.assertEqual(result, -0.3)
         self.mock_log.assert_called_once()
 
     def test_objective_returns_configured_multiobjective_tuple(self) -> None:
@@ -542,8 +744,7 @@ class ObjectiveTests(unittest.TestCase):
         self.client._hil_request = MagicMock(return_value=metrics)
         trial = DummyTrial()
 
-        with patch("nas_model_client.train_and_score", wraps=train_and_score):
-            result = self.client.objective(trial)
+        result = self.client.objective(trial)
 
         self.assertEqual(result, (10.0, 512.0))
         self.mock_log.assert_called_once()
@@ -904,18 +1105,22 @@ class EvaluateCheckpointTests(unittest.TestCase):
                 x_vel=gt_vx,
                 y_vel=gt_vy,
             )
-
-            class FakeModel:
-                def predict(self, _inputs):
-                    return [np.ones_like(gt_vx), np.ones_like(gt_vy)]
+            client.dataset_bundle.test = DataSplit(
+                inputs=client.test_data.inputs,
+                targets={"velx": gt_vx, "vely": gt_vy},
+                metadata={},
+            )
+            client.task.evaluate.return_value = EvaluationResult(
+                metrics={"rmse_vel_x": 0.0, "rmse_vel_y": 0.0, "rmse_total": 0.0},
+                predictions=[gt_vx, gt_vy],
+            )
 
             metrics_path = base / "metrics.json"
-            with patch("nas_model_client.load_model", return_value=FakeModel()):
-                metrics = client.evaluate_checkpoint(
-                    checkpoint_path=base / "ckpt.keras",
-                    metrics_path=metrics_path,
-                    export_tflite=False,
-                )
+            metrics = client.evaluate_checkpoint(
+                checkpoint_path=base / "ckpt.keras",
+                metrics_path=metrics_path,
+                export_tflite=False,
+            )
 
             self.assertTrue(metrics_path.is_file())
             self.assertTrue(metrics_path.with_suffix(".csv").is_file())
@@ -934,15 +1139,18 @@ class EvaluateCheckpointTests(unittest.TestCase):
                 x_vel=gt_vx,
                 y_vel=gt_vy,
             )
-
-            class FakeModel:
-                def predict(self, _inputs):
-                    return [gt_vx, gt_vy]
+            client.dataset_bundle.test = DataSplit(
+                inputs=client.test_data.inputs,
+                targets={"velx": gt_vx, "vely": gt_vy},
+                metadata={},
+            )
+            client.task.evaluate.return_value = EvaluationResult(
+                metrics={"rmse_vel_x": 0.0, "rmse_vel_y": 0.0, "rmse_total": 0.0},
+                predictions=[gt_vx, gt_vy],
+            )
 
             tflite_path = base / "model.tflite"
-            with patch("nas_model_client.load_model", return_value=FakeModel()), patch(
-                "nas_model_client.convert_to_tflite_model"
-            ) as mock_convert:
+            with patch("nas_model_client.convert_to_tflite_model") as mock_convert:
                 client.evaluate_checkpoint(
                     checkpoint_path=base / "ckpt.keras",
                     metrics_path=base / "metrics.json",
@@ -977,7 +1185,16 @@ class TrajectoryMetricsTests(unittest.TestCase):
                 def predict(self, _inputs):
                     return [vx, vy]
 
-            with patch("nas_model_client.load_model", return_value=FakeModel()):
+            client.model_family.load_model.return_value = FakeModel()
+            client.test_data = SimpleNamespace(
+                inputs=np.zeros((length, 1, 1), dtype=np.float32),
+                x_vel=vx,
+                y_vel=vy,
+                size_of_each=[length],
+                x0=[0.0],
+                y0=[0.0],
+            )
+            with patch.object(client.model_family, "load_model", return_value=FakeModel()):
                 metrics = client.trajectory_metrics_and_plots(
                     checkpoint_path=base / "ckpt.keras",
                     plot_dir=base,

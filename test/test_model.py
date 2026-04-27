@@ -34,6 +34,7 @@ from tinyodom.model import (
     collect_non_bn_bias_layers,
     collect_metrics,
     count_flops,
+    evaluate_score_config,
     iter_layers,
     load_config,
     log_trial,
@@ -1376,6 +1377,32 @@ class TrainAndScoreTests(unittest.TestCase):
                 validation_data=MagicMock(),
                 config=config,
             )
+
+    def test_evaluate_score_config_matches_scalar_scoring_semantics(self) -> None:
+        """Public score evaluation helper should preserve scalar score behavior."""
+        score_config = Dict(
+            type="scoring-function",
+            metrics=Dict(),
+            params=Dict(
+                terms=[
+                    Dict(type="weighted", metric="rmse_total", weight=-1.0),
+                    Dict(type="weighted", metric="flops", weight=-0.001),
+                ]
+            ),
+        )
+        metrics = {"rmse_total": 0.5, "latency_ms": 10.0}
+        hyperparams = Dict(flops=1_000)
+
+        result = evaluate_score_config(
+            rmse_vel_x=0.2,
+            rmse_vel_y=0.3,
+            metrics=metrics,
+            hyperparams=hyperparams,
+            score_config=score_config,
+        )
+
+        self.assertAlmostEqual(result.score, -1.5)
+        self.assertEqual(result.objective_names, ["score"])
 
 
 class LoadSettingsTests(unittest.TestCase):
