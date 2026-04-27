@@ -544,10 +544,19 @@ class HILServer:
         effective_hil_enabled = bool(
             self.config.device.hil and runtime_device.supports_runtime_measurement()
         )
+        harness_serial_port = getattr(self.config.device, "harness_serial_port", None)
+        energy_requires_explicit_harness = self._normalized_device_name() in {
+            "PORTENTA_H7",
+            "ARDUINO_NANO_33_BLE_SENSE",
+        }
         effective_energy_aware = bool(
             self.config.training.energy_aware
             and effective_hil_enabled
             and runtime_device.supports_energy_measurement()
+            and (
+                bool(harness_serial_port)
+                or not energy_requires_explicit_harness
+            )
         )
         prepared_dir: Path | None = None
         try:

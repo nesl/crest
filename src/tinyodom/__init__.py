@@ -3,7 +3,17 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-__all__ = ["hardware", "model", "data", "geometry", "devices", "errors"]
+__all__ = [
+    "hardware",
+    "model",
+    "data",
+    "geometry",
+    "devices",
+    "errors",
+    "interfaces",
+    "pipeline_types",
+    "registry",
+]
 
 
 def __getattr__(name: str) -> Any:

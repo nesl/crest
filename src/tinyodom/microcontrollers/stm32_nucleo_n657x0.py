@@ -355,7 +355,6 @@ def _resolve_runtime_mode(raw_value: object | None) -> str:
         )
     return runtime_mode
 
-
 def _resolve_cubeprog_cli_path(cubeprog_bin: Path | None) -> Path:
     """Resolve the STM32CubeProgrammer CLI executable path.
 
