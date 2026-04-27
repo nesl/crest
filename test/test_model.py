@@ -37,6 +37,7 @@ from tinyodom.model import (
     iter_layers,
     load_config,
     log_trial,
+    score_config_uses_training_metrics,
     train_and_score,
     validate_loaded_model_input_shape,
 )  # noqa: E402
@@ -2019,6 +2020,376 @@ class LoadSettingsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unknown metric"):
                 load_config(config_path=cfg)
 
+    def test_load_settings_accepts_custom_task_metric_in_score_term(self) -> None:
+        """Task-aware validation should allow caller-supplied task metrics."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: custom_metric",
+                        "          weight: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(
+                config_path=cfg,
+                task_metric_names={"custom_metric"},
+                training_only_task_metric_names=set(),
+            )
+
+        self.assertEqual(settings.nas.score.params.terms[0].metric, "custom_metric")
+
+    def test_load_settings_rejects_unknown_custom_task_metric_without_task_context(self) -> None:
+        """Unknown task metrics should still fail without caller-supplied context."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: custom_metric",
+                        "          weight: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "unknown metric"):
+                load_config(config_path=cfg)
+
+    def test_load_settings_accepts_derived_metric_that_references_custom_task_metric(self) -> None:
+        """Derived score metrics may depend on caller-supplied task metrics."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    metrics:",
+                        "      combined_metric:",
+                        "        type: add",
+                        "        metrics:",
+                        "          - custom_metric",
+                        "          - flops",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: combined_metric",
+                        "          weight: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(
+                config_path=cfg,
+                task_metric_names={"custom_metric"},
+                training_only_task_metric_names=set(),
+            )
+
+        self.assertEqual(settings.nas.score.metrics.combined_metric.metrics, ["custom_metric", "flops"])
+
+    def test_load_settings_rejects_derived_metric_name_that_collides_with_task_metric(self) -> None:
+        """Derived metric names may not redefine caller-supplied task metrics."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    metrics:",
+                        "      custom_metric:",
+                        "        type: add",
+                        "        metrics:",
+                        "          - flops",
+                        "          - latency_ms",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: custom_metric",
+                        "          weight: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "redefine a built-in or task-declared metric",
+            ):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names=set(),
+                )
+
+    def test_load_settings_defaults_training_only_task_metrics_to_empty_when_task_metrics_are_supplied(self) -> None:
+        """Custom task metrics should not silently inherit odometry training-only defaults."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: custom_metric",
+                        "          weight: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(
+                config_path=cfg,
+                task_metric_names={"custom_metric"},
+            )
+
+        self.assertEqual(settings.nas.score.params.terms[0].metric, "custom_metric")
+
+    def test_load_settings_rejects_task_metric_overlap_with_infrastructure_metrics(self) -> None:
+        """Task metrics may not reuse reserved infrastructure metric names."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "overlaps a reserved infrastructure metric name"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"latency_ms"},
+                    training_only_task_metric_names=set(),
+                )
+
+    def test_load_settings_rejects_training_only_task_metrics_outside_task_metric_set(self) -> None:
+        """Training-only task metrics must be a subset of the task metric set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "must be a subset"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names={"other_metric"},
+                )
+
+    def test_load_settings_accepts_custom_task_metric_in_prune_rules(self) -> None:
+        """Prune validation should allow supplied non-training-only task metrics."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: flops",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: custom_metric",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(
+                config_path=cfg,
+                task_metric_names={"custom_metric"},
+                training_only_task_metric_names=set(),
+            )
+
+        self.assertEqual(settings.nas.prune.rules[0].metric, "custom_metric")
+
+    def test_load_settings_rejects_prune_rules_that_use_custom_training_only_task_metrics(self) -> None:
+        """Prune rules may not directly read task metrics that need training."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: flops",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: custom_metric",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "training-only"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names={"custom_metric"},
+                )
+
+    def test_load_settings_rejects_prune_rules_that_depend_on_custom_training_only_task_metrics(self) -> None:
+        """Prune rules may not depend indirectly on task metrics that need training."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    metrics:",
+                        "      combined_metric:",
+                        "        type: add",
+                        "        metrics:",
+                        "          - custom_metric",
+                        "          - flops",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: flops",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: combined_metric",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "training-only"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names={"custom_metric"},
+                )
+
     def test_load_settings_accepts_cadenced_sleep_metric_in_score_terms(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -2299,6 +2670,80 @@ class LoadSettingsTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "must be one of"):
                 load_config(config_path=cfg)
+
+
+class ScoreConfigTrainingDependencyTests(unittest.TestCase):
+    """Validate task-aware training-metric detection helpers."""
+
+    def test_score_config_uses_training_metrics_detects_multilevel_derived_dependency(self) -> None:
+        score_config = Dict(
+            type="scoring-function",
+            metrics=Dict(
+                level_one=Dict(type="add", metrics=["level_two", "flops"]),
+                level_two=Dict(type="add", metrics=["custom_training_metric", "latency_ms"]),
+            ),
+            params=Dict(terms=[Dict(type="weighted", metric="level_one", weight=1.0)]),
+        )
+
+        self.assertTrue(
+            score_config_uses_training_metrics(
+                score_config,
+                training_only_metric_names={"custom_training_metric"},
+            )
+        )
+
+    def test_score_config_uses_training_metrics_detects_typed_reference_dependency(self) -> None:
+        score_config = Dict(
+            type="scoring-function",
+            metrics=Dict(
+                custom_reference_metric=Dict(
+                    type="add",
+                    metrics=["custom_training_metric", "flops"],
+                )
+            ),
+            params=Dict(
+                terms=[
+                    Dict(
+                        type="normalized-weighted",
+                        metric="flops",
+                        weight=1.0,
+                        reference=Dict(type="metric", metric="custom_reference_metric"),
+                    )
+                ]
+            ),
+        )
+
+        self.assertTrue(
+            score_config_uses_training_metrics(
+                score_config,
+                training_only_metric_names={"custom_training_metric"},
+            )
+        )
+
+    def test_score_config_uses_training_metrics_returns_false_for_non_training_metrics(self) -> None:
+        score_config = Dict(
+            type="scoring-function",
+            metrics=Dict(
+                combined_metric=Dict(type="add", metrics=["custom_metric", "flops"]),
+            ),
+            params=Dict(terms=[Dict(type="weighted", metric="combined_metric", weight=1.0)]),
+        )
+
+        self.assertFalse(
+            score_config_uses_training_metrics(
+                score_config,
+                training_only_metric_names=set(),
+            )
+        )
+
+    def test_score_config_uses_training_metrics_keeps_default_odometry_behavior(self) -> None:
+        score_config = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(objectives=[Dict(metric="rmse_total", direction="minimize")]),
+        )
+
+        self.assertTrue(score_config_uses_training_metrics(score_config))
 
 
 @unittest.skipUnless(_cli_exists(), "Arduino CLI not installed")

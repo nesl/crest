@@ -61,7 +61,6 @@ VALID_DERIVED_METRIC_TYPES = {"add", "energy-budget-from-power"}
 VALID_TERM_TYPES = {"weighted", "normalized-weighted", "boundary", "target"}
 VALID_OBJECTIVE_DIRECTIONS = {"maximize", "minimize"}
 VALID_PRUNE_CONDITIONS = {"gt", "gte", "lt", "lte"}
-TRAINING_ONLY_METRICS = {"rmse_vel_x", "rmse_vel_y", "rmse_total"}
 NONNEGATIVE_METRICS = {
     "rmse_vel_x",
     "rmse_vel_y",
@@ -89,10 +88,7 @@ NONNEGATIVE_METRICS = {
     "cadenced_rtc_sleep_ms",
     "cadenced_deadline_miss_count",
 }
-BUILTIN_SCORE_METRICS = {
-    "rmse_vel_x",
-    "rmse_vel_y",
-    "rmse_total",
+INFRASTRUCTURE_SCORE_METRICS = {
     "ram_bytes",
     "flash_bytes",
     "max_ram_bytes",
@@ -117,6 +113,12 @@ BUILTIN_SCORE_METRICS = {
     "cadenced_rtc_sleep_ms",
     "cadenced_deadline_miss_count",
 }
+DEFAULT_TASK_SCORE_METRICS = {"rmse_vel_x", "rmse_vel_y", "rmse_total"}
+DEFAULT_TRAINING_ONLY_TASK_METRICS = {"rmse_vel_x", "rmse_vel_y", "rmse_total"}
+# Keep these legacy names for compatibility, but Phase 3 validation should rely
+# on resolved metric sets instead of these static aliases.
+TRAINING_ONLY_METRICS = DEFAULT_TRAINING_ONLY_TASK_METRICS
+BUILTIN_SCORE_METRICS = INFRASTRUCTURE_SCORE_METRICS | DEFAULT_TASK_SCORE_METRICS
 
 CADENCED_NUMERIC_FIELD_DEFAULTS = {
     "cadenced_error_code": -1,
@@ -929,9 +931,71 @@ def _validate_typed_reference(reference: Any, allowed_metrics: set[str], context
     return normalized_reference
 
 
+def _resolve_validation_metric_sets(
+    task_metric_names: set[str] | None = None,
+    training_only_task_metric_names: set[str] | None = None,
+) -> tuple[set[str], set[str]]:
+    """Resolve the metric sets used by task-aware score and prune validation.
+
+    Parameters
+    ----------
+    task_metric_names : set[str] | None, optional
+        Task-owned metric names that may appear in score or prune configs.
+        When omitted, the current odometry RMSE set is used.
+    training_only_task_metric_names : set[str] | None, optional
+        Task-owned metric names that are only available after training. When
+        omitted, the current odometry RMSE set is used.
+
+    Returns
+    -------
+    tuple[set[str], set[str]]
+        ``(allowed_base_metric_names, effective_training_only_metric_names)``
+        after applying defaults and compatibility checks.
+
+    Raises
+    ------
+    ValueError
+        If task metrics overlap infrastructure metrics or if the training-only
+        set is not a subset of the task metric set.
+    """
+
+    if task_metric_names is None and training_only_task_metric_names is None:
+        effective_task_metric_names = set(DEFAULT_TASK_SCORE_METRICS)
+        effective_training_only_metric_names = set(DEFAULT_TRAINING_ONLY_TASK_METRICS)
+    else:
+        effective_task_metric_names = set(
+            DEFAULT_TASK_SCORE_METRICS if task_metric_names is None else task_metric_names
+        )
+        effective_training_only_metric_names = set(
+            set() if training_only_task_metric_names is None else training_only_task_metric_names
+        )
+
+    overlap = INFRASTRUCTURE_SCORE_METRICS & effective_task_metric_names
+    if overlap:
+        overlapping_metric = sorted(overlap)[0]
+        raise ValueError(
+            f"Task metric '{overlapping_metric}' overlaps a reserved infrastructure metric name."
+        )
+
+    if not effective_training_only_metric_names <= effective_task_metric_names:
+        missing_metric = sorted(
+            effective_training_only_metric_names - effective_task_metric_names
+        )[0]
+        raise ValueError(
+            "training_only_task_metric_names must be a subset of task_metric_names; "
+            f"'{missing_metric}' is missing from task_metric_names."
+        )
+
+    return (
+        INFRASTRUCTURE_SCORE_METRICS | effective_task_metric_names,
+        effective_training_only_metric_names,
+    )
+
+
 def _metric_depends_on_training(
     metric_name: str,
     score_metrics: Dict,
+    training_only_metric_names: set[str] | None = None,
     stack: tuple[str, ...] = (),
 ) -> bool:
     """Return whether a metric depends on training-only quantities.
@@ -942,6 +1006,9 @@ def _metric_depends_on_training(
         Metric name to inspect.
     score_metrics : addict.Dict
         Normalized derived metrics from ``nas.score.metrics``.
+    training_only_metric_names : set[str] | None, optional
+        Task-owned metric names that are only available after training. When
+        omitted, the current odometry RMSE set is used.
     stack : tuple[str, ...], optional
         Active recursion stack used to detect cycles.
 
@@ -951,7 +1018,12 @@ def _metric_depends_on_training(
         ``True`` when the metric or any derived dependency requires
         post-training values such as RMSE.
     """
-    if metric_name in TRAINING_ONLY_METRICS:
+    effective_training_only_metric_names = set(
+        DEFAULT_TRAINING_ONLY_TASK_METRICS
+        if training_only_metric_names is None
+        else training_only_metric_names
+    )
+    if metric_name in effective_training_only_metric_names:
         return True
     if metric_name not in score_metrics or metric_name in stack:
         return False
@@ -966,18 +1038,29 @@ def _metric_depends_on_training(
         if metric_cfg.duration_ms.type == "metric":
             child_metrics.append(str(metric_cfg.duration_ms.metric))
     return any(
-        _metric_depends_on_training(child_metric, score_metrics, stack + (metric_name,))
+        _metric_depends_on_training(
+            child_metric,
+            score_metrics,
+            effective_training_only_metric_names,
+            stack + (metric_name,),
+        )
         for child_metric in child_metrics
     )
 
 
-def score_config_uses_training_metrics(score_config: Dict) -> bool:
+def score_config_uses_training_metrics(
+    score_config: Dict,
+    training_only_metric_names: set[str] | None = None,
+) -> bool:
     """Return whether a score config depends on post-training RMSE metrics.
 
     Parameters
     ----------
     score_config : addict.Dict
         Normalized score configuration.
+    training_only_metric_names : set[str] | None, optional
+        Task-owned metric names that are only available after training. When
+        omitted, the current odometry RMSE set is used.
 
     Returns
     -------
@@ -986,6 +1069,11 @@ def score_config_uses_training_metrics(score_config: Dict) -> bool:
         depends directly or indirectly on training-only metrics.
     """
     score_metrics = getattr(score_config, "metrics", Dict())
+    effective_training_only_metric_names = set(
+        DEFAULT_TRAINING_ONLY_TASK_METRICS
+        if training_only_metric_names is None
+        else training_only_metric_names
+    )
 
     def _reference_depends_on_training(reference: Any) -> bool:
         """Check whether a typed reference reads a training-derived metric.
@@ -1003,30 +1091,49 @@ def score_config_uses_training_metrics(score_config: Dict) -> bool:
         return (
             reference is not None
             and getattr(reference, "type", None) == "metric"
-            and _metric_depends_on_training(str(reference.metric), score_metrics)
+            and _metric_depends_on_training(
+                str(reference.metric),
+                score_metrics,
+                effective_training_only_metric_names,
+            )
         )
 
     if is_multiobjective_score_config(score_config):
         return any(
-            _metric_depends_on_training(str(objective.metric), score_metrics)
+            _metric_depends_on_training(
+                str(objective.metric),
+                score_metrics,
+                effective_training_only_metric_names,
+            )
             for objective in getattr(score_config.params, "objectives", [])
         )
 
     for term in getattr(score_config.params, "terms", []):
-        if _metric_depends_on_training(str(term.metric), score_metrics):
+        if _metric_depends_on_training(
+            str(term.metric),
+            score_metrics,
+            effective_training_only_metric_names,
+        ):
             return True
         if _reference_depends_on_training(getattr(term, "reference", None)):
             return True
     return False
 
 
-def _validate_score_config(score_input: Any, has_legacy_multiobjective: bool = False) -> Dict:
+def _validate_score_config(
+    score_input: Any,
+    allowed_base_metric_names: set[str],
+    has_legacy_multiobjective: bool = False,
+) -> Dict:
     """Validate and normalize the NAS score configuration.
 
     Parameters
     ----------
     score_input : object
         Raw ``nas.score`` configuration.
+    allowed_base_metric_names : set[str]
+        Infrastructure and task-owned metric names that are valid for the
+        current validation context.
     has_legacy_multiobjective : bool, optional
         Whether the deprecated ``training.nas_multiobjective`` field is still
         present in the source configuration.
@@ -1061,11 +1168,14 @@ def _validate_score_config(score_input: Any, has_legacy_multiobjective: bool = F
     score_config.params = Dict(score_config.get("params", {}))
 
     custom_metric_names = set(score_config.metrics.keys())
-    duplicate_names = BUILTIN_SCORE_METRICS & custom_metric_names
+    duplicate_names = allowed_base_metric_names & custom_metric_names
     if duplicate_names:
         duplicate_name = sorted(duplicate_names)[0]
-        raise ValueError(f"score.metrics may not redefine built-in metric '{duplicate_name}'.")
-    allowed_metric_names = BUILTIN_SCORE_METRICS | custom_metric_names
+        raise ValueError(
+            "score.metrics may not redefine a built-in or task-declared metric "
+            f"'{duplicate_name}'."
+        )
+    allowed_metric_names = allowed_base_metric_names | custom_metric_names
 
     normalized_metrics = Dict()
     for metric_name, raw_metric in score_config.metrics.items():
@@ -1181,7 +1291,12 @@ def _validate_score_config(score_input: Any, has_legacy_multiobjective: bool = F
     return score_config
 
 
-def _validate_prune_config(prune_input: Any, score_config: Dict) -> Dict:
+def _validate_prune_config(
+    prune_input: Any,
+    score_config: Dict,
+    allowed_base_metric_names: set[str],
+    training_only_metric_names: set[str],
+) -> Dict:
     """Validate and normalize NAS prune policy.
 
     Parameters
@@ -1190,6 +1305,11 @@ def _validate_prune_config(prune_input: Any, score_config: Dict) -> Dict:
         Raw ``nas.prune`` configuration.
     score_config : addict.Dict
         Normalized ``nas.score`` configuration.
+    allowed_base_metric_names : set[str]
+        Infrastructure and task-owned metric names that are valid for the
+        current validation context.
+    training_only_metric_names : set[str]
+        Task-owned metric names that are only available after training.
 
     Returns
     -------
@@ -1210,7 +1330,7 @@ def _validate_prune_config(prune_input: Any, score_config: Dict) -> Dict:
     if is_multiobjective_score_config(score_config) and len(raw_rules) > 0:
         raise ValueError("nas.prune.rules is only supported when nas.score.type is scoring-function.")
 
-    allowed_metric_names = BUILTIN_SCORE_METRICS | set(getattr(score_config, "metrics", Dict()).keys())
+    allowed_metric_names = allowed_base_metric_names | set(getattr(score_config, "metrics", Dict()).keys())
     normalized_rules = []
     for idx, raw_rule in enumerate(raw_rules):
         rule_cfg = Dict(raw_rule)
@@ -1222,7 +1342,11 @@ def _validate_prune_config(prune_input: Any, score_config: Dict) -> Dict:
             raise ValueError(
                 f"nas.prune.rules[{idx}].condition must be one of: {sorted(VALID_PRUNE_CONDITIONS)}."
             )
-        if _metric_depends_on_training(metric_name, getattr(score_config, "metrics", Dict())):
+        if _metric_depends_on_training(
+            metric_name,
+            getattr(score_config, "metrics", Dict()),
+            training_only_metric_names,
+        ):
             raise ValueError(
                 f"nas.prune.rules[{idx}] may not use training-only metric '{metric_name}'."
             )
@@ -1234,6 +1358,7 @@ def _validate_prune_config(prune_input: Any, score_config: Dict) -> Dict:
         if reference.type == "metric" and _metric_depends_on_training(
             str(reference.metric),
             getattr(score_config, "metrics", Dict()),
+            training_only_metric_names,
         ):
             raise ValueError(
                 f"nas.prune.rules[{idx}] may not reference training-only metric '{reference.metric}'."
@@ -1249,13 +1374,21 @@ def _validate_prune_config(prune_input: Any, score_config: Dict) -> Dict:
     return prune_config
 
 
-def _validate_nas_config(config: Dict) -> Dict:
+def _validate_nas_config(
+    config: Dict,
+    task_metric_names: set[str] | None = None,
+    training_only_task_metric_names: set[str] | None = None,
+) -> Dict:
     """Validate and normalize the top-level NAS policy configuration.
 
     Parameters
     ----------
     config : addict.Dict
         Parsed YAML configuration tree.
+    task_metric_names : set[str] | None, optional
+        Task-owned metric names that may appear in score or prune configs.
+    training_only_task_metric_names : set[str] | None, optional
+        Task-owned metric names that are only available after training.
 
     Returns
     -------
@@ -1273,11 +1406,21 @@ def _validate_nas_config(config: Dict) -> Dict:
         raise KeyError("Missing required top-level 'nas' section in the configuration.")
 
     nas_config = Dict(config.nas)
+    allowed_base_metric_names, effective_training_only_metric_names = _resolve_validation_metric_sets(
+        task_metric_names=task_metric_names,
+        training_only_task_metric_names=training_only_task_metric_names,
+    )
     score_config = _validate_score_config(
         nas_config.get("score"),
+        allowed_base_metric_names=allowed_base_metric_names,
         has_legacy_multiobjective="nas_multiobjective" in config.training,
     )
-    prune_config = _validate_prune_config(nas_config.get("prune", {}), score_config)
+    prune_config = _validate_prune_config(
+        nas_config.get("prune", {}),
+        score_config,
+        allowed_base_metric_names,
+        effective_training_only_metric_names,
+    )
     nas_config.score = score_config
     nas_config.prune = prune_config
     return nas_config
@@ -1334,6 +1477,9 @@ def evaluate_prune_rules(
 
 def load_config(
     config_path: str | Path | None = None,
+    *,
+    task_metric_names: set[str] | None = None,
+    training_only_task_metric_names: set[str] | None = None,
 ) -> Dict:
     """
     Load the NAS configuration from YAML, derive convenience paths/names,
@@ -1343,11 +1489,18 @@ def load_config(
     ----------
     config_path : str | Path | None
         Optional override for the YAML location. Defaults to src/nas_config.yaml.
+    task_metric_names : set[str] | None, optional
+        Task-owned metric names that may appear in score or prune configs. When
+        omitted, the current odometry RMSE metrics are used.
+    training_only_task_metric_names : set[str] | None, optional
+        Task-owned metric names that are only available after training. When
+        omitted, the current odometry RMSE metrics are used.
 
     Returns
     -------
     addict.Dict
-        Configuration tree with derived paths (models_dir, checkpoint paths, etc.).
+        Configuration tree with derived paths (models_dir, checkpoint paths,
+        etc.) and a task-aware validated NAS policy.
     """
     cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
@@ -1533,7 +1686,11 @@ def load_config(
         )
     config.logging = Dict()
     config.logging.level = level_name
-    config.nas = _validate_nas_config(config)
+    config.nas = _validate_nas_config(
+        config,
+        task_metric_names=task_metric_names,
+        training_only_task_metric_names=training_only_task_metric_names,
+    )
 
     return config
 
