@@ -1,4 +1,5 @@
 import argparse
+from collections.abc import Mapping
 import csv
 import inspect
 import json
@@ -279,6 +280,9 @@ class NASModelClient:
         task_name: str,
         config: Any,
         task_config: Any,
+        *,
+        checkpoint_path: Path | None = None,
+        early_stopping_patience: int | None = None,
     ) -> Any:
         """Instantiate one task component with compatibility constructor args.
 
@@ -300,10 +304,16 @@ class NASModelClient:
         signature = inspect.signature(task_cls)
         kwargs: dict[str, Any] = {}
         if "checkpoint_path" in signature.parameters:
-            kwargs["checkpoint_path"] = Path(config.outputs.checkpoint_path)
+            kwargs["checkpoint_path"] = (
+                Path(config.outputs.checkpoint_path)
+                if checkpoint_path is None
+                else Path(checkpoint_path)
+            )
         if "early_stopping_patience" in signature.parameters:
             kwargs["early_stopping_patience"] = int(
                 self._cfg_get(task_config, "early_stopping_patience", 40)
+                if early_stopping_patience is None
+                else early_stopping_patience
             )
         return task_cls(**kwargs)
 
@@ -476,8 +486,11 @@ class NASModelClient:
         model_build_context = self._build_model_context(bundle, target_spec)
 
         self.dataset = dataset
+        self.dataset_name = selection["dataset_name"]
         self.task = task
+        self.task_name = selection["task_name"]
         self.model_family = model_family
+        self.model_family_name = selection["model_family_name"]
         self.dataset_bundle = bundle
         self.target_spec = target_spec
         self.metric_contract = metric_contract
@@ -699,6 +712,215 @@ class NASModelClient:
             family_hparams["dilations"] = DILATION_CANDIDATES[int(family_hparams["dilations_index"])]
         family_hparams.pop("dilations_index", None)
         return family_hparams
+
+    @staticmethod
+    def _concatenate_split_payload(
+        train_value: Any,
+        val_value: Any,
+        *,
+        context_name: str,
+    ) -> Any:
+        """Concatenate one train/validation payload for combine-train-val mode.
+
+        Parameters
+        ----------
+        train_value : Any
+            Training split payload.
+        val_value : Any
+            Validation split payload.
+        context_name : str
+            Human-readable field name used in errors.
+
+        Returns
+        -------
+        Any
+            Concatenated payload.
+
+        Raises
+        ------
+        ValueError
+            If the payload shape is unsupported for concatenation.
+        """
+
+        if isinstance(train_value, np.ndarray) and isinstance(val_value, np.ndarray):
+            return np.concatenate([train_value, val_value], axis=0)
+        if isinstance(train_value, Mapping) and isinstance(val_value, Mapping):
+            if set(train_value) != set(val_value):
+                raise ValueError(
+                    f"combine_train_val=True requires matching mapping keys for {context_name}."
+                )
+            return {
+                key: NASModelClient._concatenate_split_payload(
+                    train_value[key],
+                    val_value[key],
+                    context_name=f"{context_name}.{key}",
+                )
+                for key in train_value
+            }
+        if train_value is None and val_value is None:
+            return None
+        raise ValueError(
+            "combine_train_val=True only supports NumPy arrays or dicts of NumPy arrays; "
+            f"unsupported payload encountered for {context_name}."
+        )
+
+    def _merge_train_and_val_splits(self) -> DataSplit:
+        """Merge train and validation splits for compatibility final training.
+
+        Returns
+        -------
+        DataSplit
+            Concatenated training split.
+
+        Raises
+        ------
+        ValueError
+            If no validation split is available or if the payloads are not
+            concatenable under the compatibility rules.
+        """
+
+        train_split = self.dataset_bundle.train
+        val_split = self.dataset_bundle.val
+        if val_split is None:
+            raise ValueError("combine_train_val=True requires a validation split.")
+        return DataSplit(
+            inputs=self._concatenate_split_payload(
+                train_split.inputs,
+                val_split.inputs,
+                context_name="inputs",
+            ),
+            targets=self._concatenate_split_payload(
+                train_split.targets,
+                val_split.targets,
+                context_name="targets",
+            ),
+            sample_weights=self._concatenate_split_payload(
+                train_split.sample_weights,
+                val_split.sample_weights,
+                context_name="sample_weights",
+            ),
+            metadata=dict(train_split.metadata),
+        )
+
+    def _fit_targets_for_split(self, split: DataSplit) -> Any:
+        """Return task targets in model-output order for manual fit paths.
+
+        Parameters
+        ----------
+        split : DataSplit
+            Dataset split to adapt.
+
+        Returns
+        -------
+        Any
+            Model.fit-compatible target payload.
+
+        Raises
+        ------
+        ValueError
+            If the split targets are missing declared output names.
+        """
+
+        if isinstance(split.targets, Mapping):
+            missing = [
+                output_name
+                for output_name in self.target_spec.output_names
+                if output_name not in split.targets
+            ]
+            if missing:
+                raise ValueError(
+                    "Split targets do not satisfy the active task output contract; "
+                    f"missing targets: {', '.join(missing)}."
+                )
+            return [split.targets[output_name] for output_name in self.target_spec.output_names]
+        return split.targets
+
+    def _resolve_dataset_numeric_setting(
+        self,
+        key: str,
+        *,
+        split: DataSplit | None = None,
+    ) -> float:
+        """Resolve one numeric dataset setting from metadata or config.
+
+        Parameters
+        ----------
+        key : str
+            Numeric dataset field name to resolve.
+        split : DataSplit | None, optional
+            Optional split whose metadata should take precedence.
+
+        Returns
+        -------
+        float
+            Resolved numeric value.
+
+        Raises
+        ------
+        ValueError
+            If the value cannot be resolved or is not positive and finite.
+        """
+
+        raw_value = None
+        if split is not None:
+            raw_value = split.metadata.get(key)
+        if raw_value in (None, ""):
+            raw_value = self.dataset_bundle.metadata.get(key)
+        if raw_value in (None, ""):
+            raw_value = self._cfg_get(self.dataset_config, key, None)
+        if raw_value in (None, "") or isinstance(raw_value, bool):
+            raise ValueError(f"Unable to resolve dataset setting '{key}' for the active configuration.")
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Dataset setting '{key}' must be numeric for the active configuration."
+            ) from exc
+        if not np.isfinite(value) or value <= 0.0:
+            raise ValueError(
+                f"Dataset setting '{key}' must be a positive finite value for the active configuration."
+            )
+        return value
+
+    def _trajectory_split_view(self) -> _LegacySplitView:
+        """Return an odometry-oriented view of the test split for reporting.
+
+        Returns
+        -------
+        _LegacySplitView
+            Legacy-compatible test-split view for trajectory analysis.
+
+        Raises
+        ------
+        ValueError
+            If the active test split does not expose the odometry metadata
+            required by the trajectory helper.
+        """
+
+        split = self.dataset_bundle.test
+        if split is None:
+            raise ValueError("Trajectory reporting requires a held-out test split.")
+        try:
+            legacy_view = self._make_legacy_split_view(split)
+        except KeyError as exc:
+            raise ValueError(
+                "Trajectory reporting remains odometry-specific and requires "
+                "velocity targets named 'velx' and 'vely'."
+            ) from exc
+        if legacy_view is None:
+            raise ValueError("Trajectory reporting requires a held-out test split.")
+        required_fields = ("size_of_each", "x0", "y0")
+        missing = [
+            field_name
+            for field_name in required_fields
+            if getattr(legacy_view, field_name, None) in (None, "")
+        ]
+        if missing:
+            raise ValueError(
+                "Trajectory reporting remains odometry-specific and requires test-split metadata "
+                f"for: {', '.join(missing)}."
+            )
+        return legacy_view
 
     def objective(self, trial: optuna.Trial) -> float | tuple:
         """Optimize TinyODOM architecture and training hyperparameters.
@@ -1463,56 +1685,53 @@ class NASModelClient:
 
         batch_size = 256  # Use the same fixed batch size as in NAS search.
         family_hparams = self._expand_best_params_to_family_hparams(dict(best_params))
+        fit_task = self._instantiate_task(
+            self.task_name,
+            self.config,
+            self.task_config,
+            checkpoint_path=ckpt_path,
+            early_stopping_patience=patience,
+        )
         model = self.model_family.build_model(
             family_hparams,
             self.model_build_context,
             self.model_config,
         )
-        self.task.validate_model_outputs(model, self.target_spec)
-        self.task.compile_model(model, self.task_config, self.target_spec)
+        fit_task.validate_model_outputs(model, self.target_spec)
+        fit_task.compile_model(model, self.task_config, self.target_spec)
 
-        # Decide whether to hold out validation or fold it into training for the final fit.
         if combine_train_val:
-            # Concatenate train and validation to squeeze the most data; monitor training loss instead.
-            train_inputs = np.concatenate([self.training_data.inputs, self.validation_data.inputs], axis=0)
-            train_x_vel = np.concatenate([self.training_data.x_vel, self.validation_data.x_vel], axis=0)
-            train_y_vel = np.concatenate([self.training_data.y_vel, self.validation_data.y_vel], axis=0)
-            val_data = None
-            monitor_metric = "loss"
+            merged_train_split = self._merge_train_and_val_splits()
+            checkpoint_cb = ModelCheckpoint(
+                filepath=str(ckpt_path),
+                monitor="loss",
+                mode="min",
+                verbose=1,
+                save_best_only=True,
+            )
+            early_stop_cb = EarlyStopping(
+                monitor="loss",
+                patience=patience,
+                mode="min",
+                verbose=1,
+                restore_best_weights=True,
+            )
+            fit_kwargs = {
+                "x": merged_train_split.inputs,
+                "y": self._fit_targets_for_split(merged_train_split),
+                "shuffle": True,
+                "callbacks": [checkpoint_cb, early_stop_cb],
+            }
         else:
-            train_inputs = self.training_data.inputs
-            train_x_vel = self.training_data.x_vel
-            train_y_vel = self.training_data.y_vel
-            val_data = (self.validation_data.inputs, [self.validation_data.x_vel, self.validation_data.y_vel])
-            monitor_metric = "val_loss"
-
-        # Configure callbacks for checkpointing and early stopping.
-        checkpoint_cb = ModelCheckpoint(
-            filepath=str(ckpt_path),
-            monitor=monitor_metric,
-            mode="min",
-            verbose=1,
-            save_best_only=True,
-        )
-        early_stop_cb = EarlyStopping(
-            monitor=monitor_metric,
-            patience=patience,
-            mode="min",
-            verbose=1,
-            restore_best_weights=True,
-        )
-
-        # Kick off the long training run with the configured schedule and callbacks.
-        fit_kwargs = {
-            "x": train_inputs,
-            "y": [train_x_vel, train_y_vel],
-            "epochs": self.config.training.model_epochs,
-            "batch_size": batch_size,
-            "shuffle": True,
-            "callbacks": [checkpoint_cb, early_stop_cb],
-        }
-        if val_data is not None:
-            fit_kwargs["validation_data"] = val_data
+            fit_plan = fit_task.make_fit_plan(
+                self.dataset_bundle,
+                self.task_config,
+                self.target_spec,
+            )
+            fit_kwargs = dict(fit_plan.fit_kwargs)
+            fit_kwargs["callbacks"] = list(fit_plan.callbacks)
+        fit_kwargs["epochs"] = self.config.training.model_epochs
+        fit_kwargs["batch_size"] = batch_size
         history = model.fit(**fit_kwargs)
 
         # Persist the training history so future plotting/reporting does not require rerunning training.
@@ -1667,9 +1886,10 @@ class NASModelClient:
         tflite_written = None
         if export_tflite:
             tflite_path = Path(tflite_path) if tflite_path else Path(self.config.outputs.tflite_model_path)
+            representative_split = self.dataset_bundle.calibration or self.dataset_bundle.train
             convert_to_tflite_model(
                 model=model,
-                training_data=self.training_data.inputs,
+                training_data=representative_split.inputs,
                 quantization=self.config.training.quantization,
                 output_name=tflite_path,
             )
@@ -1716,9 +1936,11 @@ class NASModelClient:
         plot_dir : Path | None, optional
             Directory to save trajectory plots. Defaults to `models_dir/trajectories`.
         stride : int | None, optional
-            Sliding window stride used during preprocessing. Defaults to `config.data.stride`.
+            Sliding window stride used during preprocessing. Defaults to the
+            active dataset metadata/config when omitted.
         window_size : int | None, optional
-            Sliding window length used during preprocessing. Defaults to `config.data.window_size`.
+            Sliding window length used during preprocessing. Defaults to the
+            active dataset metadata/config when omitted.
         study_name : str | None, optional
             Study name to prefix plot filenames.
 
@@ -1736,15 +1958,29 @@ class NASModelClient:
         ckpt_path = Path(checkpoint_path) if checkpoint_path else Path(self.config.outputs.checkpoint_path)
         plot_dir = Path(plot_dir) if plot_dir else Path(self.config.outputs.models_dir) / "trajectories"
         plot_dir.mkdir(parents=True, exist_ok=True)
-        stride = stride if stride is not None else self.config.data.stride
-        window_size = window_size if window_size is not None else self.config.data.window_size
+        test_split = self.dataset_bundle.test
+        trajectory_split = self._trajectory_split_view()
+        stride = (
+            float(stride)
+            if stride is not None
+            else self._resolve_dataset_numeric_setting("stride", split=test_split)
+        )
+        window_size = (
+            float(window_size)
+            if window_size is not None
+            else self._resolve_dataset_numeric_setting("window_size", split=test_split)
+        )
+        sampling_rate_hz = self._resolve_dataset_numeric_setting(
+            "sampling_rate_hz",
+            split=test_split,
+        )
 
         model = self.model_family.load_model(
             ckpt_path,
             self.model_build_context,
             self.model_config,
         )
-        preds = model.predict(self.test_data.inputs)
+        preds = model.predict(trajectory_split.inputs)
 
         # Helper to integrate velocities into XY tracks.
         samples_per_window = max((window_size - stride) / stride, 1)
@@ -1784,15 +2020,15 @@ class NASModelClient:
         plot_paths = []
 
         idx_start = 0
-        for i, length in enumerate(self.test_data.size_of_each):
+        for i, length in enumerate(trajectory_split.size_of_each):
             idx_end = idx_start + length
             # Flatten in case datasets store (n, 1) vectors.
-            gt_vx = self.test_data.x_vel[idx_start:idx_end].ravel()
-            gt_vy = self.test_data.y_vel[idx_start:idx_end].ravel()
+            gt_vx = trajectory_split.x_vel[idx_start:idx_end].ravel()
+            gt_vy = trajectory_split.y_vel[idx_start:idx_end].ravel()
             pred_vx = preds[0][idx_start:idx_end].ravel()
             pred_vy = preds[1][idx_start:idx_end].ravel()
-            start_x = self.test_data.x0[i]
-            start_y = self.test_data.y0[i]
+            start_x = trajectory_split.x0[i]
+            start_y = trajectory_split.y0[i]
 
             gt_x, gt_y = integrate_track(gt_vx, gt_vy, start_x, start_y)
             pd_x, pd_y = integrate_track(pred_vx, pred_vy, start_x, start_y)
@@ -1805,7 +2041,7 @@ class NASModelClient:
             # Relative Trajectory Error over ~60s segments (heuristic).
             window_seconds = 60
             # Windows per second: sampling_rate_hz / stride (stride is in samples).
-            samples_per_sec = max(self.config.data.sampling_rate_hz / stride, 1)
+            samples_per_sec = max(sampling_rate_hz / stride, 1)
             segment = max(int(window_seconds * samples_per_sec), 1)
             rte_segments = []
             for j in range(0, len(gt_x) - segment, segment):

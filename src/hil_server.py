@@ -173,11 +173,19 @@ class HILServer:
         ensure_builtin_components_registered()
         self.config = config if config is not None else load_config(config_path)
         selection = self._resolve_component_selection(self.config)
-        dataset, bundle = self._load_dataset_bundle(
-            selection["dataset_name"],
-            selection["dataset_config"],
-        )
-        self._initialize_component_state(selection, dataset, bundle)
+        self.dataset_name = selection["dataset_name"]
+        self.task_name = selection["task_name"]
+        self.model_family_name = selection["model_family_name"]
+        self.dataset_config = selection["dataset_config"]
+        self.task_config = selection["task_config"]
+        self.model_config = selection["model_config"]
+        self.dataset = None
+        self.task = None
+        self.model_family = None
+        self.dataset_bundle = None
+        self.target_spec = None
+        self.model_build_context = None
+        self._pipeline_bootstrapped = False
 
         # Resolve repository root once so sketch variants can be copied before each compile.
         self.repo_root = Path(__file__).resolve().parent.parent
@@ -212,6 +220,37 @@ class HILServer:
         """
 
         return cfg_get(container, key, default)
+
+    def _ensure_pipeline_bootstrapped(self) -> None:
+        """Load and cache the active dataset/task/model pipeline on first use.
+
+        Returns
+        -------
+        None
+            Subsequent calls are no-ops after the first successful bootstrap.
+        """
+
+        if self._pipeline_bootstrapped:
+            return
+        if self.dataset_bundle is not None:
+            dataset_cls = dataset_registry.get(self.dataset_name)
+            dataset = self.dataset if self.dataset is not None else dataset_cls()
+            dataset.validate_config(self.dataset_config)
+            bundle = self.dataset_bundle
+        else:
+            dataset, bundle = self._load_dataset_bundle(
+                self.dataset_name,
+                self.dataset_config,
+            )
+        selection = {
+            "dataset_name": self.dataset_name,
+            "task_name": self.task_name,
+            "model_family_name": self.model_family_name,
+            "dataset_config": self.dataset_config,
+            "task_config": self.task_config,
+            "model_config": self.model_config,
+        }
+        self._initialize_component_state(selection, dataset, bundle)
 
     def _resolve_component_selection(self, config: Any) -> dict[str, Any]:
         """Resolve active dataset, task, and model-family selections.
@@ -346,6 +385,9 @@ class HILServer:
         target_spec = task.build_target_spec(bundle, selection["task_config"])
         model_build_context = self._build_model_context(bundle, target_spec)
 
+        self.dataset_name = selection["dataset_name"]
+        self.task_name = selection["task_name"]
+        self.model_family_name = selection["model_family_name"]
         self.dataset = dataset
         self.task = task
         self.model_family = model_family
@@ -355,6 +397,7 @@ class HILServer:
         self.dataset_config = selection["dataset_config"]
         self.task_config = selection["task_config"]
         self.model_config = selection["model_config"]
+        self._pipeline_bootstrapped = True
 
     def _split_request_hparams(self, hyperparams: Mapping[str, Any]) -> tuple[dict[str, Any], Dict]:
         """Split inbound request fields into family and runtime-owned values.
@@ -381,6 +424,140 @@ class HILServer:
         )
         return family_hparams, runtime_metadata
 
+    @staticmethod
+    def _parse_required_runtime_int(
+        runtime_metadata: Mapping[str, Any],
+        field_name: str,
+    ) -> int:
+        """Parse one required integer field from runtime metadata.
+
+        Parameters
+        ----------
+        runtime_metadata : Mapping[str, Any]
+            Runtime-owned request metadata.
+        field_name : str
+            Required field name.
+
+        Returns
+        -------
+        int
+            Parsed integer value.
+
+        Raises
+        ------
+        ValueError
+            If the field is missing or not a valid integer.
+        """
+
+        if field_name not in runtime_metadata:
+            raise ValueError(f"HIL request hyperparams must include '{field_name}'.")
+        raw_value = runtime_metadata[field_name]
+        if isinstance(raw_value, bool):
+            raise ValueError(f"HIL request hyperparams field '{field_name}' must be an integer.")
+        try:
+            return int(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"HIL request hyperparams field '{field_name}' must be an integer."
+            ) from exc
+
+    @classmethod
+    def _normalize_runtime_metadata(cls, runtime_metadata: Mapping[str, Any]) -> Dict:
+        """Normalize required runtime metadata into typed integer values.
+
+        Parameters
+        ----------
+        runtime_metadata : Mapping[str, Any]
+            Raw runtime-owned request metadata.
+
+        Returns
+        -------
+        Dict
+            Normalized runtime metadata with validated integer values.
+        """
+
+        normalized = Dict(dict(runtime_metadata))
+        normalized.flops = cls._parse_required_runtime_int(runtime_metadata, "flops")
+        normalized.timesteps = cls._parse_required_runtime_int(runtime_metadata, "timesteps")
+        normalized.input_dim = cls._parse_required_runtime_int(runtime_metadata, "input_dim")
+        if "batch_size" in runtime_metadata:
+            normalized.batch_size = cls._parse_required_runtime_int(runtime_metadata, "batch_size")
+        return normalized
+
+    def _validate_request_dimensions(
+        self,
+        *,
+        requested_timesteps: int,
+        requested_input_dim: int,
+    ) -> None:
+        """Reject HIL requests whose model dimensions diverge from the server.
+
+        Parameters
+        ----------
+        requested_timesteps : int
+            Request-owned logical timestep count.
+        requested_input_dim : int
+            Request-owned logical input dimension.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ValueError
+            If the bootstrapped model context is unavailable or mismatched.
+        """
+
+        self._ensure_pipeline_bootstrapped()
+        input_shape = None if self.model_build_context is None else self.model_build_context.input_shape
+        if input_shape is None or len(input_shape) < 2:
+            raise ValueError("The active model build context does not expose a 2D logical input shape.")
+        expected_timesteps = int(input_shape[0])
+        expected_input_dim = int(input_shape[1])
+        if requested_timesteps != expected_timesteps or requested_input_dim != expected_input_dim:
+            raise ValueError(
+                "HIL request model dimensions do not match the active server configuration: "
+                f"expected timesteps={expected_timesteps}, input_dim={expected_input_dim}; "
+                f"got timesteps={requested_timesteps}, input_dim={requested_input_dim}."
+            )
+
+    def _resolve_dataset_numeric_setting(self, key: str) -> float:
+        """Resolve one numeric dataset setting from metadata or config.
+
+        Parameters
+        ----------
+        key : str
+            Numeric dataset field name to resolve.
+
+        Returns
+        -------
+        float
+            Resolved numeric value.
+
+        Raises
+        ------
+        ValueError
+            If the field cannot be resolved to a finite positive number.
+        """
+
+        self._ensure_pipeline_bootstrapped()
+        metadata = {} if self.dataset_bundle is None else dict(self.dataset_bundle.metadata)
+        raw_value = metadata.get(key, self._cfg_get(self.dataset_config, key, None))
+        if raw_value in (None, "") or isinstance(raw_value, bool):
+            raise ValueError(f"Unable to resolve dataset setting '{key}' for the active configuration.")
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Dataset setting '{key}' must be numeric for the active configuration."
+            ) from exc
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(
+                f"Dataset setting '{key}' must be a positive finite value for the active configuration."
+            )
+        return value
+
     def _ensure_calibration_split(self) -> DataSplit | None:
         """Resolve and cache calibration data only when a backend needs it.
 
@@ -391,6 +568,7 @@ class HILServer:
             expose calibration data.
         """
 
+        self._ensure_pipeline_bootstrapped()
         if not self._calibration_split_resolved:
             self.calibration_split = self.dataset.make_calibration_data(
                 self.dataset_bundle,
@@ -435,8 +613,9 @@ class HILServer:
             or model build context.
         """
 
-        metadata = dict(self.dataset_bundle.metadata)
-        input_shape = self.model_build_context.input_shape
+        self._ensure_pipeline_bootstrapped()
+        metadata = {} if self.dataset_bundle is None else dict(self.dataset_bundle.metadata)
+        input_shape = None if self.model_build_context is None else self.model_build_context.input_shape
         raw_window_size = metadata.get("window_size")
         raw_input_dim = metadata.get("input_dim")
         if raw_window_size is None and input_shape is not None and len(input_shape) >= 1:
@@ -473,6 +652,7 @@ class HILServer:
             Validated model instance ready for export preparation.
         """
 
+        self._ensure_pipeline_bootstrapped()
         model = self.model_family.materialize_export_model(
             family_hparams,
             self.model_build_context,
@@ -538,7 +718,9 @@ class HILServer:
         configured_budget = getattr(self.config.device, "latency_budget_ms", None)
         if configured_budget is not None:
             return float(configured_budget)
-        return (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000
+        stride = self._resolve_dataset_numeric_setting("stride")
+        sampling_rate_hz = self._resolve_dataset_numeric_setting("sampling_rate_hz")
+        return (stride / sampling_rate_hz) * 1000
 
     def _configured_runtime_mode(self) -> str:
         """Return the normalized configured runtime mode."""
@@ -735,7 +917,10 @@ class HILServer:
         error_detail: str,
     ) -> dict:
         """Build failure metrics for malformed or invalid client requests."""
-        latency_budget_ms = self._effective_latency_budget_ms()
+        try:
+            latency_budget_ms = self._effective_latency_budget_ms()
+        except ValueError:
+            latency_budget_ms = -1.0
         effective_hil_enabled = bool(self.config.device.hil)
         effective_energy_aware = bool(self.config.training.energy_aware and effective_hil_enabled)
         return _build_backend_failure_metrics(
@@ -787,7 +972,31 @@ class HILServer:
             If a requested trained checkpoint does not exist.
         """
         family_hparams, runtime_metadata = self._split_request_hparams(hyperparams)
-        latency_budget_ms = self._effective_latency_budget_ms()
+        try:
+            runtime_metadata = self._normalize_runtime_metadata(runtime_metadata)
+        except ValueError as exc:
+            return self._request_boundary_failure_metrics(
+                error_kind="request",
+                error_detail=str(exc),
+            )
+        try:
+            self._ensure_pipeline_bootstrapped()
+            latency_budget_ms = self._effective_latency_budget_ms()
+        except ValueError as exc:
+            return self._request_boundary_failure_metrics(
+                error_kind="config",
+                error_detail=str(exc),
+            )
+        try:
+            self._validate_request_dimensions(
+                requested_timesteps=runtime_metadata.timesteps,
+                requested_input_dim=runtime_metadata.input_dim,
+            )
+        except ValueError as exc:
+            return self._request_boundary_failure_metrics(
+                error_kind="request",
+                error_detail=str(exc),
+            )
         resolved_device_options = resolve_device_options(self._normalized_device_name(), self.config.device) or {}
         filtered_device_options_overrides = {
             key: value
@@ -826,12 +1035,6 @@ class HILServer:
             return self._request_boundary_failure_metrics(
                 error_kind="request" if filtered_device_options_overrides else "config",
                 error_detail=str(exc),
-            )
-
-        if "flops" not in runtime_metadata:
-            return self._request_boundary_failure_metrics(
-                error_kind="request",
-                error_detail="HIL request hyperparams must include 'flops'.",
             )
 
         window_size, input_dim = self._resolve_runtime_dimensions()

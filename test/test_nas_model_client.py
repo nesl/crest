@@ -151,6 +151,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
             drop_rate_choices=[0.1, 0.2],
             train=True,
             nas_epochs=10,
+            model_epochs=20,
             quantization="float",
             latency_proxy_max_flops=1_000_000,
             nas_trials=2,
@@ -186,8 +187,11 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     client.validation_data = legacy_dataset
     client.test_data = legacy_dataset
     client.dataset = SimpleNamespace(validate_config=MagicMock())
+    client.dataset_name = "oxiod"
     client.task = task
+    client.task_name = "odometry_regression"
     client.model_family = model_family
+    client.model_family_name = "tinyodom_tcn"
     client.dataset_bundle = bundle
     client.target_spec = target_spec
     client.metric_contract = metric_contract
@@ -1078,6 +1082,71 @@ class RunNASTests(unittest.TestCase):
             ],
         )
 
+class TrainBestTrialTests(unittest.TestCase):
+    """Best-trial retraining should honor the task abstraction."""
+
+    def test_train_best_trial_uses_task_fit_plan_with_override_task_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            built_model = client.model_family.build_model.return_value
+            built_model.fit.return_value = SimpleNamespace(history={"loss": [1.0], "val_loss": [0.5]})
+            fit_task = MagicMock()
+            fit_task.make_fit_plan.return_value = FitPlan(
+                fit_kwargs={
+                    "x": client.dataset_bundle.train.inputs,
+                    "y": [client.dataset_bundle.train.targets["velx"], client.dataset_bundle.train.targets["vely"]],
+                    "validation_data": (
+                        client.dataset_bundle.val.inputs,
+                        [client.dataset_bundle.val.targets["velx"], client.dataset_bundle.val.targets["vely"]],
+                    ),
+                    "shuffle": True,
+                },
+                callbacks=["task-callback"],
+                monitor_metric="val_loss",
+            )
+            best_trial = SimpleNamespace(
+                params={
+                    "nb_filters": 2,
+                    "kernel_size": 2,
+                    "dropout_rate": 0.1,
+                    "use_skip_connections": True,
+                    "norm_flag": True,
+                    "dilations_index": 0,
+                }
+            )
+
+            with patch.object(client, "_instantiate_task", return_value=fit_task) as instantiate_mock, patch(
+                "nas_model_client.optuna.load_study",
+                return_value=SimpleNamespace(best_trial=best_trial),
+            ):
+                history = client.train_best_trial(
+                    study_storage="sqlite:///optuna.db",
+                    study_name="demo",
+                    patience=7,
+                    checkpoint_path=base / "best.keras",
+                    history_path=base / "history.json",
+                )
+
+            instantiate_mock.assert_called_once_with(
+                client.task_name,
+                client.config,
+                client.task_config,
+                checkpoint_path=base / "best.keras",
+                early_stopping_patience=7,
+            )
+            fit_task.make_fit_plan.assert_called_once_with(
+                client.dataset_bundle,
+                client.task_config,
+                client.target_spec,
+            )
+            built_model.fit.assert_called_once()
+            fit_call = built_model.fit.call_args.kwargs
+            self.assertEqual(fit_call["callbacks"], ["task-callback"])
+            self.assertEqual(fit_call["epochs"], client.config.training.model_epochs)
+            self.assertEqual(fit_call["batch_size"], 256)
+            self.assertEqual(history["loss"], [1.0])
+
 
 class PlotTrainingHistoryTests(unittest.TestCase):
     """Plotting helpers should emit PNGs without requiring a display."""
@@ -1148,18 +1217,20 @@ class EvaluateCheckpointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
+            calibration_inputs = np.full((3, 16, 3), 7.0, dtype=np.float32)
+            client.dataset_bundle.calibration = DataSplit(
+                inputs=calibration_inputs,
+                targets={"velx": np.zeros((3, 1), dtype=np.float32), "vely": np.zeros((3, 1), dtype=np.float32)},
+                metadata={},
+            )
             gt_vx = np.zeros((2, 1), dtype=np.float32)
             gt_vy = np.zeros((2, 1), dtype=np.float32)
-            client.test_data = SimpleNamespace(
-                inputs=np.zeros((2, 1, 1), dtype=np.float32),
-                x_vel=gt_vx,
-                y_vel=gt_vy,
-            )
             client.dataset_bundle.test = DataSplit(
-                inputs=client.test_data.inputs,
+                inputs=np.zeros((2, 1, 1), dtype=np.float32),
                 targets={"velx": gt_vx, "vely": gt_vy},
                 metadata={},
             )
+            client.training_data = SimpleNamespace(inputs=np.full((1, 1, 1), 99.0, dtype=np.float32))
             client.task.evaluate.return_value = EvaluationResult(
                 metrics={"rmse_vel_x": 0.0, "rmse_vel_y": 0.0, "rmse_total": 0.0},
                 predictions=[gt_vx, gt_vy],
@@ -1176,6 +1247,9 @@ class EvaluateCheckpointTests(unittest.TestCase):
 
             self.assertTrue(mock_convert.called)
             self.assertEqual(mock_convert.call_args.kwargs["output_name"], tflite_path)
+            self.assertTrue(
+                np.array_equal(mock_convert.call_args.kwargs["training_data"], calibration_inputs)
+            )
 
 
 class TrajectoryMetricsTests(unittest.TestCase):
@@ -1188,28 +1262,21 @@ class TrajectoryMetricsTests(unittest.TestCase):
             length = 4
             vx = np.full((length, 1), 0.5, dtype=np.float32)
             vy = np.full((length, 1), 0.5, dtype=np.float32)
-            client.test_data = SimpleNamespace(
-                inputs=np.zeros((length, 1, 1), dtype=np.float32),
-                x_vel=vx,
-                y_vel=vy,
-                size_of_each=[length],
-                x0=[0.0],
-                y0=[0.0],
+            client.dataset_bundle.metadata.update(
+                {"sampling_rate_hz": 100, "window_size": 2, "stride": 1}
             )
+            client.dataset_bundle.test = DataSplit(
+                inputs=np.zeros((length, 1, 1), dtype=np.float32),
+                targets={"velx": vx, "vely": vy},
+                metadata={"size_of_each": [length], "x0": [0.0], "y0": [0.0]},
+            )
+            delattr(client.config, "data")
 
             class FakeModel:
                 def predict(self, _inputs):
                     return [vx, vy]
 
             client.model_family.load_model.return_value = FakeModel()
-            client.test_data = SimpleNamespace(
-                inputs=np.zeros((length, 1, 1), dtype=np.float32),
-                x_vel=vx,
-                y_vel=vy,
-                size_of_each=[length],
-                x0=[0.0],
-                y0=[0.0],
-            )
             with patch.object(client.model_family, "load_model", return_value=FakeModel()):
                 metrics = client.trajectory_metrics_and_plots(
                     checkpoint_path=base / "ckpt.keras",
@@ -1226,6 +1293,29 @@ class TrajectoryMetricsTests(unittest.TestCase):
             self.assertTrue(Path(metrics["plots"][0]).is_file())
             # RTE uses a 60s window; with tiny synthetic data it should be NaN.
             self.assertTrue(np.isnan(metrics["rte_median"]))
+
+    def test_trajectory_metrics_and_plots_requires_odometry_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            vx = np.full((2, 1), 0.5, dtype=np.float32)
+            vy = np.full((2, 1), 0.5, dtype=np.float32)
+            client.dataset_bundle.metadata.update(
+                {"sampling_rate_hz": 100, "window_size": 2, "stride": 1}
+            )
+            client.dataset_bundle.test = DataSplit(
+                inputs=np.zeros((2, 1, 1), dtype=np.float32),
+                targets={"velx": vx, "vely": vy},
+                metadata={},
+            )
+            delattr(client.config, "data")
+
+            with self.assertRaisesRegex(ValueError, "odometry-specific"):
+                client.trajectory_metrics_and_plots(
+                    checkpoint_path=base / "ckpt.keras",
+                    plot_dir=base,
+                    study_name="demo",
+                )
 
 
 class SummaryBundleTests(unittest.TestCase):
