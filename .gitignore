@@ -288,6 +288,7 @@ sketches/stm32/tinyodom_tcn_stm32_lrun/**
 !sketches/stm32/tinyodom_tcn_stm32_lrun/lrun_ownership_manifest.tsv
 !sketches/stm32/tinyodom_tcn_stm32_lrun/Appli/
 !sketches/stm32/tinyodom_tcn_stm32_lrun/Appli/Inc/
+!sketches/stm32/tinyodom_tcn_stm32_lrun/Appli/Inc/mx25um51245g_conf.h
 !sketches/stm32/tinyodom_tcn_stm32_lrun/Appli/Inc/stm32n6xx_hal_conf.h
 !sketches/stm32/tinyodom_tcn_stm32_lrun/Appli/Inc/stm32n6xx_nucleo_conf.h
 !sketches/stm32/tinyodom_tcn_stm32_lrun/Appli/Inc/tcn_dut_runner.h

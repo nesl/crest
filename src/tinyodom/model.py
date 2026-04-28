@@ -38,7 +38,7 @@ from .data import OxIODSplitData
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "nas_config.yaml"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # Keep the legacy constant name for compatibility with older callers, but point
-# it at the canonical STM32 FSBL template that now lives under ``sketches/``.
+# it at the canonical STM32 LRUN workspace under ``sketches/``.
 STM32_DEFAULT_PROJECT_ROOT = (
     REPO_ROOT
     / "sketches"
