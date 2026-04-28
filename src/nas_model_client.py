@@ -391,10 +391,11 @@ class NASModelClient:
         if split is None:
             return None
         metadata = dict(split.metadata)
+        targets = split.targets if isinstance(split.targets, Mapping) else {}
         return _LegacySplitView(
             inputs=split.inputs,
-            x_vel=split.targets["velx"],
-            y_vel=split.targets["vely"],
+            x_vel=targets.get("velx"),
+            y_vel=targets.get("vely"),
             disp=metadata.get("disp"),
             heading=metadata.get("heading"),
             position=metadata.get("position"),
@@ -1873,8 +1874,12 @@ class NASModelClient:
             self.task_config,
             self.target_spec,
         )
-        rmse_vel_x = float(evaluation_result.metrics["rmse_vel_x"])
-        rmse_vel_y = float(evaluation_result.metrics["rmse_vel_y"])
+        task_metrics = {}
+        for metric_name, raw_value in evaluation_result.metrics.items():
+            if isinstance(raw_value, np.generic):
+                task_metrics[metric_name] = raw_value.item()
+            else:
+                task_metrics[metric_name] = raw_value
 
         # Gather hyperparameters for record-keeping if the study is available.
         best_params = None
@@ -1900,10 +1905,9 @@ class NASModelClient:
             "checkpoint_path": str(ckpt_path),
             "study_name": study_name,
             "study_storage": study_storage,
-            "rmse_vel_x": float(rmse_vel_x),
-            "rmse_vel_y": float(rmse_vel_y),
             "hyperparameters": best_params,
             "tflite_path": tflite_written,
+            **task_metrics,
         }
 
         # Persist JSON for rich write-ups and a simple CSV for quick scanning.

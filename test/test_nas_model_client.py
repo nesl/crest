@@ -375,6 +375,36 @@ class InitializationTests(unittest.TestCase):
         )
         fake_socket.connect.assert_called_once()
 
+    def test_refresh_legacy_split_aliases_tolerates_non_odometry_targets(self) -> None:
+        client = _build_test_client()
+        bundle = DatasetBundle(
+            train=DataSplit(
+                inputs=np.zeros((2, 16, 3), dtype=np.float32),
+                targets={"class_id": np.array([0, 1], dtype=np.int32)},
+                metadata={},
+            ),
+            val=DataSplit(
+                inputs=np.zeros((1, 16, 3), dtype=np.float32),
+                targets={"class_id": np.array([1], dtype=np.int32)},
+                metadata={},
+            ),
+            test=DataSplit(
+                inputs=np.zeros((1, 16, 3), dtype=np.float32),
+                targets={"class_id": np.array([0], dtype=np.int32)},
+                metadata={},
+            ),
+            input_shape=(16, 3),
+            input_dtype="float32",
+            metadata={},
+        )
+
+        client._refresh_legacy_split_aliases(bundle)
+
+        self.assertIsNone(client.training_data.x_vel)
+        self.assertIsNone(client.training_data.y_vel)
+        self.assertIsNone(client.validation_data.x_vel)
+        self.assertIsNone(client.test_data.y_vel)
+
 
 class ObjectiveTests(unittest.TestCase):
     """Exercise Optuna objective branches with lightweight stubs."""
@@ -1212,6 +1242,30 @@ class EvaluateCheckpointTests(unittest.TestCase):
             self.assertAlmostEqual(metrics["rmse_vel_x"], 0.0)
             self.assertAlmostEqual(metrics["rmse_vel_y"], 0.0)
             self.assertEqual(metrics["checkpoint_path"], str(base / "ckpt.keras"))
+
+    def test_evaluate_checkpoint_preserves_task_defined_metric_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            client.task.evaluate.return_value = EvaluationResult(
+                metrics={"f1_macro": np.float32(0.8), "loss": np.float64(0.25)},
+                predictions=None,
+            )
+
+            metrics_path = base / "metrics.json"
+            metrics = client.evaluate_checkpoint(
+                checkpoint_path=base / "ckpt.keras",
+                metrics_path=metrics_path,
+                export_tflite=False,
+            )
+
+            self.assertAlmostEqual(metrics["f1_macro"], 0.8)
+            self.assertAlmostEqual(metrics["loss"], 0.25)
+            self.assertNotIn("rmse_vel_x", metrics)
+            with metrics_path.open() as handle:
+                persisted = json.load(handle)
+            self.assertAlmostEqual(persisted["f1_macro"], 0.8)
+            self.assertAlmostEqual(persisted["loss"], 0.25)
 
     def test_evaluate_checkpoint_exports_tflite_when_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
