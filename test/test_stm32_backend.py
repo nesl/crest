@@ -1602,6 +1602,10 @@ class STM32HelperTests(unittest.TestCase):
                 device,
                 "_storage_power_metrics",
                 return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
+            ), patch.object(
+                device,
+                "_program_runtime_images",
+                return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
             ), patch(
                 "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
                 return_value=project_root / "STM32CubeIDE" / "Boot" / "Debug" / "Template_LRUN_FSBL.elf",
@@ -1744,6 +1748,7 @@ class STM32HelperTests(unittest.TestCase):
             manifest_path = project_root / STAGED_MANIFEST_NAME
             manifest_path.write_text(
                 "{\n"
+                f'  "staged_workspace_root": "{project_root.resolve()}",\n'
                 '  "weight_storage_mode": "external_flash",\n'
                 '  "weights_blob_size": 4097,\n'
                 '  "weights_blob_path": "/tmp/network_data.bin"\n'
@@ -3235,6 +3240,7 @@ class STM32HelperTests(unittest.TestCase):
             (project_root / STAGED_MANIFEST_NAME).write_text(
                 json.dumps(
                     {
+                        "staged_workspace_root": str(project_root.resolve()),
                         "weight_storage_mode": "external_flash",
                         "weights_blob_path": str(weights_blob),
                         "weights_blob_size": weights_blob.stat().st_size,
