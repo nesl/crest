@@ -162,6 +162,10 @@ class TaskMetricContract:
         Metric names the task can produce.
     training_only_metric_names : set[str], optional
         Metric names available only after training has completed.
+    nonnegative_metric_names : set[str], optional
+        Task metric names guaranteed to stay nonnegative. Shared score and
+        prune validation uses this set to interpret negative sentinels as
+        unavailable values.
     primary_metric_names : set[str], optional
         Informational headline metrics exposed by the task. These names do not
         override runner-owned objective configuration.
@@ -169,4 +173,5 @@ class TaskMetricContract:
 
     available_metric_names: set[str] = field(default_factory=set)
     training_only_metric_names: set[str] = field(default_factory=set)
+    nonnegative_metric_names: set[str] = field(default_factory=set)
     primary_metric_names: set[str] = field(default_factory=set)

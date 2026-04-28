@@ -94,6 +94,7 @@ class OdometryRegressionTask(TaskABC):
         return TaskMetricContract(
             available_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
             training_only_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
+            nonnegative_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
             primary_metric_names={"rmse_total"},
         )
 

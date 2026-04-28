@@ -27,7 +27,7 @@ from tinyodom.hardware import (
     HIL_MASTER_FATAL,
     HIL_MASTER_SUCCESS,
 )  # noqa: E402
-from tinyodom.model import ScoringResult, ScoreConfigEvaluationError  # noqa: E402
+from tinyodom.model import ScoreConfigEvaluationError, TrialOutcome  # noqa: E402
 from tinyodom.pipeline_types import (
     DataSplit,
     DatasetBundle,
@@ -37,31 +37,6 @@ from tinyodom.pipeline_types import (
     TargetSpec,
     TaskMetricContract,
 )  # noqa: E402
-
-
-def _make_scoring_result(
-    *,
-    score: float | None = 0.3,
-    objective_names: list[str] | None = None,
-    objective_values: list[float] | None = None,
-    objective_directions: list[str] | None = None,
-    rmse_vel_x: float = 0.1,
-    rmse_vel_y: float = 0.2,
-) -> ScoringResult:
-    if objective_names is None:
-        objective_names = ["score"]
-    if objective_values is None:
-        objective_values = [score if score is not None else 0.0]
-    if objective_directions is None:
-        objective_directions = ["maximize"]
-    return ScoringResult(
-        rmse_vel_x=rmse_vel_x,
-        rmse_vel_y=rmse_vel_y,
-        score=score,
-        objective_names=objective_names,
-        objective_values=objective_values,
-        objective_directions=objective_directions,
-    )
 
 
 def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
@@ -114,6 +89,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     metric_contract = TaskMetricContract(
         available_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
         training_only_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
+        nonnegative_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
         primary_metric_names={"rmse_total"},
     )
     fake_built_model = MagicMock()
@@ -351,6 +327,7 @@ class InitializationTests(unittest.TestCase):
         metric_contract = TaskMetricContract(
             available_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
             training_only_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
+            nonnegative_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
             primary_metric_names={"rmse_total"},
         )
         fake_task = SimpleNamespace(
@@ -591,9 +568,9 @@ class ObjectiveTests(unittest.TestCase):
         with self.assertRaises(optuna.TrialPruned):
             self.client.objective(trial)
 
-        scoring_result = self.mock_log.call_args.kwargs["scoring_result"]
-        self.assertEqual(scoring_result.rmse_vel_x, -1.0)
-        self.assertEqual(scoring_result.rmse_vel_y, -1.0)
+        trial_outcome = self.mock_log.call_args.kwargs["trial_outcome"]
+        self.assertIsInstance(trial_outcome, TrialOutcome)
+        self.assertEqual(trial_outcome.task_metrics, {})
 
     def test_objective_does_not_swallow_generic_training_value_errors(self) -> None:
         metrics = {
@@ -709,6 +686,8 @@ class ObjectiveTests(unittest.TestCase):
         self.client.task.make_fit_plan.assert_called_once()
         self.assertEqual(result, -0.3)
         self.mock_log.assert_called_once()
+        logged_outcome = self.mock_log.call_args.kwargs["trial_outcome"]
+        self.assertEqual(logged_outcome.task_metrics["rmse_total"], 0.3)
 
     def test_objective_returns_configured_multiobjective_tuple(self) -> None:
         """Configured multi-objective runs should return all objective values.
@@ -748,6 +727,43 @@ class ObjectiveTests(unittest.TestCase):
 
         self.assertEqual(result, (10.0, 512.0))
         self.mock_log.assert_called_once()
+
+    def test_objective_train_false_uses_generic_metric_sentinels(self) -> None:
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+        }
+        self.client.metric_contract = TaskMetricContract(
+            available_metric_names={"signed_bias", "signed_offset"},
+            training_only_metric_names={"signed_bias", "signed_offset"},
+            nonnegative_metric_names=set(),
+            primary_metric_names={"signed_bias"},
+        )
+        self.client.config.training.train = False
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="signed_bias", direction="maximize"),
+                    Dict(metric="signed_offset", direction="maximize"),
+                ]
+            ),
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        result = self.client.objective(trial)
+
+        self.assertEqual(result, (-1.0, -1.0))
+        logged_outcome = self.mock_log.call_args.kwargs["trial_outcome"]
+        self.assertEqual(
+            logged_outcome.task_metrics,
+            {"signed_bias": -1.0, "signed_offset": -1.0},
+        )
 
     def test_objective_portenta_forwards_device_options_to_hardware_specs(self) -> None:
         metrics = {

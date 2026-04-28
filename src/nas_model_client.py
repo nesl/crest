@@ -38,8 +38,9 @@ from tinyodom.microcontrollers import (
 from tinyodom.builtin_components import ensure_builtin_components_registered
 from tinyodom.component_selection import cfg_get, resolve_component_selection
 from tinyodom.model import (
-    ScoringResult,
+    NONNEGATIVE_METRICS,
     ScoreConfigEvaluationError,
+    build_trial_outcome,
     DILATION_CANDIDATES,
     apply_cadenced_metric_defaults,
     count_flops,
@@ -49,6 +50,7 @@ from tinyodom.model import (
     is_multiobjective_score_config,
     log_trial,
     load_config,
+    TrialOutcome,
     DEFAULT_CONFIG_PATH,
     score_config_uses_training_metrics,
     set_error_code,
@@ -672,9 +674,11 @@ class NASModelClient:
         -------
         None
         """
-        metrics["rmse_vel_x"] = float(task_metrics["rmse_vel_x"])
-        metrics["rmse_vel_y"] = float(task_metrics["rmse_vel_y"])
-        metrics["rmse_total"] = float(task_metrics["rmse_total"])
+        for metric_name, raw_value in task_metrics.items():
+            if isinstance(raw_value, np.generic):
+                metrics[metric_name] = raw_value.item()
+            else:
+                metrics[metric_name] = raw_value
 
     @staticmethod
     def _expand_best_params_to_family_hparams(best_params: dict[str, Any]) -> dict[str, Any]:
@@ -813,9 +817,9 @@ class NASModelClient:
         except ValueError:
             runtime_device = None
 
-        rmse_vel_x = -1.0
-        rmse_vel_y = -1.0
         penalty_acc = -100.0
+        task_nonnegative_metric_names = set(self.metric_contract.nonnegative_metric_names)
+        effective_nonnegative_metric_names = set(NONNEGATIVE_METRICS) | task_nonnegative_metric_names
         # If no error code present (or timeout), treat as fatal error
         error_code = metrics.get("error_code", HIL_MASTER_FATAL)
 
@@ -834,9 +838,6 @@ class NASModelClient:
         def _fail_with_penalty(
             prune_reason: str,
             prune_rule: str = "",
-            *,
-            penalty_rmse_vel_x: float = -1.0,
-            penalty_rmse_vel_y: float = -1.0,
         ):
             """Helper to prune with a penalty score and log the failure."""
             metrics.setdefault("latency_ms", 10000.0)
@@ -846,7 +847,6 @@ class NASModelClient:
             metrics.setdefault("bus_voltage_v", -1.0)
             metrics.setdefault("latency_budget_ms", -1.0)
             metrics.setdefault("arena_bytes", -1)
-            metrics.setdefault("rmse_total", -1.0)
             apply_cadenced_metric_defaults(metrics, metrics)
             directions = self._study_directions()
             if self._score_is_multiobjective():
@@ -855,28 +855,29 @@ class NASModelClient:
                     -1e12 if direction == "maximize" else 1e12
                     for direction in directions
                 ]
-                scoring_result = ScoringResult(
-                    rmse_vel_x=penalty_rmse_vel_x,
-                    rmse_vel_y=penalty_rmse_vel_y,
+                trial_outcome = TrialOutcome(
                     score=None,
                     objective_names=objective_names,
                     objective_values=objective_values,
                     objective_directions=directions,
+                    task_metrics={},
+                    hyperparams=dict(hyperparams),
+                    artifact_summary=None,
                 )
             else:
-                scoring_result = ScoringResult(
-                    rmse_vel_x=penalty_rmse_vel_x,
-                    rmse_vel_y=penalty_rmse_vel_y,
+                trial_outcome = TrialOutcome(
                     score=penalty_acc,
                     objective_names=["score"],
                     objective_values=[penalty_acc],
                     objective_directions=["maximize"],
+                    task_metrics={},
+                    hyperparams=dict(hyperparams),
+                    artifact_summary=None,
                 )
 
             log_trial(
-                scoring_result=scoring_result,
+                trial_outcome=trial_outcome,
                 metrics=metrics,
-                hyperparams=hyperparams,
                 trial=trial,
                 log_file_name=str(log_path),
                 study_name=self.study_name,
@@ -886,7 +887,7 @@ class NASModelClient:
             )
 
             if self._score_is_multiobjective():
-                return tuple(scoring_result.objective_values)
+                return tuple(trial_outcome.objective_values)
 
             _report_if_supported(-float("inf"))
             raise optuna.TrialPruned(prune_reason)
@@ -947,16 +948,22 @@ class NASModelClient:
 
         try:
             if not self.config.training.train:
-                metrics["rmse_vel_x"] = rmse_vel_x
-                metrics["rmse_vel_y"] = rmse_vel_y
-                metrics["rmse_total"] = -1.0
+                task_metrics = {
+                    metric_name: -1.0
+                    for metric_name in sorted(self.metric_contract.available_metric_names)
+                }
+                self._sync_task_metrics(metrics, task_metrics)
                 self._apply_non_hil_success_sentinels(metrics)
-                scoring_result = evaluate_score_config(
-                    rmse_vel_x=rmse_vel_x,
-                    rmse_vel_y=rmse_vel_y,
+                score_result = evaluate_score_config(
                     metrics=metrics,
                     hyperparams=hyperparams,
                     score_config=self.config.nas.score,
+                    task_nonnegative_metric_names=task_nonnegative_metric_names,
+                )
+                trial_outcome = build_trial_outcome(
+                    score_result=score_result,
+                    task_metrics=task_metrics,
+                    hyperparams=dict(hyperparams),
                 )
             else:
                 fit_plan = self.task.make_fit_plan(
@@ -981,45 +988,53 @@ class NASModelClient:
                     self.task_config,
                     self.target_spec,
                 )
-                self._sync_task_metrics(metrics, evaluation_result.metrics)
-                rmse_vel_x = float(metrics["rmse_vel_x"])
-                rmse_vel_y = float(metrics["rmse_vel_y"])
+                task_metrics = dict(evaluation_result.metrics)
+                self._sync_task_metrics(metrics, task_metrics)
                 self._apply_non_hil_success_sentinels(metrics)
-                scoring_result = evaluate_score_config(
-                    rmse_vel_x=rmse_vel_x,
-                    rmse_vel_y=rmse_vel_y,
+                score_result = evaluate_score_config(
                     metrics=metrics,
                     hyperparams=hyperparams,
                     score_config=self.config.nas.score,
+                    task_nonnegative_metric_names=task_nonnegative_metric_names,
+                )
+                trial_outcome = build_trial_outcome(
+                    score_result=score_result,
+                    task_metrics=task_metrics,
+                    hyperparams=dict(hyperparams),
+                    artifact_summary=evaluation_result.artifacts,
                 )
         except ScoreConfigEvaluationError:
             return _fail_with_penalty(
                 "Training failed to produce valid metrics",
-                penalty_rmse_vel_x=-1.0,
-                penalty_rmse_vel_y=-1.0,
             )
 
         if any(
-            (not np.isfinite(value)) or (direction == "minimize" and value < 0.0)
-            for value, direction in zip(scoring_result.objective_values, scoring_result.objective_directions)
+            (not np.isfinite(value))
+            or (
+                direction == "minimize"
+                and objective_name in effective_nonnegative_metric_names
+                and value < 0.0
+            )
+            for objective_name, value, direction in zip(
+                trial_outcome.objective_names,
+                trial_outcome.objective_values,
+                trial_outcome.objective_directions,
+            )
         ):
             return _fail_with_penalty(
                 "Training failed to produce valid metrics",
-                penalty_rmse_vel_x=-1.0,
-                penalty_rmse_vel_y=-1.0,
             )
 
         log_trial(
-            scoring_result=scoring_result,
+            trial_outcome=trial_outcome,
             metrics=metrics,
-            hyperparams=hyperparams,
             trial=trial,
             log_file_name=str(log_path),
             study_name=self.study_name,
         )
         if self._score_is_multiobjective():
-            return tuple(scoring_result.objective_values)
-        return float(scoring_result.score)
+            return tuple(trial_outcome.objective_values)
+        return float(trial_outcome.score)
 
     def smoke_test(
         self,
@@ -1132,7 +1147,7 @@ class NASModelClient:
                 for name, value in trial.params.items():
                     print(f"    {name}: {value}")
                 print("  Runtime metrics (user attrs):")
-                for key in ("ram_bytes", "flash_bytes", "latency_ms", "rmse_vel_x", "rmse_vel_y", "hil_error_code", "arena_bytes"):
+                for key in ("ram_bytes", "flash_bytes", "latency_ms", "hil_error_code", "arena_bytes", "task_metrics"):
                     print(f"    {key}: {trial.user_attrs.get(key)}")
         else:
             best_trial = single_trial_study.best_trial
@@ -1141,7 +1156,7 @@ class NASModelClient:
             for name, value in best_trial.params.items():
                 print(f"  {name}: {value}")
             print("Runtime metrics (user attrs):")
-            for key in ("ram_bytes", "flash_bytes", "latency_ms", "rmse_vel_x", "rmse_vel_y", "hil_error_code", "arena_bytes"):
+            for key in ("ram_bytes", "flash_bytes", "latency_ms", "hil_error_code", "arena_bytes", "task_metrics"):
                 print(f"  {key}: {best_trial.user_attrs.get(key)}")
 
     def run_nas(

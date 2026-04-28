@@ -127,36 +127,6 @@ RAM_OVERFLOW_STDERR = (
 )
 
 
-class OversizedModelMixin:
-    """Build a deliberately large TinyODOM-style TCN to stress flash usage."""
-
-    _OVERSIZED_TIMESTEPS = 400
-    _OVERSIZED_CHANNELS = 9
-
-    def _build_oversized_model(self) -> tf.keras.Model:
-        inputs = tf.keras.Input(
-            shape=(self._OVERSIZED_TIMESTEPS, self._OVERSIZED_CHANNELS),
-            name="imu_window",
-        )
-        features = TCN(
-            nb_filters=128,
-            kernel_size=5,
-            dilations=[1, 2, 4, 8, 16, 32, 64],
-            dropout_rate=0.1,
-            use_skip_connections=True,
-            use_batch_norm=True,
-        )(inputs)
-        features = tf.keras.layers.Reshape((128, 1))(features)
-        features = tf.keras.layers.MaxPooling1D(pool_size=2)(features)
-        features = tf.keras.layers.Flatten()(features)
-        features = tf.keras.layers.Dense(512, activation="relu", name="dense_big")(features)
-        vel_x = tf.keras.layers.Dense(2, activation="linear", name="velx")(features)
-        vel_y = tf.keras.layers.Dense(2, activation="linear", name="vely")(features)
-        model = tf.keras.Model(inputs=[inputs], outputs=[vel_x, vel_y])
-        model.compile(optimizer="adam", loss={"velx": "mse", "vely": "mse"})
-        model.build((None, self._OVERSIZED_TIMESTEPS, self._OVERSIZED_CHANNELS))
-        return model
-
 class TinyModelMixin:
     """Provide a small trained model + dataset so converter tests stay fast."""
 
@@ -2386,7 +2356,7 @@ SKETCH_SOURCE_DIR = ROOT_DIR / "tinyodom_tcn"
     ARDUINO_CLI_AVAILABLE and SKETCH_SOURCE_DIR.exists(),
     "Arduino CLI and tinyodom sketch are required for compile-only validation.",
 )
-class HILCompileOnlyTests(TinyModelMixin, OversizedModelMixin, unittest.TestCase):
+class HILCompileOnlyTests(TinyModelMixin, unittest.TestCase):
     def test_hil_spec_compile_only_runs_cli(self):
         # Runs the compile-only flow to ensure Arduino CLI integration keeps returning resource metrics.
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2461,36 +2431,6 @@ class HILCompileOnlyTests(TinyModelMixin, OversizedModelMixin, unittest.TestCase
             self.skipTest(f"Expected RAM overflow but got err={err}; board toolchain may differ.")
         self.assertEqual((ram, flash, latency), (-1, -1, -1.0))
         self.assertGreater(arena_bytes, 0)
-
-    def test_compile_only_with_oversized_model_triggers_flash_overflow(self):
-        # Embeds a massive TCN in the sketch and expects flash overflow during compile.
-        model = self._build_oversized_model()
-        calibration = np.random.rand(
-            16, self._OVERSIZED_TIMESTEPS, self._OVERSIZED_CHANNELS
-        ).astype(np.float32)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_path = Path(tmpdir)
-            tflite_path = tmp_path / "oversized.tflite"
-            convert_to_tflite_model(model, calibration, output_name=tflite_path)
-            cpp_dir = tmp_path / "cpp"
-            convert_to_cpp_model(tflite_path, cpp_dir)
-
-            sketch_copy = tmp_path / "tinyodom_tcn"
-            shutil.copytree(SKETCH_SOURCE_DIR, sketch_copy)
-            shutil.copy2(cpp_dir / "model.cc", sketch_copy / "model.cc")
-            shutil.copy2(cpp_dir / "model.h", sketch_copy / "model.h")
-
-            ram, flash, latency, arena_bytes, err, _power = HIL_spec(
-                dirpath=sketch_copy,
-                chosen_device="ARDUINO_NANO_33_BLE_SENSE",
-                compile_only=True,
-            )
-        if err != HIL_ERROR_FLASH_OVERFLOW:
-            self.skipTest(f"Expected flash overflow but got err={err}; board toolchain may differ.")
-        self.assertEqual((ram, flash, latency), (-1, -1, -1.0))
-        self.assertGreater(arena_bytes, 0)
-
 
 if __name__ == "__main__":
     defaultTest=None

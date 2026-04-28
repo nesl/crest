@@ -1,7 +1,10 @@
 import csv
+import fcntl
 import json
 import itertools
 import logging
+import os
+import tempfile
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -62,9 +65,6 @@ VALID_TERM_TYPES = {"weighted", "normalized-weighted", "boundary", "target"}
 VALID_OBJECTIVE_DIRECTIONS = {"maximize", "minimize"}
 VALID_PRUNE_CONDITIONS = {"gt", "gte", "lt", "lte"}
 NONNEGATIVE_METRICS = {
-    "rmse_vel_x",
-    "rmse_vel_y",
-    "rmse_total",
     "ram_bytes",
     "flash_bytes",
     "max_ram_bytes",
@@ -161,6 +161,36 @@ CADENCED_CSV_FIELDS = (
     "cadenced_error_code",
     "cadenced_error_label",
 )
+TRIAL_LOG_STABLE_COLUMNS = (
+    "study_name",
+    "timestamp_unix",
+    "timestamp_readable",
+    "score",
+    "ram_bytes",
+    "flash_bytes",
+    "external_flash_bytes",
+    "weight_storage_mode",
+    "flops",
+    "latency_ms",
+    "latency_budget_ms",
+    "energy_mj_per_inference",
+    "avg_power_mw",
+    "avg_current_ma",
+    "bus_voltage_v",
+    "cpu_clock_mhz_requested",
+    "clock_hz",
+    "error_code",
+    "error_label",
+    "score_type",
+    "objective_names_json",
+    "objective_values_json",
+    "objective_directions_json",
+    "artifact_summary_json",
+    "pruned",
+    "prune_reason",
+    "prune_rule",
+    *CADENCED_CSV_FIELDS,
+)
 
 
 def _minimum_stm32_serial_timeout_s(
@@ -215,17 +245,14 @@ class TrialLike(Protocol):
 
 
 @dataclass(frozen=True)
-class ScoringResult:
-    """Resolved scalar or multi-objective trial result.
+class ScoreEvaluationResult:
+    """Resolved score/objective values for one evaluated trial.
 
     Parameters
     ----------
-    rmse_vel_x : float
-        Validation RMSE along X.
-    rmse_vel_y : float
-        Validation RMSE along Y.
     score : float | None
-        Scalar score for single-objective runs. ``None`` for multi-objective runs.
+        Scalar score for single-objective runs. ``None`` for multi-objective
+        runs.
     objective_names : list[str]
         Ordered objective labels.
     objective_values : list[float]
@@ -234,12 +261,42 @@ class ScoringResult:
         Ordered objective directions matching Optuna conventions.
     """
 
-    rmse_vel_x: float
-    rmse_vel_y: float
     score: float | None
     objective_names: list[str]
     objective_values: list[float]
     objective_directions: list[str]
+
+
+@dataclass(frozen=True)
+class TrialOutcome:
+    """Generic trial outcome used by NAS logging and pruning paths.
+
+    Parameters
+    ----------
+    score : float | None
+        Scalar score for single-objective runs. ``None`` for multi-objective
+        runs.
+    objective_names : list[str]
+        Ordered objective labels.
+    objective_values : list[float]
+        Ordered objective values.
+    objective_directions : list[str]
+        Ordered objective directions matching Optuna conventions.
+    task_metrics : dict[str, Any]
+        Task-owned metric payload recorded for this trial.
+    hyperparams : dict[str, Any]
+        Resolved trial hyperparameters used for HIL, scoring, and logging.
+    artifact_summary : dict[str, Any] | None
+        JSON-safe task-owned artifact summary associated with the trial.
+    """
+
+    score: float | None
+    objective_names: list[str]
+    objective_values: list[float]
+    objective_directions: list[str]
+    task_metrics: dict[str, Any]
+    hyperparams: dict[str, Any]
+    artifact_summary: dict[str, Any] | None = None
 
 
 class ScoreConfigEvaluationError(ValueError):
@@ -658,7 +715,37 @@ def get_score_config_directions(score_config: Any) -> list[str]:
     ]
 
 
-def _metric_unavailable(metric_name: str, value: Any) -> bool:
+def _resolve_nonnegative_metric_names(
+    task_nonnegative_metric_names: set[str] | None = None,
+) -> set[str]:
+    """Return the effective nonnegative metric set for score evaluation.
+
+    Parameters
+    ----------
+    task_nonnegative_metric_names : set[str] | None, optional
+        Task-declared metric names that are guaranteed to stay nonnegative.
+        When omitted, the current TinyODOM RMSE metrics are used.
+
+    Returns
+    -------
+    set[str]
+        Union of infrastructure nonnegative metrics and task-declared
+        nonnegative metrics.
+    """
+
+    effective_task_nonnegative = set(
+        DEFAULT_TASK_SCORE_METRICS
+        if task_nonnegative_metric_names is None
+        else task_nonnegative_metric_names
+    )
+    return set(NONNEGATIVE_METRICS) | effective_task_nonnegative
+
+
+def _metric_unavailable(
+    metric_name: str,
+    value: Any,
+    task_nonnegative_metric_names: set[str] | None = None,
+) -> bool:
     """Return whether a metric value is unavailable for scoring.
 
     Parameters
@@ -684,13 +771,108 @@ def _metric_unavailable(metric_name: str, value: Any) -> bool:
         return True
     if not np.isfinite(numeric_value):
         return True
-    return metric_name in NONNEGATIVE_METRICS and numeric_value < 0.0
+    return (
+        metric_name in _resolve_nonnegative_metric_names(task_nonnegative_metric_names)
+        and numeric_value < 0.0
+    )
+
+
+def _normalize_json_safe(value: Any) -> Any:
+    """Convert one value into a JSON-safe representation.
+
+    Parameters
+    ----------
+    value : Any
+        Arbitrary runtime value.
+
+    Returns
+    -------
+    Any
+        Recursively normalized JSON-safe value.
+    """
+
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {
+            str(key): _normalize_json_safe(val)
+            for key, val in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_normalize_json_safe(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def normalize_artifact_summary(artifact_summary: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Normalize task-owned artifact metadata into a JSON-safe mapping.
+
+    Parameters
+    ----------
+    artifact_summary : dict[str, Any] | None
+        Optional raw artifact payload returned by a task.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        Normalized JSON-safe artifact summary.
+    """
+
+    if artifact_summary is None:
+        return None
+    return dict(_normalize_json_safe(artifact_summary))
+
+
+def build_trial_outcome(
+    *,
+    score_result: ScoreEvaluationResult,
+    task_metrics: dict[str, Any],
+    hyperparams: dict[str, Any],
+    artifact_summary: dict[str, Any] | None = None,
+) -> TrialOutcome:
+    """Assemble a generic trial outcome from score, metric, and artifact data.
+
+    Parameters
+    ----------
+    score_result : ScoreEvaluationResult
+        Evaluated scalar or multi-objective score payload.
+    task_metrics : dict[str, Any]
+        Task-owned metrics recorded for the trial.
+    hyperparams : dict[str, Any]
+        Resolved trial hyperparameters.
+    artifact_summary : dict[str, Any] | None, optional
+        Optional task-owned artifact metadata.
+
+    Returns
+    -------
+    TrialOutcome
+        Normalized generic trial outcome.
+    """
+
+    normalized_metrics = dict(_normalize_json_safe(task_metrics))
+    normalized_hyperparams = dict(_normalize_json_safe(hyperparams))
+    normalized_artifacts = normalize_artifact_summary(artifact_summary)
+    return TrialOutcome(
+        score=score_result.score,
+        objective_names=list(score_result.objective_names),
+        objective_values=list(score_result.objective_values),
+        objective_directions=list(score_result.objective_directions),
+        task_metrics=normalized_metrics,
+        hyperparams=normalized_hyperparams,
+        artifact_summary=normalized_artifacts,
+    )
 
 
 def _resolve_metric_value(
     metric_name: str,
     context: dict[str, Any],
     score_config: Dict,
+    task_nonnegative_metric_names: set[str] | None = None,
     stack: tuple[str, ...] = (),
 ) -> float:
     """Resolve a metric from the runtime scoring context.
@@ -704,6 +886,8 @@ def _resolve_metric_value(
         previously resolved derived metrics.
     score_config : addict.Dict
         Validated score configuration tree.
+    task_nonnegative_metric_names : set[str] | None, optional
+        Task-declared metric names that are guaranteed to stay nonnegative.
     stack : tuple[str, ...], optional
         Active recursion stack used to detect cycles in derived metrics.
 
@@ -720,7 +904,7 @@ def _resolve_metric_value(
     """
     if metric_name in context:
         value = context[metric_name]
-        if _metric_unavailable(metric_name, value):
+        if _metric_unavailable(metric_name, value, task_nonnegative_metric_names):
             raise ValueError(f"Metric '{metric_name}' is unavailable for scoring.")
         return float(value)
 
@@ -736,12 +920,28 @@ def _resolve_metric_value(
             # Derived metrics intentionally stay simple in v1: resolve each
             # child metric and sum the results.
             resolved = sum(
-                _resolve_metric_value(child_name, context, score_config, stack + (metric_name,))
+                _resolve_metric_value(
+                    child_name,
+                    context,
+                    score_config,
+                    task_nonnegative_metric_names,
+                    stack + (metric_name,),
+                )
                 for child_name in metric_config.metrics
             )
         elif metric_config.type == "energy-budget-from-power":
-            power_mw = _typed_reference_value(metric_config.power_mw, context, score_config)
-            duration_ms = _typed_reference_value(metric_config.duration_ms, context, score_config)
+            power_mw = _typed_reference_value(
+                metric_config.power_mw,
+                context,
+                score_config,
+                task_nonnegative_metric_names,
+            )
+            duration_ms = _typed_reference_value(
+                metric_config.duration_ms,
+                context,
+                score_config,
+                task_nonnegative_metric_names,
+            )
             if duration_ms <= 0.0:
                 raise ValueError(
                     f"Derived metric '{metric_name}' requires a positive duration reference."
@@ -764,7 +964,12 @@ def _resolve_metric_value(
     return float(resolved)
 
 
-def _typed_reference_value(reference: Dict, context: dict[str, Any], score_config: Dict) -> float:
+def _typed_reference_value(
+    reference: Dict,
+    context: dict[str, Any],
+    score_config: Dict,
+    task_nonnegative_metric_names: set[str] | None = None,
+) -> float:
     """Resolve a typed literal-or-metric reference entry.
 
     Parameters
@@ -775,6 +980,8 @@ def _typed_reference_value(reference: Dict, context: dict[str, Any], score_confi
         Runtime scoring context.
     score_config : addict.Dict
         Validated score configuration tree.
+    task_nonnegative_metric_names : set[str] | None, optional
+        Task-declared metric names that are guaranteed to stay nonnegative.
 
     Returns
     -------
@@ -784,36 +991,39 @@ def _typed_reference_value(reference: Dict, context: dict[str, Any], score_confi
     """
     if reference.type == "literal":
         return float(reference.value)
-    return float(_resolve_metric_value(reference.metric, context, score_config))
+    return float(
+        _resolve_metric_value(
+            reference.metric,
+            context,
+            score_config,
+            task_nonnegative_metric_names,
+        )
+    )
 
 
 def _evaluate_score_config(
-    rmse_vel_x: float,
-    rmse_vel_y: float,
     metrics: dict[str, Any],
     hyperparams: Dict,
     score_config: Dict,
-) -> ScoringResult:
+    task_nonnegative_metric_names: set[str] | None = None,
+) -> ScoreEvaluationResult:
     """Evaluate scalar or multi-objective scores from the resolved config.
 
     Parameters
     ----------
-    rmse_vel_x : float
-        Validation RMSE along X.
-    rmse_vel_y : float
-        Validation RMSE along Y.
     metrics : dict[str, Any]
         Runtime metrics collected for the trial.
     hyperparams : addict.Dict
         Sampled hyperparameters for the trial.
     score_config : addict.Dict
         Validated score configuration tree.
+    task_nonnegative_metric_names : set[str] | None, optional
+        Task-declared metric names that are guaranteed to stay nonnegative.
 
     Returns
     -------
-    ScoringResult
-        Structured scalar or multi-objective result ready for Optuna and CSV
-        logging.
+    ScoreEvaluationResult
+        Structured scalar or multi-objective score result.
 
     Raises
     ------
@@ -822,9 +1032,6 @@ def _evaluate_score_config(
         normalized reference resolves to a non-positive value.
     """
     context = dict(metrics)
-    context["rmse_vel_x"] = rmse_vel_x
-    context["rmse_vel_y"] = rmse_vel_y
-    context["rmse_total"] = metrics.get("rmse_total", -1.0)
     context["flops"] = hyperparams["flops"]
 
     def _resolve_score_metric(metric_name: str) -> float:
@@ -846,7 +1053,12 @@ def _evaluate_score_config(
             If the metric cannot be resolved for the current context.
         """
         try:
-            return _resolve_metric_value(metric_name, context, score_config)
+            return _resolve_metric_value(
+                metric_name,
+                context,
+                score_config,
+                task_nonnegative_metric_names,
+            )
         except ValueError as exc:
             raise ScoreConfigEvaluationError(str(exc)) from exc
 
@@ -869,7 +1081,12 @@ def _evaluate_score_config(
             If the reference cannot be evaluated for the current context.
         """
         try:
-            return _typed_reference_value(reference, context, score_config)
+            return _typed_reference_value(
+                reference,
+                context,
+                score_config,
+                task_nonnegative_metric_names,
+            )
         except ValueError as exc:
             raise ScoreConfigEvaluationError(str(exc)) from exc
 
@@ -895,9 +1112,7 @@ def _evaluate_score_config(
                 score_total -= weight * abs(metric_value - reference_value)
             else:
                 raise ValueError(f"Unsupported scalar score term '{term.type}'.")
-        return ScoringResult(
-            rmse_vel_x=rmse_vel_x,
-            rmse_vel_y=rmse_vel_y,
+        return ScoreEvaluationResult(
             score=float(score_total),
             objective_names=["score"],
             objective_values=[float(score_total)],
@@ -911,9 +1126,7 @@ def _evaluate_score_config(
         objective_names.append(str(objective.metric))
         objective_values.append(_resolve_score_metric(objective.metric))
         objective_directions.append(str(objective.direction))
-    return ScoringResult(
-        rmse_vel_x=rmse_vel_x,
-        rmse_vel_y=rmse_vel_y,
+    return ScoreEvaluationResult(
         score=None,
         objective_names=objective_names,
         objective_values=objective_values,
@@ -923,39 +1136,35 @@ def _evaluate_score_config(
 
 def evaluate_score_config(
     *,
-    rmse_vel_x: float,
-    rmse_vel_y: float,
     metrics: dict[str, Any],
     hyperparams: Dict,
     score_config: Dict,
-) -> ScoringResult:
+    task_nonnegative_metric_names: set[str] | None = None,
+) -> ScoreEvaluationResult:
     """Evaluate one validated score configuration against runtime metrics.
 
     Parameters
     ----------
-    rmse_vel_x : float
-        Validation RMSE along X.
-    rmse_vel_y : float
-        Validation RMSE along Y.
     metrics : dict[str, Any]
         Runtime metrics collected for the trial.
     hyperparams : Dict
         Resolved hyperparameter payload used for HIL, logging, and scoring.
     score_config : Dict
         Validated score configuration tree.
+    task_nonnegative_metric_names : set[str] | None, optional
+        Task-declared metric names that are guaranteed to stay nonnegative.
 
     Returns
     -------
-    ScoringResult
+    ScoreEvaluationResult
         Structured scalar or multi-objective score result.
     """
 
     return _evaluate_score_config(
-        rmse_vel_x=rmse_vel_x,
-        rmse_vel_y=rmse_vel_y,
         metrics=metrics,
         hyperparams=hyperparams,
         score_config=score_config,
+        task_nonnegative_metric_names=task_nonnegative_metric_names,
     )
 
 
@@ -2125,10 +2334,187 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
 
     return metrics
 
+def _serialize_csv_cell(value: Any) -> Any:
+    """Return a CSV-friendly representation for one cell value.
+
+    Parameters
+    ----------
+    value : Any
+        Raw cell value.
+
+    Returns
+    -------
+    Any
+        Primitive value or JSON string suitable for CSV writing.
+    """
+
+    normalized = _normalize_json_safe(value)
+    if normalized is None:
+        return ""
+    if isinstance(normalized, (str, int, float, bool)):
+        return normalized
+    return json.dumps(normalized, sort_keys=True)
+
+
+def _trial_log_row_mapping(
+    *,
+    trial_outcome: TrialOutcome,
+    metrics: dict[str, Any],
+    study_name: str,
+    pruned: bool,
+    prune_reason: str,
+    prune_rule: str,
+) -> dict[str, Any]:
+    """Build one row mapping for the shared trial CSV.
+
+    Parameters
+    ----------
+    trial_outcome : TrialOutcome
+        Generic trial outcome to log.
+    metrics : dict[str, Any]
+        Shared infrastructure metrics dictionary.
+    study_name : str
+        Name of the active study.
+    pruned : bool
+        Whether the trial was pruned.
+    prune_reason : str
+        Human-readable pruning reason.
+    prune_rule : str
+        Stable pruning rule identifier.
+
+    Returns
+    -------
+    dict[str, Any]
+        Flat row mapping keyed by CSV column name.
+    """
+
+    score_type = "multi-objective" if trial_outcome.score is None else "scoring-function"
+    mapping: dict[str, Any] = {
+        "study_name": study_name,
+        "timestamp_unix": time.time(),
+        "timestamp_readable": time.strftime("%m-%d-%Y %H:%M:%S"),
+        "score": "" if trial_outcome.score is None else trial_outcome.score,
+        "ram_bytes": metrics["ram_bytes"],
+        "flash_bytes": metrics["flash_bytes"],
+        "external_flash_bytes": metrics.get("external_flash_bytes", -1),
+        "weight_storage_mode": metrics.get("weight_storage_mode", "embedded"),
+        "flops": trial_outcome.hyperparams["flops"],
+        "latency_ms": metrics["latency_ms"],
+        "latency_budget_ms": metrics.get("latency_budget_ms", -1.0),
+        "energy_mj_per_inference": metrics["energy_mj_per_inference"],
+        "avg_power_mw": metrics["avg_power_mw"],
+        "avg_current_ma": metrics["avg_current_ma"],
+        "bus_voltage_v": metrics["bus_voltage_v"],
+        "cpu_clock_mhz_requested": metrics.get("cpu_clock_mhz_requested", -1),
+        "clock_hz": metrics.get("clock_hz", -1.0),
+        "error_code": metrics["error_code"],
+        "error_label": metrics.get("error_label", describe_error_code(metrics["error_code"])),
+        "score_type": score_type,
+        "objective_names_json": json.dumps(trial_outcome.objective_names),
+        "objective_values_json": json.dumps(trial_outcome.objective_values),
+        "objective_directions_json": json.dumps(trial_outcome.objective_directions),
+        "artifact_summary_json": json.dumps(trial_outcome.artifact_summary, sort_keys=True),
+        "pruned": pruned,
+        "prune_reason": prune_reason,
+        "prune_rule": prune_rule,
+    }
+    for field_name in CADENCED_CSV_FIELDS:
+        mapping[field_name] = metrics.get(field_name)
+    for metric_name, value in trial_outcome.task_metrics.items():
+        mapping[f"metric__{metric_name}"] = value
+    for hyperparam_name, value in trial_outcome.hyperparams.items():
+        if hyperparam_name == "flops":
+            continue
+        mapping[f"hparam__{hyperparam_name}"] = value
+    return mapping
+
+
+def _read_trial_log(log_path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    """Read one existing trial log file.
+
+    Parameters
+    ----------
+    log_path : Path
+        CSV log path.
+
+    Returns
+    -------
+    tuple[list[str], list[dict[str, str]]]
+        Existing header plus all row dictionaries.
+    """
+
+    with log_path.open(newline="") as csvfile:
+        reader = csv.DictReader(csvfile)
+        return list(reader.fieldnames or []), list(reader)
+
+
+def _write_trial_log_atomic(
+    log_path: Path,
+    header: list[str],
+    rows: list[dict[str, Any]],
+) -> None:
+    """Rewrite one trial log file atomically.
+
+    Parameters
+    ----------
+    log_path : Path
+        Destination CSV path.
+    header : list[str]
+        Full header to write.
+    rows : list[dict[str, Any]]
+        Row mappings to serialize.
+
+    Returns
+    -------
+    None
+    """
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        newline="",
+        delete=False,
+        dir=log_path.parent,
+        prefix=f"{log_path.name}.",
+        suffix=".tmp",
+    ) as tmpfile:
+        writer = csv.DictWriter(tmpfile, fieldnames=header, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({column: _serialize_csv_cell(row.get(column)) for column in header})
+        temp_path = Path(tmpfile.name)
+    try:
+        os.replace(temp_path, log_path)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+
+def _write_trial_log_append(log_path: Path, header: list[str], row: dict[str, Any]) -> None:
+    """Append one row to a trial log whose header already matches.
+
+    Parameters
+    ----------
+    log_path : Path
+        Destination CSV path.
+    header : list[str]
+        Existing CSV header.
+    row : dict[str, Any]
+        Row mapping to append.
+
+    Returns
+    -------
+    None
+    """
+
+    with log_path.open("a", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=header, extrasaction="ignore")
+        writer.writerow({column: _serialize_csv_cell(row.get(column)) for column in header})
+
+
 def log_trial(
-    scoring_result: ScoringResult,
+    trial_outcome: TrialOutcome,
     metrics: dict,
-    hyperparams: dict,
     trial: TrialLike,
     log_file_name: str,
     study_name: str = "",
@@ -2140,12 +2526,10 @@ def log_trial(
 
     Parameters
     ----------
-    scoring_result : ScoringResult
-        Structured scalar or multi-objective score output.
+    trial_outcome : TrialOutcome
+        Generic trial outcome to write.
     metrics : dict
         Resource metrics dict.
-    hyperparams : dict
-        Selected hyperparameters for the trial.
     trial : TrialLike
         Trial-like object (e.g., optuna.Trial) to annotate.
     log_file_name : str
@@ -2165,115 +2549,105 @@ def log_trial(
         Writes one CSV row and mutates ``trial`` user attributes in place.
     """
     log_path = Path(log_file_name)
-    score_type = "multi-objective" if scoring_result.score is None else "scoring-function"
-    header = [
-        "study_name",
-        "timestamp_unix",  # Added: Unix timestamp (seconds since epoch, float)
-        "timestamp_readable",  # Added: Human-readable timestamp (MM-DD-YYYY HH:MM:SS)
-        "score",
-        "rmse_vel_x",
-        "rmse_vel_y",
-        "rmse_total",
-        "ram_bytes",
-        "flash_bytes",
-        "external_flash_bytes",
-        "weight_storage_mode",
-        "flops",
-        "latency_ms",
-        "energy_mj_per_inference",
-        "avg_power_mw",
-        "avg_current_ma",
-        "bus_voltage_v",
-        "cpu_clock_mhz_requested",
-        "clock_hz",
-        "nb_filters",
-        "kernel_size",
-        "dilations",
-        "dropout_rate",
-        "use_skip_connections",
-        "norm_flag",
-        "error_code",
-        "error_label",
-        "score_type",
-        "objective_names_json",
-        "objective_values_json",
-        "objective_directions_json",
-        "pruned",
-        "prune_reason",
-        "prune_rule",
-        *CADENCED_CSV_FIELDS,
-    ]
-    
-    if not log_path.exists() or log_path.stat().st_size == 0:
-        # Seed the CSV with a header row so downstream tooling can rely on names
-        with open(log_path, "w", newline="") as csvfile:
-            csv.writer(csvfile).writerow(header)
-    # Row mirrors TinyODOM CSV schema so downstream tooling stays compatible
-    row_write = [
-        study_name,
-        time.time(),  # Added: Current Unix timestamp (float)
-        time.strftime('%m-%d-%Y %H:%M:%S'),  # Added: Human-readable timestamp
-        "" if scoring_result.score is None else scoring_result.score,
-        scoring_result.rmse_vel_x,
-        scoring_result.rmse_vel_y,
-        metrics.get("rmse_total", -1.0),
-        metrics["ram_bytes"],
-        metrics["flash_bytes"],
-        metrics.get("external_flash_bytes", -1),
-        metrics.get("weight_storage_mode", "embedded"),
-        hyperparams["flops"],
-        metrics["latency_ms"],
-        metrics["energy_mj_per_inference"],
-        metrics["avg_power_mw"],
-        metrics["avg_current_ma"],
-        metrics["bus_voltage_v"],
-        metrics.get("cpu_clock_mhz_requested", -1),
-        metrics.get("clock_hz", -1.0),
-        hyperparams["nb_filters"],
-        hyperparams["kernel_size"],
-        hyperparams["dilations"],
-        hyperparams["dropout_rate"],
-        hyperparams["use_skip_connections"],
-        hyperparams["norm_flag"],
-        metrics["error_code"],
-        metrics.get("error_label", describe_error_code(metrics["error_code"])),
-        score_type,
-        json.dumps(scoring_result.objective_names),
-        json.dumps(scoring_result.objective_values),
-        json.dumps(scoring_result.objective_directions),
-        pruned,
-        prune_reason,
-        prune_rule,
-        *[metrics.get(field_name) for field_name in CADENCED_CSV_FIELDS],
-    ]
-    with open(log_path, "a", newline="") as csvfile:
-        csv.writer(csvfile).writerow(row_write)
+    row_mapping = _trial_log_row_mapping(
+        trial_outcome=trial_outcome,
+        metrics=metrics,
+        study_name=study_name,
+        pruned=pruned,
+        prune_reason=prune_reason,
+        prune_rule=prune_rule,
+    )
+    metric_columns = sorted(
+        column_name
+        for column_name in row_mapping
+        if column_name.startswith("metric__")
+    )
+    hyperparam_columns = sorted(
+        column_name
+        for column_name in row_mapping
+        if column_name.startswith("hparam__")
+    )
+    lock_path = log_path.with_name(f"{log_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        if not log_path.exists() or log_path.stat().st_size == 0:
+            header = [
+                *TRIAL_LOG_STABLE_COLUMNS,
+                *metric_columns,
+                *hyperparam_columns,
+            ]
+            _write_trial_log_atomic(log_path, header, [row_mapping])
+        else:
+            existing_header, existing_rows = _read_trial_log(log_path)
+            existing_metric_columns = sorted(
+                column_name
+                for column_name in existing_header
+                if column_name.startswith("metric__")
+            )
+            existing_hparam_columns = sorted(
+                column_name
+                for column_name in existing_header
+                if column_name.startswith("hparam__")
+            )
+            legacy_columns = [
+                column_name
+                for column_name in existing_header
+                if (
+                    column_name not in TRIAL_LOG_STABLE_COLUMNS
+                    and not column_name.startswith("metric__")
+                    and not column_name.startswith("hparam__")
+                )
+            ]
+            header = [
+                *TRIAL_LOG_STABLE_COLUMNS,
+                *legacy_columns,
+                *sorted(set(existing_metric_columns) | set(metric_columns)),
+                *sorted(set(existing_hparam_columns) | set(hyperparam_columns)),
+            ]
+            if existing_header == header:
+                _write_trial_log_append(log_path, header, row_mapping)
+            else:
+                _write_trial_log_atomic(
+                    log_path,
+                    header,
+                    [*existing_rows, row_mapping],
+                )
 
     trial.set_user_attr("ram_bytes", metrics["ram_bytes"])
     trial.set_user_attr("flash_bytes", metrics["flash_bytes"])
     trial.set_user_attr("external_flash_bytes", metrics.get("external_flash_bytes", -1))
     trial.set_user_attr("weight_storage_mode", metrics.get("weight_storage_mode", "embedded"))
     trial.set_user_attr("latency_ms", metrics["latency_ms"])
-    trial.set_user_attr("latency_budget_ms", metrics["latency_budget_ms"])
+    trial.set_user_attr("latency_budget_ms", metrics.get("latency_budget_ms", -1.0))
     trial.set_user_attr("energy_mj_per_inference", metrics["energy_mj_per_inference"])
     trial.set_user_attr("cpu_clock_mhz_requested", metrics.get("cpu_clock_mhz_requested", -1))
     trial.set_user_attr("clock_hz", metrics.get("clock_hz", -1.0))
-    trial.set_user_attr("rmse_vel_x", scoring_result.rmse_vel_x)
-    trial.set_user_attr("rmse_vel_y", scoring_result.rmse_vel_y)
-    trial.set_user_attr("rmse_total", metrics.get("rmse_total", -1.0))
     trial.set_user_attr("hil_error_code", metrics["error_code"])
     trial.set_user_attr("arena_bytes", metrics["arena_bytes"])
-    trial.set_user_attr("flops", hyperparams["flops"])
+    trial.set_user_attr("flops", trial_outcome.hyperparams["flops"])
     trial.set_user_attr("error_code", metrics["error_code"])
-    trial.set_user_attr("score_type", score_type)
-    trial.set_user_attr("objective_names", list(scoring_result.objective_names))
-    trial.set_user_attr("objective_values", list(scoring_result.objective_values))
-    trial.set_user_attr("objective_directions", list(scoring_result.objective_directions))
+    trial.set_user_attr(
+        "score_type",
+        "multi-objective" if trial_outcome.score is None else "scoring-function",
+    )
+    trial.set_user_attr("objective_names", list(trial_outcome.objective_names))
+    trial.set_user_attr("objective_values", list(trial_outcome.objective_values))
+    trial.set_user_attr("objective_directions", list(trial_outcome.objective_directions))
     error_label = metrics.get("error_label", describe_error_code(metrics["error_code"]))
     trial.set_user_attr("error_code_label", error_label)
     trial.set_user_attr("pruned", pruned)
     trial.set_user_attr("prune_reason", prune_reason)
     trial.set_user_attr("prune_rule", prune_rule)
+    trial.set_user_attr("task_metrics", dict(trial_outcome.task_metrics))
+    trial.set_user_attr("hyperparameters", dict(trial_outcome.hyperparams))
+    trial.set_user_attr("artifact_summary", trial_outcome.artifact_summary)
+    for metric_name, value in trial_outcome.task_metrics.items():
+        trial.set_user_attr(f"metric__{metric_name}", value)
+    for hyperparam_name, value in trial_outcome.hyperparams.items():
+        if hyperparam_name == "flops":
+            continue
+        trial.set_user_attr(f"hparam__{hyperparam_name}", value)
     for field_name in CADENCED_ALL_FIELDS:
         trial.set_user_attr(field_name, metrics.get(field_name))
 
@@ -2286,11 +2660,14 @@ def train_and_score(
     metrics: dict,
     max_ram: float,
     max_flash: float,
-    training_data: OxIODSplitData,
-    validation_data: OxIODSplitData,
+    training_data: Any,
+    validation_data: Any,
     config: Dict,
+    *,
+    task_metric_names: set[str] | None = None,
+    task_nonnegative_metric_names: set[str] | None = None,
 ):
-    """Train the model, compute validation RMSE, and evaluate the configured score.
+    """Legacy TinyODOM training helper retained for compatibility.
 
     Parameters
     ----------
@@ -2308,23 +2685,51 @@ def train_and_score(
     max_flash : float
         Maximum usable flash on the device. Exposed to scoring as
         ``max_flash_bytes``.
-    training_data : OxIODSplitData
-        Training dataset.
-    validation_data : OxIODSplitData
-        Validation dataset.
+    training_data : Any
+        Training dataset payload. The legacy training path expects TinyODOM
+        split attributes such as ``inputs``, ``x_vel``, and ``y_vel``.
+    validation_data : Any
+        Validation dataset payload. The legacy training path expects TinyODOM
+        split attributes such as ``inputs``, ``x_vel``, and ``y_vel``.
     config : addict.Dict
         NAS configuration tree.
+    task_metric_names : set[str] | None, optional
+        Task metric names available to the no-training sentinel path. When
+        omitted, the TinyODOM RMSE metric set is used.
+    task_nonnegative_metric_names : set[str] | None, optional
+        Task metric names that should treat negative values as unavailable
+        sentinels during score evaluation. When omitted, the TinyODOM RMSE
+        metric set is used.
 
     Returns
     -------
-    ScoringResult
-        Structured scalar or multi-objective result.
+    TrialOutcome
+        Generic trial outcome containing score/objective values, task metrics,
+        and the resolved hyperparameter payload.
 
     Raises
     ------
     ValueError
-        If the active scoring configuration references unavailable metrics.
+        If the active scoring configuration references unavailable metrics, or
+        when the legacy training path is asked to train a non-TinyODOM task.
+
+    Notes
+    -----
+    The production modular NAS path does not call this helper. The no-training
+    path accepts generic task metric names, but the training path remains
+    TinyODOM-specific because it still computes velocity RMSE from the legacy
+    split structure.
     """
+    effective_task_metric_names = set(
+        DEFAULT_TASK_SCORE_METRICS
+        if task_metric_names is None
+        else task_metric_names
+    )
+    effective_task_nonnegative_metric_names = set(
+        DEFAULT_TASK_SCORE_METRICS
+        if task_nonnegative_metric_names is None
+        else task_nonnegative_metric_names
+    )
 
     # Surface device resource caps inside the scoring context so scalar terms
     # can normalize usage directly against the target hardware limits.
@@ -2332,17 +2737,30 @@ def train_and_score(
     metrics["max_flash_bytes"] = float(max_flash)
 
     if not config.training.train:
-        rmse_vel_x = -1.0
-        rmse_vel_y = -1.0
-        metrics["rmse_vel_x"] = rmse_vel_x
-        metrics["rmse_vel_y"] = rmse_vel_y
-        # Keep the aggregate RMSE sentinel aligned with the individual RMSE
-        # sentinels so config-driven scoring sees one consistent unavailable value.
-        metrics["rmse_total"] = -1.0
+        task_metrics = {
+            metric_name: -1.0
+            for metric_name in sorted(effective_task_metric_names)
+        }
+        metrics.update(task_metrics)
         if (not metrics["hil_enabled"]) and metrics.get("error_code", 0) == 0:
             metrics["latency_ms"] = -1  # keep CSV compatibility for non-HIL trials
             set_error_code(metrics, 1)
-        return _evaluate_score_config(rmse_vel_x, rmse_vel_y, metrics, hyperparams, config.nas.score)
+        return build_trial_outcome(
+            score_result=_evaluate_score_config(
+                metrics=metrics,
+                hyperparams=hyperparams,
+                score_config=config.nas.score,
+                task_nonnegative_metric_names=effective_task_nonnegative_metric_names,
+            ),
+            task_metrics=task_metrics,
+            hyperparams=dict(hyperparams),
+        )
+
+    if effective_task_metric_names != set(DEFAULT_TASK_SCORE_METRICS):
+        raise ValueError(
+            "train_and_score(train=True) is a legacy TinyODOM helper and only "
+            "supports task metrics {'rmse_vel_x', 'rmse_vel_y', 'rmse_total'}."
+        )
     
     # Train the model with early stopping and checkpointing
     checkpoint = ModelCheckpoint(
@@ -2379,17 +2797,29 @@ def train_and_score(
     y_pred = model.predict(validation_data.inputs)
     rmse_vel_x = mean_squared_error(validation_data.x_vel, y_pred[0], squared=False)
     rmse_vel_y = mean_squared_error(validation_data.y_vel, y_pred[1], squared=False)
-    metrics["rmse_vel_x"] = rmse_vel_x
-    metrics["rmse_vel_y"] = rmse_vel_y
+    task_metrics = {
+        "rmse_vel_x": float(rmse_vel_x),
+        "rmse_vel_y": float(rmse_vel_y),
+        "rmse_total": float(rmse_vel_x + rmse_vel_y),
+    }
+    metrics.update(task_metrics)
     # Populate the built-in aggregate RMSE metric once so all downstream score
     # terms and objectives reference the same value.
-    metrics["rmse_total"] = float(rmse_vel_x + rmse_vel_y)
     
     # Set error code for non-HIL trials that passed resource checks
     if (not metrics["hil_enabled"]) and metrics.get("error_code", 0) == 0:
         metrics["latency_ms"] = -1  # keep CSV compatibility for non-HIL trials
         set_error_code(metrics, 1)
-    return _evaluate_score_config(rmse_vel_x, rmse_vel_y, metrics, hyperparams, config.nas.score)
+    return build_trial_outcome(
+        score_result=_evaluate_score_config(
+            metrics=metrics,
+            hyperparams=hyperparams,
+            score_config=config.nas.score,
+            task_nonnegative_metric_names=effective_task_nonnegative_metric_names,
+        ),
+        task_metrics=task_metrics,
+        hyperparams=dict(hyperparams),
+    )
 
 
 def build_tinyodom_model(hyperparams: Dict) -> Model:

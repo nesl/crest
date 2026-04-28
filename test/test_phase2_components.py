@@ -185,6 +185,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
 
         self.assertEqual(contract.available_metric_names, {"rmse_vel_x", "rmse_vel_y", "rmse_total"})
         self.assertEqual(contract.training_only_metric_names, {"rmse_vel_x", "rmse_vel_y", "rmse_total"})
+        self.assertEqual(contract.nonnegative_metric_names, {"rmse_vel_x", "rmse_vel_y", "rmse_total"})
         self.assertEqual(contract.primary_metric_names, {"rmse_total"})
 
     def test_compile_model_uses_adam_and_legacy_loss_map(self) -> None:

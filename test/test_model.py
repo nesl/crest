@@ -24,9 +24,10 @@ from tinyodom.model import (
     CollectMetricsRequest,
     DROP_RATE_CHOICES,
     HarnessConfig,
+    TRIAL_LOG_STABLE_COLUMNS,
+    TrialOutcome,
     _minimum_stm32_serial_timeout_s,
     _metric_unavailable,
-    ScoringResult,
     ScoreConfigEvaluationError,
     apply_combined_perturbation,
     build_collect_metrics_request,
@@ -1426,6 +1427,61 @@ class TrainAndScoreTests(unittest.TestCase):
 
         self.assertAlmostEqual(scoring_result.score, -0.15)
 
+    def test_train_and_score_supports_generic_task_sentinels_when_training_disabled(self) -> None:
+        """The legacy no-train path should allow generic task metric names."""
+        config = Dict(
+            training=Dict(
+                energy_aware=False,
+                train=False,
+                latency_proxy_max_flops=20_000_000,
+            ),
+            nas=Dict(
+                score=Dict(
+                    type="multi-objective",
+                    metrics=Dict(),
+                    params=Dict(
+                        objectives=[
+                            Dict(metric="signed_bias", direction="maximize"),
+                            Dict(metric="signed_offset", direction="maximize"),
+                        ]
+                    ),
+                ),
+                prune=Dict(rules=[]),
+            ),
+            outputs=Dict(checkpoint_path=Path("unused.keras")),
+        )
+        metrics = {
+            "energy_aware": False,
+            "energy_mj_per_inference": -1.0,
+            "latency_ms": 12.5,
+            "hil_enabled": True,
+            "error_code": 0,
+            "ram_bytes": 128,
+            "flash_bytes": 256,
+        }
+        hyperparams = Dict(flops=1_000)
+
+        trial_outcome = train_and_score(
+            model=MagicMock(),
+            batch_size=1,
+            hyperparams=hyperparams,
+            metrics=metrics,
+            max_ram=1_024,
+            max_flash=2_048,
+            training_data=MagicMock(),
+            validation_data=MagicMock(),
+            config=config,
+            task_metric_names={"signed_bias", "signed_offset"},
+            task_nonnegative_metric_names=set(),
+        )
+
+        self.assertIsNone(trial_outcome.score)
+        self.assertEqual(trial_outcome.objective_values, [-1.0, -1.0])
+        self.assertEqual(
+            trial_outcome.task_metrics,
+            {"signed_bias": -1.0, "signed_offset": -1.0},
+        )
+
     def test_train_and_score_raises_dedicated_exception_for_unavailable_score_metric(self) -> None:
         """Unavailable score metrics should raise ScoreConfigEvaluationError."""
         config = Dict(
@@ -1494,8 +1550,6 @@ class TrainAndScoreTests(unittest.TestCase):
         hyperparams = Dict(flops=1_000)
 
         result = evaluate_score_config(
-            rmse_vel_x=0.2,
-            rmse_vel_y=0.3,
             metrics=metrics,
             hyperparams=hyperparams,
             score_config=score_config,
@@ -2932,41 +2986,16 @@ class FakeTrial:
 
 class LogTrialTests(unittest.TestCase):
     HEADER = [
-        "study_name",
-        "timestamp_unix",
-        "timestamp_readable",
-        "score",
-        "rmse_vel_x",
-        "rmse_vel_y",
-        "rmse_total",
-        "ram_bytes",
-        "flash_bytes",
-        "external_flash_bytes",
-        "weight_storage_mode",
-        "flops",
-        "latency_ms",
-        "energy_mj_per_inference",
-        "avg_power_mw",
-        "avg_current_ma",
-        "bus_voltage_v",
-        "cpu_clock_mhz_requested",
-        "clock_hz",
-        "nb_filters",
-        "kernel_size",
-        "dilations",
-        "dropout_rate",
-        "use_skip_connections",
-        "norm_flag",
-        "error_code",
-        "error_label",
-        "score_type",
-        "objective_names_json",
-        "objective_values_json",
-        "objective_directions_json",
-        "pruned",
-        "prune_reason",
-        "prune_rule",
-        *CADENCED_CSV_FIELDS,
+        *TRIAL_LOG_STABLE_COLUMNS,
+        "metric__rmse_total",
+        "metric__rmse_vel_x",
+        "metric__rmse_vel_y",
+        "hparam__dilations",
+        "hparam__dropout_rate",
+        "hparam__kernel_size",
+        "hparam__nb_filters",
+        "hparam__norm_flag",
+        "hparam__use_skip_connections",
     ]
 
     def _sample_metrics(self):
@@ -3010,27 +3039,56 @@ class LogTrialTests(unittest.TestCase):
             "norm_flag": True,
         }
 
+    def _sample_trial_outcome(
+        self,
+        *,
+        score: float | None = 0.5,
+        objective_names: list[str] | None = None,
+        objective_values: list[float] | None = None,
+        objective_directions: list[str] | None = None,
+        artifact_summary: dict[str, object] | None = None,
+        task_metrics: dict[str, object] | None = None,
+        hyperparams: dict[str, object] | None = None,
+    ) -> TrialOutcome:
+        if objective_names is None:
+            objective_names = ["score"]
+        if objective_values is None:
+            objective_values = [score if score is not None else 0.0]
+        if objective_directions is None:
+            objective_directions = ["maximize"]
+        if task_metrics is None:
+            task_metrics = {
+                "rmse_vel_x": 0.1,
+                "rmse_vel_y": 0.2,
+                "rmse_total": 0.3,
+            }
+        if hyperparams is None:
+            hyperparams = self._sample_hyperparams()
+        return TrialOutcome(
+            score=score,
+            objective_names=objective_names,
+            objective_values=objective_values,
+            objective_directions=objective_directions,
+            task_metrics=task_metrics,
+            hyperparams=hyperparams,
+            artifact_summary=artifact_summary,
+        )
+
     def test_log_trial_writes_header_and_row(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             fake_trial = FakeTrial()
             metrics = self._sample_metrics()
-            hyperparams = self._sample_hyperparams()
+            trial_outcome = self._sample_trial_outcome(
+                artifact_summary={"plot_path": "plots/demo.png"}
+            )
 
             with patch("tinyodom.model.time.time", return_value=123.0), patch(
                 "tinyodom.model.time.strftime", return_value="01-02-1970 00:02:03"
             ):
                 log_trial(
-                    scoring_result=ScoringResult(
-                        rmse_vel_x=0.1,
-                        rmse_vel_y=0.2,
-                        score=0.5,
-                        objective_names=["score"],
-                        objective_values=[0.5],
-                        objective_directions=["maximize"],
-                    ),
+                    trial_outcome=trial_outcome,
                     metrics=metrics,
-                    hyperparams=hyperparams,
                     trial=fake_trial,
                     log_file_name=str(log_path),
                 )
@@ -3045,7 +3103,6 @@ class LogTrialTests(unittest.TestCase):
                 rows[1][header_index["timestamp_readable"]], "01-02-1970 00:02:03"
             )
             self.assertEqual(float(rows[1][header_index["score"]]), 0.5)
-            self.assertAlmostEqual(float(rows[1][header_index["rmse_total"]]), metrics["rmse_total"])
             self.assertEqual(
                 int(rows[1][header_index["ram_bytes"]]), metrics["ram_bytes"]
             )
@@ -3059,6 +3116,10 @@ class LogTrialTests(unittest.TestCase):
             )
             self.assertEqual(
                 float(rows[1][header_index["latency_ms"]]), metrics["latency_ms"]
+            )
+            self.assertEqual(
+                float(rows[1][header_index["latency_budget_ms"]]),
+                metrics["latency_budget_ms"],
             )
             self.assertAlmostEqual(
                 float(rows[1][header_index["energy_mj_per_inference"]]),
@@ -3084,6 +3145,10 @@ class LogTrialTests(unittest.TestCase):
                 rows[1][header_index["error_label"]], metrics["error_label"]
             )
             self.assertEqual(rows[1][header_index["score_type"]], "scoring-function")
+            self.assertEqual(
+                rows[1][header_index["artifact_summary_json"]],
+                '{"plot_path": "plots/demo.png"}',
+            )
             self.assertEqual(rows[1][header_index["pruned"]], "False")
             self.assertEqual(rows[1][header_index["prune_reason"]], "")
             self.assertEqual(rows[1][header_index["prune_rule"]], "")
@@ -3092,6 +3157,11 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(rows[1][header_index["cadenced_energy_mj_per_window"]], "-1.0")
             self.assertEqual(rows[1][header_index["cadenced_energy_mj_per_trial"]], "-1.0")
             self.assertEqual(rows[1][header_index["cadenced_error_code"]], "-1")
+            self.assertEqual(rows[1][header_index["metric__rmse_vel_x"]], "0.1")
+            self.assertEqual(rows[1][header_index["metric__rmse_vel_y"]], "0.2")
+            self.assertEqual(rows[1][header_index["metric__rmse_total"]], "0.3")
+            self.assertEqual(rows[1][header_index["hparam__nb_filters"]], "32")
+            self.assertEqual(rows[1][header_index["hparam__kernel_size"]], "3")
             self.assertEqual(
                 fake_trial.attrs["cadenced_window_latency_ms"],
                 metrics["cadenced_window_latency_ms"],
@@ -3114,9 +3184,13 @@ class LogTrialTests(unittest.TestCase):
                 fake_trial.attrs["weight_storage_mode"],
                 metrics["weight_storage_mode"],
             )
-            self.assertEqual(fake_trial.attrs["rmse_vel_x"], 0.1)
-            self.assertEqual(fake_trial.attrs["rmse_vel_y"], 0.2)
-            self.assertEqual(fake_trial.attrs["rmse_total"], metrics["rmse_total"])
+            self.assertEqual(fake_trial.attrs["task_metrics"], trial_outcome.task_metrics)
+            self.assertEqual(fake_trial.attrs["metric__rmse_vel_x"], 0.1)
+            self.assertEqual(fake_trial.attrs["metric__rmse_vel_y"], 0.2)
+            self.assertEqual(fake_trial.attrs["metric__rmse_total"], 0.3)
+            self.assertEqual(fake_trial.attrs["hyperparameters"], trial_outcome.hyperparams)
+            self.assertEqual(fake_trial.attrs["hparam__nb_filters"], 32)
+            self.assertEqual(fake_trial.attrs["artifact_summary"], {"plot_path": "plots/demo.png"})
             self.assertEqual(fake_trial.attrs["latency_budget_ms"], metrics["latency_budget_ms"])
             self.assertEqual(
                 fake_trial.attrs["cpu_clock_mhz_requested"],
@@ -3137,36 +3211,35 @@ class LogTrialTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             metrics = self._sample_metrics()
-            hyperparams = self._sample_hyperparams()
 
             fake_trial_one = FakeTrial()
             fake_trial_two = FakeTrial()
 
             log_trial(
-                scoring_result=ScoringResult(
-                    rmse_vel_x=0.05,
-                    rmse_vel_y=0.06,
+                trial_outcome=self._sample_trial_outcome(
                     score=0.3,
-                    objective_names=["score"],
                     objective_values=[0.3],
-                    objective_directions=["maximize"],
+                    task_metrics={
+                        "rmse_vel_x": 0.05,
+                        "rmse_vel_y": 0.06,
+                        "rmse_total": 0.11,
+                    },
                 ),
                 metrics=metrics,
-                hyperparams=hyperparams,
                 trial=fake_trial_one,
                 log_file_name=str(log_path),
             )
             log_trial(
-                scoring_result=ScoringResult(
-                    rmse_vel_x=0.04,
-                    rmse_vel_y=0.05,
+                trial_outcome=self._sample_trial_outcome(
                     score=0.2,
-                    objective_names=["score"],
                     objective_values=[0.2],
-                    objective_directions=["maximize"],
+                    task_metrics={
+                        "rmse_vel_x": 0.04,
+                        "rmse_vel_y": 0.05,
+                        "rmse_total": 0.09,
+                    },
                 ),
                 metrics=metrics,
-                hyperparams=hyperparams,
                 trial=fake_trial_two,
                 log_file_name=str(log_path),
             )
@@ -3177,24 +3250,71 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(rows[0], self.HEADER)
             self.assertEqual(len(rows), 3)
 
+    def test_log_trial_expands_dynamic_header_and_backfills_prior_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "log.csv"
+            metrics = self._sample_metrics()
+
+            log_trial(
+                trial_outcome=self._sample_trial_outcome(
+                    task_metrics={"rmse_total": 0.3},
+                    hyperparams={"flops": 1_000_000, "kernel_size": 3},
+                ),
+                metrics=metrics,
+                trial=FakeTrial(),
+                log_file_name=str(log_path),
+            )
+            log_trial(
+                trial_outcome=self._sample_trial_outcome(
+                    task_metrics={"rmse_total": 0.2, "custom_accuracy": 0.9},
+                    hyperparams={
+                        "flops": 1_000_000,
+                        "kernel_size": 3,
+                        "nb_filters": 32,
+                    },
+                ),
+                metrics=metrics,
+                trial=FakeTrial(),
+                log_file_name=str(log_path),
+            )
+
+            with log_path.open(newline="") as csvfile:
+                rows = list(csv.DictReader(csvfile))
+
+            self.assertEqual(
+                list(rows[0].keys()),
+                [
+                    *TRIAL_LOG_STABLE_COLUMNS,
+                    "metric__custom_accuracy",
+                    "metric__rmse_total",
+                    "hparam__kernel_size",
+                    "hparam__nb_filters",
+                ],
+            )
+            self.assertEqual(rows[0]["metric__custom_accuracy"], "")
+            self.assertEqual(rows[0]["hparam__nb_filters"], "")
+            self.assertEqual(rows[1]["metric__custom_accuracy"], "0.9")
+            self.assertEqual(rows[1]["hparam__nb_filters"], "32")
+
     def test_log_trial_marks_single_objective_multiobjective_runs_correctly(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             fake_trial = FakeTrial()
             metrics = self._sample_metrics()
-            hyperparams = self._sample_hyperparams()
 
             log_trial(
-                scoring_result=ScoringResult(
-                    rmse_vel_x=0.1,
-                    rmse_vel_y=0.2,
+                trial_outcome=self._sample_trial_outcome(
                     score=None,
                     objective_names=["rmse_total"],
                     objective_values=[0.3],
                     objective_directions=["minimize"],
+                    task_metrics={
+                        "rmse_vel_x": 0.1,
+                        "rmse_vel_y": 0.2,
+                        "rmse_total": 0.3,
+                    },
                 ),
                 metrics=metrics,
-                hyperparams=hyperparams,
                 trial=fake_trial,
                 log_file_name=str(log_path),
             )
