@@ -49,13 +49,14 @@ def resolve_component_selection(config: Any) -> dict[str, Any]:
     dataset_block = cfg_get(config, "dataset", None)
     task_block = cfg_get(config, "task", None)
     model_block = cfg_get(config, "model", None)
+    dataset_config = cfg_get(config, "data", None)
+    if dataset_block is not None:
+        dataset_params = cfg_get(dataset_block, "params", None)
+        if dataset_params is not None:
+            dataset_config = dataset_params
     return {
         "dataset_name": str(cfg_get(dataset_block, "name", "oxiod")),
-        "dataset_config": (
-            cfg_get(dataset_block, "params", None)
-            if dataset_block is not None
-            else cfg_get(config, "data", None)
-        ),
+        "dataset_config": dataset_config,
         "task_name": str(cfg_get(task_block, "name", "odometry_regression")),
         "task_config": cfg_get(task_block, "params", Dict()) if task_block is not None else Dict(),
         "model_family_name": str(cfg_get(model_block, "family", "tinyodom_tcn")),

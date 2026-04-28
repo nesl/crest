@@ -51,6 +51,7 @@ from tinyodom.model import (
     is_multiobjective_score_config,
     log_trial,
     load_config,
+    require_logical_input_shape,
     TrialOutcome,
     DEFAULT_CONFIG_PATH,
     score_config_uses_training_metrics,
@@ -646,12 +647,15 @@ class NASModelClient:
             Legacy hyperparameter payload used by HIL, pruning, scoring, and
             CSV logging.
         """
+        timesteps, input_dim = require_logical_input_shape(
+            None if self.model_build_context is None else self.model_build_context.input_shape
+        )
         return Dict(
             {
                 **family_hparams,
                 "batch_size": int(batch_size),
-                "timesteps": int(self.model_build_context.input_shape[0]),
-                "input_dim": int(self.model_build_context.input_shape[1]),
+                "timesteps": timesteps,
+                "input_dim": input_dim,
                 "flops": int(flops),
             }
         )
@@ -901,13 +905,17 @@ class NASModelClient:
         split = self.dataset_bundle.test
         if split is None:
             raise ValueError("Trajectory reporting requires a held-out test split.")
-        try:
-            legacy_view = self._make_legacy_split_view(split)
-        except KeyError as exc:
+        if not isinstance(split.targets, Mapping):
             raise ValueError(
                 "Trajectory reporting remains odometry-specific and requires "
                 "velocity targets named 'velx' and 'vely'."
-            ) from exc
+            )
+        if split.targets.get("velx") is None or split.targets.get("vely") is None:
+            raise ValueError(
+                "Trajectory reporting remains odometry-specific and requires "
+                "velocity targets named 'velx' and 'vely'."
+            )
+        legacy_view = self._make_legacy_split_view(split)
         if legacy_view is None:
             raise ValueError("Trajectory reporting requires a held-out test split.")
         required_fields = ("size_of_each", "x0", "y0")
@@ -990,7 +998,10 @@ class NASModelClient:
         )
         self.task.validate_model_outputs(model, self.target_spec)
         self.task.compile_model(model, self.task_config, self.target_spec)
-        flops = count_flops(model, self.model_build_context.input_shape)
+        logical_input_shape = require_logical_input_shape(
+            None if self.model_build_context is None else self.model_build_context.input_shape
+        )
+        flops = count_flops(model, logical_input_shape)
         hyperparams = self._assemble_runtime_hyperparams(
             family_hparams,
             flops,

@@ -167,6 +167,33 @@ class OxIODDataset(DatasetABC):
             },
         )
 
+    def make_calibration_data(
+        self,
+        bundle: DatasetBundle,
+        dataset_config: Any,
+    ) -> DataSplit | None:
+        """Return calibration data with legacy OxIOD fallback semantics.
+
+        Parameters
+        ----------
+        bundle : DatasetBundle
+            Normalized dataset package produced by :meth:`load`.
+        dataset_config : Any
+            Dataset-local configuration subtree.
+
+        Returns
+        -------
+        DataSplit | None
+            Explicitly capped calibration data when configured, otherwise the
+            full training split to preserve the legacy ``max_windows=None``
+            representative-data behavior.
+        """
+
+        calibration_windows = _cfg_get(dataset_config, "calibration_windows", None)
+        if calibration_windows is None:
+            return bundle.train
+        return bundle.calibration
+
     def _to_split(self, legacy_split: Any) -> DataSplit:
         """Translate one legacy OxIOD split into a generic ``DataSplit``.
 

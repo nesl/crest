@@ -106,7 +106,7 @@ class OxIODDatasetTests(unittest.TestCase):
         self.assertNotIn("useStepCounter", test_call.kwargs)
         self.assertNotIn("AugmentationCopies", test_call.kwargs)
 
-    def test_missing_calibration_windows_keeps_calibration_split_empty(self) -> None:
+    def test_missing_calibration_windows_keeps_bundle_calibration_empty(self) -> None:
         with patch(
             "tinyodom.datasets.oxiod.import_oxiod_dataset",
             side_effect=[_make_legacy_split(), _make_legacy_split(), _make_legacy_split()],
@@ -114,6 +114,7 @@ class OxIODDatasetTests(unittest.TestCase):
             bundle = self.dataset.load(self.config)
 
         self.assertIsNone(bundle.calibration)
+        self.assertIs(self.dataset.make_calibration_data(bundle, self.config), bundle.train)
 
     def test_configured_calibration_windows_loads_capped_calibration_split(self) -> None:
         config = Dict(
@@ -137,6 +138,7 @@ class OxIODDatasetTests(unittest.TestCase):
         self.assertIsNotNone(bundle.calibration)
         self.assertEqual(load_mock.call_args_list[3].kwargs["max_windows"], 7)
         self.assertEqual(bundle.calibration.targets["velx"].tolist(), calibration_split.x_vel.tolist())
+        self.assertIs(self.dataset.make_calibration_data(bundle, config), bundle.calibration)
 
 
 class OdometryRegressionTaskTests(unittest.TestCase):

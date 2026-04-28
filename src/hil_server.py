@@ -37,6 +37,7 @@ from tinyodom.model import (
     build_collect_metrics_request,
     collect_metrics,
     load_config,
+    require_logical_input_shape,
     set_error_code,
     validate_model_input_shape,
 )
@@ -511,10 +512,7 @@ class HILServer:
 
         self._ensure_pipeline_bootstrapped()
         input_shape = None if self.model_build_context is None else self.model_build_context.input_shape
-        if input_shape is None or len(input_shape) < 2:
-            raise ValueError("The active model build context does not expose a 2D logical input shape.")
-        expected_timesteps = int(input_shape[0])
-        expected_input_dim = int(input_shape[1])
+        expected_timesteps, expected_input_dim = require_logical_input_shape(input_shape)
         if requested_timesteps != expected_timesteps or requested_input_dim != expected_input_dim:
             raise ValueError(
                 "HIL request model dimensions do not match the active server configuration: "
@@ -616,12 +614,15 @@ class HILServer:
         self._ensure_pipeline_bootstrapped()
         metadata = {} if self.dataset_bundle is None else dict(self.dataset_bundle.metadata)
         input_shape = None if self.model_build_context is None else self.model_build_context.input_shape
+        resolved_input_shape = None
         raw_window_size = metadata.get("window_size")
         raw_input_dim = metadata.get("input_dim")
-        if raw_window_size is None and input_shape is not None and len(input_shape) >= 1:
-            raw_window_size = input_shape[0]
-        if raw_input_dim is None and input_shape is not None and len(input_shape) >= 2:
-            raw_input_dim = input_shape[1]
+        if raw_window_size is None or raw_input_dim is None:
+            resolved_input_shape = require_logical_input_shape(input_shape)
+        if raw_window_size is None:
+            raw_window_size = resolved_input_shape[0]
+        if raw_input_dim is None:
+            raw_input_dim = resolved_input_shape[1]
         if raw_window_size is None or raw_input_dim is None:
             raise ValueError(
                 "Unable to resolve runtime window_size/input_dim from dataset metadata or model context."

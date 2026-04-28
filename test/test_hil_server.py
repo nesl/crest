@@ -373,6 +373,19 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertEqual(metrics["backend_error_kind"], "request")
         self.assertIn("do not match", metrics["backend_error_detail"])
 
+    def test_determine_metrics_rejects_invalid_model_build_context_input_shapes(self) -> None:
+        server = self.build_server()
+        server._ensure_pipeline_bootstrapped()
+
+        for invalid_shape in (None, (None, 6), ("abc", 6), (0, 6), (32, False)):
+            with self.subTest(input_shape=invalid_shape):
+                server.model_build_context.input_shape = invalid_shape
+                with patch("hil_server.get_microcontroller_device") as device_mock:
+                    metrics = server.determine_metrics(self.request_hparams())
+                device_mock.assert_not_called()
+                self.assertEqual(metrics["backend_error_kind"], "request")
+                self.assertIn("2D logical input shape", metrics["backend_error_detail"])
+
     def test_determine_metrics_runs_arduino_cadenced_second_pass_after_successful_base_run(self) -> None:
         server = self.build_server()
         self.config.device.name = "ARDUINO_NANO_33_BLE_SENSE"
@@ -718,6 +731,33 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(metrics["backend_error_kind"], "config")
         self.assertIn("calibration data", metrics["backend_error_detail"])
         fake_device.prepare_candidate.assert_not_called()
+
+    def test_determine_metrics_uses_dataset_calibration_fallback_when_bundle_calibration_missing(self) -> None:
+        FakeDataset.bundle = DatasetBundle(
+            train=self.train_split,
+            val=self.train_split,
+            test=self.train_split,
+            calibration=None,
+            input_shape=(32, 6),
+            input_dtype="float32",
+            metadata={"window_size": 32, "input_dim": 6},
+        )
+        FakeDataset.calibration_split_override = self.train_split
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.collect_metrics", return_value={"ok": True}):
+            server.determine_metrics(self.request_hparams())
+
+        request = fake_device.prepare_candidate.call_args.kwargs["request"]
+        self.assertIs(request.calibration_split, self.train_split)
 
     def test_stm_runtime_backend_keeps_hil_enabled_when_supported(self) -> None:
         """Ensure STM runtime-capable backends keep HIL enabled.

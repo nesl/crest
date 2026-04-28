@@ -302,6 +302,24 @@ class InitializationTests(unittest.TestCase):
         self.assertEqual(selection["model_config"].params.width, 8)
         self.assertEqual(selection["model_config"].search.depth, [2, 3])
 
+    def test_resolve_component_selection_falls_back_to_legacy_data_when_dataset_params_missing(self) -> None:
+        client = _build_test_client()
+        client.config.dataset = SimpleNamespace(name="custom_dataset")
+
+        selection = client._resolve_component_selection(client.config)
+
+        self.assertEqual(selection["dataset_name"], "custom_dataset")
+        self.assertIs(selection["dataset_config"], client.config.data)
+
+    def test_resolve_component_selection_falls_back_to_legacy_data_when_dataset_params_is_none(self) -> None:
+        client = _build_test_client()
+        client.config.dataset = SimpleNamespace(name="custom_dataset", params=None)
+
+        selection = client._resolve_component_selection(client.config)
+
+        self.assertEqual(selection["dataset_name"], "custom_dataset")
+        self.assertIs(selection["dataset_config"], client.config.data)
+
     def test_init_reuses_preliminary_bundle_when_dataset_selection_matches(self) -> None:
         base = Path(tempfile.mkdtemp())
         config = SimpleNamespace(
@@ -468,6 +486,17 @@ class ObjectiveTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             self.client.objective(trial)
+
+    def test_objective_rejects_invalid_model_build_context_input_shapes(self) -> None:
+        self.client._hil_request = MagicMock()
+
+        for invalid_shape in (None, (None, 3), ("abc", 3), (0, 3), (16, False)):
+            with self.subTest(input_shape=invalid_shape):
+                self.client.model_build_context.input_shape = invalid_shape
+                with self.assertRaisesRegex(ValueError, "2D logical input shape"):
+                    self.client.objective(DummyTrial())
+
+        self.client._hil_request.assert_not_called()
 
         self.mock_log.assert_not_called()
         self.client.task.make_fit_plan.assert_not_called()
@@ -1370,6 +1399,24 @@ class TrajectoryMetricsTests(unittest.TestCase):
                     plot_dir=base,
                     study_name="demo",
                 )
+
+    def test_trajectory_split_view_requires_velocity_targets(self) -> None:
+        cases = (
+            {"class_id": np.array([0, 1], dtype=np.int32)},
+            {"velx": None, "vely": np.zeros((2, 1), dtype=np.float32)},
+            {"velx": np.zeros((2, 1), dtype=np.float32), "vely": None},
+            ["not", "a", "mapping"],
+        )
+        for targets in cases:
+            with self.subTest(targets=targets):
+                client = _build_test_client()
+                client.dataset_bundle.test = DataSplit(
+                    inputs=np.zeros((2, 1, 1), dtype=np.float32),
+                    targets=targets,
+                    metadata={"size_of_each": [2], "x0": [0.0], "y0": [0.0]},
+                )
+                with self.assertRaisesRegex(ValueError, "velocity targets named 'velx' and 'vely'"):
+                    client._trajectory_split_view()
 
 
 class SummaryBundleTests(unittest.TestCase):

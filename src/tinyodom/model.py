@@ -487,8 +487,7 @@ def validate_model_input_shape(
         If the model has an unexpected number of inputs or incompatible input
         dimensions.
     """
-    if input_shape is None or len(input_shape) != 2:
-        raise ValueError(f"Expected a 2D logical input shape, got {input_shape!r}.")
+    expected_timesteps, expected_input_dim = require_logical_input_shape(input_shape)
 
     resolved_input_shape = model.input_shape
     if isinstance(resolved_input_shape, list):
@@ -500,8 +499,6 @@ def validate_model_input_shape(
     if not isinstance(resolved_input_shape, tuple) or len(resolved_input_shape) != 3:
         raise ValueError(f"Unexpected checkpoint input shape: {resolved_input_shape}")
 
-    expected_timesteps = int(input_shape[0])
-    expected_input_dim = int(input_shape[1])
     actual_timesteps = resolved_input_shape[1]
     actual_input_dim = resolved_input_shape[2]
     if (
@@ -2007,6 +2004,52 @@ def count_flops(model, input_shape):
         )
         flops = tf.compat.v1.profiler.profile(graph, options=options)
     return flops.total_float_ops
+
+
+def require_logical_input_shape(input_shape: Any) -> tuple[int, int]:
+    """Resolve one concrete 2D logical input shape from build-context metadata.
+
+    Parameters
+    ----------
+    input_shape : Any
+        Logical input shape excluding the batch dimension.
+
+    Returns
+    -------
+    tuple[int, int]
+        Concrete ``(timesteps, input_dim)`` pair.
+
+    Raises
+    ------
+    ValueError
+        If the shape is missing, not 2D, non-numeric, boolean, or contains
+        non-positive dimensions.
+    """
+
+    error_message = (
+        "The active model build context must expose a 2D logical input shape "
+        "with positive integer timesteps and input_dim."
+    )
+    if input_shape is None:
+        raise ValueError(error_message)
+    try:
+        if len(input_shape) != 2:
+            raise ValueError(error_message)
+    except TypeError as exc:
+        raise ValueError(error_message) from exc
+
+    resolved_dims: list[int] = []
+    for raw_dim in (input_shape[0], input_shape[1]):
+        if raw_dim is None or isinstance(raw_dim, bool):
+            raise ValueError(error_message)
+        try:
+            resolved_dim = int(raw_dim)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(error_message) from exc
+        if resolved_dim <= 0:
+            raise ValueError(error_message)
+        resolved_dims.append(resolved_dim)
+    return resolved_dims[0], resolved_dims[1]
 
 def build_collect_metrics_request(
     config: Dict,
