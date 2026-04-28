@@ -16,6 +16,7 @@ from typing import Any, Mapping, Optional
 import serial
 
 from ..devices import (
+    CandidatePrepareRequest,
     CompileResult,
     DeviceInterface,
     DeviceMetrics,
@@ -354,7 +355,6 @@ def _resolve_runtime_mode(raw_value: object | None) -> str:
             f"{runtime_mode!r}. Expected 'back_to_back' or 'cadenced'."
         )
     return runtime_mode
-
 
 def _resolve_cubeprog_cli_path(cubeprog_bin: Path | None) -> Path:
     """Resolve the STM32CubeProgrammer CLI executable path.
@@ -1980,36 +1980,15 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
     def prepare_candidate(
         self,
         *,
-        config: Any,
-        hyperparams: Any,
-        model: Any,
-        outputs_dir: Path,
-        tflite_model_path: Path,
-        training_data: Any,
-        model_variant: str,
-        checkpoint_path: Path | str | None,
+        request: CandidatePrepareRequest,
     ) -> Path:
         """Stage a candidate-specific STM32 workspace and return its root.
 
         Parameters
         ----------
-        config : Any
-            Loaded TinyODOM config object.
-        hyperparams : Any
-            Trial hyperparameters retained for interface compatibility after
-            the Keras model has been built.
-        model : Any
-            Candidate Keras model to export as TFLite.
-        outputs_dir : pathlib.Path
-            Root output directory for the current run.
-        tflite_model_path : pathlib.Path
-            Shared controller argument retained for interface compatibility.
-        training_data : Any
-            Calibration or training data used for TFLite export.
-        model_variant : str
-            Human-readable model variant label.
-        checkpoint_path : pathlib.Path | str | None
-            Shared controller argument retained for interface compatibility.
+        request : CandidatePrepareRequest
+            Typed request describing the model, calibration data, and
+            orchestration-selected artifact locations for one candidate.
 
         Returns
         -------
@@ -2024,10 +2003,9 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             If template validation, compatibility preflight, ST Edge AI
             generation, or staged-file validation fails.
         """
-        del hyperparams, tflite_model_path, checkpoint_path
-        if model is None:
+        if request.model is None:
             raise ValueError("STM32 candidate preparation requires a built Keras model.")
-        if training_data is None or not hasattr(training_data, "inputs"):
+        if request.calibration_split is None:
             raise ValueError("STM32 candidate preparation requires calibration/training data.")
 
         from tinyodom.hardware import convert_to_tflite_model
@@ -2053,7 +2031,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 self._options.weights_external_loader,
             )
 
-        candidate_root = self._build_candidate_root(Path(outputs_dir), model_variant)
+        candidate_root = self._build_candidate_root(Path(request.artifact_root), request.model_variant)
         staged_dir_name = canonical_paths.root.name
         staged_project_root = candidate_root / staged_dir_name
         model_dir = candidate_root / "model"
@@ -2071,9 +2049,9 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
 
             tflite_path = model_dir / "tinyodom_candidate.tflite"
             convert_to_tflite_model(
-                model=model,
-                training_data=training_data.inputs,
-                quantization=bool(config.training.quantization),
+                model=request.model,
+                training_data=request.calibration_split.inputs,
+                quantization=bool(request.config.training.quantization),
                 output_name=tflite_path,
             )
             _run_stedgeai_analyze(
@@ -2117,7 +2095,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 },
             )
             _parse_arena_bytes(staged_paths.inc_dir / "network_data_params.h")
-            config_device = getattr(config, "device", None)
+            config_device = getattr(request.config, "device", None)
             header_path = _write_phase_config_header(
                 paths=staged_paths,
                 cpu_clock_mhz=self._options.cpu_clock_mhz,

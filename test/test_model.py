@@ -1,5 +1,4 @@
 import csv
-import shutil
 import sys
 import tempfile
 import unittest
@@ -24,9 +23,10 @@ from tinyodom.model import (
     CollectMetricsRequest,
     DROP_RATE_CHOICES,
     HarnessConfig,
+    TRIAL_LOG_STABLE_COLUMNS,
+    TrialOutcome,
     _minimum_stm32_serial_timeout_s,
     _metric_unavailable,
-    ScoringResult,
     ScoreConfigEvaluationError,
     apply_combined_perturbation,
     build_collect_metrics_request,
@@ -34,19 +34,20 @@ from tinyodom.model import (
     collect_non_bn_bias_layers,
     collect_metrics,
     count_flops,
+    evaluate_score_config,
     iter_layers,
     load_config,
     log_trial,
+    score_config_uses_training_metrics,
     train_and_score,
+    validate_model_input_shape,
     validate_loaded_model_input_shape,
 )  # noqa: E402
 from tinyodom.hardware import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
 from tinyodom.microcontrollers import resolve_device_options  # noqa: E402
-
-try:  # Support both `python -m unittest test.test_*` and direct execution.
-    from test.test_hardware import _cli_exists  # type: ignore  # noqa: E402
-except ModuleNotFoundError:
-    from test_hardware import _cli_exists  # type: ignore  # noqa: E402
+import tinyodom.model_families.tinyodom_tcn as tinyodom_tcn_module  # noqa: E402
+from tinyodom.model_families.tinyodom_tcn import TinyOdomTCNFamily  # noqa: E402
+from tinyodom.pipeline_types import ModelBuildContext, TargetSpec  # noqa: E402
 
 
 class CountFlopsTests(unittest.TestCase):
@@ -213,6 +214,79 @@ class ModelVariantHelperTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             validate_loaded_model_input_shape(model, hyperparams)
+
+    def test_validate_model_input_shape_accepts_matching_shape(self) -> None:
+        inputs = tf.keras.Input(shape=(20, 6))
+        outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
+        model = tf.keras.Model(inputs, outputs)
+
+        validate_model_input_shape(model, (20, 6))
+
+    def test_validate_model_input_shape_rejects_missing_expected_shape(self) -> None:
+        inputs = tf.keras.Input(shape=(20, 6))
+        outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
+        model = tf.keras.Model(inputs, outputs)
+
+        with self.assertRaises(ValueError):
+            validate_model_input_shape(model, None)
+
+
+class TinyOdomTCNFamilyExportTests(unittest.TestCase):
+    """Validate TinyODOM-family export materialization behavior."""
+
+    def setUp(self) -> None:
+        self.family = TinyOdomTCNFamily()
+        self.ctx = ModelBuildContext(
+            input_shape=(32, 6),
+            input_dtype="float32",
+            target_spec=TargetSpec(
+                task_type="regression",
+                output_names=["velx", "vely"],
+                output_shapes=[(1,), (1,)],
+                metadata={},
+            ),
+        )
+
+    def tearDown(self) -> None:
+        tf.keras.backend.clear_session()
+
+    def test_materialize_export_model_perturbs_approx_trained_variants(self) -> None:
+        fake_model = object()
+        model_config = Dict()
+
+        with patch.object(self.family, "build_model", return_value=fake_model) as build_mock, patch.object(
+            tinyodom_tcn_module,
+            "apply_combined_perturbation",
+            return_value=(2, 3),
+        ) as perturb_mock:
+            materialized = self.family.materialize_export_model(
+                {"nb_filters": 8},
+                self.ctx,
+                model_config,
+                model_variant="approx_trained",
+            )
+
+        build_mock.assert_called_once_with({"nb_filters": 8}, self.ctx, model_config)
+        perturb_mock.assert_called_once_with(model=fake_model, seed=1337)
+        self.assertIs(materialized, fake_model)
+
+    def test_materialize_export_model_trained_variant_delegates_to_loader(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "trained.keras"
+            checkpoint_path.write_text("placeholder", encoding="utf-8")
+            model_config = Dict()
+
+            with patch.object(self.family, "load_model", return_value="loaded-model") as load_mock:
+                materialized = self.family.materialize_export_model(
+                    {"nb_filters": 8},
+                    self.ctx,
+                    model_config,
+                    model_variant="trained",
+                    checkpoint_path=checkpoint_path,
+                )
+
+        load_mock.assert_called_once_with(checkpoint_path, self.ctx, model_config)
+        self.assertEqual(materialized, "loaded-model")
 
 
 class CollectMetricsTests(unittest.TestCase):
@@ -638,6 +712,8 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         device_options: dict | None | object = ...,
         hil_enabled: bool | None = None,
         energy_aware: bool | None = None,
+        window_size: int | None = None,
+        input_dim: int | None = None,
     ) -> CollectMetricsRequest:
         """Build a request with resolved backend options for test readability."""
         resolved_options = (
@@ -653,6 +729,8 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             device_options=resolved_options,
             hil_enabled=hil_enabled,
             energy_aware=energy_aware,
+            window_size=window_size,
+            input_dim=input_dim,
         )
 
     def test_non_energy_aware_sets_harness_none(self) -> None:
@@ -689,6 +767,25 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         request = self._build_request(config, hyperparams)
 
         self.assertEqual(request.measured_inference_runs, 7)
+
+    def test_explicit_window_size_and_input_dim_override_legacy_fallbacks(self) -> None:
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
+            data=Dict(window_size=128),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        hyperparams = Dict(flops=123, input_dim=6)
+
+        request = self._build_request(
+            config,
+            hyperparams,
+            window_size=32,
+            input_dim=3,
+        )
+
+        self.assertEqual(request.window_size, 32)
+        self.assertEqual(request.input_dim, 3)
 
     def test_build_request_defaults_stm_serial_timeout(self) -> None:
         config = Dict(
@@ -1324,6 +1421,61 @@ class TrainAndScoreTests(unittest.TestCase):
 
         self.assertAlmostEqual(scoring_result.score, -0.15)
 
+    def test_train_and_score_supports_generic_task_sentinels_when_training_disabled(self) -> None:
+        """The legacy no-train path should allow generic task metric names."""
+        config = Dict(
+            training=Dict(
+                energy_aware=False,
+                train=False,
+                latency_proxy_max_flops=20_000_000,
+            ),
+            nas=Dict(
+                score=Dict(
+                    type="multi-objective",
+                    metrics=Dict(),
+                    params=Dict(
+                        objectives=[
+                            Dict(metric="signed_bias", direction="maximize"),
+                            Dict(metric="signed_offset", direction="maximize"),
+                        ]
+                    ),
+                ),
+                prune=Dict(rules=[]),
+            ),
+            outputs=Dict(checkpoint_path=Path("unused.keras")),
+        )
+        metrics = {
+            "energy_aware": False,
+            "energy_mj_per_inference": -1.0,
+            "latency_ms": 12.5,
+            "hil_enabled": True,
+            "error_code": 0,
+            "ram_bytes": 128,
+            "flash_bytes": 256,
+        }
+        hyperparams = Dict(flops=1_000)
+
+        trial_outcome = train_and_score(
+            model=MagicMock(),
+            batch_size=1,
+            hyperparams=hyperparams,
+            metrics=metrics,
+            max_ram=1_024,
+            max_flash=2_048,
+            training_data=MagicMock(),
+            validation_data=MagicMock(),
+            config=config,
+            task_metric_names={"signed_bias", "signed_offset"},
+            task_nonnegative_metric_names=set(),
+        )
+
+        self.assertIsNone(trial_outcome.score)
+        self.assertEqual(trial_outcome.objective_values, [-1.0, -1.0])
+        self.assertEqual(
+            trial_outcome.task_metrics,
+            {"signed_bias": -1.0, "signed_offset": -1.0},
+        )
+
     def test_train_and_score_raises_dedicated_exception_for_unavailable_score_metric(self) -> None:
         """Unavailable score metrics should raise ScoreConfigEvaluationError."""
         config = Dict(
@@ -1375,6 +1527,30 @@ class TrainAndScoreTests(unittest.TestCase):
                 validation_data=MagicMock(),
                 config=config,
             )
+
+    def test_evaluate_score_config_matches_scalar_scoring_semantics(self) -> None:
+        """Public score evaluation helper should preserve scalar score behavior."""
+        score_config = Dict(
+            type="scoring-function",
+            metrics=Dict(),
+            params=Dict(
+                terms=[
+                    Dict(type="weighted", metric="rmse_total", weight=-1.0),
+                    Dict(type="weighted", metric="flops", weight=-0.001),
+                ]
+            ),
+        )
+        metrics = {"rmse_total": 0.5, "latency_ms": 10.0}
+        hyperparams = Dict(flops=1_000)
+
+        result = evaluate_score_config(
+            metrics=metrics,
+            hyperparams=hyperparams,
+            score_config=score_config,
+        )
+
+        self.assertAlmostEqual(result.score, -1.5)
+        self.assertEqual(result.objective_names, ["score"])
 
 
 class LoadSettingsTests(unittest.TestCase):
@@ -2019,6 +2195,376 @@ class LoadSettingsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unknown metric"):
                 load_config(config_path=cfg)
 
+    def test_load_settings_accepts_custom_task_metric_in_score_term(self) -> None:
+        """Task-aware validation should allow caller-supplied task metrics."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: custom_metric",
+                        "          weight: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(
+                config_path=cfg,
+                task_metric_names={"custom_metric"},
+                training_only_task_metric_names=set(),
+            )
+
+        self.assertEqual(settings.nas.score.params.terms[0].metric, "custom_metric")
+
+    def test_load_settings_rejects_unknown_custom_task_metric_without_task_context(self) -> None:
+        """Unknown task metrics should still fail without caller-supplied context."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: custom_metric",
+                        "          weight: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "unknown metric"):
+                load_config(config_path=cfg)
+
+    def test_load_settings_accepts_derived_metric_that_references_custom_task_metric(self) -> None:
+        """Derived score metrics may depend on caller-supplied task metrics."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    metrics:",
+                        "      combined_metric:",
+                        "        type: add",
+                        "        metrics:",
+                        "          - custom_metric",
+                        "          - flops",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: combined_metric",
+                        "          weight: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(
+                config_path=cfg,
+                task_metric_names={"custom_metric"},
+                training_only_task_metric_names=set(),
+            )
+
+        self.assertEqual(settings.nas.score.metrics.combined_metric.metrics, ["custom_metric", "flops"])
+
+    def test_load_settings_rejects_derived_metric_name_that_collides_with_task_metric(self) -> None:
+        """Derived metric names may not redefine caller-supplied task metrics."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    metrics:",
+                        "      custom_metric:",
+                        "        type: add",
+                        "        metrics:",
+                        "          - flops",
+                        "          - latency_ms",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: custom_metric",
+                        "          weight: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "redefine a built-in or task-declared metric",
+            ):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names=set(),
+                )
+
+    def test_load_settings_defaults_training_only_task_metrics_to_empty_when_task_metrics_are_supplied(self) -> None:
+        """Custom task metrics should not silently inherit odometry training-only defaults."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: custom_metric",
+                        "          weight: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(
+                config_path=cfg,
+                task_metric_names={"custom_metric"},
+            )
+
+        self.assertEqual(settings.nas.score.params.terms[0].metric, "custom_metric")
+
+    def test_load_settings_rejects_task_metric_overlap_with_infrastructure_metrics(self) -> None:
+        """Task metrics may not reuse reserved infrastructure metric names."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "overlaps a reserved infrastructure metric name"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"latency_ms"},
+                    training_only_task_metric_names=set(),
+                )
+
+    def test_load_settings_rejects_training_only_task_metrics_outside_task_metric_set(self) -> None:
+        """Training-only task metrics must be a subset of the task metric set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "must be a subset"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names={"other_metric"},
+                )
+
+    def test_load_settings_accepts_custom_task_metric_in_prune_rules(self) -> None:
+        """Prune validation should allow supplied non-training-only task metrics."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: flops",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: custom_metric",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(
+                config_path=cfg,
+                task_metric_names={"custom_metric"},
+                training_only_task_metric_names=set(),
+            )
+
+        self.assertEqual(settings.nas.prune.rules[0].metric, "custom_metric")
+
+    def test_load_settings_rejects_prune_rules_that_use_custom_training_only_task_metrics(self) -> None:
+        """Prune rules may not directly read task metrics that need training."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: flops",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: custom_metric",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "training-only"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names={"custom_metric"},
+                )
+
+    def test_load_settings_rejects_prune_rules_that_depend_on_custom_training_only_task_metrics(self) -> None:
+        """Prune rules may not depend indirectly on task metrics that need training."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    metrics:",
+                        "      combined_metric:",
+                        "        type: add",
+                        "        metrics:",
+                        "          - custom_metric",
+                        "          - flops",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: flops",
+                        "          weight: -1.0",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: combined_metric",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "training-only"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names={"custom_metric"},
+                )
+
     def test_load_settings_accepts_cadenced_sleep_metric_in_score_terms(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -2301,54 +2847,78 @@ class LoadSettingsTests(unittest.TestCase):
                 load_config(config_path=cfg)
 
 
-@unittest.skipUnless(_cli_exists(), "Arduino CLI not installed")
-class CollectMetricsIntegrationTests(unittest.TestCase):
-    """Run collect_metrics against the real controller (proxy mode)."""
+class ScoreConfigTrainingDependencyTests(unittest.TestCase):
+    """Validate task-aware training-metric detection helpers."""
 
-    def test_proxy_flow_runs_end_to_end(self) -> None:
-        sketch_src = ROOT_DIR / "tinyodom_tcn"
-        with tempfile.TemporaryDirectory() as tmpdir:
-            sketch_dir = Path(tmpdir) / "tinyodom_tcn"
-            shutil.copytree(sketch_src, sketch_dir)
+    def test_score_config_uses_training_metrics_detects_multilevel_derived_dependency(self) -> None:
+        score_config = Dict(
+            type="scoring-function",
+            metrics=Dict(
+                level_one=Dict(type="add", metrics=["level_two", "flops"]),
+                level_two=Dict(type="add", metrics=["custom_training_metric", "latency_ms"]),
+            ),
+            params=Dict(terms=[Dict(type="weighted", metric="level_one", weight=1.0)]),
+        )
 
-            # Build a tiny model so Arduino CLI compiles deterministically without overflow.
-            inputs = tf.keras.Input(shape=(64, 3))
-            x = tf.keras.layers.Conv1D(4, kernel_size=3, activation="relu")(inputs)
-            x = tf.keras.layers.GlobalAveragePooling1D()(x)
-            outputs = tf.keras.layers.Dense(2, activation="linear")(x)
-            model = tf.keras.Model(inputs, outputs)
-
-            dummy_data = np.random.rand(8, 64, 3).astype(np.float32)
-            tflite_path = sketch_dir / "model.tflite"
-            convert_to_tflite_model(model, dummy_data, output_name=tflite_path)
-            convert_to_cpp_model(
-                tflite_path,
-                sketch_dir,
-                array_name="g_model",
-                source_name="model.cc",
-                header_name="model.h",
+        self.assertTrue(
+            score_config_uses_training_metrics(
+                score_config,
+                training_only_metric_names={"custom_training_metric"},
             )
+        )
 
-            metrics = collect_metrics(
-                CollectMetricsRequest(
-                    hil_enabled=False,
-                    energy_aware=False,
-                    flops=5_000_000,
-                    device_name="ARDUINO_NANO_33_BLE_SENSE",
-                    window_size=200,
-                    input_dim=3,
-                    dirpath=sketch_dir,
-                    latency_proxy_max_flops=30_000_000,
-                    serial_port=None,
+    def test_score_config_uses_training_metrics_detects_typed_reference_dependency(self) -> None:
+        score_config = Dict(
+            type="scoring-function",
+            metrics=Dict(
+                custom_reference_metric=Dict(
+                    type="add",
+                    metrics=["custom_training_metric", "flops"],
                 )
+            ),
+            params=Dict(
+                terms=[
+                    Dict(
+                        type="normalized-weighted",
+                        metric="flops",
+                        weight=1.0,
+                        reference=Dict(type="metric", metric="custom_reference_metric"),
+                    )
+                ]
+            ),
+        )
+
+        self.assertTrue(
+            score_config_uses_training_metrics(
+                score_config,
+                training_only_metric_names={"custom_training_metric"},
             )
+        )
 
-        self.assertGreaterEqual(metrics["flash_bytes"], 0)
-        self.assertGreaterEqual(metrics["ram_bytes"], -1)
-        self.assertGreaterEqual(metrics["arena_bytes"], 0)
-        self.assertEqual(metrics["latency_ms"], -1)
-        self.assertEqual(metrics["latency_budget_ms"], -1)
+    def test_score_config_uses_training_metrics_returns_false_for_non_training_metrics(self) -> None:
+        score_config = Dict(
+            type="scoring-function",
+            metrics=Dict(
+                combined_metric=Dict(type="add", metrics=["custom_metric", "flops"]),
+            ),
+            params=Dict(terms=[Dict(type="weighted", metric="combined_metric", weight=1.0)]),
+        )
 
+        self.assertFalse(
+            score_config_uses_training_metrics(
+                score_config,
+                training_only_metric_names=set(),
+            )
+        )
+
+    def test_score_config_uses_training_metrics_keeps_default_odometry_behavior(self) -> None:
+        score_config = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(objectives=[Dict(metric="rmse_total", direction="minimize")]),
+        )
+
+        self.assertTrue(score_config_uses_training_metrics(score_config))
 
 class FakeTrial:
     def __init__(self):
@@ -2360,41 +2930,16 @@ class FakeTrial:
 
 class LogTrialTests(unittest.TestCase):
     HEADER = [
-        "study_name",
-        "timestamp_unix",
-        "timestamp_readable",
-        "score",
-        "rmse_vel_x",
-        "rmse_vel_y",
-        "rmse_total",
-        "ram_bytes",
-        "flash_bytes",
-        "external_flash_bytes",
-        "weight_storage_mode",
-        "flops",
-        "latency_ms",
-        "energy_mj_per_inference",
-        "avg_power_mw",
-        "avg_current_ma",
-        "bus_voltage_v",
-        "cpu_clock_mhz_requested",
-        "clock_hz",
-        "nb_filters",
-        "kernel_size",
-        "dilations",
-        "dropout_rate",
-        "use_skip_connections",
-        "norm_flag",
-        "error_code",
-        "error_label",
-        "score_type",
-        "objective_names_json",
-        "objective_values_json",
-        "objective_directions_json",
-        "pruned",
-        "prune_reason",
-        "prune_rule",
-        *CADENCED_CSV_FIELDS,
+        *TRIAL_LOG_STABLE_COLUMNS,
+        "metric__rmse_total",
+        "metric__rmse_vel_x",
+        "metric__rmse_vel_y",
+        "hparam__dilations",
+        "hparam__dropout_rate",
+        "hparam__kernel_size",
+        "hparam__nb_filters",
+        "hparam__norm_flag",
+        "hparam__use_skip_connections",
     ]
 
     def _sample_metrics(self):
@@ -2438,27 +2983,56 @@ class LogTrialTests(unittest.TestCase):
             "norm_flag": True,
         }
 
+    def _sample_trial_outcome(
+        self,
+        *,
+        score: float | None = 0.5,
+        objective_names: list[str] | None = None,
+        objective_values: list[float] | None = None,
+        objective_directions: list[str] | None = None,
+        artifact_summary: dict[str, object] | None = None,
+        task_metrics: dict[str, object] | None = None,
+        hyperparams: dict[str, object] | None = None,
+    ) -> TrialOutcome:
+        if objective_names is None:
+            objective_names = ["score"]
+        if objective_values is None:
+            objective_values = [score if score is not None else 0.0]
+        if objective_directions is None:
+            objective_directions = ["maximize"]
+        if task_metrics is None:
+            task_metrics = {
+                "rmse_vel_x": 0.1,
+                "rmse_vel_y": 0.2,
+                "rmse_total": 0.3,
+            }
+        if hyperparams is None:
+            hyperparams = self._sample_hyperparams()
+        return TrialOutcome(
+            score=score,
+            objective_names=objective_names,
+            objective_values=objective_values,
+            objective_directions=objective_directions,
+            task_metrics=task_metrics,
+            hyperparams=hyperparams,
+            artifact_summary=artifact_summary,
+        )
+
     def test_log_trial_writes_header_and_row(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             fake_trial = FakeTrial()
             metrics = self._sample_metrics()
-            hyperparams = self._sample_hyperparams()
+            trial_outcome = self._sample_trial_outcome(
+                artifact_summary={"plot_path": "plots/demo.png"}
+            )
 
             with patch("tinyodom.model.time.time", return_value=123.0), patch(
                 "tinyodom.model.time.strftime", return_value="01-02-1970 00:02:03"
             ):
                 log_trial(
-                    scoring_result=ScoringResult(
-                        rmse_vel_x=0.1,
-                        rmse_vel_y=0.2,
-                        score=0.5,
-                        objective_names=["score"],
-                        objective_values=[0.5],
-                        objective_directions=["maximize"],
-                    ),
+                    trial_outcome=trial_outcome,
                     metrics=metrics,
-                    hyperparams=hyperparams,
                     trial=fake_trial,
                     log_file_name=str(log_path),
                 )
@@ -2473,7 +3047,6 @@ class LogTrialTests(unittest.TestCase):
                 rows[1][header_index["timestamp_readable"]], "01-02-1970 00:02:03"
             )
             self.assertEqual(float(rows[1][header_index["score"]]), 0.5)
-            self.assertAlmostEqual(float(rows[1][header_index["rmse_total"]]), metrics["rmse_total"])
             self.assertEqual(
                 int(rows[1][header_index["ram_bytes"]]), metrics["ram_bytes"]
             )
@@ -2487,6 +3060,10 @@ class LogTrialTests(unittest.TestCase):
             )
             self.assertEqual(
                 float(rows[1][header_index["latency_ms"]]), metrics["latency_ms"]
+            )
+            self.assertEqual(
+                float(rows[1][header_index["latency_budget_ms"]]),
+                metrics["latency_budget_ms"],
             )
             self.assertAlmostEqual(
                 float(rows[1][header_index["energy_mj_per_inference"]]),
@@ -2512,6 +3089,10 @@ class LogTrialTests(unittest.TestCase):
                 rows[1][header_index["error_label"]], metrics["error_label"]
             )
             self.assertEqual(rows[1][header_index["score_type"]], "scoring-function")
+            self.assertEqual(
+                rows[1][header_index["artifact_summary_json"]],
+                '{"plot_path": "plots/demo.png"}',
+            )
             self.assertEqual(rows[1][header_index["pruned"]], "False")
             self.assertEqual(rows[1][header_index["prune_reason"]], "")
             self.assertEqual(rows[1][header_index["prune_rule"]], "")
@@ -2520,6 +3101,11 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(rows[1][header_index["cadenced_energy_mj_per_window"]], "-1.0")
             self.assertEqual(rows[1][header_index["cadenced_energy_mj_per_trial"]], "-1.0")
             self.assertEqual(rows[1][header_index["cadenced_error_code"]], "-1")
+            self.assertEqual(rows[1][header_index["metric__rmse_vel_x"]], "0.1")
+            self.assertEqual(rows[1][header_index["metric__rmse_vel_y"]], "0.2")
+            self.assertEqual(rows[1][header_index["metric__rmse_total"]], "0.3")
+            self.assertEqual(rows[1][header_index["hparam__nb_filters"]], "32")
+            self.assertEqual(rows[1][header_index["hparam__kernel_size"]], "3")
             self.assertEqual(
                 fake_trial.attrs["cadenced_window_latency_ms"],
                 metrics["cadenced_window_latency_ms"],
@@ -2542,9 +3128,13 @@ class LogTrialTests(unittest.TestCase):
                 fake_trial.attrs["weight_storage_mode"],
                 metrics["weight_storage_mode"],
             )
-            self.assertEqual(fake_trial.attrs["rmse_vel_x"], 0.1)
-            self.assertEqual(fake_trial.attrs["rmse_vel_y"], 0.2)
-            self.assertEqual(fake_trial.attrs["rmse_total"], metrics["rmse_total"])
+            self.assertEqual(fake_trial.attrs["task_metrics"], trial_outcome.task_metrics)
+            self.assertEqual(fake_trial.attrs["metric__rmse_vel_x"], 0.1)
+            self.assertEqual(fake_trial.attrs["metric__rmse_vel_y"], 0.2)
+            self.assertEqual(fake_trial.attrs["metric__rmse_total"], 0.3)
+            self.assertEqual(fake_trial.attrs["hyperparameters"], trial_outcome.hyperparams)
+            self.assertEqual(fake_trial.attrs["hparam__nb_filters"], 32)
+            self.assertEqual(fake_trial.attrs["artifact_summary"], {"plot_path": "plots/demo.png"})
             self.assertEqual(fake_trial.attrs["latency_budget_ms"], metrics["latency_budget_ms"])
             self.assertEqual(
                 fake_trial.attrs["cpu_clock_mhz_requested"],
@@ -2565,36 +3155,35 @@ class LogTrialTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             metrics = self._sample_metrics()
-            hyperparams = self._sample_hyperparams()
 
             fake_trial_one = FakeTrial()
             fake_trial_two = FakeTrial()
 
             log_trial(
-                scoring_result=ScoringResult(
-                    rmse_vel_x=0.05,
-                    rmse_vel_y=0.06,
+                trial_outcome=self._sample_trial_outcome(
                     score=0.3,
-                    objective_names=["score"],
                     objective_values=[0.3],
-                    objective_directions=["maximize"],
+                    task_metrics={
+                        "rmse_vel_x": 0.05,
+                        "rmse_vel_y": 0.06,
+                        "rmse_total": 0.11,
+                    },
                 ),
                 metrics=metrics,
-                hyperparams=hyperparams,
                 trial=fake_trial_one,
                 log_file_name=str(log_path),
             )
             log_trial(
-                scoring_result=ScoringResult(
-                    rmse_vel_x=0.04,
-                    rmse_vel_y=0.05,
+                trial_outcome=self._sample_trial_outcome(
                     score=0.2,
-                    objective_names=["score"],
                     objective_values=[0.2],
-                    objective_directions=["maximize"],
+                    task_metrics={
+                        "rmse_vel_x": 0.04,
+                        "rmse_vel_y": 0.05,
+                        "rmse_total": 0.09,
+                    },
                 ),
                 metrics=metrics,
-                hyperparams=hyperparams,
                 trial=fake_trial_two,
                 log_file_name=str(log_path),
             )
@@ -2605,24 +3194,71 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(rows[0], self.HEADER)
             self.assertEqual(len(rows), 3)
 
+    def test_log_trial_expands_dynamic_header_and_backfills_prior_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "log.csv"
+            metrics = self._sample_metrics()
+
+            log_trial(
+                trial_outcome=self._sample_trial_outcome(
+                    task_metrics={"rmse_total": 0.3},
+                    hyperparams={"flops": 1_000_000, "kernel_size": 3},
+                ),
+                metrics=metrics,
+                trial=FakeTrial(),
+                log_file_name=str(log_path),
+            )
+            log_trial(
+                trial_outcome=self._sample_trial_outcome(
+                    task_metrics={"rmse_total": 0.2, "custom_accuracy": 0.9},
+                    hyperparams={
+                        "flops": 1_000_000,
+                        "kernel_size": 3,
+                        "nb_filters": 32,
+                    },
+                ),
+                metrics=metrics,
+                trial=FakeTrial(),
+                log_file_name=str(log_path),
+            )
+
+            with log_path.open(newline="") as csvfile:
+                rows = list(csv.DictReader(csvfile))
+
+            self.assertEqual(
+                list(rows[0].keys()),
+                [
+                    *TRIAL_LOG_STABLE_COLUMNS,
+                    "metric__custom_accuracy",
+                    "metric__rmse_total",
+                    "hparam__kernel_size",
+                    "hparam__nb_filters",
+                ],
+            )
+            self.assertEqual(rows[0]["metric__custom_accuracy"], "")
+            self.assertEqual(rows[0]["hparam__nb_filters"], "")
+            self.assertEqual(rows[1]["metric__custom_accuracy"], "0.9")
+            self.assertEqual(rows[1]["hparam__nb_filters"], "32")
+
     def test_log_trial_marks_single_objective_multiobjective_runs_correctly(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             fake_trial = FakeTrial()
             metrics = self._sample_metrics()
-            hyperparams = self._sample_hyperparams()
 
             log_trial(
-                scoring_result=ScoringResult(
-                    rmse_vel_x=0.1,
-                    rmse_vel_y=0.2,
+                trial_outcome=self._sample_trial_outcome(
                     score=None,
                     objective_names=["rmse_total"],
                     objective_values=[0.3],
                     objective_directions=["minimize"],
+                    task_metrics={
+                        "rmse_vel_x": 0.1,
+                        "rmse_vel_y": 0.2,
+                        "rmse_total": 0.3,
+                    },
                 ),
                 metrics=metrics,
-                hyperparams=hyperparams,
                 trial=fake_trial,
                 log_file_name=str(log_path),
             )

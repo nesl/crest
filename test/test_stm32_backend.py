@@ -22,7 +22,7 @@ from tinyodom.errors import (  # noqa: E402
     HIL_ERROR_RAM_OVERFLOW,
     HIL_ERROR_UPLOAD,
 )
-from tinyodom.devices import DeviceMetrics  # noqa: E402
+from tinyodom.devices import CandidatePrepareRequest, DeviceMetrics  # noqa: E402
 from tinyodom.microcontrollers import get_device, list_device_specs, resolve_device_options  # noqa: E402
 from tinyodom.microcontrollers import stm32_cube_clt  # noqa: E402
 from tinyodom.microcontrollers import stm32_nucleo_n657x0 as stm32_n657_backend  # noqa: E402
@@ -137,6 +137,51 @@ def _build_lrun_project_tree(root: Path) -> Path:
     _write_text(root / "STM32CubeIDE" / "Boot" / "Debug" / "objects.list", "obj\n")
     _write_text(root / "STM32CubeIDE" / "AppS" / "Debug" / "objects.list", "obj\n")
     return root
+
+
+def _make_prepare_request(
+    *,
+    config: object,
+    outputs_dir: Path,
+    model: object,
+    calibration_inputs: object,
+    model_variant: str = "approx_trained",
+    checkpoint_path: Path | str | None = None,
+) -> CandidatePrepareRequest:
+    """Build a typed backend preparation request for STM32 tests.
+
+    Parameters
+    ----------
+    config : object
+        Lightweight config object supplied to the backend.
+    outputs_dir : Path
+        Artifact root used by the staged candidate.
+    model : object
+        Model object forwarded to candidate preparation.
+    calibration_inputs : object
+        Representative calibration inputs exposed through ``.inputs``.
+    model_variant : str, optional
+        Export variant label.
+    checkpoint_path : Path | str | None, optional
+        Optional checkpoint path for trained variants.
+
+    Returns
+    -------
+    CandidatePrepareRequest
+        Typed request object accepted by ``prepare_candidate(...)``.
+    """
+
+    calibration_split = type("CalibrationSplit", (), {"inputs": calibration_inputs})()
+    return CandidatePrepareRequest(
+        config=config,
+        model=model,
+        model_variant=model_variant,
+        artifact_root=outputs_dir,
+        tflite_model_path=outputs_dir / "ignored.tflite",
+        calibration_split=calibration_split,
+        input_shape=(4, 6),
+        checkpoint_path=checkpoint_path,
+    )
 
 
 class _FakeSerialMonitor:
@@ -889,21 +934,19 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
                 with patch("tinyodom.hardware.convert_to_tflite_model", side_effect=_write_tflite):
                     staged_root = device.prepare_candidate(
-                        config=type(
-                            "Config",
-                            (),
-                            {
-                                "training": type("Training", (), {"quantization": True})(),
-                                "device": type("Device", (), {"measured_inference_runs": 9})(),
-                            },
-                        )(),
-                        hyperparams=None,
-                        model=fake_model,
-                        outputs_dir=outputs_dir,
-                        tflite_model_path=outputs_dir / "ignored.tflite",
-                        training_data=fake_training_data,
-                        model_variant="approx_trained",
-                        checkpoint_path=None,
+                        request=_make_prepare_request(
+                            config=type(
+                                "Config",
+                                (),
+                                {
+                                    "training": type("Training", (), {"quantization": True})(),
+                                    "device": type("Device", (), {"measured_inference_runs": 9})(),
+                                },
+                            )(),
+                            outputs_dir=outputs_dir,
+                            model=fake_model,
+                            calibration_inputs=fake_training_data.inputs,
+                        )
                     )
 
             self.assertTrue(staged_root.is_dir())
@@ -1020,14 +1063,16 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                 side_effect=_write_tflite,
             ):
                 staged_root = device.prepare_candidate(
-                    config=type("Config", (), {"training": type("Training", (), {"quantization": True})()})(),
-                    hyperparams=None,
-                    model=object(),
-                    outputs_dir=outputs_dir,
-                    tflite_model_path=outputs_dir / "ignored.tflite",
-                    training_data=type("TrainingData", (), {"inputs": [[[0.0] * 6] * 4]})(),
-                    model_variant="approx_trained",
-                    checkpoint_path=None,
+                    request=_make_prepare_request(
+                        config=type(
+                            "Config",
+                            (),
+                            {"training": type("Training", (), {"quantization": True})()},
+                        )(),
+                        outputs_dir=outputs_dir,
+                        model=object(),
+                        calibration_inputs=[[[0.0] * 6] * 4],
+                    )
                 )
                 self.assertTrue(staged_root.is_dir())
 
@@ -1084,14 +1129,16 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(stm32_cube_clt.WorkflowError, "generate failed"):
                     device.prepare_candidate(
-                        config=type("Config", (), {"training": type("Training", (), {"quantization": True})()})(),
-                        hyperparams=None,
-                        model=object(),
-                        outputs_dir=outputs_dir,
-                        tflite_model_path=outputs_dir / "ignored.tflite",
-                        training_data=fake_training_data,
-                        model_variant="approx_trained",
-                        checkpoint_path=None,
+                        request=_make_prepare_request(
+                            config=type(
+                                "Config",
+                                (),
+                                {"training": type("Training", (), {"quantization": True})()},
+                            )(),
+                            outputs_dir=outputs_dir,
+                            model=object(),
+                            calibration_inputs=fake_training_data.inputs,
+                        )
                     )
 
             stm32_outputs_root = outputs_dir / "stm32"
@@ -1270,14 +1317,16 @@ class STM32HelperTests(unittest.TestCase):
                 "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_required_tool_path"
             ) as tool_mock:
                 staged_root = device.prepare_candidate(
-                    config=type("Config", (), {"training": type("Training", (), {"quantization": True})()})(),
-                    hyperparams=None,
-                    model=object(),
-                    outputs_dir=outputs_dir,
-                    tflite_model_path=outputs_dir / "ignored.tflite",
-                    training_data=type("TrainingData", (), {"inputs": [[[0.0] * 6] * 4]})(),
-                    model_variant="approx_trained",
-                    checkpoint_path=None,
+                    request=_make_prepare_request(
+                        config=type(
+                            "Config",
+                            (),
+                            {"training": type("Training", (), {"quantization": True})()},
+                        )(),
+                        outputs_dir=outputs_dir,
+                        model=object(),
+                        calibration_inputs=[[[0.0] * 6] * 4],
+                    )
                 )
 
                 self.assertTrue(staged_root.is_dir())
@@ -1553,6 +1602,10 @@ class STM32HelperTests(unittest.TestCase):
                 device,
                 "_storage_power_metrics",
                 return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
+            ), patch.object(
+                device,
+                "_program_runtime_images",
+                return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
             ), patch(
                 "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
                 return_value=project_root / "STM32CubeIDE" / "Boot" / "Debug" / "Template_LRUN_FSBL.elf",
@@ -1695,6 +1748,7 @@ class STM32HelperTests(unittest.TestCase):
             manifest_path = project_root / STAGED_MANIFEST_NAME
             manifest_path.write_text(
                 "{\n"
+                f'  "staged_workspace_root": "{project_root.resolve()}",\n'
                 '  "weight_storage_mode": "external_flash",\n'
                 '  "weights_blob_size": 4097,\n'
                 '  "weights_blob_path": "/tmp/network_data.bin"\n'
@@ -3186,6 +3240,7 @@ class STM32HelperTests(unittest.TestCase):
             (project_root / STAGED_MANIFEST_NAME).write_text(
                 json.dumps(
                     {
+                        "staged_workspace_root": str(project_root.resolve()),
                         "weight_storage_mode": "external_flash",
                         "weights_blob_path": str(weights_blob),
                         "weights_blob_size": weights_blob.stat().st_size,

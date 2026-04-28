@@ -1,30 +1,27 @@
 import argparse
+from collections.abc import Mapping
 import csv
+import inspect
 import json
 import logging
-import time
-import socket
 import shutil
-from pathlib import Path
+import socket
+import time
 from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
 import zmq
 from addict import Dict
 
-
 import absl.logging
+import matplotlib.pyplot as plt
 import numpy as np
 import optuna
 import tensorflow as tf
-import matplotlib.pyplot as plt
-from sklearn.metrics import mean_squared_error  # , root_mean_squared_error
-from tcn import TCN
-from tensorflow.keras import optimizers
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 from optuna.trial import TrialState
-# from tensorflow.keras.layers import Dense, Flatten, MaxPooling1D, Reshape
-from tensorflow.keras.models import load_model
-
-from tinyodom.data import import_oxiod_dataset
 from tinyodom.hardware import (
     HIL_MASTER_ARENA_EXHAUSTED,
     HIL_MASTER_DEVICE_NOT_FOUND,
@@ -39,24 +36,29 @@ from tinyodom.microcontrollers import (
     get_device as get_microcontroller_device,
     resolve_device_options,
 )
+from tinyodom.builtin_components import ensure_builtin_components_registered
+from tinyodom.component_selection import cfg_get, resolve_component_selection
 from tinyodom.model import (
-    ScoringResult,
+    NONNEGATIVE_METRICS,
     ScoreConfigEvaluationError,
-    apply_cadenced_metric_defaults,
-    build_tinyodom_model,
-    evaluate_prune_rules,
-    train_and_score,
-    count_flops,
-    log_trial,
-    load_config,
-    DEFAULT_CONFIG_PATH,
+    build_trial_outcome,
     DILATION_CANDIDATES,
-    DROP_RATE_CHOICES,
+    apply_cadenced_metric_defaults,
+    count_flops,
+    evaluate_prune_rules,
+    evaluate_score_config,
     get_score_config_directions,
     is_multiobjective_score_config,
+    log_trial,
+    load_config,
+    require_logical_input_shape,
+    TrialOutcome,
+    DEFAULT_CONFIG_PATH,
     score_config_uses_training_metrics,
     set_error_code,
 )
+from tinyodom.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
+from tinyodom.registry import dataset_registry, model_family_registry, task_registry
 
 tf.get_logger().setLevel(logging.ERROR)
 absl.logging.set_verbosity(absl.logging.ERROR)
@@ -64,6 +66,11 @@ logging.getLogger("absl").setLevel(logging.ERROR)
 tf.autograph.set_verbosity(0)
 
 logger = logging.getLogger(__name__)
+
+
+class _LegacySplitView(SimpleNamespace):
+    """Legacy split view backed by the modular ``DataSplit`` contract."""
+
 
 class NASModelClient:
     """Client that orchestrates HIL-assisted NAS, training, and evaluation.
@@ -143,8 +150,47 @@ class NASModelClient:
         None
         """
         self.config_path = Path(config_path)
-        self.config = load_config(self.config_path)
-        
+        ensure_builtin_components_registered()
+        preliminary_config = load_config(self.config_path)
+        preliminary_selection = self._resolve_component_selection(preliminary_config)
+        preliminary_dataset, preliminary_bundle = self._coerce_loaded_dataset_bundle(
+            preliminary_selection["dataset_name"],
+            self._load_dataset_bundle(
+                preliminary_selection["dataset_name"],
+                preliminary_selection["dataset_config"],
+            ),
+        )
+        preliminary_task = self._instantiate_task(
+            preliminary_selection["task_name"],
+            preliminary_config,
+            preliminary_selection["task_config"],
+        )
+        preliminary_target_spec = preliminary_task.build_target_spec(
+            preliminary_bundle,
+            preliminary_selection["task_config"],
+        )
+        preliminary_metric_contract = preliminary_task.metric_contract(
+            preliminary_target_spec,
+            preliminary_selection["task_config"],
+        )
+        self.config = load_config(
+            self.config_path,
+            task_metric_names=preliminary_metric_contract.available_metric_names,
+            training_only_task_metric_names=preliminary_metric_contract.training_only_metric_names,
+        )
+        final_selection = self._resolve_component_selection(self.config)
+        dataset = preliminary_dataset
+        bundle = preliminary_bundle
+        if not self._same_component_selection(preliminary_selection, final_selection):
+            dataset, bundle = self._coerce_loaded_dataset_bundle(
+                final_selection["dataset_name"],
+                self._load_dataset_bundle(
+                    final_selection["dataset_name"],
+                    final_selection["dataset_config"],
+                ),
+            )
+        self._initialize_component_state(final_selection, dataset, bundle)
+
         if self.config.device.hil is False:
             logger.warning("HIL is disabled in the configuration.")
         if is_multiobjective_score_config(self.config.nas.score):
@@ -157,44 +203,304 @@ class NASModelClient:
         self.socket.RCVTIMEO = self.config.network.recv_timeout_sec * 1000
         self.socket.SNDTIMEO = self.config.network.send_timeout_sec * 1000  # Avoid hanging forever during tunnel hiccups
 
-        self.training_data = import_oxiod_dataset(type_flag=2, 
-                                                  useMagnetometer=True, 
-                                                  useStepCounter=True, 
-                                                  AugmentationCopies=0,
-                                                  dataset_folder=self.config.data.directory,
-                                                  sub_folders=['handbag/','handheld/','pocket/','running/','slow_walking/','trolley/'],
-                                                  sampling_rate=self.config.data.sampling_rate_hz, 
-                                                  window_size=self.config.data.window_size, 
-                                                  stride=self.config.data.stride, 
-                                                  verbose=False)
-        print("Imported Training Data")
-
-        self.validation_data = import_oxiod_dataset(type_flag = 3, 
-                                                    useMagnetometer = True, 
-                                                    useStepCounter = True, 
-                                                    AugmentationCopies = 0,
-                                                    dataset_folder = self.config.data.directory,
-                                                    sub_folders = ['handbag/','handheld/','pocket/','running/','slow_walking/','trolley/'],
-                                                    sampling_rate = self.config.data.sampling_rate_hz, 
-                                                    window_size = self.config.data.window_size, 
-                                                    stride = self.config.data.stride, 
-                                                    verbose=False)
-        print("Imported Validation Data")
-
-        self.test_data = import_oxiod_dataset(type_flag = 4,
-                                              dataset_folder = self.config.data.directory,
-                                              sub_folders = ['handbag/','handheld/','pocket/','running/','slow_walking/','trolley/'],
-                                              sampling_rate = self.config.data.sampling_rate_hz, 
-                                              window_size = self.config.data.window_size, 
-                                              stride = self.config.data.stride, 
-                                              verbose=False)
-        print("Imported Test Data")
-
         endpoint = f"tcp://{self.config.network.host}:{self.config.network.port}"
         self.socket.connect(endpoint)
         print(f"[REQ] Connected to HIL server at {endpoint}")
 
         self.study_name = "default_study"
+
+    @staticmethod
+    def _normalize_config_value(value: Any) -> Any:
+        """Normalize config-like values into plain comparison-friendly shapes.
+
+        Parameters
+        ----------
+        value : Any
+            Config-like value that may contain mappings, namespaces, or paths.
+
+        Returns
+        -------
+        Any
+            Plain recursively normalized value.
+        """
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, dict):
+            return {str(key): NASModelClient._normalize_config_value(val) for key, val in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [NASModelClient._normalize_config_value(item) for item in value]
+        if hasattr(value, "__dict__") and not isinstance(value, type):
+            return {
+                str(key): NASModelClient._normalize_config_value(val)
+                for key, val in vars(value).items()
+            }
+        return value
+
+    def _resolve_component_selection(self, config: Any) -> dict[str, Any]:
+        """Resolve component names and local config subtrees for one config.
+
+        Parameters
+        ----------
+        config : Any
+            Fully loaded global configuration.
+
+        Returns
+        -------
+        dict[str, Any]
+            Component names plus local configuration payloads.
+        """
+        return resolve_component_selection(config)
+
+    def _same_component_selection(
+        self,
+        left: dict[str, Any],
+        right: dict[str, Any],
+    ) -> bool:
+        """Return whether two resolved component selections are equivalent.
+
+        Parameters
+        ----------
+        left : dict[str, Any]
+            Preliminary component selection.
+        right : dict[str, Any]
+            Authoritative component selection.
+
+        Returns
+        -------
+        bool
+            ``True`` when both selections target the same dataset config.
+        """
+        return (
+            left["dataset_name"] == right["dataset_name"]
+            and self._normalize_config_value(left["dataset_config"])
+            == self._normalize_config_value(right["dataset_config"])
+        )
+
+    def _instantiate_task(
+        self,
+        task_name: str,
+        config: Any,
+        task_config: Any,
+        *,
+        checkpoint_path: Path | None = None,
+        early_stopping_patience: int | None = None,
+    ) -> Any:
+        """Instantiate one task component with compatibility constructor args.
+
+        Parameters
+        ----------
+        task_name : str
+            Registered task name.
+        config : Any
+            Global configuration carrying output paths.
+        task_config : Any
+            Task-local configuration subtree.
+
+        Returns
+        -------
+        Any
+            Instantiated task component.
+        """
+        task_cls = task_registry.get(task_name)
+        signature = inspect.signature(task_cls)
+        kwargs: dict[str, Any] = {}
+        if "checkpoint_path" in signature.parameters:
+            kwargs["checkpoint_path"] = (
+                Path(config.outputs.checkpoint_path)
+                if checkpoint_path is None
+                else Path(checkpoint_path)
+            )
+        if "early_stopping_patience" in signature.parameters:
+            kwargs["early_stopping_patience"] = int(
+                self._cfg_get(task_config, "early_stopping_patience", 40)
+                if early_stopping_patience is None
+                else early_stopping_patience
+            )
+        return task_cls(**kwargs)
+
+    def _load_dataset_bundle(
+        self,
+        dataset_name: str,
+        dataset_config: Any,
+    ) -> tuple[Any | None, DatasetBundle]:
+        """Instantiate one dataset and load its normalized bundle.
+
+        Parameters
+        ----------
+        dataset_name : str
+            Registered dataset name.
+        dataset_config : Any
+            Dataset-local configuration subtree.
+
+        Returns
+        -------
+        tuple[Any | None, DatasetBundle]
+            Loaded dataset instance plus bundle for the active run.
+        """
+        dataset_cls = dataset_registry.get(dataset_name)
+        dataset = dataset_cls()
+        dataset.validate_config(dataset_config)
+        bundle = dataset.load(dataset_config)
+        print("Imported Training Data")
+        print("Imported Validation Data")
+        print("Imported Test Data")
+        return dataset, bundle
+
+    def _coerce_loaded_dataset_bundle(
+        self,
+        dataset_name: str,
+        loaded: Any,
+    ) -> tuple[Any | None, DatasetBundle]:
+        """Normalize dataset-loader returns for backward-compatible callers.
+
+        Parameters
+        ----------
+        dataset_name : str
+            Registered dataset name associated with ``loaded``.
+        loaded : Any
+            Result returned by ``_load_dataset_bundle(...)``.
+
+        Returns
+        -------
+        tuple[Any | None, DatasetBundle]
+            Dataset instance plus normalized dataset bundle.
+
+        Notes
+        -----
+        ``_load_dataset_bundle(...)`` now returns ``(dataset, bundle)``, but
+        some tests and overrides may still return only ``DatasetBundle``.
+        Accept both shapes so those callers do not need to change in lockstep.
+        """
+        if isinstance(loaded, tuple) and len(loaded) == 2:
+            return loaded
+        return None, loaded
+
+    @staticmethod
+    def _make_legacy_split_view(split: DataSplit | None) -> _LegacySplitView | None:
+        """Convert a modular split into the legacy view expected downstream.
+
+        Parameters
+        ----------
+        split : DataSplit | None
+            Modular split to adapt.
+
+        Returns
+        -------
+        _LegacySplitView | None
+            Namespace exposing the legacy TinyODOM split fields.
+        """
+        if split is None:
+            return None
+        metadata = dict(split.metadata)
+        targets = split.targets if isinstance(split.targets, Mapping) else {}
+        return _LegacySplitView(
+            inputs=split.inputs,
+            x_vel=targets.get("velx"),
+            y_vel=targets.get("vely"),
+            disp=metadata.get("disp"),
+            heading=metadata.get("heading"),
+            position=metadata.get("position"),
+            x0=metadata.get("x0"),
+            y0=metadata.get("y0"),
+            size_of_each=metadata.get("size_of_each"),
+            head_s=metadata.get("head_s"),
+            head_c=metadata.get("head_c"),
+            inputs_orig=metadata.get("inputs_orig"),
+        )
+
+    def _refresh_legacy_split_aliases(self, bundle: DatasetBundle) -> None:
+        """Refresh legacy split aliases from one modular dataset bundle.
+
+        Parameters
+        ----------
+        bundle : DatasetBundle
+            Modular dataset bundle backing this client.
+
+        Returns
+        -------
+        None
+        """
+        self.training_data = self._make_legacy_split_view(bundle.train)
+        self.validation_data = self._make_legacy_split_view(bundle.val)
+        self.test_data = self._make_legacy_split_view(bundle.test)
+
+    def _build_model_context(
+        self,
+        bundle: DatasetBundle,
+        target_spec: Any,
+    ) -> ModelBuildContext:
+        """Build the normalized model-family context for one dataset/task pair.
+
+        Parameters
+        ----------
+        bundle : DatasetBundle
+            Active dataset bundle.
+        target_spec : Any
+            Task-owned target specification.
+
+        Returns
+        -------
+        ModelBuildContext
+            Normalized model-build context.
+        """
+        return ModelBuildContext(
+            input_shape=bundle.input_shape,
+            input_dtype=bundle.input_dtype,
+            target_spec=target_spec,
+            dataset_metadata=dict(bundle.metadata),
+            task_metadata=dict(target_spec.metadata),
+        )
+
+    def _initialize_component_state(
+        self,
+        selection: dict[str, Any],
+        dataset: Any,
+        bundle: DatasetBundle,
+    ) -> None:
+        """Instantiate and validate the active dataset/task/model components.
+
+        Parameters
+        ----------
+        selection : dict[str, Any]
+            Resolved component names and local config payloads.
+        dataset : Any
+            Dataset instance that loaded ``bundle``. When ``None``, the active
+            dataset component is instantiated from the registry.
+        bundle : DatasetBundle
+            Dataset bundle to attach to the client.
+
+        Returns
+        -------
+        None
+        """
+        dataset_cls = dataset_registry.get(selection["dataset_name"])
+        model_family_cls = model_family_registry.get(selection["model_family_name"])
+        if dataset is None:
+            dataset = dataset_cls()
+        task = self._instantiate_task(selection["task_name"], self.config, selection["task_config"])
+        model_family = model_family_cls()
+
+        task.validate_config(selection["task_config"])
+        model_family.validate_config(selection["model_config"])
+
+        target_spec = task.build_target_spec(bundle, selection["task_config"])
+        metric_contract = task.metric_contract(target_spec, selection["task_config"])
+        model_build_context = self._build_model_context(bundle, target_spec)
+
+        self.dataset = dataset
+        self.dataset_name = selection["dataset_name"]
+        self.task = task
+        self.task_name = selection["task_name"]
+        self.model_family = model_family
+        self.model_family_name = selection["model_family_name"]
+        self.dataset_bundle = bundle
+        self.target_spec = target_spec
+        self.metric_contract = metric_contract
+        self.model_build_context = model_build_context
+        self.dataset_config = selection["dataset_config"]
+        self.task_config = selection["task_config"]
+        self.model_config = selection["model_config"]
+        self._refresh_legacy_split_aliases(bundle)
 
     @staticmethod
     def _cfg_get(container, key: str, default=None):
@@ -215,10 +521,7 @@ class NASModelClient:
         object
             Retrieved field value or ``default`` when unavailable.
         """
-        getter = getattr(container, "get", None)
-        if callable(getter):
-            return getter(key, default)
-        return getattr(container, key, default)
+        return cfg_get(container, key, default)
 
     def _score_is_multiobjective(self) -> bool:
         """Return whether the active config uses multi-objective scoring.
@@ -321,6 +624,313 @@ class NASModelClient:
             # Give stdout time to flush before tearing the socket down.
             time.sleep(0.1)
 
+    def _assemble_runtime_hyperparams(
+        self,
+        family_hparams: dict[str, Any],
+        flops: int,
+        batch_size: int,
+    ) -> Dict:
+        """Assemble the legacy hyperparameter payload shared across runtime uses.
+
+        Parameters
+        ----------
+        family_hparams : dict[str, Any]
+            Model-family sampled or reconstructed hyperparameters.
+        flops : int
+            FLOP count for the built model.
+        batch_size : int
+            Runner-owned batch size.
+
+        Returns
+        -------
+        Dict
+            Legacy hyperparameter payload used by HIL, pruning, scoring, and
+            CSV logging.
+        """
+        timesteps, input_dim = require_logical_input_shape(
+            None if self.model_build_context is None else self.model_build_context.input_shape
+        )
+        return Dict(
+            {
+                **family_hparams,
+                "batch_size": int(batch_size),
+                "timesteps": timesteps,
+                "input_dim": input_dim,
+                "flops": int(flops),
+            }
+        )
+
+    @staticmethod
+    def _apply_non_hil_success_sentinels(metrics: dict[str, Any]) -> None:
+        """Apply legacy non-HIL sentinels before scoring or logging.
+
+        Parameters
+        ----------
+        metrics : dict[str, Any]
+            Runtime metrics dictionary to mutate in place.
+
+        Returns
+        -------
+        None
+        """
+        if (not metrics["hil_enabled"]) and metrics.get("error_code", 0) == 0:
+            metrics["latency_ms"] = -1
+            set_error_code(metrics, 1)
+
+    @staticmethod
+    def _sync_task_metrics(metrics: dict[str, Any], task_metrics: dict[str, Any]) -> None:
+        """Write task-owned evaluation metrics back into the shared metrics dict.
+
+        Parameters
+        ----------
+        metrics : dict[str, Any]
+            Shared runtime metrics dictionary.
+        task_metrics : dict[str, Any]
+            Task-owned evaluation metrics.
+
+        Returns
+        -------
+        None
+        """
+        for metric_name, raw_value in task_metrics.items():
+            if isinstance(raw_value, np.generic):
+                metrics[metric_name] = raw_value.item()
+            else:
+                metrics[metric_name] = raw_value
+
+    @staticmethod
+    def _expand_best_params_to_family_hparams(best_params: dict[str, Any]) -> dict[str, Any]:
+        """Convert Optuna best-trial params into model-family build hparams.
+
+        Parameters
+        ----------
+        best_params : dict[str, Any]
+            Raw Optuna trial parameters.
+
+        Returns
+        -------
+        dict[str, Any]
+            Model-family hyperparameters accepted by ``build_model(...)``.
+        """
+        family_hparams = dict(best_params)
+        if "dilations_index" in family_hparams and "dilations" not in family_hparams:
+            family_hparams["dilations"] = DILATION_CANDIDATES[int(family_hparams["dilations_index"])]
+        family_hparams.pop("dilations_index", None)
+        return family_hparams
+
+    @staticmethod
+    def _concatenate_split_payload(
+        train_value: Any,
+        val_value: Any,
+        *,
+        context_name: str,
+    ) -> Any:
+        """Concatenate one train/validation payload for combine-train-val mode.
+
+        Parameters
+        ----------
+        train_value : Any
+            Training split payload.
+        val_value : Any
+            Validation split payload.
+        context_name : str
+            Human-readable field name used in errors.
+
+        Returns
+        -------
+        Any
+            Concatenated payload.
+
+        Raises
+        ------
+        ValueError
+            If the payload shape is unsupported for concatenation.
+        """
+
+        if isinstance(train_value, np.ndarray) and isinstance(val_value, np.ndarray):
+            return np.concatenate([train_value, val_value], axis=0)
+        if isinstance(train_value, Mapping) and isinstance(val_value, Mapping):
+            if set(train_value) != set(val_value):
+                raise ValueError(
+                    f"combine_train_val=True requires matching mapping keys for {context_name}."
+                )
+            return {
+                key: NASModelClient._concatenate_split_payload(
+                    train_value[key],
+                    val_value[key],
+                    context_name=f"{context_name}.{key}",
+                )
+                for key in train_value
+            }
+        if train_value is None and val_value is None:
+            return None
+        raise ValueError(
+            "combine_train_val=True only supports NumPy arrays or dicts of NumPy arrays; "
+            f"unsupported payload encountered for {context_name}."
+        )
+
+    def _merge_train_and_val_splits(self) -> DataSplit:
+        """Merge train and validation splits for compatibility final training.
+
+        Returns
+        -------
+        DataSplit
+            Concatenated training split.
+
+        Raises
+        ------
+        ValueError
+            If no validation split is available or if the payloads are not
+            concatenable under the compatibility rules.
+        """
+
+        train_split = self.dataset_bundle.train
+        val_split = self.dataset_bundle.val
+        if val_split is None:
+            raise ValueError("combine_train_val=True requires a validation split.")
+        return DataSplit(
+            inputs=self._concatenate_split_payload(
+                train_split.inputs,
+                val_split.inputs,
+                context_name="inputs",
+            ),
+            targets=self._concatenate_split_payload(
+                train_split.targets,
+                val_split.targets,
+                context_name="targets",
+            ),
+            sample_weights=self._concatenate_split_payload(
+                train_split.sample_weights,
+                val_split.sample_weights,
+                context_name="sample_weights",
+            ),
+            metadata=dict(train_split.metadata),
+        )
+
+    def _fit_targets_for_split(self, split: DataSplit) -> Any:
+        """Return task targets in model-output order for manual fit paths.
+
+        Parameters
+        ----------
+        split : DataSplit
+            Dataset split to adapt.
+
+        Returns
+        -------
+        Any
+            Model.fit-compatible target payload.
+
+        Raises
+        ------
+        ValueError
+            If the split targets are missing declared output names.
+        """
+
+        if isinstance(split.targets, Mapping):
+            missing = [
+                output_name
+                for output_name in self.target_spec.output_names
+                if output_name not in split.targets
+            ]
+            if missing:
+                raise ValueError(
+                    "Split targets do not satisfy the active task output contract; "
+                    f"missing targets: {', '.join(missing)}."
+                )
+            return [split.targets[output_name] for output_name in self.target_spec.output_names]
+        return split.targets
+
+    def _resolve_dataset_numeric_setting(
+        self,
+        key: str,
+        *,
+        split: DataSplit | None = None,
+    ) -> float:
+        """Resolve one numeric dataset setting from metadata or config.
+
+        Parameters
+        ----------
+        key : str
+            Numeric dataset field name to resolve.
+        split : DataSplit | None, optional
+            Optional split whose metadata should take precedence.
+
+        Returns
+        -------
+        float
+            Resolved numeric value.
+
+        Raises
+        ------
+        ValueError
+            If the value cannot be resolved or is not positive and finite.
+        """
+
+        raw_value = None
+        if split is not None:
+            raw_value = split.metadata.get(key)
+        if raw_value in (None, ""):
+            raw_value = self.dataset_bundle.metadata.get(key)
+        if raw_value in (None, ""):
+            raw_value = self._cfg_get(self.dataset_config, key, None)
+        if raw_value in (None, "") or isinstance(raw_value, bool):
+            raise ValueError(f"Unable to resolve dataset setting '{key}' for the active configuration.")
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Dataset setting '{key}' must be numeric for the active configuration."
+            ) from exc
+        if not np.isfinite(value) or value <= 0.0:
+            raise ValueError(
+                f"Dataset setting '{key}' must be a positive finite value for the active configuration."
+            )
+        return value
+
+    def _trajectory_split_view(self) -> _LegacySplitView:
+        """Return an odometry-oriented view of the test split for reporting.
+
+        Returns
+        -------
+        _LegacySplitView
+            Legacy-compatible test-split view for trajectory analysis.
+
+        Raises
+        ------
+        ValueError
+            If the active test split does not expose the odometry metadata
+            required by the trajectory helper.
+        """
+
+        split = self.dataset_bundle.test
+        if split is None:
+            raise ValueError("Trajectory reporting requires a held-out test split.")
+        if not isinstance(split.targets, Mapping):
+            raise ValueError(
+                "Trajectory reporting remains odometry-specific and requires "
+                "velocity targets named 'velx' and 'vely'."
+            )
+        if split.targets.get("velx") is None or split.targets.get("vely") is None:
+            raise ValueError(
+                "Trajectory reporting remains odometry-specific and requires "
+                "velocity targets named 'velx' and 'vely'."
+            )
+        legacy_view = self._make_legacy_split_view(split)
+        if legacy_view is None:
+            raise ValueError("Trajectory reporting requires a held-out test split.")
+        required_fields = ("size_of_each", "x0", "y0")
+        missing = [
+            field_name
+            for field_name in required_fields
+            if getattr(legacy_view, field_name, None) in (None, "")
+        ]
+        if missing:
+            raise ValueError(
+                "Trajectory reporting remains odometry-specific and requires test-split metadata "
+                f"for: {', '.join(missing)}."
+            )
+        return legacy_view
+
     def objective(self, trial: optuna.Trial) -> float | tuple:
         """Optimize TinyODOM architecture and training hyperparameters.
 
@@ -370,38 +980,33 @@ class NASModelClient:
         """
         artifacts_dir = self._artifacts_dir()
         log_path = artifacts_dir / self.config.outputs.log_file_name
-        # Sample the CNN/TCN architecture knobs for this Optuna trial.
-        # ~40 million combinations
-        nb_filters = trial.suggest_int("nb_filters", 2, 63)
-        kernel_size = trial.suggest_int("kernel_size", 2, 15)
-        dropout_rate = trial.suggest_categorical("dropout_rate", DROP_RATE_CHOICES)
-        use_skip_connections = trial.suggest_categorical("use_skip_connections", [True, False])
-        norm_flag = trial.suggest_categorical("norm_flag", [True, False])
-        dilations_index = trial.suggest_int("dilations_index", 0, len(DILATION_CANDIDATES) - 1)
-        dilations = DILATION_CANDIDATES[dilations_index]
-
-        # Build a model that matches the sampled hyperparameters so we can count FLOPs.
-        batch_size, timesteps, input_dim = 256, self.config.data.window_size, self.training_data.inputs.shape[2]
-        hyperparams = {
-            "nb_filters": nb_filters,
-            "kernel_size": kernel_size,
-            "dropout_rate": dropout_rate,
-            "use_skip_connections": use_skip_connections,
-            "norm_flag": norm_flag,
-            "dilations": dilations,
-            "batch_size": batch_size,
-            "timesteps": timesteps,
-            "input_dim": input_dim,
-        }
-        
-        model = build_tinyodom_model(Dict(hyperparams))
-        optimizer = optimizers.Adam()
-        model.compile(loss={"velx": "mse", "vely": "mse"}, optimizer=optimizer)
-
-        # Returns total number of flops
-        flops = count_flops(model, (timesteps, input_dim))
-
-        hyperparams["flops"] = flops
+        batch_size = 256
+        family_hparams = self.model_family.sample_hparams(
+            trial,
+            self.model_build_context,
+            self.model_config,
+        )
+        self.model_family.validate_hparams(
+            family_hparams,
+            self.model_build_context,
+            self.model_config,
+        )
+        model = self.model_family.build_model(
+            family_hparams,
+            self.model_build_context,
+            self.model_config,
+        )
+        self.task.validate_model_outputs(model, self.target_spec)
+        self.task.compile_model(model, self.task_config, self.target_spec)
+        logical_input_shape = require_logical_input_shape(
+            None if self.model_build_context is None else self.model_build_context.input_shape
+        )
+        flops = count_flops(model, logical_input_shape)
+        hyperparams = self._assemble_runtime_hyperparams(
+            family_hparams,
+            flops,
+            batch_size,
+        )
 
         # if the board supports runtime CPU clock selection, choose it here
         cpu_clock_mhz_options = self._cfg_get(self.config.device, "cpu_clock_mhz_options", None)
@@ -426,6 +1031,8 @@ class NASModelClient:
         if device_options_overrides is not None:
             request_payload["device_options_overrides"] = device_options_overrides
         metrics = self._hil_request(request_payload)
+        metrics.setdefault("hil_enabled", bool(self.config.device.hil))
+        metrics.setdefault("energy_aware", bool(self.config.training.energy_aware))
 
         # Gets the hardware *estimated* specifications for the target device
         device_options = self._hardware_limit_device_options()
@@ -444,9 +1051,9 @@ class NASModelClient:
         except ValueError:
             runtime_device = None
 
-        rmse_vel_x = -1.0
-        rmse_vel_y = -1.0
         penalty_acc = -100.0
+        task_nonnegative_metric_names = set(self.metric_contract.nonnegative_metric_names)
+        effective_nonnegative_metric_names = set(NONNEGATIVE_METRICS) | task_nonnegative_metric_names
         # If no error code present (or timeout), treat as fatal error
         error_code = metrics.get("error_code", HIL_MASTER_FATAL)
 
@@ -462,7 +1069,10 @@ class NASModelClient:
             if not self._score_is_multiobjective():
                 trial.report(value, step=0)
 
-        def _fail_with_penalty(prune_reason: str, prune_rule: str = ""):
+        def _fail_with_penalty(
+            prune_reason: str,
+            prune_rule: str = "",
+        ):
             """Helper to prune with a penalty score and log the failure."""
             metrics.setdefault("latency_ms", 10000.0)
             metrics.setdefault("energy_mj_per_inference", 10000.0)
@@ -471,7 +1081,6 @@ class NASModelClient:
             metrics.setdefault("bus_voltage_v", -1.0)
             metrics.setdefault("latency_budget_ms", -1.0)
             metrics.setdefault("arena_bytes", -1)
-            metrics.setdefault("rmse_total", -1.0)
             apply_cadenced_metric_defaults(metrics, metrics)
             directions = self._study_directions()
             if self._score_is_multiobjective():
@@ -480,28 +1089,29 @@ class NASModelClient:
                     -1e12 if direction == "maximize" else 1e12
                     for direction in directions
                 ]
-                scoring_result = ScoringResult(
-                    rmse_vel_x=rmse_vel_x,
-                    rmse_vel_y=rmse_vel_y,
+                trial_outcome = TrialOutcome(
                     score=None,
                     objective_names=objective_names,
                     objective_values=objective_values,
                     objective_directions=directions,
+                    task_metrics={},
+                    hyperparams=dict(hyperparams),
+                    artifact_summary=None,
                 )
             else:
-                scoring_result = ScoringResult(
-                    rmse_vel_x=rmse_vel_x,
-                    rmse_vel_y=rmse_vel_y,
+                trial_outcome = TrialOutcome(
                     score=penalty_acc,
                     objective_names=["score"],
                     objective_values=[penalty_acc],
                     objective_directions=["maximize"],
+                    task_metrics={},
+                    hyperparams=dict(hyperparams),
+                    artifact_summary=None,
                 )
 
             log_trial(
-                scoring_result=scoring_result,
+                trial_outcome=trial_outcome,
                 metrics=metrics,
-                hyperparams=hyperparams,
                 trial=trial,
                 log_file_name=str(log_path),
                 study_name=self.study_name,
@@ -511,7 +1121,7 @@ class NASModelClient:
             )
 
             if self._score_is_multiobjective():
-                return tuple(scoring_result.objective_values)
+                return tuple(trial_outcome.objective_values)
 
             _report_if_supported(-float("inf"))
             raise optuna.TrialPruned(prune_reason)
@@ -570,39 +1180,95 @@ class NASModelClient:
             prune_rule, prune_reason = prune_hit
             return _fail_with_penalty(prune_reason, prune_rule=prune_rule)
 
-        # Only train/evaluate models that pass all resource checks.
         try:
-            scoring_result = train_and_score(
-                model,
-                batch_size=batch_size,
-                hyperparams=Dict(hyperparams),
-                metrics=metrics,
-                max_ram=max_ram,
-                max_flash=max_flash,
-                training_data=self.training_data,
-                validation_data=self.validation_data,
-                config=self.config,
-            )
+            if not self.config.training.train:
+                task_metrics = {
+                    metric_name: -1.0
+                    for metric_name in sorted(self.metric_contract.available_metric_names)
+                }
+                self._sync_task_metrics(metrics, task_metrics)
+                self._apply_non_hil_success_sentinels(metrics)
+                score_result = evaluate_score_config(
+                    metrics=metrics,
+                    hyperparams=hyperparams,
+                    score_config=self.config.nas.score,
+                    task_nonnegative_metric_names=task_nonnegative_metric_names,
+                )
+                trial_outcome = build_trial_outcome(
+                    score_result=score_result,
+                    task_metrics=task_metrics,
+                    hyperparams=dict(hyperparams),
+                )
+            else:
+                fit_plan = self.task.make_fit_plan(
+                    self.dataset_bundle,
+                    self.task_config,
+                    self.target_spec,
+                )
+                model.fit(
+                    **fit_plan.fit_kwargs,
+                    callbacks=fit_plan.callbacks,
+                    epochs=self.config.training.nas_epochs,
+                    batch_size=batch_size,
+                )
+                model = self.model_family.load_model(
+                    self.config.outputs.checkpoint_path,
+                    self.model_build_context,
+                    self.model_config,
+                )
+                evaluation_result = self.task.evaluate(
+                    model,
+                    self.dataset_bundle.val,
+                    self.task_config,
+                    self.target_spec,
+                )
+                task_metrics = dict(evaluation_result.metrics)
+                self._sync_task_metrics(metrics, task_metrics)
+                self._apply_non_hil_success_sentinels(metrics)
+                score_result = evaluate_score_config(
+                    metrics=metrics,
+                    hyperparams=hyperparams,
+                    score_config=self.config.nas.score,
+                    task_nonnegative_metric_names=task_nonnegative_metric_names,
+                )
+                trial_outcome = build_trial_outcome(
+                    score_result=score_result,
+                    task_metrics=task_metrics,
+                    hyperparams=dict(hyperparams),
+                    artifact_summary=evaluation_result.artifacts,
+                )
         except ScoreConfigEvaluationError:
-            return _fail_with_penalty("Training failed to produce valid metrics")
+            return _fail_with_penalty(
+                "Training failed to produce valid metrics",
+            )
 
         if any(
-            (not np.isfinite(value)) or (direction == "minimize" and value < 0.0)
-            for value, direction in zip(scoring_result.objective_values, scoring_result.objective_directions)
+            (not np.isfinite(value))
+            or (
+                direction == "minimize"
+                and objective_name in effective_nonnegative_metric_names
+                and value < 0.0
+            )
+            for objective_name, value, direction in zip(
+                trial_outcome.objective_names,
+                trial_outcome.objective_values,
+                trial_outcome.objective_directions,
+            )
         ):
-            return _fail_with_penalty("Training failed to produce valid metrics")
+            return _fail_with_penalty(
+                "Training failed to produce valid metrics",
+            )
 
         log_trial(
-            scoring_result=scoring_result,
+            trial_outcome=trial_outcome,
             metrics=metrics,
-            hyperparams=hyperparams,
             trial=trial,
             log_file_name=str(log_path),
             study_name=self.study_name,
         )
         if self._score_is_multiobjective():
-            return tuple(scoring_result.objective_values)
-        return float(scoring_result.score)
+            return tuple(trial_outcome.objective_values)
+        return float(trial_outcome.score)
 
     def smoke_test(
         self,
@@ -652,9 +1318,12 @@ class NASModelClient:
                 self.config.device.hil = hil
             self.config.training.train = train
             self.config.training.nas_epochs = epochs  # Speed up smoke test
-            if (not train) and score_config_uses_training_metrics(self.config.nas.score):
+            if (not train) and score_config_uses_training_metrics(
+                self.config.nas.score,
+                self.metric_contract.training_only_metric_names,
+            ):
                 raise ValueError(
-                    "train=False is incompatible with score configs that require RMSE metrics."
+                    "train=False is incompatible with score configs that require training-only metrics."
                 )
             if self._score_is_multiobjective():
                 sampler = optuna.samplers.NSGAIISampler(
@@ -712,7 +1381,7 @@ class NASModelClient:
                 for name, value in trial.params.items():
                     print(f"    {name}: {value}")
                 print("  Runtime metrics (user attrs):")
-                for key in ("ram_bytes", "flash_bytes", "latency_ms", "rmse_vel_x", "rmse_vel_y", "hil_error_code", "arena_bytes"):
+                for key in ("ram_bytes", "flash_bytes", "latency_ms", "hil_error_code", "arena_bytes", "task_metrics"):
                     print(f"    {key}: {trial.user_attrs.get(key)}")
         else:
             best_trial = single_trial_study.best_trial
@@ -721,7 +1390,7 @@ class NASModelClient:
             for name, value in best_trial.params.items():
                 print(f"  {name}: {value}")
             print("Runtime metrics (user attrs):")
-            for key in ("ram_bytes", "flash_bytes", "latency_ms", "rmse_vel_x", "rmse_vel_y", "hil_error_code", "arena_bytes"):
+            for key in ("ram_bytes", "flash_bytes", "latency_ms", "hil_error_code", "arena_bytes", "task_metrics"):
                 print(f"  {key}: {best_trial.user_attrs.get(key)}")
 
     def run_nas(
@@ -1026,70 +1695,55 @@ class NASModelClient:
         best_trial = study.best_trial
         best_params = best_trial.params
 
-        # Derive full hyperparameter set expected by the model builder.
-        # The search space stores only indices/choices; fill in derived values here.
-        dilations = DILATION_CANDIDATES[best_params["dilations_index"]]
         batch_size = 256  # Use the same fixed batch size as in NAS search.
-        hyperparams = Dict(
-            {
-                "nb_filters": best_params["nb_filters"],
-                "kernel_size": best_params["kernel_size"],
-                "dropout_rate": best_params["dropout_rate"],
-                "use_skip_connections": best_params["use_skip_connections"],
-                "norm_flag": best_params["norm_flag"],
-                "dilations": dilations,
-                "timesteps": self.config.data.window_size,
-                "input_dim": self.training_data.inputs.shape[2],
-                "batch_size": batch_size,
-            }
+        family_hparams = self._expand_best_params_to_family_hparams(dict(best_params))
+        fit_task = self._instantiate_task(
+            self.task_name,
+            self.config,
+            self.task_config,
+            checkpoint_path=ckpt_path,
+            early_stopping_patience=patience,
         )
+        model = self.model_family.build_model(
+            family_hparams,
+            self.model_build_context,
+            self.model_config,
+        )
+        fit_task.validate_model_outputs(model, self.target_spec)
+        fit_task.compile_model(model, self.task_config, self.target_spec)
 
-        # Rebuild a fresh model and compile with a standard optimizer/loss.
-        model = build_tinyodom_model(hyperparams)
-        model.compile(loss={"velx": "mse", "vely": "mse"}, optimizer=optimizers.Adam())
-
-        # Decide whether to hold out validation or fold it into training for the final fit.
         if combine_train_val:
-            # Concatenate train and validation to squeeze the most data; monitor training loss instead.
-            train_inputs = np.concatenate([self.training_data.inputs, self.validation_data.inputs], axis=0)
-            train_x_vel = np.concatenate([self.training_data.x_vel, self.validation_data.x_vel], axis=0)
-            train_y_vel = np.concatenate([self.training_data.y_vel, self.validation_data.y_vel], axis=0)
-            val_data = None
-            monitor_metric = "loss"
+            merged_train_split = self._merge_train_and_val_splits()
+            checkpoint_cb = ModelCheckpoint(
+                filepath=str(ckpt_path),
+                monitor="loss",
+                mode="min",
+                verbose=1,
+                save_best_only=True,
+            )
+            early_stop_cb = EarlyStopping(
+                monitor="loss",
+                patience=patience,
+                mode="min",
+                verbose=1,
+                restore_best_weights=True,
+            )
+            fit_kwargs = {
+                "x": merged_train_split.inputs,
+                "y": self._fit_targets_for_split(merged_train_split),
+                "shuffle": True,
+                "callbacks": [checkpoint_cb, early_stop_cb],
+            }
         else:
-            train_inputs = self.training_data.inputs
-            train_x_vel = self.training_data.x_vel
-            train_y_vel = self.training_data.y_vel
-            val_data = (self.validation_data.inputs, [self.validation_data.x_vel, self.validation_data.y_vel])
-            monitor_metric = "val_loss"
-
-        # Configure callbacks for checkpointing and early stopping.
-        checkpoint_cb = ModelCheckpoint(
-            filepath=str(ckpt_path),
-            monitor=monitor_metric,
-            mode="min",
-            verbose=1,
-            save_best_only=True,
-        )
-        early_stop_cb = EarlyStopping(
-            monitor=monitor_metric,
-            patience=patience,
-            mode="min",
-            verbose=1,
-            restore_best_weights=True,
-        )
-
-        # Kick off the long training run with the configured schedule and callbacks.
-        fit_kwargs = {
-            "x": train_inputs,
-            "y": [train_x_vel, train_y_vel],
-            "epochs": self.config.training.model_epochs,
-            "batch_size": batch_size,
-            "shuffle": True,
-            "callbacks": [checkpoint_cb, early_stop_cb],
-        }
-        if val_data is not None:
-            fit_kwargs["validation_data"] = val_data
+            fit_plan = fit_task.make_fit_plan(
+                self.dataset_bundle,
+                self.task_config,
+                self.target_spec,
+            )
+            fit_kwargs = dict(fit_plan.fit_kwargs)
+            fit_kwargs["callbacks"] = list(fit_plan.callbacks)
+        fit_kwargs["epochs"] = self.config.training.model_epochs
+        fit_kwargs["batch_size"] = batch_size
         history = model.fit(**fit_kwargs)
 
         # Persist the training history so future plotting/reporting does not require rerunning training.
@@ -1220,11 +1874,23 @@ class NASModelClient:
             metrics_path = Path(metrics_path)
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Load checkpoint and compute test-set RMSEs.
-        model = load_model(str(ckpt_path), custom_objects={"TCN": TCN})
-        preds = model.predict(self.test_data.inputs)
-        rmse_vel_x = mean_squared_error(self.test_data.x_vel, preds[0], squared=False)
-        rmse_vel_y = mean_squared_error(self.test_data.y_vel, preds[1], squared=False)
+        model = self.model_family.load_model(
+            ckpt_path,
+            self.model_build_context,
+            self.model_config,
+        )
+        evaluation_result = self.task.evaluate(
+            model,
+            self.dataset_bundle.test,
+            self.task_config,
+            self.target_spec,
+        )
+        task_metrics = {}
+        for metric_name, raw_value in evaluation_result.metrics.items():
+            if isinstance(raw_value, np.generic):
+                task_metrics[metric_name] = raw_value.item()
+            else:
+                task_metrics[metric_name] = raw_value
 
         # Gather hyperparameters for record-keeping if the study is available.
         best_params = None
@@ -1236,9 +1902,10 @@ class NASModelClient:
         tflite_written = None
         if export_tflite:
             tflite_path = Path(tflite_path) if tflite_path else Path(self.config.outputs.tflite_model_path)
+            representative_split = self.dataset_bundle.calibration or self.dataset_bundle.train
             convert_to_tflite_model(
                 model=model,
-                training_data=self.training_data.inputs,
+                training_data=representative_split.inputs,
                 quantization=self.config.training.quantization,
                 output_name=tflite_path,
             )
@@ -1249,10 +1916,9 @@ class NASModelClient:
             "checkpoint_path": str(ckpt_path),
             "study_name": study_name,
             "study_storage": study_storage,
-            "rmse_vel_x": float(rmse_vel_x),
-            "rmse_vel_y": float(rmse_vel_y),
             "hyperparameters": best_params,
             "tflite_path": tflite_written,
+            **task_metrics,
         }
 
         # Persist JSON for rich write-ups and a simple CSV for quick scanning.
@@ -1285,9 +1951,11 @@ class NASModelClient:
         plot_dir : Path | None, optional
             Directory to save trajectory plots. Defaults to `models_dir/trajectories`.
         stride : int | None, optional
-            Sliding window stride used during preprocessing. Defaults to `config.data.stride`.
+            Sliding window stride used during preprocessing. Defaults to the
+            active dataset metadata/config when omitted.
         window_size : int | None, optional
-            Sliding window length used during preprocessing. Defaults to `config.data.window_size`.
+            Sliding window length used during preprocessing. Defaults to the
+            active dataset metadata/config when omitted.
         study_name : str | None, optional
             Study name to prefix plot filenames.
 
@@ -1305,11 +1973,29 @@ class NASModelClient:
         ckpt_path = Path(checkpoint_path) if checkpoint_path else Path(self.config.outputs.checkpoint_path)
         plot_dir = Path(plot_dir) if plot_dir else Path(self.config.outputs.models_dir) / "trajectories"
         plot_dir.mkdir(parents=True, exist_ok=True)
-        stride = stride if stride is not None else self.config.data.stride
-        window_size = window_size if window_size is not None else self.config.data.window_size
+        test_split = self.dataset_bundle.test
+        trajectory_split = self._trajectory_split_view()
+        stride = (
+            float(stride)
+            if stride is not None
+            else self._resolve_dataset_numeric_setting("stride", split=test_split)
+        )
+        window_size = (
+            float(window_size)
+            if window_size is not None
+            else self._resolve_dataset_numeric_setting("window_size", split=test_split)
+        )
+        sampling_rate_hz = self._resolve_dataset_numeric_setting(
+            "sampling_rate_hz",
+            split=test_split,
+        )
 
-        model = load_model(str(ckpt_path), custom_objects={"TCN": TCN})
-        preds = model.predict(self.test_data.inputs)
+        model = self.model_family.load_model(
+            ckpt_path,
+            self.model_build_context,
+            self.model_config,
+        )
+        preds = model.predict(trajectory_split.inputs)
 
         # Helper to integrate velocities into XY tracks.
         samples_per_window = max((window_size - stride) / stride, 1)
@@ -1349,15 +2035,15 @@ class NASModelClient:
         plot_paths = []
 
         idx_start = 0
-        for i, length in enumerate(self.test_data.size_of_each):
+        for i, length in enumerate(trajectory_split.size_of_each):
             idx_end = idx_start + length
             # Flatten in case datasets store (n, 1) vectors.
-            gt_vx = self.test_data.x_vel[idx_start:idx_end].ravel()
-            gt_vy = self.test_data.y_vel[idx_start:idx_end].ravel()
+            gt_vx = trajectory_split.x_vel[idx_start:idx_end].ravel()
+            gt_vy = trajectory_split.y_vel[idx_start:idx_end].ravel()
             pred_vx = preds[0][idx_start:idx_end].ravel()
             pred_vy = preds[1][idx_start:idx_end].ravel()
-            start_x = self.test_data.x0[i]
-            start_y = self.test_data.y0[i]
+            start_x = trajectory_split.x0[i]
+            start_y = trajectory_split.y0[i]
 
             gt_x, gt_y = integrate_track(gt_vx, gt_vy, start_x, start_y)
             pd_x, pd_y = integrate_track(pred_vx, pred_vy, start_x, start_y)
@@ -1370,7 +2056,7 @@ class NASModelClient:
             # Relative Trajectory Error over ~60s segments (heuristic).
             window_seconds = 60
             # Windows per second: sampling_rate_hz / stride (stride is in samples).
-            samples_per_sec = max(self.config.data.sampling_rate_hz / stride, 1)
+            samples_per_sec = max(sampling_rate_hz / stride, 1)
             segment = max(int(window_seconds * samples_per_sec), 1)
             rte_segments = []
             for j in range(0, len(gt_x) - segment, segment):

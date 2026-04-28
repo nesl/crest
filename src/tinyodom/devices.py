@@ -21,6 +21,7 @@ from .errors import (
 )
 from . import hil_protocol
 from .microcontrollers import arduino_base
+from .pipeline_types import DataSplit
 
 logger = logging.getLogger(__name__)
 RuntimeMeasureMode = Literal["direct_serial", "harness_only"]
@@ -194,6 +195,41 @@ class MeasureResult:
     power_metrics: Optional[Dict[str, Optional[float]]]
 
 
+@dataclass(frozen=True)
+class CandidatePrepareRequest:
+    """Typed request passed into backend candidate preparation.
+
+    Parameters
+    ----------
+    config : Any
+        Loaded TinyODOM configuration object.
+    model : Any
+        Model instance to export and stage for one backend attempt.
+    model_variant : str
+        Human-readable export variant label.
+    artifact_root : pathlib.Path
+        Root directory chosen by orchestration for backend-owned artifacts.
+    tflite_model_path : pathlib.Path
+        Explicit TFLite output path selected by orchestration.
+    calibration_split : DataSplit | None
+        Calibration split used for representative export data when required.
+    input_shape : tuple[int, ...] | None
+        Logical model input shape excluding the batch dimension.
+    checkpoint_path : pathlib.Path | str | None, optional
+        Checkpoint path associated with trained export variants when one
+        exists.
+    """
+
+    config: Any
+    model: Any
+    model_variant: str
+    artifact_root: Path
+    tflite_model_path: Path
+    calibration_split: DataSplit | None
+    input_shape: tuple[int, ...] | None
+    checkpoint_path: Path | str | None = None
+
+
 class DeviceInterface(ABC):
     """Contract for device-specific compile/upload/measure workflows."""
 
@@ -232,26 +268,10 @@ class DeviceInterface(ABC):
     def prepare_candidate(
         self,
         *,
-        config: Any,
-        hyperparams: Any,
-        model: Any,
-        outputs_dir: Path,
-        tflite_model_path: Path,
-        training_data: Any,
-        model_variant: str,
-        checkpoint_path: Path | str | None,
+        request: CandidatePrepareRequest,
     ) -> Path:
         """Prepare backend-owned build inputs and return the compile directory."""
-        del (
-            config,
-            hyperparams,
-            model,
-            outputs_dir,
-            tflite_model_path,
-            training_data,
-            model_variant,
-            checkpoint_path,
-        )
+        del request
         raise NotImplementedError("prepare_candidate() must be implemented by backend classes.")
 
     def cleanup_prepared_candidate(self, prepared_dir: Path | None) -> None:
@@ -769,36 +789,28 @@ class ArduinoDevice(DeviceInterface):
     def prepare_candidate(
         self,
         *,
-        config: Any,
-        hyperparams: Any,
-        model: Any,
-        outputs_dir: Path,
-        tflite_model_path: Path,
-        training_data: Any,
-        model_variant: str,
-        checkpoint_path: Path | str | None,
+        request: CandidatePrepareRequest,
     ) -> Path:
         """Prepare Arduino build artifacts and return the active sketch directory."""
-        del hyperparams, model_variant, checkpoint_path
-        if model is None:
+        if request.model is None:
             raise ValueError("Arduino candidate preparation requires a built Keras model.")
-        if training_data is None or not hasattr(training_data, "inputs"):
+        if request.calibration_split is None:
             raise ValueError("Arduino candidate preparation requires calibration/training data.")
 
         from .hardware import convert_to_cpp_model, convert_to_tflite_model
 
         convert_to_tflite_model(
-            model=model,
-            training_data=training_data.inputs,
-            quantization=config.training.quantization,
-            output_name=str(tflite_model_path),
+            model=request.model,
+            training_data=request.calibration_split.inputs,
+            quantization=request.config.training.quantization,
+            output_name=str(request.tflite_model_path),
         )
         convert_to_cpp_model(
-            tflite_path=tflite_model_path,
-            output_dir=outputs_dir,
+            tflite_path=request.tflite_model_path,
+            output_dir=request.artifact_root,
         )
-        _sync_arduino_sketch_variant_for_config(config, outputs_dir)
-        return outputs_dir
+        _sync_arduino_sketch_variant_for_config(request.config, request.artifact_root)
+        return request.artifact_root
 
     def set_input_mode(
         self,
