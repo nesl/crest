@@ -1,3 +1,10 @@
+"""STM32CubeCLT and GDB helper workflows for the STM32 backend.
+
+These helpers wrap STM32CubeCLT build, sign, and program steps plus the
+ST-LINK GDB server flow used to debug-load split boot/application artifacts
+during HIL evaluation.
+"""
+
 from __future__ import annotations
 
 import os
@@ -889,6 +896,8 @@ def _run_gdb_load(
             if _expected_post_jump_disconnect(stdout):
                 return stdout
             lowered = stdout.lower()
+            # After the jump we expect either a disconnect or silence; treat
+            # explicit failure signatures here as real pre-jump/load errors.
             for indicator in (
                 "error",
                 "failed",
@@ -1009,8 +1018,8 @@ def debug_load_elf(
         text=True,
     )
     try:
-        # Keep the entire server lifecycle inside this helper. The device class
-        # should only need a single "debug-load this ELF" primitive in Phase 1.
+        # Keep the entire server lifecycle inside this helper: spawn, wait for
+        # readiness, perform the GDB load, then surface one combined log.
         _wait_for_server_ready(proc, log_file, server_ready_timeout_s)
         time.sleep(SERVER_SETTLE_DELAY_S)
         if proc.poll() is not None:

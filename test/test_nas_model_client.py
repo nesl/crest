@@ -1,3 +1,11 @@
+"""Regression tests for the legacy NASModelClient orchestration surface.
+
+This module covers bootstrap helpers, objective/pruning branches, smoke-test
+behavior, final-training utilities, evaluation and trajectory reporting, and
+resource-cleanup paths while replacing heavy production dependencies with test
+doubles.
+"""
+
 import json
 import sys
 import tempfile
@@ -45,13 +53,21 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     The real class performs heavy dataset loading inside __init__. To keep the
     tests fast and deterministic, we bypass __init__ and fill in the handful of
     attributes the logic depends on.
+
+    Notes
+    -----
+    This fixture preserves the production contracts around dataset bundles,
+    target specs, metric contracts, model-family hooks, and output-path shape.
+    It intentionally skips real dataset loading, real ZMQ sockets, and real
+    filesystem/network side effects beyond temporary artifact directories.
     """
     client = NASModelClient.__new__(NASModelClient)
     base_dir = Path(tempfile.mkdtemp()) if base_dir is None else Path(base_dir)
 
     window_size = 16
     input_dim = 3
-    # Mimic the (batch, timesteps, dim) tensor structure Optuna expects.
+    # Minimal dataset/task/model contract: enough structure for build, fit,
+    # evaluate, and trajectory helpers to behave like production code.
     legacy_dataset = SimpleNamespace(
         inputs=np.zeros((2, window_size, input_dim), dtype=np.float32),
         x_vel=np.zeros((2, 1), dtype=np.float32),
@@ -137,8 +153,8 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
         load_model=MagicMock(return_value=fake_loaded_model),
     )
 
-    # Build a SimpleNamespace tree that mirrors the configuration object used in
-    # production so attribute lookups behave the same.
+    # Artifact, socket, and config defaults: mirror the production config shape
+    # without paying the cost of real I/O-heavy initialization.
     client.config = SimpleNamespace(
         network=SimpleNamespace(host="localhost", port=5555, recv_timeout_sec=5, send_timeout_sec=5),
         data=SimpleNamespace(
@@ -232,9 +248,11 @@ class DummyTrial:
         return value
 
     def report(self, value, step):
+        """Record one Optuna-style intermediate report call."""
         self.report_calls.append((value, step))
 
     def set_user_attr(self, key, value):
+        """Record one Optuna-style user attribute update."""
         self.user_attrs[key] = value
 
 
@@ -247,6 +265,7 @@ class HILRequestTests(unittest.TestCase):
         Instead of booting a real server we just drive the mock socket and
         assert that the client sends/receives JSON exactly once.
         """
+        # Verify that HIL request success.
         client = _build_test_client()
         metrics = {"ram_bytes": 1024}
         client.socket.recv_json.return_value = metrics
@@ -260,6 +279,7 @@ class HILRequestTests(unittest.TestCase):
 
     def test_hil_request_timeout_raises(self) -> None:
         """Timeouts surfaced by pyzmq should be wrapped in a RuntimeError."""
+        # Verify that HIL request timeout raises.
         client = _build_test_client()
         client.socket.recv_json.side_effect = zmq.error.Again()
 
@@ -273,6 +293,7 @@ class InitializationTests(unittest.TestCase):
     """Validate the Phase 4 bootstrap and component-selection helpers."""
 
     def test_resolve_component_selection_uses_compatibility_defaults(self) -> None:
+        # Verify that resolve component selection uses compatibility defaults.
         client = _build_test_client()
 
         selection = client._resolve_component_selection(client.config)
@@ -283,6 +304,7 @@ class InitializationTests(unittest.TestCase):
         self.assertEqual(selection["model_family_name"], "tinyodom_tcn")
 
     def test_resolve_component_selection_honors_explicit_component_blocks(self) -> None:
+        # Verify that resolve component selection honors explicit component blocks.
         client = _build_test_client()
         client.config.dataset = SimpleNamespace(name="custom_dataset", params=Dict(root="custom"))
         client.config.task = SimpleNamespace(name="custom_task", params=Dict(alpha=3))
@@ -303,6 +325,7 @@ class InitializationTests(unittest.TestCase):
         self.assertEqual(selection["model_config"].search.depth, [2, 3])
 
     def test_resolve_component_selection_falls_back_to_legacy_data_when_dataset_params_missing(self) -> None:
+        # Verify that resolve component selection falls back to legacy data when dataset params missing.
         client = _build_test_client()
         client.config.dataset = SimpleNamespace(name="custom_dataset")
 
@@ -312,6 +335,7 @@ class InitializationTests(unittest.TestCase):
         self.assertIs(selection["dataset_config"], client.config.data)
 
     def test_resolve_component_selection_falls_back_to_legacy_data_when_dataset_params_is_none(self) -> None:
+        # Verify that resolve component selection falls back to legacy data when dataset params is none.
         client = _build_test_client()
         client.config.dataset = SimpleNamespace(name="custom_dataset", params=None)
 
@@ -321,6 +345,7 @@ class InitializationTests(unittest.TestCase):
         self.assertIs(selection["dataset_config"], client.config.data)
 
     def test_init_reuses_preliminary_bundle_when_dataset_selection_matches(self) -> None:
+        # Verify that init reuses preliminary bundle when dataset selection matches.
         base = Path(tempfile.mkdtemp())
         config = SimpleNamespace(
             network=SimpleNamespace(host="localhost", port=5555, recv_timeout_sec=5, send_timeout_sec=5),
@@ -394,6 +419,7 @@ class InitializationTests(unittest.TestCase):
         fake_socket.connect.assert_called_once()
 
     def test_refresh_legacy_split_aliases_tolerates_non_odometry_targets(self) -> None:
+        # Verify that refresh legacy split aliases tolerates non odometry targets.
         client = _build_test_client()
         bundle = DatasetBundle(
             train=DataSplit(
@@ -443,6 +469,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_prunes_on_flash_overflow(self) -> None:
         """Flash overflow errors should prune the Optuna trial."""
+        # Verify that objective prunes on flash overflow.
         self.client._hil_request = MagicMock(return_value={"error_code": HIL_MASTER_FLASH_OVERFLOW})
         trial = DummyTrial()
 
@@ -455,6 +482,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_prune_logging_populates_cadenced_sentinels(self) -> None:
         """Early-pruned trials should still log stable cadenced metric defaults."""
+        # Verify that objective prune logging populates cadenced sentinels.
         self.client._hil_request = MagicMock(return_value={"error_code": HIL_MASTER_FLASH_OVERFLOW})
         trial = DummyTrial()
 
@@ -469,6 +497,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_prunes_on_ram_overflow(self) -> None:
         """RAM overflow errors should prune the trial to skip training."""
+        # Verify that objective prunes on ram overflow.
         self.client._hil_request = MagicMock(return_value={"error_code": HIL_MASTER_RAM_OVERFLOW})
         trial = DummyTrial()
 
@@ -481,6 +510,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_raises_on_device_not_found(self) -> None:
         """Device-not-found errors should abort the NAS run instead of pruning every trial."""
+        # Verify that objective raises on device not found.
         self.client._hil_request = MagicMock(return_value={"error_code": HIL_MASTER_DEVICE_NOT_FOUND})
         trial = DummyTrial()
 
@@ -488,6 +518,7 @@ class ObjectiveTests(unittest.TestCase):
             self.client.objective(trial)
 
     def test_objective_rejects_invalid_model_build_context_input_shapes(self) -> None:
+        # Verify that objective rejects invalid model build context input shapes.
         self.client._hil_request = MagicMock()
 
         for invalid_shape in (None, (None, 3), ("abc", 3), (0, 3), (16, False)):
@@ -503,6 +534,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_handles_resource_failure(self) -> None:
         """Exceeding estimated resources should skip training and log a fatal code."""
+        # Verify that objective handles resource failure.
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             # Force RAM usage above the limit returned by return_hardware_specs.
@@ -522,6 +554,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_happy_path_runs_training(self) -> None:
         """Valid metrics should flow into training and return the reported score."""
+        # Verify that objective happy path runs training.
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -541,6 +574,7 @@ class ObjectiveTests(unittest.TestCase):
         self.mock_log.assert_called_once()
 
     def test_objective_prunes_before_training_on_config_rule(self) -> None:
+        # Verify that objective prunes before training on config rule.
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -579,6 +613,7 @@ class ObjectiveTests(unittest.TestCase):
         )
 
     def test_objective_prunes_when_rule_metric_is_unavailable(self) -> None:
+        # Verify that objective prunes when rule metric is unavailable.
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -613,6 +648,7 @@ class ObjectiveTests(unittest.TestCase):
         self.assertIn("Configured prune metric unavailable", self.mock_log.call_args.kwargs["prune_reason"])
 
     def test_objective_uses_negative_one_rmse_sentinels_for_failed_trials(self) -> None:
+        # Verify that objective uses negative one RMSE sentinels for failed trials.
         metrics = {
             "error_code": HIL_MASTER_RAM_OVERFLOW,
             "ram_bytes": -1,
@@ -636,6 +672,7 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(trial_outcome.task_metrics, {})
 
     def test_objective_does_not_swallow_generic_training_value_errors(self) -> None:
+        # Verify that objective does not swallow generic training value errors.
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -658,6 +695,7 @@ class ObjectiveTests(unittest.TestCase):
         self.mock_log.assert_not_called()
 
     def test_objective_converts_score_config_errors_into_prune_penalties(self) -> None:
+        # Verify that objective converts score config errors into prune penalties.
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -687,6 +725,7 @@ class ObjectiveTests(unittest.TestCase):
         )
 
     def test_objective_samples_cpu_clock_into_device_overrides(self) -> None:
+        # Verify that objective samples CPU clock into device overrides.
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -708,6 +747,7 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(trial.params["cpu_clock_mhz_index"], 0)
 
     def test_objective_omits_device_overrides_when_clock_options_are_null(self) -> None:
+        # Verify that objective omits device overrides when clock options are null.
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -732,6 +772,7 @@ class ObjectiveTests(unittest.TestCase):
         -------
         None
         """
+        # Verify that objective stm phase1 allows arena sentinel.
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -759,6 +800,7 @@ class ObjectiveTests(unittest.TestCase):
         -------
         None
         """
+        # Verify that objective returns configured multiobjective tuple.
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -792,6 +834,7 @@ class ObjectiveTests(unittest.TestCase):
         self.mock_log.assert_called_once()
 
     def test_objective_train_false_uses_generic_metric_sentinels(self) -> None:
+        # Verify that objective train false uses generic metric sentinels.
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -829,6 +872,7 @@ class ObjectiveTests(unittest.TestCase):
         )
 
     def test_objective_portenta_forwards_device_options_to_hardware_specs(self) -> None:
+        # Verify that objective Portenta forwards device options to hardware specs.
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -854,6 +898,7 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(kwargs["device_options"]["security"], "none")
 
     def test_objective_portenta_requires_target_core_for_hardware_limits(self) -> None:
+        # Verify that objective Portenta requires target core for hardware limits.
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -875,6 +920,7 @@ class SmokeTestTests(unittest.TestCase):
 
     def test_smoke_test_restores_config_flags(self) -> None:
         """Config flags should be restored even if the study raises."""
+        # Verify that smoke test restores config flags.
         client = _build_test_client()
         client.objective = MagicMock(return_value=0.1)
 
@@ -902,6 +948,7 @@ class SmokeTestTests(unittest.TestCase):
 
     def test_smoke_test_uses_loaded_multiobjective_config(self) -> None:
         """Smoke test should honor multi-objective mode from the loaded config."""
+        # Verify that smoke test uses loaded multiobjective config.
         client = _build_test_client()
         client.config.nas.score = Dict(
             type="multi-objective",
@@ -944,6 +991,7 @@ class SmokeTestTests(unittest.TestCase):
         self.assertTrue(kwargs["load_if_exists"])
 
     def test_smoke_test_uses_loaded_scalar_config(self) -> None:
+        # Verify that smoke test uses loaded scalar config.
         client = _build_test_client()
         client.objective = MagicMock(return_value=0.1)
 
@@ -964,6 +1012,7 @@ class SmokeTestTests(unittest.TestCase):
         self.assertTrue(mock_create.call_args.kwargs["load_if_exists"])
 
     def test_smoke_test_defaults_to_loaded_hil_setting(self) -> None:
+        # Verify that smoke test defaults to loaded HIL setting.
         client = _build_test_client()
         observed_hil_values = []
 
@@ -990,6 +1039,7 @@ class SmokeTestTests(unittest.TestCase):
         self.assertEqual(observed_hil_values, [True])
 
     def test_smoke_test_rejects_derived_rmse_usage_when_training_disabled(self) -> None:
+        # Verify that smoke test rejects derived RMSE usage when training disabled.
         client = _build_test_client()
         client.config.nas.score = Dict(
             type="scoring-function",
@@ -1013,6 +1063,7 @@ class SmokeTestTests(unittest.TestCase):
         self.assertFalse(mock_create.called)
 
     def test_smoke_test_preserves_existing_db_and_log_before_validation(self) -> None:
+        # Verify that smoke test preserves existing db and log before validation.
         client = _build_test_client()
         client.objective = MagicMock(return_value=0.1)
         study_name = "stale_smoke"
@@ -1045,6 +1096,7 @@ class SmokeTestTests(unittest.TestCase):
         self.assertFalse(mock_create.called)
 
     def test_copy_run_config_skips_same_file(self) -> None:
+        # Verify that copy run config skips same file.
         client = _build_test_client()
         artifacts_dir = client._artifacts_dir()
         cfg_path = artifacts_dir / "config.yaml"
@@ -1084,6 +1136,7 @@ class RunNASTests(unittest.TestCase):
             self.enqueue_calls.append(params)
 
     def test_run_nas_retries_until_completed_target(self) -> None:
+        # Verify that run NAS retries until completed target.
         client = _build_test_client()
         client.config.training.nas_trials = 2
         client.config.training.max_total_trials = 5
@@ -1113,6 +1166,7 @@ class RunNASTests(unittest.TestCase):
         )
 
     def test_run_nas_honors_max_total_trials_cap(self) -> None:
+        # Verify that run NAS honors max total trials cap.
         client = _build_test_client()
         client.config.training.nas_trials = 2
         client.config.training.max_total_trials = 3
@@ -1145,6 +1199,7 @@ class TrainBestTrialTests(unittest.TestCase):
     """Best-trial retraining should honor the task abstraction."""
 
     def test_train_best_trial_uses_task_fit_plan_with_override_task_settings(self) -> None:
+        # Verify that train best trial uses task fit plan with override task settings.
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -1211,6 +1266,7 @@ class PlotTrainingHistoryTests(unittest.TestCase):
     """Plotting helpers should emit PNGs without requiring a display."""
 
     def test_plot_training_history_writes_pngs(self) -> None:
+        # Verify that plot training history writes pngs.
         import matplotlib.pyplot as plt
 
         plt.switch_backend("Agg")
@@ -1238,6 +1294,7 @@ class EvaluateCheckpointTests(unittest.TestCase):
     """Checkpoint evaluation should write metrics and (optionally) export TFLite."""
 
     def test_evaluate_checkpoint_writes_metrics(self) -> None:
+        # Verify that evaluate checkpoint writes metrics.
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -1273,6 +1330,7 @@ class EvaluateCheckpointTests(unittest.TestCase):
             self.assertEqual(metrics["checkpoint_path"], str(base / "ckpt.keras"))
 
     def test_evaluate_checkpoint_preserves_task_defined_metric_names(self) -> None:
+        # Verify that evaluate checkpoint preserves task defined metric names.
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -1297,6 +1355,7 @@ class EvaluateCheckpointTests(unittest.TestCase):
             self.assertAlmostEqual(persisted["loss"], 0.25)
 
     def test_evaluate_checkpoint_exports_tflite_when_requested(self) -> None:
+        # Verify that evaluate checkpoint exports tflite when requested.
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -1339,6 +1398,7 @@ class TrajectoryMetricsTests(unittest.TestCase):
     """Trajectory metrics/plots should be generated with stubbed models."""
 
     def test_trajectory_metrics_and_plots_zero_error(self) -> None:
+        # Verify that trajectory metrics and plots zero error.
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -1378,6 +1438,7 @@ class TrajectoryMetricsTests(unittest.TestCase):
             self.assertTrue(np.isnan(metrics["rte_median"]))
 
     def test_trajectory_metrics_and_plots_requires_odometry_metadata(self) -> None:
+        # Verify that trajectory metrics and plots requires odometry metadata.
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -1401,6 +1462,7 @@ class TrajectoryMetricsTests(unittest.TestCase):
                 )
 
     def test_trajectory_split_view_requires_velocity_targets(self) -> None:
+        # Verify that trajectory split view requires velocity targets.
         cases = (
             {"class_id": np.array([0, 1], dtype=np.int32)},
             {"velx": None, "vely": np.zeros((2, 1), dtype=np.float32)},
@@ -1423,6 +1485,7 @@ class SummaryBundleTests(unittest.TestCase):
     """Summary bundle aggregation should fuse existing artifacts."""
 
     def test_write_summary_bundle_persists_expected_fields(self) -> None:
+        # Verify that write summary bundle persists expected fields.
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -1464,6 +1527,7 @@ class CloseTests(unittest.TestCase):
         This protects long test runs from leaking file descriptors, so the unit
         test just confirms we call the underlying pyzmq cleanup hooks.
         """
+        # Verify that close shuts socket and context.
         client = _build_test_client()
         client.close()
         client.socket.close.assert_called_once_with(linger=0)

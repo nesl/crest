@@ -19,7 +19,14 @@ if TYPE_CHECKING:
 
 
 class DatasetABC(ABC):
-    """Abstract dataset contract for modular pipeline implementations."""
+    """Abstract dataset contract for modular pipeline implementations.
+
+    Implementations must provide :meth:`load` and may optionally override the
+    default hooks for config validation and calibration-data selection. By
+    default, :attr:`name` returns the implementing class name,
+    :meth:`validate_config` performs no validation, and
+    :meth:`make_calibration_data` forwards ``bundle.calibration`` unchanged.
+    """
 
     @property
     def name(self) -> str:
@@ -46,6 +53,8 @@ class DatasetABC(ABC):
         -------
         DatasetBundle
             Normalized dataset package ready for downstream pipeline stages.
+            The returned bundle is also the source object consumed by later
+            dataset hooks, including the default calibration-data passthrough.
         """
 
     def validate_config(self, dataset_config: Any) -> None:
@@ -59,7 +68,8 @@ class DatasetABC(ABC):
         Returns
         -------
         None
-            The default implementation performs no validation.
+            The default implementation intentionally performs no validation and
+            accepts any config object.
         """
 
         del dataset_config
@@ -82,7 +92,8 @@ class DatasetABC(ABC):
         -------
         DataSplit | None
             Calibration split when one is available. The default implementation
-            forwards ``bundle.calibration`` unchanged.
+            ignores ``dataset_config``, forwards ``bundle.calibration``
+            unchanged, and may therefore return ``None``.
         """
 
         del dataset_config
@@ -90,7 +101,14 @@ class DatasetABC(ABC):
 
 
 class TaskABC(ABC):
-    """Abstract task contract for training, evaluation, and metrics."""
+    """Abstract task contract for training, evaluation, and metrics.
+
+    Implementations define the task-owned target contract, metric declaration,
+    compile behavior, fit wiring, and evaluation logic. By default,
+    :attr:`name` returns the implementing class name,
+    :meth:`validate_config` performs no validation, and
+    :meth:`validate_model_outputs` performs no output checks.
+    """
 
     @property
     def name(self) -> str:
@@ -123,7 +141,8 @@ class TaskABC(ABC):
         -------
         TargetSpec
             Concrete target and output contract for model construction and
-            validation.
+            validation. This is the task-owned contract returned by the task
+            implementation for downstream task logic.
         """
 
     @abstractmethod
@@ -144,7 +163,7 @@ class TaskABC(ABC):
         Returns
         -------
         TaskMetricContract
-            Metric declaration consumed by orchestration code.
+            Task-defined metric declaration consumed by orchestration code.
         """
 
     @abstractmethod
@@ -168,6 +187,8 @@ class TaskABC(ABC):
         Returns
         -------
         None
+            The task implementation applies compile configuration to the passed
+            model using ``task_config`` and ``target_spec``.
         """
 
     @abstractmethod
@@ -232,7 +253,8 @@ class TaskABC(ABC):
         Returns
         -------
         None
-            The default implementation performs no validation.
+            The default implementation intentionally performs no validation and
+            accepts any config object.
         """
 
         del task_config
@@ -254,14 +276,22 @@ class TaskABC(ABC):
         Returns
         -------
         None
-            The default implementation performs no validation.
+            The default implementation intentionally performs no checks and
+            exists as an override hook for task-specific output validation.
         """
 
         del model, target_spec
 
 
 class ModelFamilyABC(ABC):
-    """Abstract model-family contract for sampling and model construction."""
+    """Abstract model-family contract for sampling and model construction.
+
+    Implementations must provide hyperparameter sampling and model
+    construction. The base class also exposes optional helper hooks for
+    validation, model loading, export-model materialization, custom object
+    registration, FLOP counting, and export-capability reporting. By default,
+    :attr:`name` returns the implementing class name.
+    """
 
     @property
     def name(self) -> str:
@@ -296,7 +326,8 @@ class ModelFamilyABC(ABC):
         Returns
         -------
         dict[str, Any]
-            Normalized hyperparameter dictionary.
+            Normalized hyperparameter dictionary produced by the model-family
+            implementation.
         """
 
     @abstractmethod
@@ -320,7 +351,8 @@ class ModelFamilyABC(ABC):
         Returns
         -------
         tf.keras.Model
-            Uncompiled model instance.
+            Model instance constructed for the sampled hyperparameters and
+            build context.
         """
 
     def validate_config(self, model_config: Any) -> None:
@@ -334,7 +366,8 @@ class ModelFamilyABC(ABC):
         Returns
         -------
         None
-            The default implementation performs no validation.
+            The default implementation intentionally performs no validation and
+            accepts any config object.
         """
 
         del model_config
@@ -359,7 +392,8 @@ class ModelFamilyABC(ABC):
         Returns
         -------
         None
-            The default implementation performs no validation.
+            The default implementation intentionally performs no
+            hyperparameter checks.
         """
 
         del hparams, ctx, config
@@ -384,7 +418,9 @@ class ModelFamilyABC(ABC):
         Returns
         -------
         tf.keras.Model
-            Loaded model instance using generic Keras loading semantics.
+            Loaded model instance using generic Keras loading semantics. The
+            default implementation ignores ``ctx`` and ``config`` and passes
+            :meth:`custom_objects` through to the Keras loader.
         """
 
         del ctx, config
@@ -420,7 +456,10 @@ class ModelFamilyABC(ABC):
         Returns
         -------
         tf.keras.Model
-            Model instance ready for export preparation.
+            Model instance ready for export preparation. The default
+            implementation builds a fresh model for ``"untrained"`` and routes
+            variants whose normalized names start with ``"trained"`` through
+            :meth:`load_model`.
 
         Raises
         ------

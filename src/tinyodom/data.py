@@ -25,17 +25,8 @@ from . import geometry
 
 @dataclass
 class OxIODSplitData:
-    """
-    Container for the windowed OxIOD split returned by `import_oxiod_dataset`.
+    """Container for the windowed OxIOD split returned by `import_oxiod_dataset`.
 
-    Note: The original comment was as follows:
-        ```
-        # 1. training set from IMU 2. ground truth displacements 3. ground truth heading rates 4. ground truth position
-        # 5. list of initial x positions 6. list of initial y positions 7. size of each file in windowed form
-        # 8. ground truth x velocity 9. ground truth y velocity 10. heading rate in terms of sin 11. heading rate in terms of cos
-        # 12. unwindowed training set from IMU
-        ```
-    
     Attributes
     ----------
     inputs : np.ndarray
@@ -44,26 +35,28 @@ class OxIODSplitData:
     disp : np.ndarray
         Absolute displacement magnitude per window, length `n_windows`.
     heading : np.ndarray
-        Heading delta (degrees) per window, length `n_windows`.
+        Window-level heading signal in degrees derived from successive absolute
+        endpoint headings, length `n_windows`.
     position : np.ndarray
         Ground-truth XY positions inside each window,
         shape `(n_windows, window_size, 2)`.
     x0 : list of float
-        Initial X position of each raw trajectory.
+        Starting X positions recorded for each returned chunk/copy.
     y0 : list of float
-        Initial Y position of each raw trajectory.
+        Starting Y positions recorded for each returned chunk/copy.
     size_of_each : list of int
-        Number of windows produced per trajectory.
+        Window counts recorded for each returned chunk/copy.
     x_vel : np.ndarray
         Window-wise displacement along the X axis.
     y_vel : np.ndarray
         Window-wise displacement along the Y axis.
     head_s : np.ndarray
-        Sine of the absolute heading for each window.
+        Sine of the absolute endpoint direction for each window.
     head_c : np.ndarray
-        Cosine of the absolute heading for each window.
+        Cosine of the absolute endpoint direction for each window.
     inputs_orig : np.ndarray
-        Concatenated unwindowed IMU samples for all trajectories.
+        Concatenated unwindowed IMU samples preserved for compatibility with
+        legacy downstream code.
     """
     inputs: np.ndarray
     disp: np.ndarray
@@ -98,7 +91,8 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
     AugmentationCopies : int, optional
         Number of random 3-D rotations applied per sample for augmentation, by default 0 (no augmentation).
     dataset_folder : str, optional
-        Base directory containing dataset subfolders; should end with a slash, by default 'oxiod/'.
+        Base directory containing dataset subfolders; should end with a slash,
+        by default 'data/oxiod/'.
     sub_folders : list of str, optional
         Relative subfolder paths searched for split files (e.g., ['handbag/', 'handheld/', ...]),
           by default all six OxIOD motion types.
@@ -109,7 +103,7 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
     stride : int, optional
         Sliding window stride in samples, by default 10.
     verbose : bool, optional
-        Print filenames as they are processed when True, by default False.
+        Print filenames as they are processed when True, by default True.
     max_windows : int | None, optional
         Hard cap on the number of sliding windows to load. When set, the loader
         stops once ``max_windows`` examples have been added. This is useful for
@@ -119,13 +113,25 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
     Returns
     -------
     OxIODSplitData
-        Dataclass containing windowed IMU inputs and ground-truth data.
+        Dataclass containing windowed IMU inputs and derived window-level
+        labels. Accelerometer features are formed as ``Lin_Acc + Grav`` and
+        stacked with gyroscope channels, plus optional magnetometer channels
+        and an optional final step-indicator channel. Ground-truth labels are
+        derived from window endpoints, and augmentation reuses the same labels
+        for rotated IMU windows.
 
     Notes
     -----
     Expects split files (Train.txt, Valid.txt, etc.) inside each subfolder,
     listing IMU CSV paths whose paired ground-truth files are obtained via
-    ``path.replace('imu', 'vi')``.
+    ``path.replace('imu', 'vi')``. ``inputs`` contains 6 channels without the
+    magnetometer, 9 channels with the magnetometer before step augmentation,
+    and one additional channel when ``useStepCounter=True``.
+
+    Raises
+    ------
+    ValueError
+        If ``type_flag`` is not one of ``1``, ``2``, ``3``, or ``4``.
     """
     default_channels = ['Timestamp','Roll','Pitch','Yaw','Gyro_X','Gyro_Y','Gyro_Z','Grav_X','Grav_Y','Grav_Z','Lin_Acc_X','Lin_Acc_Y','Lin_Acc_Z','Mag_X','Mag_Y','Mag_Z']
     default_GT_channels = ['Timestamp','Header','Pose_X','Pose_Y','Pose_Z','Rot_X','Rot_Y','Rot_Z','Rot_W']
@@ -367,7 +373,7 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
                            inputs_orig=X_orig)
 
 def abs_heading(cur_x, cur_y, prev_x, prev_y):
-        """Compute the absolute heading angle between two planar positions.
+        """Compute the repository's absolute heading signal between 2D points.
 
         Parameters
         ----------
@@ -383,47 +389,43 @@ def abs_heading(cur_x, cur_y, prev_x, prev_y):
         Returns
         -------
         float
-            Heading angle in degrees using the repository's ``atan2(delx, dely)``
-            convention.
+            Heading angle in degrees using the repository's
+            ``atan2(delta_x, delta_y)`` convention. When both deltas are zero,
+            ``atan2(0, 0)`` yields ``0.0``.
         """
         dely = (cur_y - prev_y)
         delx = (cur_x - prev_x)
+        # This repository measures heading from the +y axis by swapping the
+        # usual ``atan2(y, x)`` argument order.
         delh= atan2(delx,dely)*57.2958
         return delh
     
 def abs_heading_sin_cos(cur_x, cur_y, prev_x, prev_y, eps=1e-4):
-    """
-    Compute the sine and cosine of the absolute heading between two 2D points.
-
-    Given current and previous (x, y) positions, this function calculates the
-    normalized direction of motion as sine (`s`) and cosine (`c`) components.
-    If the displacement magnitude is below a small threshold (`eps`), the
-    heading is considered undefined and `(0.0, 0.0)` is returned instead of
-    performing an unstable division.
+    """Compute normalized endpoint-direction components between 2D points.
 
     Parameters
     ----------
-    cur_x : float or np.ndarray
-        Current x-coordinate(s) of the trajectory point(s).
-    cur_y : float or np.ndarray
-        Current y-coordinate(s) of the trajectory point(s).
-    prev_x : float or np.ndarray
-        Previous x-coordinate(s) of the trajectory point(s).
-    prev_y : float or np.ndarray
-        Previous y-coordinate(s) of the trajectory point(s).
+    cur_x : float
+        Current x-coordinate of the trajectory point.
+    cur_y : float
+        Current y-coordinate of the trajectory point.
+    prev_x : float
+        Previous x-coordinate of the trajectory point.
+    prev_y : float
+        Previous y-coordinate of the trajectory point.
     eps : float, optional
-        Minimum displacement (in meters) to be considered as motion.
-        Displacements smaller than `eps` are treated as zero to prevent
-        division-by-zero errors. Default is 1e-4 (≈ 0.1 mm).
+        Minimum displacement magnitude treated as motion. Smaller
+        displacements return ``(0.0, 0.0)`` instead of performing the
+        normalization.
 
     Returns
     -------
-    s : float or np.ndarray
-        The sine component of the absolute heading (Δy / √(Δx² + Δy²)).
-        Returns 0.0 if the displacement is below `eps`.
-    c : float or np.ndarray
-        The cosine component of the absolute heading (Δx / √(Δx² + Δy²)).
-        Returns 0.0 if the displacement is below `eps`.
+    s : float
+        Normalized ``delta_y`` component. Returns ``0.0`` if the displacement
+        magnitude is below ``eps``.
+    c : float
+        Normalized ``delta_x`` component. Returns ``0.0`` if the displacement
+        magnitude is below ``eps``.
 
     Notes
     -----
@@ -465,7 +467,8 @@ def random_rotate(input,useMagnetometer=True):
     ----------
     input : np.ndarray
         Batched IMU windows with accelerometer and gyroscope channels, and
-        optionally magnetometer channels.
+        optionally magnetometer channels. Expected channel layout is
+        ``[..., 6]`` without the magnetometer or ``[..., 9]`` with it.
     useMagnetometer : bool, optional
         Whether the input includes magnetometer channels in columns 6:9.
 
@@ -476,6 +479,7 @@ def random_rotate(input,useMagnetometer=True):
     """
     output = np.copy(input)
     euler = np.random.uniform(0, np.pi, size=3)
+    # One sampled Euler rotation is reused for the whole batch in this call.
     for i in range(0, input.shape[0]):
         input_acc = input[i,:,0:3]
         input_rot = input[i,:,3:6]
@@ -492,7 +496,7 @@ def random_rotate(input,useMagnetometer=True):
     return output
 
 def orientation_to_angles(ori):
-    """Convert quaternions into continuous Euler-angle trajectories.
+    """Convert quaternion samples into continuous angle trajectories.
 
     Parameters
     ----------
@@ -503,7 +507,9 @@ def orientation_to_angles(ori):
     Returns
     -------
     np.ndarray
-        Array of shape ``(n, 3)`` containing continuous Euler angles.
+        Array of shape ``(n, 3)`` containing continuous angles in radians.
+        Each output column is independently unwrapped with
+        :func:`adjust_angle_array`.
     """
     if ori.dtype != quaternion.quaternion:
         ori = quaternion.from_float_array(ori)
@@ -518,7 +524,7 @@ def orientation_to_angles(ori):
 
 
 def adjust_angle_array(angles):
-    """Unwrap an angle sequence by selecting equivalent values modulo ``2π``.
+    """Unwrap a 1-D radian sequence by selecting equivalent modulo-``2π`` values.
 
     Parameters
     ----------
@@ -534,6 +540,8 @@ def adjust_angle_array(angles):
     new_angle = np.copy(angles)
     angle_diff = angles[1:] - angles[:-1]
 
+    # Test equivalent jumps offset by +/- 2pi and +/- 4pi, then keep the
+    # smallest-magnitude adjacent change.
     diff_cand = angle_diff[:, None] - np.array([-math.pi * 4, -math.pi * 2, 0, math.pi * 2, math.pi * 4])
     min_id = np.argmin(np.abs(diff_cand), axis=1)
 
@@ -543,32 +551,26 @@ def adjust_angle_array(angles):
 
 
 def Cal_TE(Gvx, Gvy, Pvx, Pvy, sampling_rate=100, window_size=200, stride=10, length=None):
-    """Compute average and relative translation errors between ground-truth and predicted 2D trajectories.
-
-    This function compares ground-truth positions ``(Gvx, Gvy)`` with predicted
-    positions ``(Pvx, Pvy)`` and returns the Average Translation Error (ATE)
-    over the full trajectory, as well as an estimated Relative Translation
-    Error (RTE) over a one-minute horizon based on the provided sampling and
-    windowing parameters.
+    """Compute the trajectory-error summary used by this repository.
 
     Parameters
     ----------
     Gvx : array-like of float
-        Ground-truth x-coordinates of the trajectory, in meters.
+        Ground-truth x-coordinate sequence, in meters.
     Gvy : array-like of float
-        Ground-truth y-coordinates of the trajectory, in meters.
+        Ground-truth y-coordinate sequence, in meters.
     Pvx : array-like of float
-        Predicted x-coordinates of the trajectory, in meters.
+        Predicted x-coordinate sequence, in meters.
     Pvy : array-like of float
-        Predicted y-coordinates of the trajectory, in meters.
+        Predicted y-coordinate sequence, in meters.
     sampling_rate : int, optional
         Sampling frequency in Hz (samples per second). Default is ``100``.
     window_size : int, optional
-        Sliding-window size in samples used to define a one-minute horizon.
-        Default is ``200``.
+        Sliding-window size in samples used in the one-minute horizon
+        calculation. Default is ``200``.
     stride : int, optional
-        Sliding-window stride in samples used for the one-minute horizon.
-        Default is ``10``.
+        Sliding-window stride in samples used in the one-minute horizon
+        calculation. Default is ``10``.
     length : int or None, optional
         Number of samples to use from the beginning of the sequences.
         If ``None``, all samples in ``Gvx`` are used. Default is ``None``.
@@ -576,17 +578,17 @@ def Cal_TE(Gvx, Gvy, Pvx, Pvy, sampling_rate=100, window_size=200, stride=10, le
     Returns
     -------
     ate : float
-        Average Translation Error over the full trajectory, computed as the
-        mean Euclidean distance between ground-truth and predicted positions.
+        Mean pointwise Euclidean error over the requested prefix.
     rte : float
-        Estimated Relative Translation Error over a one-minute horizon.
-        If the trajectory is shorter than one minute, ``rte`` is obtained by
-        scaling ``ate`` by ``n_windows_one_min / length``.
+        Heuristic one-minute error summary. When enough samples exist, this is
+        the mean pointwise Euclidean error over the first
+        ``n_windows_one_min`` points. Otherwise it scales ``ate`` by
+        ``n_windows_one_min / length``.
     at_all : list of float
-        Per-sample Euclidean position errors for the full trajectory.
+        Per-sample Euclidean errors over the requested prefix.
     rt_all : list of float
-        Per-sample Euclidean position errors used for the one-minute RTE
-        computation (typically the first ``n_windows_one_min`` samples).
+        Per-sample Euclidean errors collected for the one-minute prefix branch.
+        This list stays empty in the short-trajectory fallback branch.
     """
 
     if length is None:
@@ -628,11 +630,12 @@ def Cal_len_meters(Gvx, Gvy, length=None):
     Parameters
     ----------
     Gvx : array-like of float
-        Ground-truth x-coordinates of the trajectory, in meters.
+        Ground-truth x-coordinate sequence, in meters.
     Gvy : array-like of float
-        Ground-truth y-coordinates of the trajectory, in meters.
+        Ground-truth y-coordinate sequence, in meters.
     length : int or None, optional
-        Number of samples to use from the beginning of the sequences.
+        Number of samples to use from the beginning of the coordinate
+        sequences.
         If ``None``, all samples in ``Gvx`` are used. Default is ``None``.
 
     Returns

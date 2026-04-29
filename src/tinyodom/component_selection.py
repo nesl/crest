@@ -1,4 +1,10 @@
-"""Helpers for resolving modular component selection from global config."""
+"""Helpers for resolving component choices from legacy and modular config.
+
+This module bridges the older global TinyOdom config layout with the newer
+explicit dataset, task, and model-family selection blocks. The helpers accept
+mapping-like and namespace-like config containers so callers can reuse the same
+selection logic across runtime config representations.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +20,8 @@ def cfg_get(container: Any, key: str, default: Any = None) -> Any:
     Parameters
     ----------
     container : Any
-        Object exposing either ``get`` or attribute access.
+        Object exposing either ``get`` or attribute access. When both are
+        available, a callable ``get`` is preferred.
     key : str
         Field name to resolve.
     default : Any, optional
@@ -43,7 +50,17 @@ def resolve_component_selection(config: Any) -> dict[str, Any]:
     Returns
     -------
     dict[str, Any]
-        Resolved component names and local configuration subtrees.
+        Resolved component names and local configuration subtrees. The returned
+        mapping always includes ``dataset_name``, ``dataset_config``,
+        ``task_name``, ``task_config``, ``model_family_name``, and
+        ``model_config``. When no explicit component blocks are provided, the
+        helper falls back to the legacy defaults ``"oxiod"``,
+        ``"odometry_regression"``, and ``"tinyodom_tcn"``. Dataset
+        configuration prefers ``config.dataset.params`` when present and not
+        ``None``; otherwise it falls back to legacy ``config.data``.
+        ``task_config`` defaults to an empty ``Dict()``, and ``model_config``
+        is returned as a ``SimpleNamespace`` with ``params`` and ``search``
+        attributes.
     """
 
     dataset_block = cfg_get(config, "dataset", None)

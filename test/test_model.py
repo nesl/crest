@@ -1,3 +1,5 @@
+"""Unit tests for NAS model orchestration and metric collection helpers."""
+
 import csv
 import sys
 import tempfile
@@ -59,6 +61,7 @@ class CountFlopsTests(unittest.TestCase):
 
     def test_deeper_model_has_more_flops(self) -> None:
         """A slightly larger dense stack should yield more FLOPs."""
+        # Verify that deeper model has more flops.
         input_shape = (8,)
 
         small_model = tf.keras.Sequential(
@@ -92,6 +95,19 @@ class ModelVariantHelperTests(unittest.TestCase):
         tf.keras.backend.clear_session()
 
     def _build_perturbation_test_model(self) -> tf.keras.Model:
+        """Build a model that exercises both BN and non-BN perturbation paths.
+
+        Returns
+        -------
+        tensorflow.keras.Model
+            Model containing batch-normalization layers plus biased/non-biased
+            layers so perturbation helpers can prove they touch the right
+            tensors.
+        """
+
+        # Choose layers that cover both BatchNorm tensors and ordinary bias
+        # tensors because the perturbation helper updates those groups
+        # differently.
         inputs = tf.keras.Input(shape=(16, 4))
         x = tf.keras.layers.Conv1D(8, kernel_size=3, use_bias=True, name="conv_bias")(inputs)
         x = tf.keras.layers.BatchNormalization(name="bn1")(x)
@@ -103,6 +119,19 @@ class ModelVariantHelperTests(unittest.TestCase):
         return tf.keras.Model(inputs, outputs)
 
     def _snapshot_touched_tensors(self, model: tf.keras.Model) -> dict[str, np.ndarray]:
+        """Capture the tensors that perturbation helpers are allowed to change.
+
+        Parameters
+        ----------
+        model : tensorflow.keras.Model
+            Model whose BN and non-BN bias tensors should be snapshotted.
+
+        Returns
+        -------
+        dict[str, numpy.ndarray]
+            Copies of the tensors keyed by ``layer_name.attribute``.
+        """
+
         snapshot: dict[str, np.ndarray] = {}
         for layer in collect_bn_layers(model):
             for attr in ("gamma", "beta", "moving_mean", "moving_variance"):
@@ -116,6 +145,7 @@ class ModelVariantHelperTests(unittest.TestCase):
         return snapshot
 
     def test_iter_layers_flattens_without_duplicates(self) -> None:
+        # Verify that iter layers flattens without duplicates.
         inputs = tf.keras.Input(shape=(8,))
         shared_dense = tf.keras.layers.Dense(8, activation="relu", name="shared_dense")
         x = shared_dense(inputs)
@@ -134,6 +164,7 @@ class ModelVariantHelperTests(unittest.TestCase):
         self.assertTrue(any(layer.name == "nested_dense" for layer in layers))
 
     def test_collect_bn_layers_returns_only_batchnorm(self) -> None:
+        # Verify that collect BN layers returns only batchnorm.
         inputs = tf.keras.Input(shape=(8,))
         x = tf.keras.layers.Dense(8, use_bias=True, name="dense1")(inputs)
         x = tf.keras.layers.BatchNormalization(name="bn1")(x)
@@ -148,6 +179,7 @@ class ModelVariantHelperTests(unittest.TestCase):
         )
 
     def test_collect_non_bn_bias_layers_excludes_bn(self) -> None:
+        # Verify that collect non BN bias layers excludes BN.
         inputs = tf.keras.Input(shape=(16, 4))
         x = tf.keras.layers.Conv1D(8, kernel_size=3, use_bias=True, name="conv_bias")(inputs)
         x = tf.keras.layers.BatchNormalization(name="bn")(x)
@@ -164,12 +196,14 @@ class ModelVariantHelperTests(unittest.TestCase):
         )
 
     def test_apply_combined_perturbation_returns_expected_counts(self) -> None:
+        # Verify that apply combined perturbation returns expected counts.
         model = self._build_perturbation_test_model()
         bn_touched, bias_touched = apply_combined_perturbation(model, seed=1337)
         self.assertEqual(bn_touched, 2)
         self.assertEqual(bias_touched, 3)
 
     def test_apply_combined_perturbation_is_deterministic_for_seed(self) -> None:
+        # Verify that apply combined perturbation is deterministic for seed.
         seed = 2026
         model_a = self._build_perturbation_test_model()
         model_b = self._build_perturbation_test_model()
@@ -185,6 +219,7 @@ class ModelVariantHelperTests(unittest.TestCase):
             np.testing.assert_allclose(value_a, snapshot_b[key], atol=0.0, rtol=0.0)
 
     def test_validate_loaded_model_input_shape_accepts_matching_shape(self) -> None:
+        # Verify that validate loaded model input shape accepts matching shape.
         inputs = tf.keras.Input(shape=(20, 6))
         outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
         model = tf.keras.Model(inputs, outputs)
@@ -192,6 +227,7 @@ class ModelVariantHelperTests(unittest.TestCase):
         validate_loaded_model_input_shape(model, hyperparams)
 
     def test_validate_loaded_model_input_shape_rejects_mismatch(self) -> None:
+        # Verify that validate loaded model input shape rejects mismatch.
         inputs = tf.keras.Input(shape=(20, 6))
         outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
         model = tf.keras.Model(inputs, outputs)
@@ -206,6 +242,7 @@ class ModelVariantHelperTests(unittest.TestCase):
                     validate_loaded_model_input_shape(model, hyperparams)
 
     def test_validate_loaded_model_input_shape_rejects_multi_input_model(self) -> None:
+        # Verify that validate loaded model input shape rejects multi input model.
         input_a = tf.keras.Input(shape=(20, 6), name="input_a")
         input_b = tf.keras.Input(shape=(20, 6), name="input_b")
         outputs = tf.keras.layers.Add(name="sum")([input_a, input_b])
@@ -216,6 +253,7 @@ class ModelVariantHelperTests(unittest.TestCase):
             validate_loaded_model_input_shape(model, hyperparams)
 
     def test_validate_model_input_shape_accepts_matching_shape(self) -> None:
+        # Verify that validate model input shape accepts matching shape.
         inputs = tf.keras.Input(shape=(20, 6))
         outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
         model = tf.keras.Model(inputs, outputs)
@@ -223,6 +261,7 @@ class ModelVariantHelperTests(unittest.TestCase):
         validate_model_input_shape(model, (20, 6))
 
     def test_validate_model_input_shape_rejects_missing_expected_shape(self) -> None:
+        # Verify that validate model input shape rejects missing expected shape.
         inputs = tf.keras.Input(shape=(20, 6))
         outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
         model = tf.keras.Model(inputs, outputs)
@@ -251,6 +290,7 @@ class TinyOdomTCNFamilyExportTests(unittest.TestCase):
         tf.keras.backend.clear_session()
 
     def test_materialize_export_model_perturbs_approx_trained_variants(self) -> None:
+        # Verify that materialize export model perturbs approx trained variants.
         fake_model = object()
         model_config = Dict()
 
@@ -271,6 +311,7 @@ class TinyOdomTCNFamilyExportTests(unittest.TestCase):
         self.assertIs(materialized, fake_model)
 
     def test_materialize_export_model_trained_variant_delegates_to_loader(self) -> None:
+        # Verify that materialize export model trained variant delegates to loader.
         with tempfile.TemporaryDirectory() as tmpdir:
             checkpoint_path = Path(tmpdir) / "trained.keras"
             checkpoint_path.write_text("placeholder", encoding="utf-8")
@@ -294,6 +335,7 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_proxy_metrics_normalize_none_values(self) -> None:
         """Proxy runs should convert None outputs into sentinel values."""
+        # Verify that proxy metrics normalize none values.
 
         def fake_controller(run_hil: bool, **kwargs):
             # Simulate a proxy flow that only reports flash usage.
@@ -326,6 +368,7 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_hil_metrics_report_latency_budget(self) -> None:
         """HIL runs should normalize latency using the provided budget."""
+        # Verify that HIL metrics report latency budget.
 
         def fake_controller(run_hil: bool, **kwargs):
             self.assertTrue(run_hil)
@@ -353,6 +396,7 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_hil_metrics_forward_serial_timeout_to_controller(self) -> None:
         """Direct-serial requests should forward ``serial_timeout_s``."""
+        # Verify that HIL metrics forward serial timeout to controller.
 
         def fake_controller(run_hil: bool, **kwargs):
             self.assertTrue(run_hil)
@@ -381,6 +425,7 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_collect_metrics_preserves_backend_error_fields(self) -> None:
         """STM backend detail fields should survive normalization into final metrics."""
+        # Verify that collect metrics preserves backend error fields.
 
         def fake_controller(run_hil: bool, **kwargs):
             del kwargs
@@ -421,6 +466,7 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_collect_metrics_copies_cadenced_metrics_and_runtime_mode(self) -> None:
         """Cadenced STM32 extras should survive normalization into final metrics."""
+        # Verify that collect metrics copies cadenced metrics and runtime mode.
 
         def fake_controller(run_hil: bool, **kwargs):
             del kwargs
@@ -471,6 +517,7 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_collect_metrics_back_to_back_mode_emits_cadenced_sentinels(self) -> None:
         """Single-pass mode should keep cadenced keys present with sentinel values."""
+        # Verify that collect metrics back to back mode emits cadenced sentinels.
 
         def fake_controller(run_hil: bool, **kwargs):
             del kwargs
@@ -499,6 +546,7 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_collect_metrics_normalizes_runtime_mode_from_backend_payload(self) -> None:
         """Runtime mode should be normalized and default invalid values safely."""
+        # Verify that collect metrics normalizes runtime mode from backend payload.
 
         cases = [
             ("CADENCED", "cadenced"),
@@ -534,6 +582,7 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_energy_aware_harness_fields_forwarded_to_controller(self) -> None:
         """Energy-aware requests should forward harness settings to HIL_controller."""
+        # Verify that energy aware harness fields forwarded to controller.
 
         harness = HarnessConfig(
             harness_serial_port="ttyACM1",
@@ -585,6 +634,7 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["latency_budget_ms"], 200.0)
 
     def test_energy_aware_without_harness_raises(self) -> None:
+        # Verify that energy aware without harness raises.
         request = CollectMetricsRequest(
             hil_enabled=True,
             energy_aware=True,
@@ -603,6 +653,7 @@ class CollectMetricsTests(unittest.TestCase):
             collect_metrics(request)
 
     def test_collect_metrics_forwards_device_options(self) -> None:
+        # Verify that collect metrics forwards device options.
         def fake_controller(run_hil: bool, **kwargs):
             self.assertFalse(run_hil)
             self.assertEqual(kwargs["device_options"]["target_core"], "cm7")
@@ -628,6 +679,7 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["error_code"], 0)
 
     def test_collect_metrics_portenta_cm4_runtime_requires_harness(self) -> None:
+        # Verify that collect metrics Portenta CM4 runtime requires harness.
         request = CollectMetricsRequest(
             hil_enabled=True,
             energy_aware=False,
@@ -650,6 +702,7 @@ class CollectMetricsTests(unittest.TestCase):
         controller_mock.assert_not_called()
 
     def test_collect_metrics_portenta_cm4_non_energy_forwards_harness(self) -> None:
+        # Verify that collect metrics Portenta CM4 non energy forwards harness.
         harness = HarnessConfig(
             harness_serial_port="ttyACM1",
             harness_fqbn="arduino:mbed_nano:nano33ble",
@@ -690,6 +743,7 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["error_code"], 0)
 
     def test_metric_unavailable_treats_negative_cadenced_sentinel_as_missing(self) -> None:
+        # Verify that metric unavailable treats negative cadenced sentinel as missing.
         self.assertTrue(_metric_unavailable("cadenced_energy_mj_per_trial", -1.0))
         self.assertFalse(_metric_unavailable("cadenced_energy_mj_per_trial", 0.0))
         self.assertTrue(_metric_unavailable("cadenced_rtc_sleep_ms", -1.0))
@@ -715,7 +769,20 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         window_size: int | None = None,
         input_dim: int | None = None,
     ) -> CollectMetricsRequest:
-        """Build a request with resolved backend options for test readability."""
+        """Build a request with resolved backend options for test readability.
+
+        Parameters
+        ----------
+        config : addict.Dict
+            NAS/runtime configuration under test.
+        hyperparams : addict.Dict
+            Hyperparameter payload forwarded into request construction.
+
+        Returns
+        -------
+        CollectMetricsRequest
+            Request built with either explicit or auto-resolved backend options.
+        """
         resolved_options = (
             resolve_device_options(str(config.device.name), config.device)
             if device_options is ...
@@ -734,6 +801,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         )
 
     def test_non_energy_aware_sets_harness_none(self) -> None:
+        # Verify that non energy aware sets harness none.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
@@ -751,6 +819,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertEqual(request.measured_inference_runs, 10)
 
     def test_request_uses_configured_measured_inference_runs(self) -> None:
+        # Verify that request uses configured measured inference runs.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -769,6 +838,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertEqual(request.measured_inference_runs, 7)
 
     def test_explicit_window_size_and_input_dim_override_legacy_fallbacks(self) -> None:
+        # Verify that explicit window size and input dim override legacy fallbacks.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
@@ -788,6 +858,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertEqual(request.input_dim, 3)
 
     def test_build_request_defaults_stm_serial_timeout(self) -> None:
+        # Verify that build request defaults stm serial timeout.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -810,6 +881,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertEqual(request.serial_timeout_s, 30.0)
 
     def test_build_request_scales_stm_serial_timeout_for_cadenced_runs(self) -> None:
+        # Verify that build request scales stm serial timeout for cadenced runs.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -836,6 +908,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertEqual(request.serial_timeout_s, 210.0)
 
     def test_build_request_preserves_larger_stm_serial_timeout(self) -> None:
+        # Verify that build request preserves larger stm serial timeout.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -874,6 +947,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         hil_enabled: bool | None = None,
         energy_aware: bool | None = None,
     ) -> CollectMetricsRequest:
+        """Build a request for STM32 timeout-specific request tests."""
         resolved_options = (
             resolve_device_options(str(config.device.name), config.device)
             if device_options is ...
@@ -890,6 +964,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         )
 
     def test_minimum_stm32_serial_timeout_is_30s_for_back_to_back(self) -> None:
+        # Verify that minimum STM32 serial timeout is 30s for back to back.
         self.assertEqual(
             _minimum_stm32_serial_timeout_s(
                 runtime_mode="back_to_back",
@@ -900,6 +975,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         )
 
     def test_minimum_stm32_serial_timeout_scales_for_cadenced(self) -> None:
+        # Verify that minimum STM32 serial timeout scales for cadenced.
         self.assertEqual(
             _minimum_stm32_serial_timeout_s(
                 runtime_mode="cadenced",
@@ -910,6 +986,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         )
 
     def test_energy_aware_populates_harness(self) -> None:
+        # Verify that energy aware populates harness.
         config = Dict(
             training=Dict(energy_aware=True, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -941,6 +1018,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         self.assertEqual(request.harness.harness_arm_timeout_s, 5.0)
 
     def test_missing_dut_ready_timeout_uses_default(self) -> None:
+        # Verify that missing dut ready timeout uses default.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
@@ -954,6 +1032,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         self.assertEqual(request.dut_ready_timeout_s, 5.0)
 
     def test_energy_aware_missing_harness_serial_port_raises(self) -> None:
+        # Verify that energy aware missing harness serial port raises.
         config = Dict(
             training=Dict(energy_aware=True, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
@@ -966,6 +1045,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
             self._build_request(config, hyperparams)
 
     def test_portenta_cm4_runtime_missing_harness_serial_port_raises(self) -> None:
+        # Verify that portenta CM4 runtime missing harness serial port raises.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -987,6 +1067,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
             )
 
     def test_resolve_device_options_validates_portenta_target_core(self) -> None:
+        # Verify that resolve device options validates Portenta target core.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="PORTENTA_H7", serial_port="ttyACM0", portenta=Dict()),
@@ -997,6 +1078,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
             resolve_device_options(str(config.device.name), config.device)
 
     def test_portenta_options_are_forwarded(self) -> None:
+        # Verify that portenta options are forwarded.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -1017,6 +1099,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         self.assertEqual(request.device_options["security"], "none")
 
     def test_portenta_cm4_runtime_populates_harness_even_without_energy_aware(self) -> None:
+        # Verify that portenta CM4 runtime populates harness even without energy aware.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -1051,6 +1134,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         self.assertEqual(request.harness.harness_serial_port, "ttyACM1")
 
     def test_device_name_is_normalized_before_request_build(self) -> None:
+        # Verify that device name is normalized before request build.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -1069,6 +1153,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         self.assertEqual(request.device_options["target_core"], "cm7")
 
     def test_proxy_mode_allows_missing_serial_port(self) -> None:
+        # Verify that proxy mode allows missing serial port.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=False, name="ARDUINO_NANO_33_BLE_SENSE"),
@@ -1088,6 +1173,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         -------
         None
         """
+        # Verify that stm request uses caller supplied dirpath and options.
         config = Dict(
             training=Dict(energy_aware=True, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -1128,6 +1214,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         -------
         None
         """
+        # Verify that resolve device options defaults stm template root.
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=False, name="STM32_NUCLEO_N657X0_Q"),
@@ -1147,6 +1234,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         -------
         None
         """
+        # Verify that resolve device options supports full canonical stm backend block.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             template_root = tmp_path / "stm32_project" / "FSBL"
@@ -1193,6 +1281,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
 
     def test_resolve_device_options_accepts_unmaterialized_custom_stm_root(self) -> None:
         """Ensure custom STM roots resolve before the LRUN workspace is materialized."""
+        # Verify that resolve device options accepts unmaterialized custom stm root.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             unresolved_root = tmp_path / "stm32_project"
@@ -1213,6 +1302,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
 
     def test_resolve_device_options_normalizes_custom_lrun_project_root_without_layout(self) -> None:
         """Ensure custom LRUN roots infer the dev-boot layout automatically."""
+        # Verify that resolve device options normalizes custom LRUN project root without layout.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             project_root = tmp_path / "tinyodom_tcn_stm32_lrun"
@@ -1256,6 +1346,7 @@ class TrainAndScoreTests(unittest.TestCase):
 
     def test_train_and_score_uses_effective_energy_flag_from_metrics(self) -> None:
         """STM Phase 1 should score on latency when energy was disabled upstream."""
+        # Verify that train and score uses effective energy flag from metrics.
         config = Dict(
             training=Dict(
                 energy_aware=True,
@@ -1304,6 +1395,7 @@ class TrainAndScoreTests(unittest.TestCase):
 
     def test_train_and_score_supports_normalized_weighted_terms(self) -> None:
         """Normalized weighted terms should use the injected device limits."""
+        # Verify that train and score supports normalized weighted terms.
         config = Dict(
             training=Dict(
                 energy_aware=False,
@@ -1364,6 +1456,7 @@ class TrainAndScoreTests(unittest.TestCase):
 
     def test_train_and_score_supports_energy_budget_from_power_metric(self) -> None:
         """Energy budget derived metrics should resolve from power and duration."""
+        # Verify that train and score supports energy budget from power metric.
         config = Dict(
             training=Dict(
                 energy_aware=True,
@@ -1423,6 +1516,7 @@ class TrainAndScoreTests(unittest.TestCase):
 
     def test_train_and_score_supports_generic_task_sentinels_when_training_disabled(self) -> None:
         """The legacy no-train path should allow generic task metric names."""
+        # Verify that train and score supports generic task sentinels when training disabled.
         config = Dict(
             training=Dict(
                 energy_aware=False,
@@ -1478,6 +1572,7 @@ class TrainAndScoreTests(unittest.TestCase):
 
     def test_train_and_score_raises_dedicated_exception_for_unavailable_score_metric(self) -> None:
         """Unavailable score metrics should raise ScoreConfigEvaluationError."""
+        # Verify that train and score raises dedicated exception for unavailable score metric.
         config = Dict(
             training=Dict(
                 energy_aware=True,
@@ -1530,6 +1625,7 @@ class TrainAndScoreTests(unittest.TestCase):
 
     def test_evaluate_score_config_matches_scalar_scoring_semantics(self) -> None:
         """Public score evaluation helper should preserve scalar score behavior."""
+        # Verify that evaluate score config matches scalar scoring semantics.
         score_config = Dict(
             type="scoring-function",
             metrics=Dict(),
@@ -1558,6 +1654,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     @staticmethod
     def _score_lines() -> list[str]:
+        """Return the minimal scoring-function YAML block shared by loader tests."""
         return [
             "nas:",
             "  score:",
@@ -1571,6 +1668,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_derives_expected_paths(self) -> None:
         """YAML entries should produce resolved paths and derived file names."""
+        # Verify that load settings derives expected paths.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             config_path = tmp_path / "config.yaml"
@@ -1612,6 +1710,7 @@ class LoadSettingsTests(unittest.TestCase):
             self.assertEqual(settings.training.drop_rate_choices, DROP_RATE_CHOICES)  
     def test_load_settings_requires_sections(self) -> None:
         """Missing required sections should raise informative errors."""
+        # Verify that load settings requires sections.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg_missing_device = tmp_path / "missing_device.yaml"
@@ -1645,6 +1744,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_requires_training_section(self) -> None:
         """Training section should be mandatory for NAS runs."""
+        # Verify that load settings requires training section.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg_missing_training = tmp_path / "missing_training.yaml"
@@ -1666,6 +1766,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_sets_default_max_total_trials(self) -> None:
         """max_total_trials should default to 2x the requested nas_trials when omitted."""
+        # Verify that load settings sets default max total trials.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -1688,6 +1789,7 @@ class LoadSettingsTests(unittest.TestCase):
             self.assertEqual(settings.training.max_total_trials, 20)
 
     def test_load_settings_defaults_measured_inference_runs(self) -> None:
+        # Verify that load settings defaults measured inference runs.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -1711,6 +1813,7 @@ class LoadSettingsTests(unittest.TestCase):
         self.assertEqual(settings.device.measured_inference_runs, 10)
 
     def test_load_settings_defaults_runtime_mode_and_latency_budget_override(self) -> None:
+        # Verify that load settings defaults runtime mode and latency budget override.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -1735,6 +1838,7 @@ class LoadSettingsTests(unittest.TestCase):
         self.assertIsNone(settings.device.latency_budget_ms)
 
     def test_load_settings_accepts_runtime_mode_and_latency_budget_override(self) -> None:
+        # Verify that load settings accepts runtime mode and latency budget override.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -1761,6 +1865,7 @@ class LoadSettingsTests(unittest.TestCase):
         self.assertEqual(settings.device.latency_budget_ms, 37.5)
 
     def test_load_settings_rejects_invalid_measured_inference_runs(self) -> None:
+        # Verify that load settings rejects invalid measured inference runs.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -1784,6 +1889,7 @@ class LoadSettingsTests(unittest.TestCase):
                 load_config(config_path=cfg)
 
     def test_load_settings_rejects_legacy_stm_runtime_mode_path(self) -> None:
+        # Verify that load settings rejects legacy stm runtime mode path.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -1808,6 +1914,7 @@ class LoadSettingsTests(unittest.TestCase):
                 load_config(config_path=cfg)
 
     def test_load_settings_rejects_cadenced_portenta_non_uniform_input(self) -> None:
+        # Verify that load settings rejects cadenced Portenta non uniform input.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -1835,6 +1942,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_accepts_normalized_weighted_term(self) -> None:
         """Normalized weighted terms should validate typed references."""
+        # Verify that load settings accepts normalized weighted term.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -1870,6 +1978,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_non_positive_normalized_weight_reference(self) -> None:
         """Literal normalized references must be strictly positive."""
+        # Verify that load settings rejects non positive normalized weight reference.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -1903,6 +2012,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_accepts_energy_budget_from_power_metric(self) -> None:
         """Energy budgets derived from power should validate cleanly."""
+        # Verify that load settings accepts energy budget from power metric.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -1947,6 +2057,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_non_positive_energy_budget_duration(self) -> None:
         """Energy budget duration literals must stay strictly positive."""
+        # Verify that load settings rejects non positive energy budget duration.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -1988,6 +2099,7 @@ class LoadSettingsTests(unittest.TestCase):
                 load_config(config_path=cfg)
 
     def test_load_settings_rejects_legacy_top_level_score(self) -> None:
+        # Verify that load settings rejects legacy top level score.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2016,6 +2128,7 @@ class LoadSettingsTests(unittest.TestCase):
                 load_config(config_path=cfg)
 
     def test_load_settings_accepts_scalar_prune_rules(self) -> None:
+        # Verify that load settings accepts scalar prune rules.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2056,6 +2169,7 @@ class LoadSettingsTests(unittest.TestCase):
         self.assertEqual(settings.nas.prune.rules[0].condition, "gt")
 
     def test_load_settings_accepts_empty_scalar_prune_rules(self) -> None:
+        # Verify that load settings accepts empty scalar prune rules.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2088,6 +2202,7 @@ class LoadSettingsTests(unittest.TestCase):
         self.assertEqual(settings.nas.prune.rules, [])
 
     def test_load_settings_rejects_prune_rules_for_multiobjective_score(self) -> None:
+        # Verify that load settings rejects prune rules for multiobjective score.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2125,6 +2240,7 @@ class LoadSettingsTests(unittest.TestCase):
                 load_config(config_path=cfg)
 
     def test_load_settings_rejects_prune_rules_that_depend_on_training_metrics(self) -> None:
+        # Verify that load settings rejects prune rules that depend on training metrics.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2167,6 +2283,7 @@ class LoadSettingsTests(unittest.TestCase):
                 load_config(config_path=cfg)
 
     def test_load_settings_rejects_weight_storage_mode_in_score_terms(self) -> None:
+        # Verify that load settings rejects weight storage mode in score terms.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2197,6 +2314,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_accepts_custom_task_metric_in_score_term(self) -> None:
         """Task-aware validation should allow caller-supplied task metrics."""
+        # Verify that load settings accepts custom task metric in score term.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2232,6 +2350,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_unknown_custom_task_metric_without_task_context(self) -> None:
         """Unknown task metrics should still fail without caller-supplied context."""
+        # Verify that load settings rejects unknown custom task metric without task context.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2262,6 +2381,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_accepts_derived_metric_that_references_custom_task_metric(self) -> None:
         """Derived score metrics may depend on caller-supplied task metrics."""
+        # Verify that load settings accepts derived metric that references custom task metric.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2303,6 +2423,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_derived_metric_name_that_collides_with_task_metric(self) -> None:
         """Derived metric names may not redefine caller-supplied task metrics."""
+        # Verify that load settings rejects derived metric name that collides with task metric.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2346,6 +2467,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_defaults_training_only_task_metrics_to_empty_when_task_metrics_are_supplied(self) -> None:
         """Custom task metrics should not silently inherit odometry training-only defaults."""
+        # Verify that load settings defaults training only task metrics to empty when task metrics are supplied.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2380,6 +2502,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_task_metric_overlap_with_infrastructure_metrics(self) -> None:
         """Task metrics may not reuse reserved infrastructure metric names."""
+        # Verify that load settings rejects task metric overlap with infrastructure metrics.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2407,6 +2530,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_training_only_task_metrics_outside_task_metric_set(self) -> None:
         """Training-only task metrics must be a subset of the task metric set."""
+        # Verify that load settings rejects training only task metrics outside task metric set.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2434,6 +2558,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_accepts_custom_task_metric_in_prune_rules(self) -> None:
         """Prune validation should allow supplied non-training-only task metrics."""
+        # Verify that load settings accepts custom task metric in prune rules.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2477,6 +2602,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_prune_rules_that_use_custom_training_only_task_metrics(self) -> None:
         """Prune rules may not directly read task metrics that need training."""
+        # Verify that load settings rejects prune rules that use custom training only task metrics.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2519,6 +2645,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_prune_rules_that_depend_on_custom_training_only_task_metrics(self) -> None:
         """Prune rules may not depend indirectly on task metrics that need training."""
+        # Verify that load settings rejects prune rules that depend on custom training only task metrics.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2566,6 +2693,7 @@ class LoadSettingsTests(unittest.TestCase):
                 )
 
     def test_load_settings_accepts_cadenced_sleep_metric_in_score_terms(self) -> None:
+        # Verify that load settings accepts cadenced sleep metric in score terms.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2596,6 +2724,7 @@ class LoadSettingsTests(unittest.TestCase):
         self.assertEqual(settings.nas.score.params.terms[0].metric, "cadenced_rtc_sleep_ms")
 
     def test_load_settings_accepts_cadenced_deadline_metric_in_prune_rules(self) -> None:
+        # Verify that load settings accepts cadenced deadline metric in prune rules.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2635,6 +2764,7 @@ class LoadSettingsTests(unittest.TestCase):
         self.assertEqual(settings.nas.prune.rules[0].metric, "cadenced_deadline_miss_count")
 
     def test_load_settings_accepts_cadenced_error_code_in_score_terms(self) -> None:
+        # Verify that load settings accepts cadenced error code in score terms.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2667,6 +2797,7 @@ class LoadSettingsTests(unittest.TestCase):
         self.assertEqual(settings.nas.score.params.terms[0].metric, "cadenced_error_code")
 
     def test_load_settings_accepts_cadenced_error_code_in_prune_rules(self) -> None:
+        # Verify that load settings accepts cadenced error code in prune rules.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2707,10 +2838,12 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_missing_file(self) -> None:
         """Nonexistent config paths should raise FileNotFoundError."""
+        # Verify that load settings missing file.
         with self.assertRaises(FileNotFoundError):
             load_config(config_path=Path("does_not_exist.yaml"))
 
     def test_load_settings_does_not_apply_backend_specific_harness_validation(self) -> None:
+        # Verify that load settings does not apply backend specific harness validation.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2740,6 +2873,7 @@ class LoadSettingsTests(unittest.TestCase):
         -------
         None
         """
+        # Verify that resolve device options normalizes stm backend block.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             project_root = tmp_path / "stm32_project" / "FSBL"
@@ -2777,6 +2911,7 @@ class LoadSettingsTests(unittest.TestCase):
             self.assertEqual(resolved["cpu_clock_mhz"], 600)
 
     def test_load_settings_accepts_null_cpu_clock_options(self) -> None:
+        # Verify that load settings accepts null CPU clock options.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2801,6 +2936,7 @@ class LoadSettingsTests(unittest.TestCase):
         self.assertIsNone(settings.device.cpu_clock_mhz_options)
 
     def test_load_settings_rejects_boolean_cpu_clock_options(self) -> None:
+        # Verify that load settings rejects boolean CPU clock options.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2824,6 +2960,7 @@ class LoadSettingsTests(unittest.TestCase):
                 load_config(config_path=cfg)
 
     def test_load_settings_rejects_unsupported_stm_cpu_clock_options(self) -> None:
+        # Verify that load settings rejects unsupported stm CPU clock options.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2851,6 +2988,7 @@ class ScoreConfigTrainingDependencyTests(unittest.TestCase):
     """Validate task-aware training-metric detection helpers."""
 
     def test_score_config_uses_training_metrics_detects_multilevel_derived_dependency(self) -> None:
+        # Verify that score config uses training metrics detects multilevel derived dependency.
         score_config = Dict(
             type="scoring-function",
             metrics=Dict(
@@ -2868,6 +3006,7 @@ class ScoreConfigTrainingDependencyTests(unittest.TestCase):
         )
 
     def test_score_config_uses_training_metrics_detects_typed_reference_dependency(self) -> None:
+        # Verify that score config uses training metrics detects typed reference dependency.
         score_config = Dict(
             type="scoring-function",
             metrics=Dict(
@@ -2896,6 +3035,7 @@ class ScoreConfigTrainingDependencyTests(unittest.TestCase):
         )
 
     def test_score_config_uses_training_metrics_returns_false_for_non_training_metrics(self) -> None:
+        # Verify that score config uses training metrics returns false for non training metrics.
         score_config = Dict(
             type="scoring-function",
             metrics=Dict(
@@ -2912,6 +3052,7 @@ class ScoreConfigTrainingDependencyTests(unittest.TestCase):
         )
 
     def test_score_config_uses_training_metrics_keeps_default_odometry_behavior(self) -> None:
+        # Verify that score config uses training metrics keeps default odometry behavior.
         score_config = Dict(
             type="multi-objective",
             metrics=Dict(),
@@ -2921,10 +3062,14 @@ class ScoreConfigTrainingDependencyTests(unittest.TestCase):
         self.assertTrue(score_config_uses_training_metrics(score_config))
 
 class FakeTrial:
+    """Small Optuna-trial stand-in used by CSV logging tests."""
+
     def __init__(self):
+        """Initialize an attribute store mirroring Optuna's user attrs."""
         self.attrs = {}
 
     def set_user_attr(self, key, value):
+        """Persist one user attribute exactly as Optuna would expose it."""
         self.attrs[key] = value
 
 
@@ -2943,6 +3088,7 @@ class LogTrialTests(unittest.TestCase):
     ]
 
     def _sample_metrics(self):
+        """Return a representative metric payload for trial-log tests."""
         return {
             "ram_bytes": 1000,
             "flash_bytes": 2000,
@@ -2973,6 +3119,7 @@ class LogTrialTests(unittest.TestCase):
         }
 
     def _sample_hyperparams(self):
+        """Return a representative hyperparameter payload for trial-log tests."""
         return {
             "flops": 1_000_000,
             "nb_filters": 32,
@@ -2994,6 +3141,7 @@ class LogTrialTests(unittest.TestCase):
         task_metrics: dict[str, object] | None = None,
         hyperparams: dict[str, object] | None = None,
     ) -> TrialOutcome:
+        """Build a representative ``TrialOutcome`` for CSV logging tests."""
         if objective_names is None:
             objective_names = ["score"]
         if objective_values is None:
@@ -3019,6 +3167,7 @@ class LogTrialTests(unittest.TestCase):
         )
 
     def test_log_trial_writes_header_and_row(self):
+        # Verify that log trial writes header and row.
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             fake_trial = FakeTrial()
@@ -3152,6 +3301,7 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(fake_trial.attrs["runtime_mode"], "back_to_back")
 
     def test_log_trial_appends_without_duplicate_header(self):
+        # Verify that log trial appends without duplicate header.
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             metrics = self._sample_metrics()
@@ -3195,6 +3345,7 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(len(rows), 3)
 
     def test_log_trial_expands_dynamic_header_and_backfills_prior_rows(self):
+        # Verify that log trial expands dynamic header and backfills prior rows.
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             metrics = self._sample_metrics()
@@ -3241,6 +3392,7 @@ class LogTrialTests(unittest.TestCase):
             self.assertEqual(rows[1]["hparam__nb_filters"], "32")
 
     def test_log_trial_marks_single_objective_multiobjective_runs_correctly(self):
+        # Verify that log trial marks single objective multiobjective runs correctly.
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             fake_trial = FakeTrial()

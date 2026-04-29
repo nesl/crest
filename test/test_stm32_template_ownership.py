@@ -1,3 +1,5 @@
+"""Tests for the checked-in STM32 LRUN template ownership manifest."""
+
 import subprocess
 import sys
 import unittest
@@ -21,10 +23,21 @@ ALLOWED_CATEGORIES = {
 
 
 def _load_manifest_rows() -> list[tuple[str, str, str]]:
+    """Parse the LRUN ownership manifest into normalized row tuples.
+
+    Returns
+    -------
+    list[tuple[str, str, str]]
+        ``(category, relative_path, source_path)`` rows. Entries that omit the
+        optional source path are normalized to an empty string.
+    """
+
     rows: list[tuple[str, str, str]] = []
     for raw_line in MANIFEST_PATH.read_text(encoding="utf-8").splitlines():
         if not raw_line or raw_line.startswith("#"):
             continue
+        # The manifest is a compact TSV format where source_path is only
+        # present for vendor-copy rows.
         parts = raw_line.split("\t")
         if len(parts) == 2:
             category, relative_path = parts
@@ -39,6 +52,7 @@ def _load_manifest_rows() -> list[tuple[str, str, str]]:
 
 class STM32TemplateOwnershipTests(unittest.TestCase):
     def test_manifest_categories_and_paths_are_unique(self) -> None:
+        # Verify that manifest categories and paths are unique.
         rows = _load_manifest_rows()
         seen_paths: set[str] = set()
 
@@ -53,11 +67,13 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
                 self.assertEqual(source_path, "")
 
     def test_manifest_kept_files_exist_in_canonical_workspace(self) -> None:
+        # Verify that manifest kept files exist in canonical workspace.
         for category, relative_path, _ in _load_manifest_rows():
             if category in {"vendor_derived", "tinyodom_owned", "build_recipe"}:
                 self.assertTrue((CANONICAL_ROOT / relative_path).is_file(), relative_path)
 
     def test_vendor_copy_sources_exist_when_cube_checkout_is_available(self) -> None:
+        # Verify that vendor copy sources exist when cube checkout is available.
         firmware_root = ROOT_DIR / "tools" / "stm32" / "STM32CubeN6"
         if not firmware_root.is_dir():
             self.skipTest("STM32CubeN6 checkout is not present under tools/stm32")
@@ -67,6 +83,7 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
                 self.assertTrue((firmware_root / source_path).is_file(), relative_path)
 
     def test_gitignore_covers_setup_managed_vendor_copy_and_generated_paths(self) -> None:
+        # Verify that gitignore covers setup managed vendor copy and generated paths.
         for category, relative_path, _ in _load_manifest_rows():
             if category not in {"vendor_copy", "generated"}:
                 continue
@@ -78,6 +95,7 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, relative_path)
 
     def test_setup_script_references_lrun_manifest_only(self) -> None:
+        # Verify that setup script references LRUN manifest only.
         script_text = (ROOT_DIR / "setup_stm32.sh").read_text(encoding="utf-8")
         self.assertIn("lrun_ownership_manifest.tsv", script_text)
         self.assertIn("prune_materialized_vendor_copy_files", script_text)

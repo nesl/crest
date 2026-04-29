@@ -1,3 +1,5 @@
+"""Unit tests for hardware conversion and HIL helper utilities."""
+
 import json
 import os
 import re
@@ -234,10 +236,12 @@ class SpecHelperTests(unittest.TestCase):
             return_hardware_specs("NOT_A_BOARD")
 
     def test_return_hardware_specs_portenta_requires_device_options(self):
+        # Verify that return hardware specs Portenta requires device options.
         with self.assertRaises(ValueError):
             return_hardware_specs("PORTENTA_H7")
 
     def test_return_hardware_specs_portenta_case_insensitive(self):
+        # Verify that return hardware specs Portenta case insensitive.
         options = {"target_core": "cm7", "split": "75_25", "security": "none"}
         upper_ram, upper_flash = return_hardware_specs("PORTENTA_H7", device_options=options)
         lower_ram, lower_flash = return_hardware_specs("portenta_h7", device_options=options)
@@ -255,10 +259,12 @@ class SpecHelperTests(unittest.TestCase):
             arena_size_candidates("UNKNOWN_DEVICE")
 
     def test_arena_size_candidates_portenta_requires_device_options(self):
+        # Verify that arena size candidates Portenta requires device options.
         with self.assertRaises(ValueError):
             arena_size_candidates("PORTENTA_H7")
 
     def test_arena_size_candidates_portenta_case_insensitive(self):
+        # Verify that arena size candidates Portenta case insensitive.
         options = {"target_core": "cm7", "split": "75_25", "security": "none"}
         upper = arena_size_candidates("PORTENTA_H7", device_options=options)
         lower = arena_size_candidates("portenta_h7", device_options=options)
@@ -430,6 +436,7 @@ class SketchHelperTests(unittest.TestCase):
             self.assertIn("TINYODOM_TENSOR_ARENA_BYTES (42 * 1024)", text)
 
     def test_patch_sketch_constants_updates_latency_budget_when_present(self):
+        # Verify that patch sketch constants updates latency budget when present.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             ino_path = sketch_dir / "TinyOdom.ino"
@@ -472,28 +479,34 @@ class SketchHelperTests(unittest.TestCase):
 
 class CompileFailureClassificationTests(unittest.TestCase):
     def test_classify_returns_none_for_normal_output(self):
+        # Verify that classify returns none for normal output.
         result = _classify_compile_failure(COMPILE_SAMPLE_OUTPUT)
         self.assertIsNone(result)
 
     def test_classify_detects_flash_overflow(self):
+        # Verify that classify detects flash overflow.
         result = _classify_compile_failure(FLASH_OVERFLOW_STDERR)
         self.assertEqual(result, "flash")
 
     def test_classify_detects_ram_overflow(self):
+        # Verify that classify detects ram overflow.
         result = _classify_compile_failure(RAM_OVERFLOW_STDERR)
         self.assertEqual(result, "ram")
 
 
 class PortentaOptionValidationTests(unittest.TestCase):
     def test_missing_target_core_raises(self):
+        # Verify that missing target core raises.
         with self.assertRaises(ValueError):
             arduino_portenta_h7.resolve_portenta_h7_options({})
 
     def test_invalid_split_raises(self):
+        # Verify that invalid split raises.
         with self.assertRaises(ValueError):
             arduino_portenta_h7.resolve_portenta_h7_options({"target_core": "cm7", "split": "bad_split"})
 
     def test_cm4_100_0_rejected(self):
+        # Verify that CM4 100 0 rejected.
         with self.assertRaises(ValueError):
             arduino_portenta_h7.resolve_portenta_h7_options({"target_core": "cm4", "split": "100_0"})
 
@@ -509,6 +522,7 @@ class ArduinoBoardContractShapeTests(unittest.TestCase):
         self.assertGreater(spec.max_flash_bytes, 0)
 
     def test_ble33_contract_symbols_and_spec(self):
+        # Verify that ble33 contract symbols and spec.
         required_symbols = (
             "BOARD_NAME",
             "BOARD_FQBN",
@@ -530,6 +544,7 @@ class ArduinoBoardContractShapeTests(unittest.TestCase):
         self.assertEqual(built_spec, arduino_ble33.BOARD_DEFAULT_SPEC)
 
     def test_portenta_contract_symbols_and_spec(self):
+        # Verify that portenta contract symbols and spec.
         required_symbols = (
             "BOARD_NAME",
             "BOARD_FQBN",
@@ -557,6 +572,7 @@ class ArduinoBoardContractShapeTests(unittest.TestCase):
 
 class ArduinoRegistryContractTests(unittest.TestCase):
     def test_list_device_specs_includes_ble_and_portenta(self):
+        # Verify that list device specs includes ble and Portenta.
         specs = list_device_specs()
         self.assertIn("ARDUINO_NANO_33_BLE_SENSE", specs)
         self.assertIn("PORTENTA_H7", specs)
@@ -570,6 +586,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         )
 
     def test_get_device_constructs_portenta_with_options(self):
+        # Verify that get device constructs Portenta with options.
         device = get_device(
             "PORTENTA_H7",
             device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
@@ -580,6 +597,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertEqual(device.resolved_options.security, "none")
 
     def test_get_device_normalizes_registry_name_case_and_whitespace(self):
+        # Verify that get device normalizes registry name case and whitespace.
         device = get_device(
             "  portenta_h7  ",
             device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
@@ -587,6 +605,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertIsInstance(device, arduino_portenta_h7.ArduinoPortentaH7Device)
 
     def test_get_device_non_arduino_legacy_entry_raises_actionable_error(self):
+        # Verify that get device non Arduino legacy entry raises actionable error.
         with self.assertRaises(ValueError) as context:
             get_device("ARCH_MAX")
         message = str(context.exception)
@@ -594,6 +613,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertIn("DeviceInterface", message)
 
     def test_get_device_normalizes_legacy_name_in_actionable_error(self):
+        # Verify that get device normalizes legacy name in actionable error.
         with self.assertRaises(ValueError) as context:
             get_device("  arch_max  ")
         message = str(context.exception)
@@ -601,6 +621,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertIn("no registered backend", message)
 
     def test_portenta_runtime_mode_resolution(self):
+        # Verify that portenta runtime mode resolution.
         cm7 = get_device(
             "PORTENTA_H7",
             device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
@@ -617,6 +638,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertEqual(cm4.runtime_mode_build_defines()["TINYODOM_SKIP_SERIAL_WAIT"], 1)
 
     def test_portenta_cm4_prepare_for_runtime_bootstraps_cm7_helper(self):
+        # Verify that portenta CM4 prepare for runtime bootstraps CM7 helper.
         cm4 = get_device(
             "PORTENTA_H7",
             device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
@@ -626,6 +648,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         helper_mock.assert_called_once_with(serial_port="/dev/ttyACM0")
 
     def test_portenta_cm7_prepare_for_runtime_skips_bootstrap(self):
+        # Verify that portenta CM7 prepare for runtime skips bootstrap.
         cm7 = get_device(
             "PORTENTA_H7",
             device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
@@ -637,6 +660,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
 
 class ArduinoCommandOptionTests(unittest.TestCase):
     def test_resolve_build_dir_hash_includes_board_options(self):
+        # Verify that resolve build dir hash includes board options.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
             sketch_dir.mkdir()
@@ -655,6 +679,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertNotEqual(cm7_build_dir, cm4_build_dir)
 
     def test_compile_sketch_includes_board_options(self):
+        # Verify that compile sketch includes board options.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
             sketch_dir.mkdir()
@@ -687,6 +712,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         )
 
     def test_upload_sketch_includes_board_options(self):
+        # Verify that upload sketch includes board options.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
             sketch_dir.mkdir()
@@ -715,6 +741,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         )
 
     def test_compile_sketch_leaves_memory_unknown_without_summary_or_recipe(self):
+        # Verify that compile sketch leaves memory unknown without summary or recipe.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
             sketch_dir.mkdir()
@@ -738,6 +765,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertIsNone(result.ram_bytes)
 
     def test_parse_memory_from_size_recipe_uses_platform_regexes(self):
+        # Verify that parse memory from size recipe uses platform regexes.
         with tempfile.TemporaryDirectory() as tmpdir:
             build_dir = Path(tmpdir) / "build"
             build_dir.mkdir(parents=True)
@@ -785,6 +813,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertEqual(ram_bytes, 63_304)
 
     def test_resolve_platform_txt_path_supports_hardware_folders_list(self):
+        # Verify that resolve platform txt path supports hardware folders list.
         with tempfile.TemporaryDirectory() as tmpdir:
             build_dir = Path(tmpdir) / "build"
             build_dir.mkdir(parents=True)
@@ -806,6 +835,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertEqual(resolved, expected)
 
     def test_resolve_platform_txt_path_skips_empty_entries(self):
+        # Verify that resolve platform txt path skips empty entries.
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             build_dir = root / "build"
@@ -834,6 +864,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertEqual(resolved, expected)
 
     def test_compile_sketch_uses_size_recipe_when_summary_missing(self):
+        # Verify that compile sketch uses size recipe when summary missing.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
             sketch_dir.mkdir()
@@ -857,11 +888,13 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertEqual(result.ram_bytes, 63_304)
 
     def test_sum_size_regex_matches_without_capture_group_returns_none(self):
+        # Verify that sum size regex matches without capture group returns none.
         output = ".text 149680 134479872\n.data 6184 603979776\n"
         total = _sum_size_regex_matches(output, r"^(?:\\.text|\\.data)\\s+\\d+.*")
         self.assertIsNone(total)
 
     def test_upload_permission_error_appends_linux_guidance(self):
+        # Verify that upload permission error appends linux guidance.
         augmented = _augment_upload_error("dfu-util: LIBUSB_ERROR_ACCESS")
         self.assertIn("udev", augmented)
         self.assertIn("Linux", augmented)
@@ -1010,6 +1043,7 @@ class ProtocolHandshakeTests(unittest.TestCase):
             return False
 
     def test_run_handshake_sends_ping_and_start_without_arm(self):
+        # Verify that run handshake sends ping and start without arm.
         harness_lines = [
             b"HARNESS READY\n",
             b"ARMED\n",
@@ -1059,6 +1093,7 @@ class ProtocolHandshakeTests(unittest.TestCase):
 
 class HarnessMetricSelectionTests(unittest.TestCase):
     def test_parse_power_metrics_reads_clock_and_dwt_tags(self):
+        # Verify that parse power metrics reads clock and DWT tags.
         parsed = _parse_power_metrics(
             [
                 "clock hz output: 480000000",
@@ -1071,12 +1106,14 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertAlmostEqual(parsed["dwt_cycles_per_inference"], 122345.5)
 
     def test_normalize_power_metrics_defaults_clock_and_dwt(self):
+        # Verify that normalize power metrics defaults clock and DWT.
         normalized = normalize_power_metrics({"harness_latency_s": 0.2})
         self.assertAlmostEqual(normalized["harness_latency_s"], 0.2)
         self.assertEqual(normalized["clock_hz"], -1.0)
         self.assertEqual(normalized["dwt_cycles_per_inference"], -1.0)
 
     def test_merge_power_metrics_uses_secondary_when_primary_has_sentinel(self):
+        # Verify that merge power metrics uses secondary when primary has sentinel.
         merged = _merge_power_metrics(
             primary={
                 "harness_latency_s": 0.25,
@@ -1095,6 +1132,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertAlmostEqual(merged["dwt_cycles_per_inference"], 123456.0)
 
     def test_merge_power_metrics_keeps_valid_primary_values(self):
+        # Verify that merge power metrics keeps valid primary values.
         merged = _merge_power_metrics(
             primary={
                 "clock_hz": 400000000.0,
@@ -1111,6 +1149,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertAlmostEqual(merged["dwt_cycles_per_inference"], 111111.0)
 
     def test_measure_serial_discards_energy_without_dut_timer(self):
+        # Verify that measure serial discards energy without dut timer.
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 10"],
             harness_log=[
@@ -1157,6 +1196,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertIsNone(result.power_metrics)
 
     def test_measure_serial_discards_energy_on_run_mismatch(self):
+        # Verify that measure serial discards energy on run mismatch.
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 10", "timer output: 0.250000"],
             harness_log=[
@@ -1203,6 +1243,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertIsNone(result.power_metrics)
 
     def test_measure_serial_keeps_latency_when_harness_done_missing(self):
+        # Verify that measure serial keeps latency when harness done missing.
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 10", "timer output: 0.125000"],
             harness_log=["runs: 10", "harness error: active_timeout"],
@@ -1244,6 +1285,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertIsNone(result.power_metrics)
 
     def test_measure_serial_merges_dut_clock_with_harness_energy(self):
+        # Verify that measure serial merges dut clock with harness energy.
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=[
                 "runs: 10",
@@ -1299,6 +1341,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertAlmostEqual(result.power_metrics["energy_mj_per_inference"], 10.0)
 
     def test_measure_serial_compiles_harness_with_measured_inference_runs(self):
+        # Verify that measure serial compiles harness with measured inference runs.
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 7", "timer output: 0.125000"],
             harness_log=["runs: 7", "harness timer output: 0.125000", "DONE"],
@@ -1340,6 +1383,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertEqual(compile_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"], 7)
 
     def test_measure_harness_only_open_session_uses_harness_latency(self):
+        # Verify that measure harness only open session uses harness latency.
         session = hil_protocol.HarnessSessionResult(
             harness_log=[
                 "runs: 1",
@@ -1366,6 +1410,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertAlmostEqual(result.power_metrics["energy_mj_per_inference"], 10.0)
 
     def test_measure_harness_only_open_session_timeout_sets_error(self):
+        # Verify that measure harness only open session timeout sets error.
         session = hil_protocol.HarnessSessionResult(
             harness_log=[
                 "runs: 1",
@@ -1390,6 +1435,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
 class HarnessOnlyOrderingTests(unittest.TestCase):
     def test_harness_only_opens_harness_before_upload(self):
+        # Verify that harness only opens harness before upload.
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -1535,6 +1581,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
         self.assertIsNone(result.retry_hint_bytes)
 
     def test_harness_only_not_ready_maps_to_upload_error(self):
+        # Verify that harness only not ready maps to upload error.
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -1592,6 +1639,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
         upload_mock.assert_not_called()
 
     def test_harness_only_prepare_failure_maps_to_upload_error(self):
+        # Verify that harness only prepare failure maps to upload error.
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -1632,6 +1680,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
         upload_mock.assert_not_called()
 
     def test_harness_only_prepare_for_runtime_runtimeerror_maps_to_upload_error(self):
+        # Verify that harness only prepare for runtime runtimeerror maps to upload error.
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -1674,6 +1723,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
 
 class DeviceTimeoutPassThroughTests(unittest.TestCase):
     def test_arduino_device_measure_preserves_zero_timeouts(self):
+        # Verify that arduino device measure preserves zero timeouts.
         device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE")
         fake_result = ArduinoMeasureResult(
             latency_s=0.1,
@@ -1705,6 +1755,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
         self.assertEqual(call_kwargs["harness_done_timeout_s"], 0.0)
 
     def test_arduino_device_measure_forwards_measured_inference_runs(self):
+        # Verify that arduino device measure forwards measured inference runs.
         device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE")
         fake_result = ArduinoMeasureResult(
             latency_s=0.1,
@@ -1726,6 +1777,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
         self.assertEqual(mock_measure.call_args.kwargs["measured_inference_runs"], 7)
 
     def test_arduino_device_evaluate_compiles_dut_with_measured_inference_runs(self):
+        # Verify that arduino device evaluate compiles dut with measured inference runs.
         device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE", serial_port="/dev/ttyACM0")
         compile_result = ArduinoCompileResult(
             success=True,
@@ -1760,6 +1812,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
         self.assertEqual(compile_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"], 7)
 
     def test_portenta_cm4_harness_only_compiles_harness_with_measured_inference_runs(self):
+        # Verify that portenta CM4 harness only compiles harness with measured inference runs.
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -2241,6 +2294,7 @@ class HILControllerTests(unittest.TestCase):
         self.assertAlmostEqual(latency, 0.2)
 
     def test_hil_controller_uses_injected_device_spec_not_catalog(self):
+        # Verify that HIL controller uses injected device spec not catalog.
         arena_candidates = np.array([11, 33, 77])
         device = self._controller_device(arena_candidates, name="PORTENTA_H7")
         observed_indices: list[int] = []

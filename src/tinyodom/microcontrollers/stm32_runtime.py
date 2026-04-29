@@ -1,3 +1,11 @@
+"""Direct-serial runtime protocol helpers for the STM32 backend.
+
+This module parses the UART protocol emitted by the STM32 TinyODOM runtime and
+provides a replayable serial monitor abstraction so callers can coordinate
+``INIT -> READY -> START -> RUN`` session phases without losing earlier log
+context.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -482,6 +490,8 @@ def parse_stm32_runtime_lines(lines: Sequence[str]) -> STM32RuntimeTelemetry:
     _raise_failure_from_lines(serial_log)
     floats = _parse_last_float_fields(serial_log, DUT_FLOAT_PATTERNS)
     strings = _parse_last_string_fields(serial_log, DUT_STRING_PATTERNS)
+    # Validate the coarse session shape first so later field-specific failures
+    # can assume the runtime reached a known protocol phase.
     phase = strings.get("phase", "").strip().lower()
     if phase not in {"back_to_back", "cadenced"}:
         raise STM32RuntimeProtocolError(
@@ -508,6 +518,8 @@ def parse_stm32_runtime_lines(lines: Sequence[str]) -> STM32RuntimeTelemetry:
         )
     timer_output_s = floats.get("timer_output_s")
     timer_per_inference_s = floats.get("timer_per_inference_s")
+    # Back-to-back mode reports aggregate timer output for the whole run,
+    # whereas cadenced mode may only expose per-inference timing.
     if phase == "back_to_back" and _is_finite_positive(timer_output_s):
         latency_s = float(timer_output_s)
     elif _is_finite_positive(timer_per_inference_s):
@@ -573,7 +585,14 @@ def execute_runtime_session(
         If the DUT fails to reach the required protocol milestones.
     RuntimeError
         If the serial reader exits unexpectedly.
+
+    Notes
+    -----
+    The expected token order is ``STM32_AI_INIT=*`` followed by ``DUT READY``,
+    then a host-sent ``START`` line, and finally ``STM32_AI_RUN=*`` plus the
+    telemetry fields parsed by :func:`parse_stm32_runtime_lines`.
     """
+    # Phase 1: wait for the firmware to boot and publish its init status.
     init_line, cursor = monitor.wait_for_match(
         _init_terminal,
         boot_timeout_s,
@@ -587,6 +606,7 @@ def execute_runtime_session(
             serial_log=monitor.snapshot_lines(),
         )
     _raise_failure_from_lines([init_line])
+    # Phase 2: wait for the DUT to signal that it is armed for the run.
     ready_line, cursor = monitor.wait_for_match(
         lambda line: line.strip() == "DUT READY",
         boot_timeout_s,
@@ -599,7 +619,9 @@ def execute_runtime_session(
             detail="Timed out waiting for DUT READY.",
             serial_log=monitor.snapshot_lines(),
         )
+    # Phase 3: explicitly start the measurement window from the host side.
     monitor.write_line("START")
+    # Phase 4: wait for the terminal run token and parse the full session log.
     run_line, _ = monitor.wait_for_match(
         _run_terminal,
         run_timeout_s,

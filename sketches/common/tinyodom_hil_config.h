@@ -1,3 +1,7 @@
+// Shared TinyODOM HIL protocol constants.
+//
+// These macros define the GPIO and serial handshake contract shared by the
+// device under test, the external measurement harness, and the host tooling.
 #pragma once
 
 #ifndef TINYODOM_INFERENCE_RUNS
@@ -34,7 +38,9 @@
 #define TINYODOM_HARNESS_ACTIVE_TIMEOUT_MS 600000
 #endif
 
-// Protocol strings shared by DUT, harness, and host.
+// Protocol strings shared by DUT, harness, and host. Keeping them centralized
+// avoids subtle parser mismatches between the Arduino sketches and Python HIL
+// tooling.
 #define TINYODOM_DUT_READY "DUT READY"
 #define TINYODOM_HARNESS_READY "HARNESS READY"
 #define TINYODOM_CMD_PING "PING"

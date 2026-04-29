@@ -1,3 +1,11 @@
+"""Explicit registries for dataset, task, and model-family components.
+
+This module centralizes the small registration helpers that let TinyOdom map
+stable string names to concrete component classes. The exported registries are
+used to keep dataset, task, and model-family selection explicit rather than
+relying on implicit discovery.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -9,6 +17,10 @@ T = TypeVar("T")
 @dataclass
 class ComponentRegistry(Generic[T]):
     """Registry for explicitly named component classes.
+
+    The registry stores classes, not instances. Registration keys are
+    normalized with :meth:`str.strip` before duplicate checks and lookups so
+    surrounding whitespace does not create distinct entries.
 
     Parameters
     ----------
@@ -54,7 +66,8 @@ class ComponentRegistry(Generic[T]):
         Parameters
         ----------
         name : str
-            Stable registration key.
+            Stable registration key. Leading and trailing whitespace is removed
+            before lookup.
 
         Returns
         -------
@@ -109,7 +122,8 @@ class ComponentRegistry(Generic[T]):
         Parameters
         ----------
         name : str
-            Stable registration key.
+            Stable registration key passed through :meth:`get`, including its
+            whitespace-normalization and error behavior.
 
         Returns
         -------

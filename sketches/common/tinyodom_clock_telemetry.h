@@ -1,3 +1,7 @@
+// Helpers for emitting board clock and DWT cycle-counter telemetry.
+//
+// These helpers keep the host-facing telemetry keys stable even when boards
+// differ in whether they expose a usable hardware cycle counter.
 #pragma once
 
 #include <Arduino.h>
@@ -11,6 +15,7 @@
 
 namespace tinyodom_clock {
 
+// Enable the ARM DWT cycle counter when the target exposes it.
 inline void ConfigureCycleCounter() {
 #if TINYODOM_HAS_DWT_CYCLE_COUNTER
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
@@ -27,6 +32,8 @@ inline uint32_t ReadCycleCounterRaw() {
 #endif
 }
 
+// Prefer a runtime-reported clock when available, then fall back to the
+// compile-time F_CPU constant.
 inline float ReadClockHz() {
 #if defined(ARDUINO_ARCH_MBED)
   const float runtime_clock_hz = static_cast<float>(SystemCoreClock);
@@ -43,6 +50,8 @@ inline float ReadClockHz() {
   return -1.0f;
 }
 
+// Derive per-inference cycle telemetry while rejecting obviously ambiguous
+// cases where the 32-bit DWT counter may have wrapped across the window.
 inline float ComputeCyclesPerInference(
     uint32_t start_cycles,
     uint32_t end_cycles,
@@ -77,6 +86,7 @@ inline float ComputeCyclesPerInference(
 #endif
 }
 
+// Emit a stable key/value schema so the Python parser stays board-agnostic.
 inline void EmitClockTelemetry(float clock_hz, float dwt_cycles_per_inference) {
   Serial.print("clock hz output: ");
   if (clock_hz >= 0.0f) {

@@ -1,3 +1,11 @@
+"""Portenta H7 board wrapper and option normalization helpers.
+
+This module translates TinyODOM config fields into Portenta-specific board
+options, device limits, and CM4 runtime prerequisites. The CM4 path is
+special-cased because reliable runtime telemetry depends on a companion CM7
+boot-helper sketch and harness-only measurement.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -307,7 +315,13 @@ class ArduinoPortentaH7Device(ArduinoDevice):
         return self._resolved_options.to_board_options()
 
     def runtime_measure_mode(self) -> RuntimeMeasureMode:
-        """Return runtime measurement mode for the selected target core."""
+        """Return runtime measurement mode for the selected target core.
+
+        Returns
+        -------
+        RuntimeMeasureMode
+            ``"harness_only"`` for CM4 targets, otherwise ``"direct_serial"``.
+        """
         if self._resolved_options.target_core == "cm4":
             # CM4 runtime telemetry is measured by the external harness because
             # host-visible USB CDC Serial is not reliable for this target core.
@@ -315,7 +329,14 @@ class ArduinoPortentaH7Device(ArduinoDevice):
         return "direct_serial"
 
     def runtime_mode_build_defines(self) -> dict[str, int]:
-        """Return compile-time runtime defines for CM4 autostart mode."""
+        """Return compile-time runtime defines for CM4 autostart mode.
+
+        Returns
+        -------
+        dict[str, int]
+            Extra preprocessor defines required for CM4 autostart builds, or
+            an empty mapping when the selected core does not need them.
+        """
         if self._resolved_options.target_core != "cm4":
             return {}
         return {
@@ -325,7 +346,14 @@ class ArduinoPortentaH7Device(ArduinoDevice):
         }
 
     def _cm7_boot_helper_board_options(self) -> dict[str, str]:
-        """Return board options for CM7 boot-assist sketch upload."""
+        """Return board options for the CM7 boot-helper sketch.
+
+        Returns
+        -------
+        dict[str, str]
+            Portenta board options that keep the helper sketch aligned with
+            the active memory split and security profile.
+        """
         return {
             "target_core": "cm7",
             "split": self._resolved_options.split,
@@ -333,10 +361,24 @@ class ArduinoPortentaH7Device(ArduinoDevice):
         }
 
     def _ensure_cm7_boot_helper(self, *, serial_port: str) -> None:
-        """Ensure a CM7 helper sketch is running so M4 can boot reliably."""
+        """Ensure a CM7 helper sketch is running so M4 can boot reliably.
+
+        Parameters
+        ----------
+        serial_port : str
+            Port used to upload the helper sketch.
+
+        Returns
+        -------
+        None
+            Uploads the helper sketch only when the cached board-option
+            signature for ``serial_port`` is missing or stale.
+        """
         helper_signature = ",".join(
             f"{key}={value}" for key, value in sorted(self._cm7_boot_helper_board_options().items())
         )
+        # Cache by serial port + option signature so repeated CM4 runs do not
+        # keep reflashing the same helper firmware.
         if _CM4_BOOT_HELPER_SIGNATURES.get(serial_port) == helper_signature:
             return
         if not CM7_BOOT_HELPER_SKETCH.exists():
@@ -368,6 +410,8 @@ class ArduinoPortentaH7Device(ArduinoDevice):
             logger.warning(
                 "Portenta CM4 runtime: CM7 boot helper upload failed once; retrying with clean rebuild."
             )
+            # Retry from a clean build cache because Arduino CLI sometimes
+            # leaves stale CM7 artifacts behind after the first failed upload.
             shutil.rmtree(compile_result.build_dir, ignore_errors=True)
             retry_compile = arduino_base.compile_sketch(
                 sketch_path=CM7_BOOT_HELPER_SKETCH,

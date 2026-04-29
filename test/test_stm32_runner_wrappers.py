@@ -1,3 +1,5 @@
+"""Regression tests for the STM32 runner wrapper scripts."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -12,6 +14,21 @@ from unittest.mock import patch
 
 
 def _load_module(module_name: str, relative_path: str):
+    """Load an analysis script by repository-relative path for wrapper tests.
+
+    Parameters
+    ----------
+    module_name : str
+        Synthetic module name to register in ``sys.modules``.
+    relative_path : str
+        Repository-relative path to the Python entrypoint under test.
+
+    Returns
+    -------
+    module
+        Imported module object loaded directly from the target file.
+    """
+
     repo_root = Path(__file__).resolve().parents[1]
     module_path = repo_root / relative_path
     spec = importlib.util.spec_from_file_location(module_name, module_path)
@@ -35,6 +52,7 @@ stm32_cpu_clock_sweep = _load_module(
 
 class Stm32RunnerWrapperTests(unittest.TestCase):
     def test_cadenced_comparison_raises_with_child_output_when_metrics_missing(self):
+        # Verify that cadenced comparison raises with child output when metrics missing.
         args = Namespace(
             project_root=Path("/tmp/project"),
             config=Path("/tmp/config.yaml"),
@@ -83,6 +101,7 @@ class Stm32RunnerWrapperTests(unittest.TestCase):
         self.assertIn("child stderr", str(ctx.exception))
 
     def test_cadenced_comparison_returns_metrics_when_child_writes_artifacts(self):
+        # Verify that cadenced comparison returns metrics when child writes artifacts.
         args = Namespace(
             project_root=Path("/tmp/project"),
             config=Path("/tmp/config.yaml"),
@@ -135,6 +154,7 @@ class Stm32RunnerWrapperTests(unittest.TestCase):
         self.assertTrue(diagnostic["ok"])
 
     def test_cpu_clock_sweep_scales_cadenced_child_timeout(self):
+        # Verify that CPU clock sweep scales cadenced child timeout.
         args = Namespace(
             python_executable=Path("/usr/bin/python3"),
             project_root=Path("/tmp/project"),
@@ -183,6 +203,7 @@ class Stm32RunnerWrapperTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--serial-timeout") + 1], "50.0")
 
     def test_cpu_clock_sweep_preserves_larger_requested_timeout(self):
+        # Verify that CPU clock sweep preserves larger requested timeout.
         args = Namespace(
             python_executable=Path("/usr/bin/python3"),
             project_root=Path("/tmp/project"),
@@ -230,6 +251,7 @@ class Stm32RunnerWrapperTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--serial-timeout") + 1], "120.0")
 
     def test_cpu_clock_sweep_reuses_staged_model_on_later_repeats(self):
+        # Verify that CPU clock sweep reuses staged model on later repeats.
         class _DummyTqdm:
             def __init__(self, *args, **kwargs):
                 del args, kwargs

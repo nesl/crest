@@ -1,3 +1,5 @@
+"""Regression tests for the repository's analysis-script wrappers."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -12,6 +14,21 @@ from unittest.mock import patch
 
 
 def _load_module(module_name: str, relative_path: str):
+    """Load an analysis script by repository-relative path for wrapper tests.
+
+    Parameters
+    ----------
+    module_name : str
+        Synthetic module name to register in ``sys.modules``.
+    relative_path : str
+        Repository-relative path to the Python entrypoint under test.
+
+    Returns
+    -------
+    module
+        Imported module object loaded directly from the target file.
+    """
+
     repo_root = Path(__file__).resolve().parents[1]
     module_path = repo_root / relative_path
     spec = importlib.util.spec_from_file_location(module_name, module_path)
@@ -47,6 +64,7 @@ stm32_phase2_candidate = _load_module(
 
 class CadencedPortentaSummaryTests(unittest.TestCase):
     def test_summarize_group_counts_master_success(self):
+        # Verify that summarize group counts master success.
         summary = cadenced_portenta_h7._summarize_group(
             core="cm7",
             phase=cadenced_portenta_h7.PHASE_BACK_TO_BACK,
@@ -71,6 +89,7 @@ class CadencedPortentaSummaryTests(unittest.TestCase):
         self.assertEqual(summary["failure_count"], 1)
 
     def test_summarize_group_excludes_failed_attempts_from_aggregates(self):
+        # Verify that summarize group excludes failed attempts from aggregates.
         summary = cadenced_portenta_h7._summarize_group(
             core="cm4",
             phase=cadenced_portenta_h7.PHASE_CADENCED,
@@ -108,6 +127,7 @@ class CadencedPortentaSummaryTests(unittest.TestCase):
 
 class Stm32MeasuredRunsTests(unittest.TestCase):
     def test_phase2_candidate_uses_configured_device_name_in_tflite_filename(self):
+        # Verify that phase2 candidate uses configured device name in tflite filename.
         bundle = type(
             "Bundle",
             (),
@@ -153,6 +173,7 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
         self.assertEqual(metadata, {"model_variant": "approx_trained"})
 
     def test_write_phase_config_header_writes_measured_runs_and_clamps(self):
+        # Verify that write phase config header writes measured runs and clamps.
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir)
             (project_root / "Inc").mkdir()
@@ -184,6 +205,7 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
             self.assertIn("#define TOY_AI_MEASURED_RUNS 1", header_path.read_text(encoding="utf-8"))
 
     def test_main_maps_workflow_error_to_master_fatal(self):
+        # Verify that main maps workflow error to master fatal.
         class _DummyMonitor:
             def __init__(self, *args, **kwargs):
                 del args, kwargs
@@ -292,6 +314,7 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
             )
 
     def test_cadenced_comparison_forwards_measured_runs_to_child(self):
+        # Verify that cadenced comparison forwards measured runs to child.
         captured_cmd: list[str] = []
 
         def _fake_run(cmd, cwd, capture_output, text, check):
@@ -347,6 +370,7 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
         self.assertEqual(captured_cmd[captured_cmd.index("--measured-runs") + 1], "100")
 
     def test_cpu_clock_sweep_child_command_includes_measured_runs(self):
+        # Verify that CPU clock sweep child command includes measured runs.
         args = Namespace(
             python_executable=Path("/usr/bin/python3"),
             project_root=Path("/tmp/project"),

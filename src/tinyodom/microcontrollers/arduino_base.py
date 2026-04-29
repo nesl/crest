@@ -1,3 +1,11 @@
+"""Shared Arduino CLI helpers for TinyODOM board backends.
+
+This module owns the common compile, upload, harness-management, and serial
+measurement flow used by Arduino-backed boards. Board-specific wrappers layer
+policy on top of these helpers by choosing board options, runtime modes, and
+pre-upload preparation steps.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -559,7 +567,19 @@ def _resolve_build_dir(
 
 
 def _build_define_flags(build_defines: Optional[Dict[str, int]]) -> str:
-    """Format Arduino compile-time define flags from a key/value map."""
+    """Format Arduino compile-time define flags from a key/value map.
+
+    Parameters
+    ----------
+    build_defines : dict[str, int] | None
+        Optional compile-time macro mapping.
+
+    Returns
+    -------
+    str
+        Space-delimited ``-DNAME=value`` flags sorted by macro name so the
+        build-cache hash remains stable across equivalent dictionaries.
+    """
     if not build_defines:
         return ""
     parts: List[str] = []
@@ -628,6 +648,9 @@ def compile_sketch(
     compile_log = f"{compile_proc.stdout}\n{compile_proc.stderr}"
     flash_bytes, ram_bytes = _parse_memory_from_compile(compile_log)
     if compile_proc.returncode == 0 and (flash_bytes is None or ram_bytes is None):
+        # Some Arduino cores compile successfully but omit summary lines, so
+        # fall back to the generated size recipe before treating usage as
+        # unavailable.
         recipe_flash_bytes, recipe_ram_bytes = _parse_memory_from_size_recipe(build_dir)
         if flash_bytes is None:
             flash_bytes = recipe_flash_bytes
@@ -679,7 +702,25 @@ def upload_harness_sketch(
     build_dir: Path,
     serial_port: str,
 ) -> UploadResult:
-    """Upload a compiled harness sketch."""
+    """Upload a compiled harness sketch.
+
+    Parameters
+    ----------
+    sketch_path : Path | None
+        Optional override for the harness sketch directory.
+    fqbn : str
+        Fully qualified board name for the harness board.
+    build_dir : Path
+        Arduino CLI build directory that already contains the compiled
+        harness binary.
+    serial_port : str
+        Serial port used for harness upload.
+
+    Returns
+    -------
+    UploadResult
+        Upload result for the selected harness sketch.
+    """
     target_path = sketch_path or _HARNESS_SKETCH_DIR
     return upload_sketch(
         sketch_path=target_path,
@@ -899,7 +940,21 @@ def _merge_power_metrics(
     primary: Optional[Dict[str, Optional[float]]],
     secondary: Optional[Dict[str, Optional[float]]],
 ) -> Optional[Dict[str, Optional[float]]]:
-    """Merge two metric dictionaries, preferring valid primary values."""
+    """Merge two metric dictionaries, preferring valid primary values.
+
+    Parameters
+    ----------
+    primary : dict[str, float | None] | None
+        Existing metric payload to preserve where values are already usable.
+    secondary : dict[str, float | None] | None
+        New metric payload whose finite values should replace placeholders in
+        ``primary``.
+
+    Returns
+    -------
+    dict[str, float | None] | None
+        Merged metric payload, or ``None`` when neither source exists.
+    """
     if primary is None and secondary is None:
         return None
     merged: Dict[str, Optional[float]] = {}
@@ -920,7 +975,18 @@ def _merge_power_metrics(
 
 
 def _is_available_power_metric_value(value: Optional[float]) -> bool:
-    """Return True when a parsed metric is present and not a sentinel."""
+    """Return whether a parsed metric value should be treated as usable.
+
+    Parameters
+    ----------
+    value : float | None
+        Parsed metric value.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``value`` is finite and non-negative.
+    """
     return value is not None and math.isfinite(value) and value >= 0.0
 
 
@@ -992,7 +1058,19 @@ def _collect_latency_seconds(
 def _parse_latency_from_log(
     decoded_lines: Sequence[str],
 ) -> Tuple[Optional[float], Optional[str]]:
-    """Parse latency and arena errors from decoded serial lines."""
+    """Parse latency and arena errors from decoded serial lines.
+
+    Parameters
+    ----------
+    decoded_lines : Sequence[str]
+        Decoded serial log lines emitted by the DUT.
+
+    Returns
+    -------
+    tuple[float | None, str | None]
+        Parsed latency in seconds plus the first arena-allocation error line,
+        when present.
+    """
     for line in decoded_lines:
         lower_line = line.lower()
         if lower_line.startswith("timer output:"):
@@ -1147,6 +1225,8 @@ def measure_serial(
 
     try:
         _flash_harness()
+        # Normal path: ensure harness firmware is ready, then capture both DUT
+        # and harness telemetry in the same coordinated session.
         result = _run_handshake()
         if result.error:
             logger.warning("Harness handshake failed: %s", result.error)
@@ -1217,6 +1297,8 @@ def measure_serial(
                 _flash_harness(force=True)
             except RuntimeError as reflash_exc:
                 logger.warning("Harness reflash after serial error failed: %s", reflash_exc)
+        # Final recovery path: fall back to a DUT-only read so latency and
+        # arena diagnostics can still be surfaced even after harness trouble.
         logger.info("measure_serial: exception fallback to DUT-only flow")
         dut_log = hil_protocol.run_dut_only(
             dut_port=serial_port,

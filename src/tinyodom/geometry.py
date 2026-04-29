@@ -1,4 +1,10 @@
-### borrowed from https://github.com/matthew-brett/transforms3d/blob/master/transforms3d/taitbryan.py
+"""Quaternion and Euler-angle conversion helpers used by TinyODOM.
+
+Most of this module is adapted from the ``transforms3d`` tait-bryan helpers
+(https://github.com/matthew-brett/transforms3d/blob/master/transforms3d/taitbryan.py)
+and is kept locally so TinyODOM can reuse the same rotation conversions
+without adding another runtime dependency layer.
+"""
 
 import numpy as np
 import math

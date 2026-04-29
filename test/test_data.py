@@ -1,3 +1,5 @@
+"""Unit tests for the legacy OxIOD data-loading helpers."""
+
 import os
 import sys
 import tempfile
@@ -17,11 +19,35 @@ from tinyodom import data as data_utils_ex
 
 
 class FakeSlidingWindow:
+    """Minimal sliding-window transform used to isolate loader behavior.
+
+    Parameters
+    ----------
+    size : int
+        Width of each extracted window.
+    stride : int
+        Step between consecutive windows.
+    """
+
     def __init__(self, size, stride):
         self.size = size
         self.stride = stride
 
     def fit_transform(self, signal):
+        """Return overlapping windows using the same contract as the real helper.
+
+        Parameters
+        ----------
+        signal : array-like
+            One-dimensional signal to segment into windows.
+
+        Returns
+        -------
+        numpy.ndarray
+            Array of shape ``(num_windows, size)``. Empty inputs return an empty
+            array with the correct window width.
+        """
+
         arr = np.asarray(signal).reshape(-1)
         windows = [arr[start:start + self.size] for start in range(0, arr.shape[0] - self.size + 1, self.stride)]
         if not windows:
@@ -30,11 +56,14 @@ class FakeSlidingWindow:
 
 
 def _identity_tqdm(iterable, *_, **__):
+    """Return the iterable unchanged for deterministic, silent tests."""
     return iterable
 
 
 class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
     def setUp(self):
+        # Patch the three moving pieces together so the loader exercises its own
+        # window-capping logic without touching disk-heavy pandas/tqdm helpers.
         self.tempdir = tempfile.TemporaryDirectory()
         self.dataset_root = Path(self.tempdir.name)
         self.sub_folders = ["mock/", "mock_b/"]
@@ -63,6 +92,7 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def fake_read_csv(self, path, header=None):
+        """Return deterministic IMU or VI frames keyed by the requested path."""
         if 'imu' in path:
             data = {col: np.arange(self.num_samples, dtype=float) for col in self.default_channels}
             return pd.DataFrame(data)
@@ -72,6 +102,19 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
         raise FileNotFoundError(path)
 
     def call_loader(self, max_windows=None):
+        """Invoke ``import_oxiod_dataset`` with the shared test configuration.
+
+        Parameters
+        ----------
+        max_windows : int | None, optional
+            Optional cap forwarded to the loader under test.
+
+        Returns
+        -------
+        object
+            Legacy split object returned by ``import_oxiod_dataset``.
+        """
+
         dataset_folder = str(self.dataset_root) + os.sep
         return data_utils_ex.import_oxiod_dataset(
             type_flag=2,
@@ -87,6 +130,7 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
         )
 
     def test_respects_max_windows_cap(self):
+        # Verify that respects max windows cap.
         subset = self.call_loader(max_windows=2)
         self.assertEqual(subset.inputs.shape[0], 2)
         self.assertEqual(subset.size_of_each, [1, 1])
@@ -94,6 +138,7 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
         self.assertEqual(subset.x_vel.shape[0], 2)
 
     def test_loads_full_split_without_cap(self):
+        # Verify that loads full split without cap.
         subset = self.call_loader(max_windows=None)
         total_expected = self.expected_windows * len(self.sub_folders)
         self.assertEqual(subset.inputs.shape[0], total_expected)

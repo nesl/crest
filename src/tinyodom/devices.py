@@ -1,3 +1,11 @@
+"""Device contracts and Arduino bridge helpers for TinyODOM HIL execution.
+
+This module defines the shared device result types used across HIL backends,
+maintains the compatibility device catalog, and provides the temporary
+Arduino-backed bridge that still powers several board workflows during the
+microcontroller refactor.
+"""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -605,7 +613,22 @@ def get_device_spec(name: str) -> DeviceSpec:
 
 
 def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
-    """Read a value from a dict-like or namespace-like object."""
+    """Read a value from a dict-like or namespace-like object.
+
+    Parameters
+    ----------
+    container : Any
+        Mapping-like or attribute-style object to inspect.
+    key : str
+        Field name to resolve.
+    default : Any, optional
+        Fallback value when ``key`` is missing.
+
+    Returns
+    -------
+    Any
+        Resolved field value or ``default``.
+    """
     getter = getattr(container, "get", None)
     if callable(getter):
         return getter(key, default)
@@ -613,7 +636,18 @@ def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
 
 
 def _normalize_portenta_target_core(raw_value: object) -> str:
-    """Normalize and validate a Portenta target-core token."""
+    """Normalize and validate a Portenta target-core token.
+
+    Parameters
+    ----------
+    raw_value : object
+        Raw config value that should describe the Portenta target core.
+
+    Returns
+    -------
+    str
+        Normalized ``cm7`` or ``cm4`` token.
+    """
     normalized = str(raw_value).strip().lower() if raw_value is not None else ""
     if normalized not in {"cm7", "cm4"}:
         raise ValueError(
@@ -629,7 +663,31 @@ def _sync_arduino_sketch_variant_for_config(
     sketches_dir: Path | None = None,
     runtime_phase: str = "back_to_back",
 ) -> Path:
-    """Copy the Arduino sketch variant selected by config into ``outputs_dir``."""
+    """Copy the Arduino sketch variant selected by config into ``outputs_dir``.
+
+    Parameters
+    ----------
+    config : Any
+        Loaded TinyODOM configuration object.
+    outputs_dir : Path
+        Destination directory that will own the staged sketch.
+    sketches_dir : Path | None, optional
+        Optional override for the repository sketch root.
+    runtime_phase : str, optional
+        Runtime phase label used to choose the cadenced sketch variant.
+
+    Returns
+    -------
+    Path
+        Path to the staged ``tinyodom_tcn.ino`` file.
+
+    Raises
+    ------
+    ValueError
+        If the runtime phase or configured Arduino input mode is unsupported.
+    FileNotFoundError
+        If the selected sketch or required analysis header is missing.
+    """
     repo_root = Path(__file__).resolve().parents[2]
     sketch_variants_dir = (repo_root / "sketches") if sketches_dir is None else Path(sketches_dir)
     normalized_device_name = str(_cfg_get(_cfg_get(config, "device", None), "name", "")).strip().upper()
@@ -791,7 +849,25 @@ class ArduinoDevice(DeviceInterface):
         *,
         request: CandidatePrepareRequest,
     ) -> Path:
-        """Prepare Arduino build artifacts and return the active sketch directory."""
+        """Prepare Arduino build artifacts and return the active sketch directory.
+
+        Parameters
+        ----------
+        request : CandidatePrepareRequest
+            Candidate-export request that already includes the built Keras
+            model, calibration split, artifact root, and TFLite destination.
+
+        Returns
+        -------
+        Path
+            Staged Arduino sketch directory ready for compile/upload.
+
+        Notes
+        -----
+        The current Arduino flow quantizes against
+        ``request.calibration_split.inputs`` and then stages the selected
+        sketch variant beside the generated C model sources.
+        """
         if request.model is None:
             raise ValueError("Arduino candidate preparation requires a built Keras model.")
         if request.calibration_split is None:
@@ -927,7 +1003,30 @@ class ArduinoDevice(DeviceInterface):
         harness_active_timeout_s: Optional[float] = None,
         harness_done_timeout_s: Optional[float] = None,
     ) -> MeasureResult:
-        """Measure latency/power using the Arduino serial log."""
+        """Measure latency/power using the Arduino serial log.
+
+        Parameters
+        ----------
+        serial_port : str | None
+            DUT serial port override. Falls back to the instance default.
+        baud_rate : int
+            DUT serial baud rate.
+        serial_timeout_s : float
+            Timeout for DUT-side serial telemetry.
+        measured_inference_runs : int, optional
+            Number of inference runs encoded into the deployed firmware.
+        dut_ready_timeout_s : float | None, optional
+            Optional DUT-ready timeout override.
+        harness_serial_port : str | None, optional
+            Optional harness serial port when harness-assisted measurement is
+            enabled.
+
+        Returns
+        -------
+        MeasureResult
+            Parsed latency, optional arena diagnostics, serial log, and power
+            metrics captured for the run.
+        """
         use_serial_port = self._serial_port if serial_port is None else serial_port
         if use_serial_port is None:
             raise ValueError("serial_port must be provided for Arduino measurement.")
@@ -936,6 +1035,8 @@ class ArduinoDevice(DeviceInterface):
             use_serial_port,
             harness_serial_port,
         )
+        # Preserve explicit zero-valued overrides; only `None` should fall back
+        # to the shared harness defaults.
         _default = lambda value, fallback: fallback if value is None else value
         result = arduino_base.measure_serial(
             serial_port=use_serial_port,
@@ -987,7 +1088,35 @@ class ArduinoDevice(DeviceInterface):
         harness_active_timeout_s: Optional[float] = None,
         harness_done_timeout_s: Optional[float] = None,
     ) -> DeviceMetrics:
-        """Run a compile/upload/measure loop using the Arduino toolchain."""
+        """Run a compile/upload/measure loop using the Arduino toolchain.
+
+        Parameters
+        ----------
+        dirpath : str | Path
+            Staged sketch directory for the candidate.
+        arena_kb : int
+            Tensor arena size to compile into the sketch.
+        window_size : int
+            Sliding window length compiled into the sketch.
+        num_channels : int
+            Input channel count compiled into the sketch.
+        serial_port : str | None, optional
+            DUT serial port override for upload/runtime measurement.
+        run_hil : bool, optional
+            When ``False``, stop after compile and return compile-time metrics
+            only.
+
+        Returns
+        -------
+        DeviceMetrics
+            Normalized compile/upload/runtime metrics for one attempt.
+
+        Notes
+        -----
+        Compile overflow classification takes precedence over generic compile
+        failure. For harness-only runtime modes, upload and timing are routed
+        through the harness flow instead of the normal DUT serial path.
+        """
         sketch_path = Path(dirpath).resolve()
         arena_bytes = arena_kb * 1024
         runtime_mode = self.runtime_measure_mode()
@@ -1001,6 +1130,8 @@ class ArduinoDevice(DeviceInterface):
             else int(harness_stable_low_ms),
         }
         build_defines.update(self.runtime_mode_build_defines())
+        # Build defines carry both measurement cadence and harness wiring so
+        # every compile artifact is specific to the active runtime setup.
         compile_result = self.compile(
             sketch_path=sketch_path,
             arena_kb=arena_kb,
@@ -1049,6 +1180,8 @@ class ArduinoDevice(DeviceInterface):
         if use_serial_port is None:
             raise ValueError("serial_port must be provided when running HIL uploads.")
 
+        # Preserve explicit zero-valued timeout overrides; callers sometimes
+        # intentionally disable wait slack for test coverage.
         _default = lambda value, fallback: fallback if value is None else value
         measure_result: MeasureResult
 
@@ -1070,6 +1203,9 @@ class ArduinoDevice(DeviceInterface):
             )
 
         if runtime_mode == "harness_only":
+            # Harness-only boards keep the harness session open across DUT
+            # upload because host-visible DUT serial is not the reliable timing
+            # channel for that runtime mode.
             use_harness_port = harness_serial_port
             if not use_harness_port:
                 raise ValueError(

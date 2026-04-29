@@ -1,3 +1,11 @@
+"""Legacy TinyODOM model, scoring, and runtime-request helpers.
+
+This module still carries the shared NAS scoring DSL, YAML config validation,
+runtime metric collection request shaping, CSV trial logging, and the legacy
+TinyODOM model/training helpers that bridge the older pipeline to the newer
+componentized architecture.
+"""
+
 import csv
 import fcntl
 import json
@@ -911,6 +919,9 @@ def _resolve_metric_value(
     if metric_name in stack:
         raise ValueError(f"Cycle detected while resolving score metric '{metric_name}'.")
 
+    # `context` doubles as both the input metric namespace and a per-trial
+    # memoization cache for derived metrics so repeated references resolve
+    # consistently and cheaply.
     metric_config = score_metrics[metric_name]
     try:
         if metric_config.type == "add":
@@ -1089,6 +1100,9 @@ def _evaluate_score_config(
 
     if not is_multiobjective_score_config(score_config):
         score_total = 0.0
+        # Scalar scoring uses a small DSL: weighted terms add directly,
+        # normalized-weighted terms divide by a positive reference, and
+        # boundary/target terms subtract penalties from the maximize score.
         for term in score_config.params.terms:
             metric_value = _resolve_score_metric(term.metric)
             weight = float(term.get("weight", 1.0))
@@ -1453,6 +1467,9 @@ def _validate_score_config(
         )
     allowed_metric_names = allowed_base_metric_names | custom_metric_names
 
+    # Keep the two metric namespaces distinct: base metrics come from the
+    # infrastructure/task contract, while score.metrics introduces only derived
+    # metrics layered on top.
     normalized_metrics = Dict()
     for metric_name, raw_metric in score_config.metrics.items():
         metric_cfg = Dict(raw_metric)
@@ -1724,7 +1741,14 @@ def evaluate_prune_rules(
     Returns
     -------
     tuple[str, str] | None
-        ``(prune_rule, prune_reason)`` when a rule matches, otherwise ``None``.
+        ``(prune_rule, prune_reason)`` for the first matching rule, otherwise
+        ``None``.
+
+    Notes
+    -----
+    Rules are evaluated in configuration order. If a configured metric or
+    reference is unavailable at prune time, that unavailability is itself
+    treated as a prune outcome for the current rule.
     """
     context = dict(metrics)
     context["flops"] = hyperparams["flops"]
@@ -1778,6 +1802,22 @@ def load_config(
     addict.Dict
         Configuration tree with derived paths (models_dir, checkpoint paths,
         etc.) and a task-aware validated NAS policy.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the YAML file does not exist.
+    KeyError
+        If required config sections or mandatory fields are missing.
+    ValueError
+        If runtime-mode, timing, harness, CPU-clock, or NAS policy fields are
+        malformed.
+
+    Notes
+    -----
+    Besides parsing YAML, this helper normalizes derived artifact paths,
+    validates board/runtime policy, injects harness defaults, and resolves the
+    task-aware NAS score/prune configuration against the active metric sets.
     """
     cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
@@ -1973,8 +2013,7 @@ def load_config(
 
 
 def count_flops(model, input_shape):
-    """Estimate model FLOPs by profiling a frozen forward graph. 
-    Replaces keras-flops.get_flops (deprecated).
+    """Estimate model FLOPs by profiling a frozen forward graph.
 
     Parameters
     ----------
@@ -1987,6 +2026,13 @@ def count_flops(model, input_shape):
     -------
     int
         Total floating point operations for a single forward pass with batch size 1.
+
+    Notes
+    -----
+    The estimate freezes the TensorFlow graph with a batch size of 1 and then
+    delegates to the TensorFlow v1 profiler. It is useful for relative NAS
+    comparisons, but it still depends on TensorFlow profiler support for the
+    active ops.
     """
     concrete = tf.function(model).get_concrete_function(
         tf.TensorSpec([1, *input_shape], tf.float32)
@@ -2075,6 +2121,19 @@ def build_collect_metrics_request(
         ``input_dim`` is not passed explicitly, ``input_dim``.
     latency_budget_ms : float
         Per-inference latency budget in milliseconds, derived from stride cadence.
+    dirpath : Path
+        Candidate sketch or project directory passed through to the controller.
+    device_options : dict[str, Any] | None
+        Optional backend-specific device overrides that should accompany the
+        request.
+    hil_enabled : bool | None, optional
+        Explicit override for whether runtime HIL should be used.
+    energy_aware : bool | None, optional
+        Explicit override for whether harness energy measurement is required.
+    window_size : int | None, optional
+        Explicit window-size override. Falls back to the loaded dataset config.
+    input_dim : int | None, optional
+        Explicit input-dimension override. Falls back to ``hyperparams``.
 
     Returns
     -------
@@ -2086,6 +2145,12 @@ def build_collect_metrics_request(
     RuntimeError
         If runtime measurement requires a harness but ``device.harness_serial_port``
         is not configured.
+
+    Notes
+    -----
+    Request construction resolves config defaults first, then layers caller
+    overrides on top. Some boards still need harness configuration even for
+    non-energy runs when their runtime mode is ``harness_only``.
     """
     def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
         """Read a value from either an ``addict.Dict`` or a namespace-like object.
@@ -2133,6 +2198,8 @@ def build_collect_metrics_request(
             if callable(runtime_mode_fn):
                 runtime_mode = str(runtime_mode_fn())
 
+    # Some boards still require the harness even for non-energy runs because
+    # their runtime telemetry is only reliable through the harness path.
     if effective_energy_aware or runtime_mode == "harness_only":
         harness_serial_port = _cfg_get(config.device, "harness_serial_port", None)
         if not harness_serial_port:
@@ -2162,6 +2229,8 @@ def build_collect_metrics_request(
         serial_timeout = 12.0
     configured_runtime_mode = _cfg_get(config.device, "runtime_mode", "back_to_back")
     if effective_hil_enabled and normalized_device_name == "STM32_NUCLEO_N657X0_Q":
+        # Cadenced STM32 runs can legitimately outlive the generic serial
+        # timeout, so inflate the bound from cadence budget and run count.
         serial_timeout = max(
             float(serial_timeout),
             _minimum_stm32_serial_timeout_s(
@@ -2212,7 +2281,8 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
     Returns
     -------
     dict
-        RAM/flash/latency/arena metrics plus error codes shared across the trial.
+        RAM/flash/latency/arena metrics plus error codes shared across the
+        trial, using ``-1`` style sentinels for unavailable numeric values.
 
     Raises
     ------
@@ -2308,7 +2378,8 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
         arena_bytes,
     )
 
-    # Normalize None returns to -1 for CSV compatibility
+    # Normalize None returns to -1 so scoring and CSV logging can rely on a
+    # consistent sentinel convention across proxy and HIL paths.
     ram_bytes = ram_bytes if ram_bytes is not None else -1
     flash_bytes = flash_bytes if flash_bytes is not None else -1
     latency_ms = latency_s * 1000.0 if latency_s is not None else -1  # convert seconds → milliseconds
@@ -2327,7 +2398,8 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
     elif request.latency_proxy_max_flops <= 0:
         raise ValueError("latency_proxy_max_flops must be a positive value")
 
-    # Creates the metrics dict to return
+    # Extract backend-owned detail fields before normalizing the generic power
+    # payload into the flat metrics schema used by scoring and CSV logs.
     backend_error_kind = None
     backend_error_detail = None
     external_flash_bytes = -1
@@ -2591,6 +2663,12 @@ def log_trial(
     -------
     None
         Writes one CSV row and mutates ``trial`` user attributes in place.
+
+    Notes
+    -----
+    The CSV schema keeps a stable leading column set, then expands
+    ``metric__*`` and ``hparam__*`` columns as needed while preserving older
+    rows through lock-protected header migration.
     """
     log_path = Path(log_file_name)
     row_mapping = _trial_log_row_mapping(
@@ -2643,6 +2721,9 @@ def log_trial(
                     and not column_name.startswith("hparam__")
                 )
             ]
+            # Preserve the stable core schema first, retain any legacy unknown
+            # columns already on disk, then union the dynamic metric/hparam
+            # columns so older rows can be rewritten with backfilled blanks.
             header = [
                 *TRIAL_LOG_STABLE_COLUMNS,
                 *legacy_columns,
@@ -2781,6 +2862,8 @@ def train_and_score(
     metrics["max_flash_bytes"] = float(max_flash)
 
     if not config.training.train:
+        # Keep the no-training path scoreable by emitting task-metric
+        # sentinels through the same evaluation pipeline as real runs.
         task_metrics = {
             metric_name: -1.0
             for metric_name in sorted(effective_task_metric_names)
@@ -2872,23 +2955,9 @@ def build_tinyodom_model(hyperparams: Dict) -> Model:
     Parameters
     ----------
     hyperparams : addict.Dict
-        Dictionary containing model hyperparameters, including:
-        - timesteps : int
-            Number of time steps in the input.
-        - input_dim : int
-            Number of input features per time step.
-        - nb_filters : int
-            Number of filters in the TCN layers.
-        - kernel_size : int
-            Kernel size for the TCN layers.
-        - dilations : list of int
-            Dilation rates for the TCN layers.
-        - dropout_rate : float
-            Dropout rate for the TCN layers.
-        - use_skip_connections : bool
-            Whether to use skip connections in the TCN.
-        - norm_flag : bool
-            Whether to use batch normalization in the TCN.
+        Model hyperparameters containing at least ``timesteps``,
+        ``input_dim``, ``nb_filters``, ``kernel_size``, ``dilations``,
+        ``dropout_rate``, ``use_skip_connections``, and ``norm_flag``.
 
     Returns
     -------

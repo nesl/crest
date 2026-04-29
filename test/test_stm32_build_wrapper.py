@@ -1,3 +1,5 @@
+"""Regression tests for the STM32 blink build/upload wrapper script."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -9,6 +11,21 @@ from unittest.mock import patch
 
 
 def _load_module(module_name: str, relative_path: str):
+    """Load an analysis script by repository-relative path for wrapper tests.
+
+    Parameters
+    ----------
+    module_name : str
+        Synthetic module name to register in ``sys.modules``.
+    relative_path : str
+        Repository-relative path to the Python entrypoint under test.
+
+    Returns
+    -------
+    module
+        Imported module object loaded directly from the target file.
+    """
+
     repo_root = Path(__file__).resolve().parents[1]
     module_path = repo_root / relative_path
     spec = importlib.util.spec_from_file_location(module_name, module_path)
@@ -28,6 +45,7 @@ stm32_build_wrapper = _load_module(
 
 class Stm32BuildWrapperTests(unittest.TestCase):
     def test_run_gdb_load_raises_when_gdb_exits_early_with_error(self):
+        # Verify that run gdb load raises when gdb exits early with error.
         fake_proc = unittest.mock.Mock()
         fake_proc.communicate.return_value = ("target remote failed", "")
         fake_proc.returncode = 1
@@ -50,6 +68,7 @@ class Stm32BuildWrapperTests(unittest.TestCase):
         fake_proc.kill.assert_not_called()
 
     def test_run_gdb_load_timeout_keeps_existing_success_path(self):
+        # Verify that run gdb load timeout keeps existing success path.
         fake_proc = unittest.mock.Mock()
         fake_proc.communicate.side_effect = [
             subprocess.TimeoutExpired(cmd="gdb", timeout=stm32_build_wrapper.GDB_JUMP_TIMEOUT_S),
@@ -72,6 +91,7 @@ class Stm32BuildWrapperTests(unittest.TestCase):
         self.assertEqual(fake_proc.communicate.call_count, 2)
 
     def test_run_gdb_load_timeout_raises_when_output_shows_failure(self):
+        # Verify that run gdb load timeout raises when output shows failure.
         fake_proc = unittest.mock.Mock()
         fake_proc.communicate.side_effect = [
             subprocess.TimeoutExpired(

@@ -1,3 +1,5 @@
+"""Shared test helpers used across TinyODOM unit and integration suites."""
+
 import os
 import shutil
 import sys
@@ -18,7 +20,14 @@ from tinyodom.microcontrollers.arduino_base import ARDUINO_CLI_BIN  # noqa: E402
 
 
 def _cli_exists() -> bool:
-    """Determine whether the configured Arduino CLI binary is callable."""
+    """Determine whether the configured Arduino CLI binary is callable.
+
+    Returns
+    -------
+    bool
+        ``True`` when the configured Arduino CLI exists and is executable, or
+        when it can be resolved on ``PATH``.
+    """
     cli_path = Path(ARDUINO_CLI_BIN)
     if cli_path.exists() and os.access(cli_path, os.X_OK):
         return True
@@ -30,6 +39,7 @@ class TinyModelMixin:
 
     @classmethod
     def setUpClass(cls):
+        """Create one deterministic tiny model and training batch per test class."""
         super().setUpClass()
         tf.random.set_seed(1234)
         np.random.seed(1234)

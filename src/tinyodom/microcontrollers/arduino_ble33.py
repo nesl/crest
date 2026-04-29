@@ -1,3 +1,10 @@
+"""Static board wrapper for the Arduino Nano 33 BLE Sense backend.
+
+The BLE33 path is intentionally thin: it contributes a fixed ``DeviceSpec``
+and accepts the shared runtime options used by higher-level orchestration, but
+it does not expose board-specific compile or security variants.
+"""
+
 from __future__ import annotations
 
 from typing import Mapping, Optional

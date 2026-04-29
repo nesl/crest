@@ -1,3 +1,5 @@
+"""Integration tests for end-to-end model metric collection flows."""
+
 import shutil
 import tempfile
 import unittest
@@ -17,6 +19,7 @@ class CollectMetricsIntegrationTests(unittest.TestCase):
     """Run collect_metrics against the real controller (proxy mode)."""
 
     def test_proxy_flow_runs_end_to_end(self) -> None:
+        # Verify that proxy flow runs end to end.
         sketch_src = ROOT_DIR / "test" / "tinyodom_tcn"
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
