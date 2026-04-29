@@ -19,7 +19,7 @@ class CollectMetricsIntegrationTests(unittest.TestCase):
     """Run collect_metrics against the real controller (proxy mode)."""
 
     def test_proxy_flow_runs_end_to_end(self) -> None:
-        # Verify that proxy flow runs end to end.
+        # The proxy-only training flow should still run end to end with the integration fixture.
         sketch_src = ROOT_DIR / "test" / "tinyodom_tcn"
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"

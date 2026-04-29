@@ -46,7 +46,7 @@ stedgeai_phase0_probe = _load_module(
 
 class StEdgeAiPhase0ProbeTests(unittest.TestCase):
     def test_run_logged_writes_utf8_logs(self):
-        # Verify that run logged writes UTF-8 logs.
+        # Logged subprocess output should round-trip through UTF-8 files without losing non-ASCII characters.
         proc = subprocess.CompletedProcess(["stedgeai"], 0, "caf\xe9", "")
 
         with tempfile.TemporaryDirectory() as tmpdir:

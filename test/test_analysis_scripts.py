@@ -64,7 +64,7 @@ stm32_phase2_candidate = _load_module(
 
 class CadencedPortentaSummaryTests(unittest.TestCase):
     def test_summarize_group_counts_master_success(self):
-        # Verify that summarize group counts master success.
+        # The summary helper should count master-success rows in the expected aggregate bucket.
         summary = cadenced_portenta_h7._summarize_group(
             core="cm7",
             phase=cadenced_portenta_h7.PHASE_BACK_TO_BACK,
@@ -89,7 +89,7 @@ class CadencedPortentaSummaryTests(unittest.TestCase):
         self.assertEqual(summary["failure_count"], 1)
 
     def test_summarize_group_excludes_failed_attempts_from_aggregates(self):
-        # Verify that summarize group excludes failed attempts from aggregates.
+        # Aggregate summaries should exclude failed attempts so averages only reflect completed runs.
         summary = cadenced_portenta_h7._summarize_group(
             core="cm4",
             phase=cadenced_portenta_h7.PHASE_CADENCED,
@@ -127,7 +127,7 @@ class CadencedPortentaSummaryTests(unittest.TestCase):
 
 class Stm32MeasuredRunsTests(unittest.TestCase):
     def test_phase2_candidate_uses_configured_device_name_in_tflite_filename(self):
-        # Verify that phase2 candidate uses configured device name in tflite filename.
+        # Phase-two candidate naming should embed the configured device name in the TFLite artifact.
         bundle = type(
             "Bundle",
             (),
@@ -173,7 +173,7 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
         self.assertEqual(metadata, {"model_variant": "approx_trained"})
 
     def test_write_phase_config_header_writes_measured_runs_and_clamps(self):
-        # Verify that write phase config header writes measured runs and clamps.
+        # Phase-config headers should record measured-run counts and clamp settings so generated STM32 workspaces match the requested run mode.
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir)
             (project_root / "Inc").mkdir()
@@ -205,7 +205,7 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
             self.assertIn("#define TOY_AI_MEASURED_RUNS 1", header_path.read_text(encoding="utf-8"))
 
     def test_main_maps_workflow_error_to_master_fatal(self):
-        # Verify that main maps workflow error to master fatal.
+        # Workflow errors should map to the stable master-fatal status before the script exits.
         class _DummyMonitor:
             def __init__(self, *args, **kwargs):
                 del args, kwargs
@@ -314,7 +314,7 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
             )
 
     def test_cadenced_comparison_forwards_measured_runs_to_child(self):
-        # Verify that cadenced comparison forwards measured runs to child.
+        # Cadenced comparison wrappers should forward measured-run counts to the child process.
         captured_cmd: list[str] = []
 
         def _fake_run(cmd, cwd, capture_output, text, check):
@@ -370,7 +370,7 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
         self.assertEqual(captured_cmd[captured_cmd.index("--measured-runs") + 1], "100")
 
     def test_cpu_clock_sweep_child_command_includes_measured_runs(self):
-        # Verify that CPU clock sweep child command includes measured runs.
+        # CPU-clock sweep commands should include the measured-run count so child runs use the intended averaging window.
         args = Namespace(
             python_executable=Path("/usr/bin/python3"),
             project_root=Path("/tmp/project"),

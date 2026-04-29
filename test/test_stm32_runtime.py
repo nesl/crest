@@ -86,7 +86,7 @@ class _FakeMonitor:
 
 class STM32RuntimeParserTests(unittest.TestCase):
     def test_parse_runtime_lines_accepts_required_back_to_back_grammar(self) -> None:
-        # Verify that parse runtime lines accepts required back to back grammar.
+        # Back-to-back runtime parsing should accept the required telemetry grammar.
         lines = [
             "STM32_BOOT=START",
             "STM32_AI_INIT=OK",
@@ -114,7 +114,7 @@ class STM32RuntimeParserTests(unittest.TestCase):
         self.assertEqual(telemetry.power_metrics["deadline_miss_count"], -1)
 
     def test_parse_runtime_lines_rejects_fail_tokens(self) -> None:
-        # Verify that parse runtime lines rejects fail tokens.
+        # Runtime parsing should reject explicit FAIL tokens instead of returning partial telemetry.
         with self.assertRaises(stm32_runtime.STM32RuntimeProtocolError) as context:
             stm32_runtime.parse_stm32_runtime_lines(
                 [
@@ -127,7 +127,7 @@ class STM32RuntimeParserTests(unittest.TestCase):
         self.assertEqual(context.exception.kind, "runtime_protocol")
 
     def test_parse_runtime_lines_requires_latency_token(self) -> None:
-        # Verify that parse runtime lines requires latency token.
+        # Back-to-back runtime parsing should require the latency token before returning success.
         with self.assertRaises(stm32_runtime.STM32RuntimeProtocolError) as context:
             stm32_runtime.parse_stm32_runtime_lines(
                 [
@@ -143,7 +143,7 @@ class STM32RuntimeParserTests(unittest.TestCase):
         self.assertEqual(context.exception.kind, "runtime_latency")
 
     def test_parse_runtime_lines_accepts_cadenced_grammar(self) -> None:
-        # Verify that parse runtime lines accepts cadenced grammar.
+        # Cadenced runtime parsing should accept the extended cadence telemetry grammar.
         lines = [
             "STM32_BOOT=START",
             "STM32_AI_INIT=OK",
@@ -179,7 +179,7 @@ class STM32RuntimeParserTests(unittest.TestCase):
 
 class SerialMonitorTests(unittest.TestCase):
     def test_serial_monitor_replays_history_and_writes_lines(self) -> None:
-        # Verify that serial monitor replays history and writes lines.
+        # The serial monitor should replay prior history and capture new lines into the live log stream.
         fake_serial = _FakeSerial("/dev/ttyACM0", 115200, 0.2)
 
         with patch("tinyodom.microcontrollers.stm32_runtime.serial.Serial", return_value=fake_serial):
@@ -210,7 +210,7 @@ class SerialMonitorTests(unittest.TestCase):
 
 class STM32RuntimeSessionTests(unittest.TestCase):
     def test_execute_runtime_session_waits_for_init_then_ready_then_run(self) -> None:
-        # Verify that execute runtime session waits for init then ready then run.
+        # Runtime sessions should wait for INIT, READY, then RUN so the harness protocol stays ordered.
         monitor = _FakeMonitor(
             [
                 "STM32_BOOT=START",
@@ -234,7 +234,7 @@ class STM32RuntimeSessionTests(unittest.TestCase):
         self.assertAlmostEqual(telemetry.latency_s, 0.0005)
 
     def test_execute_runtime_session_times_out_before_init(self) -> None:
-        # Verify that execute runtime session times out before init.
+        # Runtime sessions should time out cleanly if INIT never appears.
         monitor = _FakeMonitor(["STM32_BOOT=START"])
 
         with self.assertRaises(stm32_runtime.STM32RuntimeProtocolError) as context:

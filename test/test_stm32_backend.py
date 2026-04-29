@@ -319,7 +319,7 @@ class STM32RegistryTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that registry resolves stm device without explicit project root.
+        # The STM32 registry should still resolve the default device when callers omit a custom project root.
         device = get_device("STM32_NUCLEO_N657X0_Q")
         self.assertIsInstance(device, STM32NucleoN657X0QDevice)
         self.assertEqual(device.spec.name, BOARD_NAME)
@@ -333,7 +333,7 @@ class STM32RegistryTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that list device specs includes stm entry.
+        # Listing device specs should include the STM32 entry so the public hardware catalog stays complete.
         specs = list_device_specs()
         self.assertIn("STM32_NUCLEO_N657X0_Q", specs)
         self.assertEqual(specs["STM32_NUCLEO_N657X0_Q"]["arena_sizes"], [-1])
@@ -353,7 +353,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that resolve device options defaults partial stm numeric block.
+        # Partial STM32 numeric option blocks should be defaulted deterministically before staging begins.
         resolved = resolve_device_options(
             "STM32_NUCLEO_N657X0_Q",
             type(
@@ -386,7 +386,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that resolve device options warns for template root override.
+        # Template-root overrides should emit a warning so callers know they are leaving the canonical workspace layout.
         with tempfile.TemporaryDirectory() as tmpdir:
             template_root = _build_lrun_project_tree(Path(tmpdir) / "template")
             with warnings.catch_warnings(record=True) as caught:
@@ -412,7 +412,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
     def test_resolve_device_options_defaults_without_materialized_lrun_workspace(self) -> None:
         """Ensure default STM option resolution does not require setup-generated paths."""
-        # Verify that resolve device options defaults without materialized LRUN workspace.
+        # LRUN option resolution should synthesize defaults even before the workspace exists on disk.
         with tempfile.TemporaryDirectory() as tmpdir:
             missing_root = Path(tmpdir) / "tinyodom_tcn_stm32_lrun"
             with patch.object(stm32_n657_backend, "DEFAULT_TEMPLATE_ROOT", missing_root):
@@ -424,7 +424,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
     def test_resolve_device_options_accepts_custom_lrun_root(self) -> None:
         """Ensure custom STM roots resolve when they match the LRUN workspace shape."""
-        # Verify that resolve device options accepts custom LRUN root.
+        # Custom LRUN roots should resolve cleanly so staging can target an alternate workspace.
         with tempfile.TemporaryDirectory() as tmpdir:
             template_root = _build_lrun_project_tree(Path(tmpdir) / "template")
             resolved = resolve_device_options(
@@ -439,7 +439,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
     def test_resolve_device_options_rejects_project_layout_override(self) -> None:
         """Ensure callers cannot force a legacy STM layout anymore."""
-        # Verify that resolve device options rejects project layout override.
+        # Project-layout overrides should fail early so the backend only stages supported LRUN layouts.
         with tempfile.TemporaryDirectory() as tmpdir:
             template_root = _build_lrun_project_tree(Path(tmpdir) / "template")
             with self.assertRaisesRegex(ValueError, "project_layout'.*no longer supported"):
@@ -465,7 +465,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that compile fails fast when stack is too small.
+        # Compile-time stack checks should fail before flashing so impossible runtime layouts never stage artifacts.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             _write_text(
@@ -496,7 +496,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that upload requires staged build dir.
+        # Runtime upload should require a staged build directory so it cannot program an undefined workspace.
         device = STM32NucleoN657X0QDevice()
         result = device.upload(
             sketch_path=Path("/tmp/ignored"),
@@ -513,7 +513,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that evaluate compile only reports real arena bytes.
+        # Compile-only evaluation should only report real arena bytes when the backend actually knows them.
         device = STM32NucleoN657X0QDevice()
         with patch.object(
             device,
@@ -553,7 +553,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         None
             This test asserts that runtime measurement support is enabled.
         """
-        # Verify that supports runtime measurement is enabled.
+        # The STM32 device contract should advertise runtime measurement support.
         device = STM32NucleoN657X0QDevice()
         self.assertTrue(device.supports_runtime_measurement())
 
@@ -565,7 +565,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         None
             This test asserts that energy measurement support is enabled.
         """
-        # Verify that supports energy measurement is enabled.
+        # The STM32 device contract should advertise energy measurement support.
         device = STM32NucleoN657X0QDevice()
         self.assertTrue(device.supports_energy_measurement())
 
@@ -577,7 +577,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         None
             This test asserts that successful runtime telemetry reaches the caller.
         """
-        # Verify that evaluate run HIL success uses runtime session.
+        # Successful STM32 HIL runs should use the runtime session path instead of falling back to proxy behavior.
         device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0")
         compile_result = type(
             "CompileResultDouble",
@@ -632,7 +632,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         self.assertEqual(metrics.power_metrics["external_flash_bytes"], -1.0)
 
     def test_evaluate_back_to_back_runtime_mode_skips_second_phase(self) -> None:
-        # Verify that evaluate back to back runtime mode skips second phase.
+        # Back-to-back STM32 runs should skip the cadenced second phase entirely.
         device = STM32NucleoN657X0QDevice(
             serial_port="/dev/ttyACM0",
             device_options={"runtime_mode": "back_to_back"},
@@ -661,7 +661,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         self.assertNotIn("cadenced_active_inference_latency_ms", metrics.power_metrics)
 
     def test_evaluate_cadenced_runtime_mode_merges_second_pass_metrics(self) -> None:
-        # Verify that evaluate cadenced runtime mode merges second pass metrics.
+        # Cadenced STM32 runs should merge second-pass telemetry into the first-pass result instead of overwriting it.
         device = STM32NucleoN657X0QDevice(
             serial_port="/dev/ttyACM0",
             device_options={"runtime_mode": "cadenced", "latency_budget_ms": 200.0},
@@ -728,7 +728,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         self.assertAlmostEqual(metrics.power_metrics["cadenced_rtc_sleep_ms"], 1500.0)
 
     def test_evaluate_cadenced_runtime_mode_reports_back_to_back_when_second_phase_never_runs(self) -> None:
-        # Verify that evaluate cadenced runtime mode reports back to back when second phase never runs.
+        # If cadenced phase two never starts, report back-to-back mode so partial telemetry does not masquerade as a full cadenced run.
         device = STM32NucleoN657X0QDevice(
             serial_port="/dev/ttyACM0",
             device_options={"runtime_mode": "cadenced", "latency_budget_ms": 200.0},
@@ -761,7 +761,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         self.assertNotIn("cadenced_energy_mj_per_trial", metrics.power_metrics)
 
     def test_cadenced_energy_window_uses_stable_sentinel_when_energy_is_unavailable(self) -> None:
-        # Verify that cadenced energy window uses stable sentinel when energy is unavailable.
+        # Cadenced energy windows should emit a stable sentinel when energy is unavailable so CSV rows keep the same schema.
         device = STM32NucleoN657X0QDevice(
             serial_port="/dev/ttyACM0",
             device_options={"runtime_mode": "cadenced", "latency_budget_ms": 200.0},
@@ -789,7 +789,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         None
             This test asserts that runtime protocol failures map to latency errors.
         """
-        # Verify that evaluate run HIL runtime failure maps to latency error.
+        # Runtime-session failures after bring-up should classify as latency errors rather than upload failures.
         device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0")
         compile_result = type(
             "CompileResultDouble",
@@ -843,7 +843,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         None
             This test asserts that upload failures map to upload errors.
         """
-        # Verify that evaluate run HIL upload failure maps to upload error.
+        # Failures before runtime execution should stay in the upload bucket so callers can distinguish staging from timing issues.
         device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0")
         compile_result = type(
             "CompileResultDouble",
@@ -888,7 +888,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that evaluate maps overflow kinds.
+        # Overflow classification should map backend-specific failure kinds onto the stable HIL error codes.
         device = STM32NucleoN657X0QDevice()
         for overflow_kind, expected_error in (
             ("flash", HIL_ERROR_FLASH_OVERFLOW),
@@ -919,7 +919,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
     def test_prepare_candidate_lrun_copies_workspace_and_stages_generated_outputs(self) -> None:
         """Ensure LRUN candidate prep stages generated outputs into Appli paths."""
-        # Verify that prepare candidate LRUN copies workspace and stages generated outputs.
+        # LRUN candidate staging should copy the workspace and stage generated outputs into the candidate root.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             template_root = _build_lrun_project_tree(tmp_path / "tinyodom_tcn_stm32_lrun")
@@ -1007,7 +1007,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that prepare candidate runs analyze before generate.
+        # Candidate staging should analyze the workspace before code generation so generation can reuse validated metadata.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             template_root = _build_lrun_project_tree(tmp_path / "template")
@@ -1123,7 +1123,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that cleanup prepared candidate removes staged root.
+        # Candidate cleanup should remove the staged root so repeated runs do not accumulate stale workspaces.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             project_root = _build_lrun_project_tree(tmp_path / "candidate" / "tinyodom_tcn_stm32_lrun")
@@ -1144,7 +1144,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that prepare candidate cleans up candidate root after generate failure.
+        # Failed candidate generation should clean up the partially staged root before the error returns.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             template_root = _build_lrun_project_tree(tmp_path / "template")
@@ -1196,7 +1196,7 @@ class STM32HelperTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that resolve weights external loader autodiscovers from cubeprog bin.
+        # External-weight programming should autodiscover its loader from the CubeProgrammer output when one is staged.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cubeprog_bin = tmp_path / "bin"
@@ -1214,7 +1214,7 @@ class STM32HelperTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that resolve elf path accepts non blink name.
+        # ELF-path resolution should not assume a blink example name when locating staged runtime images.
         with tempfile.TemporaryDirectory() as tmpdir:
             debug_dir = Path(tmpdir)
             elf_path = debug_dir / "tinyodom_phase2.elf"
@@ -1229,7 +1229,7 @@ class STM32HelperTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that parse size output raises workflow error when size tool is missing.
+        # Missing size tools should raise a workflow error so the backend reports a setup problem instead of bogus memory numbers.
         with tempfile.TemporaryDirectory() as tmpdir:
             elf_path = Path(tmpdir) / "tinyodom_phase2.elf"
             elf_path.write_bytes(b"elf")
@@ -1247,7 +1247,7 @@ class STM32HelperTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that classify build failure treats rom overflow as flash.
+        # ROM-overflow diagnostics should map to flash overflow so pruning uses the correct memory dimension.
         classification = stm32_cube_clt.classify_build_failure(
             "ld: region `ROM' overflowed by 2048 bytes"
         )
@@ -1260,7 +1260,7 @@ class STM32HelperTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that classify build failure treats LRUN code image budget as flash.
+        # LRUN code-image budget overflows should still prune as flash failures.
         classification = stm32_cube_clt.classify_build_failure(
             "STM trusted App image exceeds available LRUN code-image budget (130321 > 65536)."
         )
@@ -1273,7 +1273,7 @@ class STM32HelperTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that run command wraps host os errors in workflow error.
+        # Host OS command failures should be wrapped in workflow errors so backend logs keep a stable failure type.
         with patch(
             "tinyodom.microcontrollers.stm32_cube_clt.subprocess.run",
             side_effect=FileNotFoundError("make not found"),
@@ -1288,7 +1288,7 @@ class STM32HelperTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that prepare candidate only requires staging tools.
+        # Candidate staging should only require the tools needed for staging, not the full runtime toolchain.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             template_root = _build_lrun_project_tree(tmp_path / "template")
@@ -1387,7 +1387,7 @@ class STM32HelperTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that evaluate combined external flash and harness uses canonical order.
+        # Combined external-flash and harness flows should program and measure in the canonical order.
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
@@ -1624,7 +1624,7 @@ class STM32HelperTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that evaluate harness ready timeout maps to latency error.
+        # If the harness never reports READY after runtime starts, classify it as a latency-side timeout rather than upload failure.
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
@@ -1694,7 +1694,7 @@ class STM32HelperTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that evaluate harness done timeout maps to latency error.
+        # If the harness starts but never reports DONE, keep the failure in the latency bucket.
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
@@ -1792,7 +1792,7 @@ class STM32HelperTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that compile external flash overflow maps to flash failure.
+        # External-flash overflows should still surface as flash failures for pruning and reporting.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             project_root = _build_lrun_project_tree(tmp_path / "tinyodom_tcn_stm32_lrun")
@@ -1827,7 +1827,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_compile_success_lrun_returns_artifacts_and_copy_window(self) -> None:
         """Ensure LRUN compile reports app/boot artifacts and copy-window metadata."""
-        # Verify that compile success LRUN returns artifacts and copy window.
+        # Successful LRUN compiles should report both staged artifacts and the copy window used to place weights.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             device = STM32NucleoN657X0QDevice(device_options={"project_root": str(staged_root)})
@@ -1893,7 +1893,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_compile_lrun_reuses_unchanged_artifacts(self) -> None:
         """Ensure repeated LRUN compile skips rebuild/sign when inputs are unchanged."""
-        # Verify that compile LRUN reuses unchanged artifacts.
+        # Unchanged LRUN inputs should reuse existing artifacts so repeat builds do not restage identical binaries.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             manifest_path = staged_root / STAGED_MANIFEST_NAME
@@ -1978,7 +1978,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_lrun_build_input_hashes_include_setup_managed_vendor_trees(self) -> None:
         """Ensure LRUN reuse invalidates when setup-managed vendor inputs change."""
-        # Verify that LRUN build input hashes include setup managed vendor trees.
+        # LRUN input hashes should include setup-managed vendor trees so cache invalidation follows the real source set.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             paths = stm32_n657_backend._resolve_workspace_paths(project_root=staged_root)
@@ -2000,7 +2000,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_compile_lrun_rebuilds_boot_cleanly_when_boot_inputs_change(self) -> None:
         """Ensure Boot rebuilds cleanly when Boot inputs change without a copy-window change."""
-        # Verify that compile LRUN rebuilds boot cleanly when boot inputs change.
+        # Boot artifacts should rebuild when their inputs change so stale secure-boot binaries do not get reused.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             manifest_path = staged_root / STAGED_MANIFEST_NAME
@@ -2098,7 +2098,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_compile_lrun_rejects_copy_window_overlap_with_weights_region(self) -> None:
         """Ensure LRUN validates the aligned Boot copy window, not the raw signed App size."""
-        # Verify that compile LRUN rejects copy window overlap with weights region.
+        # Copy-window overlap with the weights region should fail before flashing a corrupt memory layout.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             device = STM32NucleoN657X0QDevice(
@@ -2149,7 +2149,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_compile_lrun_classifies_trusted_app_budget_overflow_as_flash(self) -> None:
         """Ensure LRUN trusted-App budget failures surface as flash overflow."""
-        # Verify that compile LRUN classifies trusted app budget overflow as flash.
+        # Trusted-app budget overflows should classify as flash so memory pruning stays consistent across security modes.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             device = STM32NucleoN657X0QDevice(device_options={"project_root": str(staged_root)})
@@ -2199,7 +2199,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_compile_lrun_flash_accounting_excludes_debug_loaded_boot(self) -> None:
         """Ensure LRUN flash accounting only tracks the trusted App image."""
-        # Verify that compile LRUN flash accounting excludes debug loaded boot.
+        # Flash accounting should exclude debug-loaded boot images so reported usage matches deployment reality.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             device = STM32NucleoN657X0QDevice(device_options={"project_root": str(staged_root)})
@@ -2252,7 +2252,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_read_storage_manifest_rejects_workspace_root_mismatch(self) -> None:
         """Ensure staged manifests cannot be reused from another workspace root."""
-        # Verify that read storage manifest rejects workspace root mismatch.
+        # Storage manifests should reject mismatched workspace roots so staging never reuses artifacts from another workspace.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             wrong_root = Path(tmpdir) / "other-staged-root"
@@ -2272,7 +2272,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_read_storage_manifest_requires_workspace_root_for_lrun(self) -> None:
         """Ensure LRUN staged manifests always declare their staged workspace root."""
-        # Verify that read storage manifest requires workspace root for LRUN.
+        # LRUN manifest reads should require a workspace root because the stored paths are workspace-relative.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             (staged_root / STAGED_MANIFEST_NAME).write_text(
@@ -2290,7 +2290,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_program_runtime_images_skips_reprogramming_when_artifacts_are_unchanged(self) -> None:
         """Ensure repeated LRUN upload skips unchanged signed-app and weight programming."""
-        # Verify that program runtime images skips reprogramming when artifacts are unchanged.
+        # Runtime programming should skip unchanged artifacts so repeated evaluations do not waste flash cycles.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             signed_app = staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS-trusted.bin"
@@ -2368,7 +2368,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_program_runtime_images_skip_path_does_not_resolve_loader(self) -> None:
         """Ensure repeated LRUN uploads do not require loader resolution on no-op skips."""
-        # Verify that program runtime images skip path does not resolve loader.
+        # The programming skip path should not resolve a loader that it never intends to use.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             signed_app = staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS-trusted.bin"
@@ -2429,7 +2429,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_program_runtime_images_uses_manifest_loader_for_signed_app_programming(self) -> None:
         """Ensure signed-App programming honors the loader path staged in the manifest."""
-        # Verify that program runtime images uses manifest loader for signed app programming.
+        # Signed runtime images should use the manifest-selected loader so programming follows the staged security layout.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             signed_app = staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS-trusted.bin"
@@ -2486,7 +2486,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_evaluate_lrun_external_flash_programs_app_then_weights_then_boot(self) -> None:
         """Ensure LRUN happy-path upload order is app, weights, then Boot ELF load."""
-        # Verify that evaluate LRUN external flash programs app then weights then boot.
+        # External-flash LRUN runs should program the app, then weights, then boot image so the runtime layout is coherent.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             signed_app = staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS-trusted.bin"
@@ -2573,7 +2573,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_compile_lrun_requires_boot_include_path_for_copy_window_updates(self) -> None:
         """Ensure LRUN compile fails if Boot recipes stop including FSBL headers."""
-        # Verify that compile LRUN requires boot include path for copy window updates.
+        # Copy-window updates should require the boot include path because that header owns the final boot constants.
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = _build_lrun_project_tree(Path(tmpdir) / "staged")
             _write_text(
@@ -2594,13 +2594,13 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_classify_signing_failure_returns_binary_signing(self) -> None:
         """Ensure signing failures are classified separately from generic toolchain errors."""
-        # Verify that classify signing failure returns binary signing.
+        # Signing failures should map to the stable binary-signing error kind.
         exc = stm32_cube_clt.SigningWorkflowError("STM32 binary signing failed.")
         self.assertEqual(stm32_n657_backend.classify_stm32_backend_error(exc), "binary_signing")
 
     def test_classify_lrun_specific_failures_returns_stable_kinds(self) -> None:
         """Ensure LRUN-specific failure strings map to stable backend error kinds."""
-        # Verify that classify LRUN specific failures returns stable kinds.
+        # LRUN-specific backend failures should collapse into stable public error kinds.
         self.assertEqual(
             stm32_n657_backend.classify_stm32_backend_error(
                 "Could not update EXTMEM_LRUN_SOURCE_SIZE in /tmp/stm32_extmem_conf.h"
@@ -2624,7 +2624,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_evaluate_uses_lrun_default_boot_timeout(self) -> None:
         """Ensure LRUN evaluation uses a safer default boot timeout when unspecified."""
-        # Verify that evaluate uses LRUN default boot timeout.
+        # Evaluation should use the LRUN default boot timeout when the caller does not override it.
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
@@ -2704,7 +2704,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_evaluate_lrun_honors_requested_measured_runs_for_header_and_harness(self) -> None:
         """Ensure LRUN evaluate uses the request run count, not the stale staged header value."""
-        # Verify that evaluate LRUN honors requested measured runs for header and harness.
+        # LRUN evaluation should propagate measured-run overrides into both the generated header and the harness workflow.
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
@@ -2826,7 +2826,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_evaluate_lrun_preserves_staged_measured_runs_when_override_is_omitted(self) -> None:
         """Ensure staged LRUN measured runs are preserved when evaluate omits an override."""
-        # Verify that evaluate LRUN preserves staged measured runs when override is omitted.
+        # Omitted measured-run overrides should preserve the staged value instead of rewriting it with a new default.
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
@@ -2958,7 +2958,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_evaluate_lrun_rewrites_stale_phase_config_fields_when_override_is_omitted(self) -> None:
         """Ensure staged LRUN evaluation refreshes generated phase-config macros."""
-        # Verify that evaluate LRUN rewrites stale phase config fields when override is omitted.
+        # Evaluation should rewrite stale phase-config fields from the staged workspace so omitted overrides do not resurrect old run settings.
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
@@ -3107,7 +3107,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_evaluate_without_staged_paths_defaults_omitted_measured_runs_to_ten(self) -> None:
         """Ensure omitted measured runs still fall back to 10 for non-staged evaluation paths."""
-        # Verify that evaluate without staged paths defaults omitted measured runs to ten.
+        # Without staged paths, LRUN evaluation should fall back to the default measured-run count of ten.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             template_root = _build_lrun_project_tree(tmp_path / "template")
@@ -3213,7 +3213,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_canonical_lrun_linkers_use_safe_heap_and_stack_floors(self) -> None:
         """Ensure the checked-in canonical LRUN linkers reserve safe heap/stack floors."""
-        # Verify that canonical LRUN linkers use safe heap and stack floors.
+        # Canonical LRUN linker templates should keep the checked-in minimum heap and stack floors.
         app_reservations = stm32_n657_backend._parse_linker_reservations(
             ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun" / "STM32CubeIDE" / "AppS" / "STM32N657XX_LRUN.ld"
         )
@@ -3227,7 +3227,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_real_lrun_template_parsers_match_checked_in_files(self) -> None:
         """Ensure LRUN path resolution and parser expectations match the checked-in workspace."""
-        # Verify that real LRUN template parsers match checked in files.
+        # Template parsers should still match the checked-in LRUN files shipped with the repository.
         canonical_root = ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = Path(tmpdir) / canonical_root.name
@@ -3255,7 +3255,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_canonical_lrun_app_recipe_includes_secure_nsc(self) -> None:
         """Ensure the checked-in AppS recipe compiles secure_nsc.c with its header path."""
-        # Verify that canonical LRUN app recipe includes secure nsc.
+        # The canonical LRUN app recipe should keep the secure NSC region enabled.
         recipe = (
             ROOT_DIR
             / "sketches"
@@ -3272,7 +3272,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_canonical_lrun_xspi2_irq_uses_second_hal_handle(self) -> None:
         """Ensure the checked-in LRUN IRQ file dispatches XSPI2 to hxspi_nor[1]."""
-        # Verify that canonical LRUN XSPI2 irq uses second hal handle.
+        # The canonical LRUN XSPI2 IRQ hook should keep using the second HAL handle.
         irq_text = (
             ROOT_DIR
             / "sketches"
@@ -3287,7 +3287,7 @@ class STM32HelperTests(unittest.TestCase):
 
     def test_canonical_lrun_runner_fails_cadenced_init_on_rtc_selftest(self) -> None:
         """Ensure the checked-in LRUN runner treats cadenced RTC self-test failures as init failures."""
-        # Verify that canonical LRUN runner fails cadenced init on RTC selftest.
+        # The canonical LRUN runner should fail cadenced init when the RTC self-test fails.
         runner_text = (
             ROOT_DIR
             / "sketches"
@@ -3306,7 +3306,7 @@ class STM32HelperTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that program weight blob autodiscovers loader when manifest omits it.
+        # Weight programming should autodiscover a loader when the manifest leaves that field unset.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             project_root = _build_lrun_project_tree(tmp_path / "tinyodom_tcn_stm32_lrun")
@@ -3353,7 +3353,7 @@ class STM32HelperTests(unittest.TestCase):
         -------
         None
         """
-        # Verify that parse size output wraps host os errors in workflow error.
+        # Host OS failures from the size parser should still surface as workflow errors.
         with tempfile.TemporaryDirectory() as tmpdir:
             elf_path = Path(tmpdir) / "tinyodom_phase2.elf"
             elf_path.write_bytes(b"elf")

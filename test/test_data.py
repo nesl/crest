@@ -130,7 +130,7 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
         )
 
     def test_respects_max_windows_cap(self):
-        # Verify that respects max windows cap.
+        # Split loading should honor the configured max-window cap when one is provided.
         subset = self.call_loader(max_windows=2)
         self.assertEqual(subset.inputs.shape[0], 2)
         self.assertEqual(subset.size_of_each, [1, 1])
@@ -138,7 +138,7 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
         self.assertEqual(subset.x_vel.shape[0], 2)
 
     def test_loads_full_split_without_cap(self):
-        # Verify that loads full split without cap.
+        # Split loading should read the full split when no max-window cap is configured.
         subset = self.call_loader(max_windows=None)
         total_expected = self.expected_windows * len(self.sub_folders)
         self.assertEqual(subset.inputs.shape[0], total_expected)

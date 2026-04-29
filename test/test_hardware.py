@@ -121,7 +121,7 @@ RAM_OVERFLOW_STDERR = (
 
 class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
     def test_convert_to_tflite_model_creates_file(self):
-        # Ensures the baseline float export path runs end-to-end so regressions in converter plumbing surface quickly.
+        # TFLite conversion should create the expected output file so later deployment steps can consume it directly.
         with tempfile.TemporaryDirectory() as tmpdir:
             tflite_path = Path(tmpdir) / "model_float.tflite"
             convert_to_tflite_model(self.model, self.train_x, output_name=tflite_path)
@@ -129,7 +129,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
             self.assertGreater(tflite_path.stat().st_size, 0)
 
     def test_convert_to_tflite_model_quantized_flow(self):
-        # Covers the quantization branch so representative dataset wiring remains valid.
+        # Quantized TFLite conversion should still follow the expected end-to-end artifact path.
         with tempfile.TemporaryDirectory() as tmpdir:
             tflite_path = Path(tmpdir) / "model_int8.tflite"
             convert_to_tflite_model(
@@ -142,7 +142,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
             self.assertGreater(tflite_path.stat().st_size, 0)
 
     def test_convert_to_cpp_model_old_emits_sources(self):
-        # Validates the manual hex emitter so updates that break header/source symmetry are caught.
+        # Legacy C-array export should emit the expected source files for older embedded workflows.
         with tempfile.TemporaryDirectory() as tmpdir:
             tflite_path = Path(tmpdir) / "model_float.tflite"
             convert_to_tflite_model(self.model, self.train_x, output_name=tflite_path)
@@ -156,7 +156,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("xxd"), "xxd command required for this test.")
     def test_convert_to_cpp_model_via_xxd(self):
-        # Exercises the xxd-backed path so subprocess handling and type replacements stay correct.
+        # The xxd-based C-array export should produce the same kind of firmware-ready sources as the Python path.
         with tempfile.TemporaryDirectory() as tmpdir:
             tflite_path = Path(tmpdir) / "model_float.tflite"
             convert_to_tflite_model(self.model, self.train_x, output_name=tflite_path)
@@ -169,7 +169,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
             self.assertIn("alignas(8) const unsigned char g_model[]", source_text)
 
     def test_convert_to_cpp_model_missing_source_raises(self):
-        # Missing model artifact should surface a FileNotFoundError so callers can recover cleanly.
+        # Missing model files should fail before the C-array export path tries to stage any output.
         with tempfile.TemporaryDirectory() as tmpdir:
             bogus_model = Path(tmpdir) / "missing_model.tflite"
             with self.assertRaises(FileNotFoundError):
@@ -177,7 +177,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("xxd"), "xxd command required for this test.")
     def test_convert_to_cpp_model_handles_corrupt_bytes(self):
-        # Even malformed flatbuffers should round-trip through xxd so deployment tooling stays resilient.
+        # Even arbitrary bytes should still flow through the raw C-array export path without needing a valid TFLite parse.
         with tempfile.TemporaryDirectory() as tmpdir:
             tflite_path = Path(tmpdir) / "model_corrupt.tflite"
             tflite_path.write_bytes(os.urandom(128))
@@ -189,7 +189,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
 
     @unittest.skipUnless(XXD_BIN, "xxd command required for parity validation.")
     def test_python_and_xxd_emit_matching_sources(self):
-        # Ensures the Python fallback produces identical C arrays when xxd is available.
+        # Python and xxd export paths should stay byte-for-byte aligned so embedded builds do not depend on the conversion route.
         with tempfile.TemporaryDirectory() as tmpdir:
             tflite_path = Path(tmpdir) / "model_stub.tflite"
             tflite_path.write_bytes(bytes(range(64)))
@@ -213,7 +213,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
             self.assertEqual(py_len.group(1), xxd_len.group(1))
 
     def test_convert_to_cpp_model_output_dir_conflict(self):
-        # Colliding with an existing file path should raise to highlight filesystem issues early.
+        # C-array export should fail when the output path conflicts with an existing file or directory.
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "not_a_directory"
             output_path.write_text("stub")
@@ -225,53 +225,53 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
 
 class SpecHelperTests(unittest.TestCase):
     def test_return_hardware_specs_known_device(self):
-        # Confirms catalog lookups return numeric limits for supported hardware.
+        # Known-device hardware-spec lookups should return the expected memory and timing limits.
         ram, flash = return_hardware_specs("ARDUINO_NANO_33_BLE_SENSE")
         self.assertGreater(ram, 0)
         self.assertGreater(flash, 0)
 
     def test_return_hardware_specs_unknown_device(self):
-        # Ensures unsupported boards raise ValueError to prevent silent misconfiguration.
+        # Unknown devices should raise immediately instead of pretending to know their hardware limits.
         with self.assertRaises(ValueError):
             return_hardware_specs("NOT_A_BOARD")
 
     def test_return_hardware_specs_portenta_requires_device_options(self):
-        # Verify that return hardware specs Portenta requires device options.
+        # Portenta hardware-spec resolution should require device options so limits are tied to an explicit core split.
         with self.assertRaises(ValueError):
             return_hardware_specs("PORTENTA_H7")
 
     def test_return_hardware_specs_portenta_case_insensitive(self):
-        # Verify that return hardware specs Portenta case insensitive.
+        # Portenta hardware-spec lookup should normalize device names so case-only input differences do not change the result.
         options = {"target_core": "cm7", "split": "75_25", "security": "none"}
         upper_ram, upper_flash = return_hardware_specs("PORTENTA_H7", device_options=options)
         lower_ram, lower_flash = return_hardware_specs("portenta_h7", device_options=options)
         self.assertEqual((lower_ram, lower_flash), (upper_ram, upper_flash))
 
     def test_arena_size_candidates_happy_path(self):
-        # Validates that arena sweeps are exposed as numpy arrays for downstream sweeps.
+        # Arena-size enumeration should return the expected candidate list for supported devices.
         arena = arena_size_candidates("ARDUINO_NANO_33_BLE_SENSE")
         self.assertIsInstance(arena, np.ndarray)
         self.assertGreater(len(arena), 0)
 
     def test_arena_size_candidates_invalid_device(self):
-        # Confirms invalid device names raise to highlight typos early.
+        # Unsupported devices should fail before arena-size exploration can start.
         with self.assertRaises(ValueError):
             arena_size_candidates("UNKNOWN_DEVICE")
 
     def test_arena_size_candidates_portenta_requires_device_options(self):
-        # Verify that arena size candidates Portenta requires device options.
+        # Portenta arena-size candidates should require device options because the split affects available memory.
         with self.assertRaises(ValueError):
             arena_size_candidates("PORTENTA_H7")
 
     def test_arena_size_candidates_portenta_case_insensitive(self):
-        # Verify that arena size candidates Portenta case insensitive.
+        # Portenta arena-size lookup should normalize name casing before it inspects device options.
         options = {"target_core": "cm7", "split": "75_25", "security": "none"}
         upper = arena_size_candidates("PORTENTA_H7", device_options=options)
         lower = arena_size_candidates("portenta_h7", device_options=options)
         self.assertTrue(np.array_equal(lower, upper))
 
     def test_get_model_memory_usage_quantized_smaller(self):
-        # Verifies the quantized flag reduces the byte estimate, preventing regressive sizing.
+        # Quantized models should report a smaller memory footprint than their float counterpart.
         model = tf.keras.Sequential(
             [
                 tf.keras.layers.Input(shape=(4,)),
@@ -287,7 +287,7 @@ class SpecHelperTests(unittest.TestCase):
 
 class DeviceCatalogTests(unittest.TestCase):
     def test_catalog_devices_are_accessible(self):
-        # Ensures every catalog entry returns the exact limits defined in DEVICE_SPECS.
+        # The built-in device catalog should expose the expected device entries.
         for name, spec in DEVICE_SPECS.items():
             options = (
                 {"target_core": "cm7", "split": "75_25", "security": "none"}
@@ -302,7 +302,7 @@ class DeviceCatalogTests(unittest.TestCase):
             self.assertGreater(len(arena), 0)
 
     def test_catalog_allows_new_device_entries(self):
-        # Adding a new device should immediately make it discoverable via the helpers.
+        # The device catalog should accept new entries without breaking existing lookups.
         new_name = "TEST_DEVICE"
         new_spec = {
             "arena_sizes": np.array([5, 15, 25]),
@@ -352,7 +352,7 @@ class MemoryUsageBoundaryTests(unittest.TestCase):
         return model
 
     def test_memory_usage_matches_manual_estimate(self):
-        # Validates the estimator against a hand-computed baseline so regressions are caught quickly.
+        # Memory estimation should still match the manual layer-by-layer calculation.
         model = self._build_dense_model()
         batch_size = 1
         usage = get_model_memory_usage(batch_size, model, quantized=False)
@@ -377,7 +377,7 @@ class MemoryUsageBoundaryTests(unittest.TestCase):
         self.assertAlmostEqual(usage, expected, places=5)
 
     def test_memory_usage_respects_float_precision(self):
-        # Ensures Keras global precision influences the estimator so resource sweeps stay trustworthy.
+        # Memory estimation should scale with the model's float precision settings.
         original_floatx = tf.keras.backend.floatx()
         try:
             tf.keras.backend.set_floatx("float16")
@@ -394,7 +394,7 @@ class MemoryUsageBoundaryTests(unittest.TestCase):
         self.assertGreater(usage_fp64, 0)
 
     def test_memory_usage_outpaces_model_serialization(self):
-        # Estimated activation+parameter usage should dominate serialized model size for sanity.
+        # Estimated memory usage should stay larger than the serialized artifact when runtime tensors dominate.
         model = self._build_example_model()
         usage = get_model_memory_usage(1, model, quantized=False)
         param_bytes = 4.0 * model.count_params()
@@ -410,13 +410,13 @@ class MemoryUsageBoundaryTests(unittest.TestCase):
 
 class SketchHelperTests(unittest.TestCase):
     def test_replace_define_updates_value(self):
-        # Protects the regex-based macro replacement so sketch constants keep updating correctly.
+        # Define replacement should update the requested constant without disturbing the rest of the file.
         text = "#define TINYODOM_WINDOW_SIZE 100\nvoid loop() {}\n"
         updated = _replace_define(text, "TINYODOM_WINDOW_SIZE", "256")
         self.assertIn("TINYODOM_WINDOW_SIZE 256", updated)
 
     def test_patch_sketch_constants_edits_ino(self):
-        # Ensures the helper edits real .ino files, preventing stale deployment constants.
+        # Sketch constant patching should rewrite the `.ino` file in place with the requested values.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             ino_path = sketch_dir / "TinyOdom.ino"
@@ -436,7 +436,7 @@ class SketchHelperTests(unittest.TestCase):
             self.assertIn("TINYODOM_TENSOR_ARENA_BYTES (42 * 1024)", text)
 
     def test_patch_sketch_constants_updates_latency_budget_when_present(self):
-        # Verify that patch sketch constants updates latency budget when present.
+        # Sketch patching should update an existing latency-budget constant so generated test firmware matches the requested timing window.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             ino_path = sketch_dir / "TinyOdom.ino"
@@ -461,7 +461,7 @@ class SketchHelperTests(unittest.TestCase):
             self.assertIn("TINYODOM_LATENCY_BUDGET_MS 76", text)
 
     def test_parse_memory_from_compile_extracts_numbers(self):
-        # Validates CLI parsing so RAM/flash metrics stay trustworthy for scoring.
+        # Compile-output parsing should recover flash and RAM counts from the standard Arduino summary.
         sample_output = (
             "Sketch uses 376104 bytes (38%) of program storage space. Maximum is 983040 bytes. \n \
             Global variables use 98112 bytes (37%) of dynamic memory, leaving 164032 bytes for local variables. Maximum is 262144 bytes."
@@ -471,7 +471,7 @@ class SketchHelperTests(unittest.TestCase):
         self.assertEqual(ram_bytes, 98112)
 
     def test_parse_memory_from_compile_handles_missing_data(self):
-        # Ensures regex failures surface as None so callers can apply defaults instead of crashing.
+        # Compile-output parsing should return unknown memory figures when the build log omits them.
         flash_bytes, ram_bytes = _parse_memory_from_compile("no relevant information")
         self.assertIsNone(flash_bytes)
         self.assertIsNone(ram_bytes)
@@ -479,34 +479,34 @@ class SketchHelperTests(unittest.TestCase):
 
 class CompileFailureClassificationTests(unittest.TestCase):
     def test_classify_returns_none_for_normal_output(self):
-        # Verify that classify returns none for normal output.
+        # Normal compiler output should not classify as an overflow so successful builds stay on the happy path.
         result = _classify_compile_failure(COMPILE_SAMPLE_OUTPUT)
         self.assertIsNone(result)
 
     def test_classify_detects_flash_overflow(self):
-        # Verify that classify detects flash overflow.
+        # Linker flash-overflow text must classify as flash so NAS pruning can stop obviously too-large candidates.
         result = _classify_compile_failure(FLASH_OVERFLOW_STDERR)
         self.assertEqual(result, "flash")
 
     def test_classify_detects_ram_overflow(self):
-        # Verify that classify detects ram overflow.
+        # RAM-overflow diagnostics must classify as RAM so pruning does not misreport a working memory failure as flash.
         result = _classify_compile_failure(RAM_OVERFLOW_STDERR)
         self.assertEqual(result, "ram")
 
 
 class PortentaOptionValidationTests(unittest.TestCase):
     def test_missing_target_core_raises(self):
-        # Verify that missing target core raises.
+        # Portenta split resolution should fail when the target core is missing instead of guessing a board half.
         with self.assertRaises(ValueError):
             arduino_portenta_h7.resolve_portenta_h7_options({})
 
     def test_invalid_split_raises(self):
-        # Verify that invalid split raises.
+        # Unsupported Portenta split values should fail before compilation starts.
         with self.assertRaises(ValueError):
             arduino_portenta_h7.resolve_portenta_h7_options({"target_core": "cm7", "split": "bad_split"})
 
     def test_cm4_100_0_rejected(self):
-        # Verify that CM4 100 0 rejected.
+        # CM4 cannot own the entire split, so the option parser should reject the unsupported 100/0 layout early.
         with self.assertRaises(ValueError):
             arduino_portenta_h7.resolve_portenta_h7_options({"target_core": "cm4", "split": "100_0"})
 
@@ -522,7 +522,7 @@ class ArduinoBoardContractShapeTests(unittest.TestCase):
         self.assertGreater(spec.max_flash_bytes, 0)
 
     def test_ble33_contract_symbols_and_spec(self):
-        # Verify that ble33 contract symbols and spec.
+        # The BLE33 contract should expose the expected symbol set and hardware spec so registry lookups remain stable.
         required_symbols = (
             "BOARD_NAME",
             "BOARD_FQBN",
@@ -544,7 +544,7 @@ class ArduinoBoardContractShapeTests(unittest.TestCase):
         self.assertEqual(built_spec, arduino_ble33.BOARD_DEFAULT_SPEC)
 
     def test_portenta_contract_symbols_and_spec(self):
-        # Verify that portenta contract symbols and spec.
+        # The Portenta contract should expose the expected symbol set and board-specific limits.
         required_symbols = (
             "BOARD_NAME",
             "BOARD_FQBN",
@@ -572,7 +572,7 @@ class ArduinoBoardContractShapeTests(unittest.TestCase):
 
 class ArduinoRegistryContractTests(unittest.TestCase):
     def test_list_device_specs_includes_ble_and_portenta(self):
-        # Verify that list device specs includes ble and Portenta.
+        # Listing device specs should include both BLE33 and Portenta entries so the public catalog stays complete.
         specs = list_device_specs()
         self.assertIn("ARDUINO_NANO_33_BLE_SENSE", specs)
         self.assertIn("PORTENTA_H7", specs)
@@ -586,7 +586,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         )
 
     def test_get_device_constructs_portenta_with_options(self):
-        # Verify that get device constructs Portenta with options.
+        # Device construction should pass Portenta board options through to the concrete device instance.
         device = get_device(
             "PORTENTA_H7",
             device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
@@ -597,7 +597,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertEqual(device.resolved_options.security, "none")
 
     def test_get_device_normalizes_registry_name_case_and_whitespace(self):
-        # Verify that get device normalizes registry name case and whitespace.
+        # Device lookup should normalize registry-name casing and whitespace before resolving the catalog entry.
         device = get_device(
             "  portenta_h7  ",
             device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
@@ -605,7 +605,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertIsInstance(device, arduino_portenta_h7.ArduinoPortentaH7Device)
 
     def test_get_device_non_arduino_legacy_entry_raises_actionable_error(self):
-        # Verify that get device non Arduino legacy entry raises actionable error.
+        # Legacy non-Arduino device aliases should raise an actionable error instead of silently misrouting the request.
         with self.assertRaises(ValueError) as context:
             get_device("ARCH_MAX")
         message = str(context.exception)
@@ -613,7 +613,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertIn("DeviceInterface", message)
 
     def test_get_device_normalizes_legacy_name_in_actionable_error(self):
-        # Verify that get device normalizes legacy name in actionable error.
+        # Legacy-name errors should show the normalized name so callers can see exactly what lookup failed.
         with self.assertRaises(ValueError) as context:
             get_device("  arch_max  ")
         message = str(context.exception)
@@ -621,7 +621,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertIn("no registered backend", message)
 
     def test_portenta_runtime_mode_resolution(self):
-        # Verify that portenta runtime mode resolution.
+        # Portenta runtime-mode resolution should preserve the CM4/CM7 split semantics the backend depends on.
         cm7 = get_device(
             "PORTENTA_H7",
             device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
@@ -638,7 +638,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertEqual(cm4.runtime_mode_build_defines()["TINYODOM_SKIP_SERIAL_WAIT"], 1)
 
     def test_portenta_cm4_prepare_for_runtime_bootstraps_cm7_helper(self):
-        # Verify that portenta CM4 prepare for runtime bootstraps CM7 helper.
+        # CM4 runtime preparation should bootstrap the CM7 helper image before the CM4 run can start.
         cm4 = get_device(
             "PORTENTA_H7",
             device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
@@ -648,7 +648,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         helper_mock.assert_called_once_with(serial_port="/dev/ttyACM0")
 
     def test_portenta_cm7_prepare_for_runtime_skips_bootstrap(self):
-        # Verify that portenta CM7 prepare for runtime skips bootstrap.
+        # CM7 runtime preparation should skip the helper bootstrap path that only CM4 depends on.
         cm7 = get_device(
             "PORTENTA_H7",
             device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
@@ -660,7 +660,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
 
 class ArduinoCommandOptionTests(unittest.TestCase):
     def test_resolve_build_dir_hash_includes_board_options(self):
-        # Verify that resolve build dir hash includes board options.
+        # Build-directory hashing should include board options so distinct Portenta layouts do not reuse one cache entry.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
             sketch_dir.mkdir()
@@ -679,7 +679,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertNotEqual(cm7_build_dir, cm4_build_dir)
 
     def test_compile_sketch_includes_board_options(self):
-        # Verify that compile sketch includes board options.
+        # Sketch compilation should forward board options so generated binaries match the selected board layout.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
             sketch_dir.mkdir()
@@ -712,7 +712,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         )
 
     def test_upload_sketch_includes_board_options(self):
-        # Verify that upload sketch includes board options.
+        # Sketch upload should forward board options so the right core and split receive the firmware.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
             sketch_dir.mkdir()
@@ -741,7 +741,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         )
 
     def test_compile_sketch_leaves_memory_unknown_without_summary_or_recipe(self):
-        # Verify that compile sketch leaves memory unknown without summary or recipe.
+        # When Arduino build output lacks a size summary, memory accounting should stay unknown instead of inventing values.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
             sketch_dir.mkdir()
@@ -765,7 +765,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertIsNone(result.ram_bytes)
 
     def test_parse_memory_from_size_recipe_uses_platform_regexes(self):
-        # Verify that parse memory from size recipe uses platform regexes.
+        # Size-recipe parsing should use each platform's regex contract so memory extraction stays portable.
         with tempfile.TemporaryDirectory() as tmpdir:
             build_dir = Path(tmpdir) / "build"
             build_dir.mkdir(parents=True)
@@ -813,7 +813,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertEqual(ram_bytes, 63_304)
 
     def test_resolve_platform_txt_path_supports_hardware_folders_list(self):
-        # Verify that resolve platform txt path supports hardware folders list.
+        # Platform.txt resolution should search hardware-folders lists in the same order Arduino tooling expects.
         with tempfile.TemporaryDirectory() as tmpdir:
             build_dir = Path(tmpdir) / "build"
             build_dir.mkdir(parents=True)
@@ -835,7 +835,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertEqual(resolved, expected)
 
     def test_resolve_platform_txt_path_skips_empty_entries(self):
-        # Verify that resolve platform txt path skips empty entries.
+        # Platform.txt resolution should ignore empty folder entries instead of treating them like valid paths.
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             build_dir = root / "build"
@@ -864,7 +864,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertEqual(resolved, expected)
 
     def test_compile_sketch_uses_size_recipe_when_summary_missing(self):
-        # Verify that compile sketch uses size recipe when summary missing.
+        # Size-recipe parsing should backfill memory accounting when the standard summary block is absent.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "tinyodom_tcn"
             sketch_dir.mkdir()
@@ -888,13 +888,13 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertEqual(result.ram_bytes, 63_304)
 
     def test_sum_size_regex_matches_without_capture_group_returns_none(self):
-        # Verify that sum size regex matches without capture group returns none.
+        # Malformed size-regex matches should return None instead of claiming a bogus memory total.
         output = ".text 149680 134479872\n.data 6184 603979776\n"
         total = _sum_size_regex_matches(output, r"^(?:\\.text|\\.data)\\s+\\d+.*")
         self.assertIsNone(total)
 
     def test_upload_permission_error_appends_linux_guidance(self):
-        # Verify that upload permission error appends linux guidance.
+        # Upload permission errors should append the Linux guidance so the failure is actionable from the first message.
         augmented = _augment_upload_error("dfu-util: LIBUSB_ERROR_ACCESS")
         self.assertIn("udev", augmented)
         self.assertIn("Linux", augmented)
@@ -918,7 +918,7 @@ class SerialHelperTests(unittest.TestCase):
             return False
 
     def test_collect_latency_returns_value(self):
-        # Serial stream publishing a timer line should surface the parsed float.
+        # Latency collection should parse and return a numeric latency sample from the serial stream.
         responses = [b"ignored\n", b"timer output: 0.42\n"]
 
         def factory(*_args, **_kwargs):
@@ -935,7 +935,7 @@ class SerialHelperTests(unittest.TestCase):
         self.assertEqual(serial_log, ["ignored", "timer output: 0.42"])
 
     def test_collect_latency_handles_timeout(self):
-        # Empty serial responses should produce a None latency instead of blocking.
+        # Latency collection should return the timeout sentinel when the serial stream never reports a sample.
         responses = [b"", b""]
 
         def factory(*_args, **_kwargs):
@@ -950,7 +950,7 @@ class SerialHelperTests(unittest.TestCase):
         self.assertEqual(serial_log, [])
 
     def test_collect_latency_invalid_port_raises(self):
-        # Serial exceptions should bubble up as RuntimeError so callers can react.
+        # Serial-port failures should surface immediately instead of being misreported as a valid latency timeout.
         with patch(
             "tinyodom.microcontrollers.arduino_base.serial.Serial",
             side_effect=serial.SerialException("boom"),
@@ -959,7 +959,7 @@ class SerialHelperTests(unittest.TestCase):
                 _collect_latency_seconds("COM3", 115200, timeout_s=0.01)
 
     def test_collect_latency_handles_non_numeric_payload(self):
-        # Malformed timer output lines should fail gracefully and return None.
+        # Latency collection should reject non-numeric serial payloads instead of treating them like valid timings.
         responses = [b"timer output: not-a-float\n"]
 
         def factory(*_args, **_kwargs):
@@ -974,7 +974,7 @@ class SerialHelperTests(unittest.TestCase):
         self.assertEqual(serial_log, ["timer output: not-a-float"])
 
     def test_collect_latency_detects_arena_error(self):
-        # Firmware-provided arena errors should surface so callers can escalate arena size.
+        # Detect collect latency detects arena error so error classification and pruning stay stable.
         responses = [b"size is too small for all buffers\n"]
 
         def factory(*_args, **_kwargs):
@@ -994,21 +994,21 @@ class RetryHintHelperTests(unittest.TestCase):
         _store_retry_hint_bytes(None)
 
     def test_compute_retry_hint_uses_missing_field(self):
-        # Firmware logs with a "missing" clause should expand the arena by the gap plus cushion.
+        # Retry-hint logic should fall back to the missing-field value when the measurement did not report a new size.
         current_bytes = 100_000
         line = "Failed... missing: 4096"
         hint = _compute_retry_hint_bytes(current_bytes, line)
         self.assertEqual(hint, current_bytes + 4096 + 2048)
 
     def test_compute_retry_hint_uses_requested_field(self):
-        # When only "requested" is present we jump to that size plus the safety margin.
+        # Retry-hint logic should use the requested size field when the backend reported one.
         current_bytes = 50_000
         line = "Requested: 60000, available: 123"
         hint = _compute_retry_hint_bytes(current_bytes, line)
         self.assertEqual(hint, 60_000 + 2048)
 
     def test_compute_retry_hint_returns_none_without_growth(self):
-        # Lines that do not imply growth (or provide no line) should not mutate arena selection.
+        # Retry-hint logic should return None when it cannot justify a larger retry window.
         current_bytes = 40_000
         line = "Requested: 1000, missing: 0"
         hint = _compute_retry_hint_bytes(current_bytes, line)
@@ -1016,7 +1016,7 @@ class RetryHintHelperTests(unittest.TestCase):
         self.assertIsNone(_compute_retry_hint_bytes(current_bytes, None))
 
     def test_store_and_pop_retry_hint_bytes(self):
-        # Stored hints should be returned once and cleared to avoid leaking state across trials.
+        # Retry-hint bytes should round-trip through storage so later retries can reuse the computed jump.
         _store_retry_hint_bytes(12_345)
         self.assertEqual(_pop_retry_hint_bytes(), 12_345)
         self.assertIsNone(_pop_retry_hint_bytes())
@@ -1043,7 +1043,7 @@ class ProtocolHandshakeTests(unittest.TestCase):
             return False
 
     def test_run_handshake_sends_ping_and_start_without_arm(self):
-        # Verify that run handshake sends ping and start without arm.
+        # The harness handshake should prime the session with ping/start traffic before any arm pulse is needed.
         harness_lines = [
             b"HARNESS READY\n",
             b"ARMED\n",
@@ -1093,7 +1093,7 @@ class ProtocolHandshakeTests(unittest.TestCase):
 
 class HarnessMetricSelectionTests(unittest.TestCase):
     def test_parse_power_metrics_reads_clock_and_dwt_tags(self):
-        # Verify that parse power metrics reads clock and DWT tags.
+        # Power-metric parsing should capture clock and DWT tags so later scoring can reason about runtime fidelity.
         parsed = _parse_power_metrics(
             [
                 "clock hz output: 480000000",
@@ -1106,14 +1106,14 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertAlmostEqual(parsed["dwt_cycles_per_inference"], 122345.5)
 
     def test_normalize_power_metrics_defaults_clock_and_dwt(self):
-        # Verify that normalize power metrics defaults clock and DWT.
+        # Power-metric normalization should fill in stable clock and DWT defaults when the harness did not report them.
         normalized = normalize_power_metrics({"harness_latency_s": 0.2})
         self.assertAlmostEqual(normalized["harness_latency_s"], 0.2)
         self.assertEqual(normalized["clock_hz"], -1.0)
         self.assertEqual(normalized["dwt_cycles_per_inference"], -1.0)
 
     def test_merge_power_metrics_uses_secondary_when_primary_has_sentinel(self):
-        # Verify that merge power metrics uses secondary when primary has sentinel.
+        # Power-metric merging should promote secondary readings when the primary path only has sentinels.
         merged = _merge_power_metrics(
             primary={
                 "harness_latency_s": 0.25,
@@ -1132,7 +1132,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertAlmostEqual(merged["dwt_cycles_per_inference"], 123456.0)
 
     def test_merge_power_metrics_keeps_valid_primary_values(self):
-        # Verify that merge power metrics keeps valid primary values.
+        # Power-metric merging should preserve valid primary readings instead of overwriting them with follow-up data.
         merged = _merge_power_metrics(
             primary={
                 "clock_hz": 400000000.0,
@@ -1149,7 +1149,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertAlmostEqual(merged["dwt_cycles_per_inference"], 111111.0)
 
     def test_measure_serial_discards_energy_without_dut_timer(self):
-        # Verify that measure serial discards energy without dut timer.
+        # Energy should be dropped when the DUT never reported its timer because the harness window cannot be aligned safely.
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 10"],
             harness_log=[
@@ -1196,7 +1196,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertIsNone(result.power_metrics)
 
     def test_measure_serial_discards_energy_on_run_mismatch(self):
-        # Verify that measure serial discards energy on run mismatch.
+        # Energy should be dropped when DUT and harness disagree on run count so cross-window samples do not contaminate scoring.
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 10", "timer output: 0.250000"],
             harness_log=[
@@ -1243,7 +1243,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertIsNone(result.power_metrics)
 
     def test_measure_serial_keeps_latency_when_harness_done_missing(self):
-        # Verify that measure serial keeps latency when harness done missing.
+        # If the harness misses DONE after latency was captured, the latency result should survive while the error is still reported.
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 10", "timer output: 0.125000"],
             harness_log=["runs: 10", "harness error: active_timeout"],
@@ -1285,7 +1285,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertIsNone(result.power_metrics)
 
     def test_measure_serial_merges_dut_clock_with_harness_energy(self):
-        # Verify that measure serial merges dut clock with harness energy.
+        # Serial measurement should combine DUT clock telemetry with harness energy so the final payload contains both perspectives.
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=[
                 "runs: 10",
@@ -1341,7 +1341,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertAlmostEqual(result.power_metrics["energy_mj_per_inference"], 10.0)
 
     def test_measure_serial_compiles_harness_with_measured_inference_runs(self):
-        # Verify that measure serial compiles harness with measured inference runs.
+        # Harness compilation should inherit the measured-run count so the helper firmware matches the DUT timing window.
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 7", "timer output: 0.125000"],
             harness_log=["runs: 7", "harness timer output: 0.125000", "DONE"],
@@ -1383,7 +1383,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertEqual(compile_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"], 7)
 
     def test_measure_harness_only_open_session_uses_harness_latency(self):
-        # Verify that measure harness only open session uses harness latency.
+        # Harness-only open-session measurements should source latency from the harness because the DUT is not reporting directly.
         session = hil_protocol.HarnessSessionResult(
             harness_log=[
                 "runs: 1",
@@ -1410,7 +1410,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         self.assertAlmostEqual(result.power_metrics["energy_mj_per_inference"], 10.0)
 
     def test_measure_harness_only_open_session_timeout_sets_error(self):
-        # Verify that measure harness only open session timeout sets error.
+        # Harness-only session timeouts should surface as latency errors once bring-up has already succeeded.
         session = hil_protocol.HarnessSessionResult(
             harness_log=[
                 "runs: 1",
@@ -1435,7 +1435,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
 class HarnessOnlyOrderingTests(unittest.TestCase):
     def test_harness_only_opens_harness_before_upload(self):
-        # Verify that harness only opens harness before upload.
+        # Harness-only runs should open the harness session before upload so READY failures stay attached to the correct stage.
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -1512,7 +1512,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
         self.assertLess(events.index("prime"), events.index("upload"))
 
     def test_harness_only_missing_diagnostics_maps_to_latency_error(self):
-        # Portenta CM4 harness-only runs do not have reliable host DUT serial
+        # If the harness omits timing diagnostics after the run starts, classify the result as a latency-side failure.
         # diagnostics, so timeout-like misses map to HIL_ERROR_LATENCY.
         device = get_device(
             "PORTENTA_H7",
@@ -1581,7 +1581,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
         self.assertIsNone(result.retry_hint_bytes)
 
     def test_harness_only_not_ready_maps_to_upload_error(self):
-        # Verify that harness only not ready maps to upload error.
+        # If the harness never announces READY, treat it as bring-up/upload failure because inference never actually started.
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -1639,7 +1639,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
         upload_mock.assert_not_called()
 
     def test_harness_only_prepare_failure_maps_to_upload_error(self):
-        # Verify that harness only prepare failure maps to upload error.
+        # Harness-only runtime preparation failures should stay in the upload bucket so callers can separate staging failures from measurement timeouts.
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -1680,7 +1680,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
         upload_mock.assert_not_called()
 
     def test_harness_only_prepare_for_runtime_runtimeerror_maps_to_upload_error(self):
-        # Verify that harness only prepare for runtime runtimeerror maps to upload error.
+        # prepare_for_runtime failures in harness-only mode should stay in the upload bucket because runtime execution never actually began.
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -1723,7 +1723,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
 
 class DeviceTimeoutPassThroughTests(unittest.TestCase):
     def test_arduino_device_measure_preserves_zero_timeouts(self):
-        # Verify that arduino device measure preserves zero timeouts.
+        # Zero timeout overrides should survive measurement setup instead of being replaced by defaults.
         device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE")
         fake_result = ArduinoMeasureResult(
             latency_s=0.1,
@@ -1755,7 +1755,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
         self.assertEqual(call_kwargs["harness_done_timeout_s"], 0.0)
 
     def test_arduino_device_measure_forwards_measured_inference_runs(self):
-        # Verify that arduino device measure forwards measured inference runs.
+        # Measured-run overrides should flow through Arduino measurement so latency and energy use the requested averaging window.
         device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE")
         fake_result = ArduinoMeasureResult(
             latency_s=0.1,
@@ -1777,7 +1777,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
         self.assertEqual(mock_measure.call_args.kwargs["measured_inference_runs"], 7)
 
     def test_arduino_device_evaluate_compiles_dut_with_measured_inference_runs(self):
-        # Verify that arduino device evaluate compiles dut with measured inference runs.
+        # Arduino DUT compilation should bake in the measured-run count so the flashed sketch matches the requested loop length.
         device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE", serial_port="/dev/ttyACM0")
         compile_result = ArduinoCompileResult(
             success=True,
@@ -1812,7 +1812,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
         self.assertEqual(compile_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"], 7)
 
     def test_portenta_cm4_harness_only_compiles_harness_with_measured_inference_runs(self):
-        # Verify that portenta CM4 harness only compiles harness with measured inference runs.
+        # Portenta CM4 harness-only runs should compile the helper harness with the requested measured-run count.
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -1890,7 +1890,7 @@ class HILSpecErrorTests(unittest.TestCase):
         )
 
     def test_hil_spec_upload_failure_sets_error_flag(self):
-        # Upload failures should surface the upload-specific flag so callers can react.
+        # HIL spec generation should flag upload failures so later phases do not treat them like runtime timings.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             self._write_sketch(sketch_dir)
@@ -1914,7 +1914,7 @@ class HILSpecErrorTests(unittest.TestCase):
             self.assertEqual(mock_run.call_count, 2)
 
     def test_hil_spec_latency_timeout_sets_error_flag(self):
-        # Latency timeouts should surface the latency timeout flag so automation can retry larger arenas.
+        # HIL spec generation should flag latency timeouts so runtime failures stay distinguishable from build failures.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             self._write_sketch(sketch_dir)
@@ -1941,7 +1941,7 @@ class HILSpecErrorTests(unittest.TestCase):
         self.assertGreater(arena_bytes, 0)
 
     def test_hil_spec_rejects_out_of_range_arena_index(self):
-        # Selecting an invalid arena index should raise IndexError immediately.
+        # HIL spec generation should reject arena indices outside the candidate list.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             self._write_sketch(sketch_dir)
@@ -1954,7 +1954,7 @@ class HILSpecErrorTests(unittest.TestCase):
                 )
 
     def test_hil_spec_detects_flash_overflow(self):
-        # Linker overflow messages should short-circuit with a dedicated error code.
+        # Detect HIL spec detects flash overflow so error classification and pruning stay stable.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             self._write_sketch(sketch_dir)
@@ -1978,7 +1978,7 @@ class HILSpecErrorTests(unittest.TestCase):
         self.assertEqual(mock_run.call_count, 1)
 
     def test_hil_spec_detects_ram_overflow_message(self):
-        # Location counter errors (RAM exhaustion) should emit the RAM-specific overflow code.
+        # Detect HIL spec detects RAM overflow message so error classification and pruning stay stable.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             self._write_sketch(sketch_dir)
@@ -2002,7 +2002,7 @@ class HILSpecErrorTests(unittest.TestCase):
         self.assertEqual(mock_run.call_count, 1)
 
     def test_hil_spec_maps_arena_errors_to_under_sized_flag(self):
-        # Serial error lines indicating insufficient buffers should set the under-sized flag.
+        # Arena-sizing failures should set the undersized flag so the search loop can widen the next attempt.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             self._write_sketch(sketch_dir)
@@ -2044,7 +2044,7 @@ class HILControllerTests(unittest.TestCase):
         return _Device(name, arena_sizes_kb)
 
     def test_hil_controller_success_on_first_candidate(self):
-        # Successful compile-only pass should short-circuit the sweep and surface metrics.
+        # The HIL controller should stop at the first successful arena candidate.
         arena_candidates = np.array([10, 20])
         device = self._controller_device(arena_candidates)
         hil_return = (64000, 128000, 0.25, 10 * 1024, HIL_ERROR_OK, None)
@@ -2066,7 +2066,7 @@ class HILControllerTests(unittest.TestCase):
         self.assertIsNone(_power_metrics)
 
     def test_hil_controller_exhausts_candidates(self):
-        # Exhausting the sweep without success should return masterError=2 and sentinel metrics.
+        # The HIL controller should return the final failure once every arena candidate has been tried.
         arena_candidates = np.array([10, 20])
         device = self._controller_device(arena_candidates)
 
@@ -2091,7 +2091,7 @@ class HILControllerTests(unittest.TestCase):
         )
 
     def test_hil_controller_single_shot_stm_timeout_is_fatal(self):
-        # STM32 uses a single-shot arena sentinel, so a timeout should remain a
+        # Single-shot STM32 timeouts should be treated as fatal because there is no arena-search retry path to recover them.
         # runtime failure instead of being rewritten as arena exhaustion.
         arena_candidates = np.array([-1])
         device = self._controller_device(arena_candidates, name="STM32_NUCLEO_N657X0_Q")
@@ -2114,7 +2114,7 @@ class HILControllerTests(unittest.TestCase):
         )
 
     def test_hil_controller_non_arena_failure(self):
-        # Non-arena errors should bubble up immediately with masterError=3 and captured metrics.
+        # Non-arena failures should surface immediately instead of triggering another arena candidate.
         arena_candidates = np.array([10, 20])
         device = self._controller_device(arena_candidates)
         hil_return = (72000, 160000, -1.0, 10 * 1024, HIL_ERROR_COMPILE, None)
@@ -2134,7 +2134,7 @@ class HILControllerTests(unittest.TestCase):
         )
 
     def test_hil_controller_reports_flash_overflow(self):
-        # Linker overflow should surface a dedicated master error for pruning.
+        # Flash overflows should bubble out of the HIL controller with the stable overflow code.
         arena_candidates = np.array([10])
         device = self._controller_device(arena_candidates)
         hil_return = (-1, -1, -1.0, 10 * 1024, HIL_ERROR_FLASH_OVERFLOW, None)
@@ -2154,7 +2154,7 @@ class HILControllerTests(unittest.TestCase):
         )
 
     def test_hil_controller_reports_device_not_found(self):
-        # Upload failures should set the dedicated master error so orchestration can stop early.
+        # Device lookup failures should surface immediately so the caller sees a catalog problem, not a measurement failure.
         arena_candidates = np.array([10])
         device = self._controller_device(arena_candidates)
         hil_return = (64000, 128000, -1.0, 10 * 1024, HIL_ERROR_UPLOAD, None)
@@ -2174,7 +2174,7 @@ class HILControllerTests(unittest.TestCase):
         )
 
     def test_hil_controller_prefers_smallest_successful_arena(self):
-        # Success at a mid-point arena should trigger a retry with the next smaller candidate.
+        # When several arena sizes work, the HIL controller should keep the smallest successful one.
         arena_candidates = np.array([10, 20, 40, 80])
         device = self._controller_device(arena_candidates)
         call_log: list[int] = []
@@ -2206,7 +2206,7 @@ class HILControllerTests(unittest.TestCase):
         self.assertAlmostEqual(latency, 0.25)
 
     def test_hil_controller_reports_master_ram_overflow_at_smallest(self):
-        # RAM overflow at the smallest arena should surface a dedicated master error for retries.
+        # If even the smallest arena candidate overflows, the controller should report master RAM overflow.
         arena_candidates = np.array([10])
         device = self._controller_device(arena_candidates)
         hil_return = (-1, -1, -1.0, 10 * 1024, HIL_ERROR_RAM_OVERFLOW, None)
@@ -2224,7 +2224,7 @@ class HILControllerTests(unittest.TestCase):
         self.assertEqual((ram, flash, latency, arena_bytes), hil_return[:4])
 
     def test_hil_controller_retains_success_after_smaller_failure(self):
-        # A smaller arena failure after a success should still return the best-known success metrics.
+        # A later smaller-arena failure should not erase the best successful candidate already found.
         arena_candidates = np.array([10, 20, 40])
         device = self._controller_device(arena_candidates)
         call_order: list[int] = []
@@ -2256,7 +2256,7 @@ class HILControllerTests(unittest.TestCase):
         self.assertAlmostEqual(latency, 0.3)
 
     def test_hil_controller_uses_retry_hint_to_jump(self):
-        # Retry hints should allow the controller to skip intermediate arenas when logs provide guidance.
+        # Retry hints should let the HIL controller skip directly to a more plausible arena candidate.
         _store_retry_hint_bytes(None)
         arena_candidates = np.array([10, 20, 40, 80])
         device = self._controller_device(arena_candidates)
@@ -2294,7 +2294,7 @@ class HILControllerTests(unittest.TestCase):
         self.assertAlmostEqual(latency, 0.2)
 
     def test_hil_controller_uses_injected_device_spec_not_catalog(self):
-        # Verify that HIL controller uses injected device spec not catalog.
+        # Injected device specs should take precedence so tests can pin the HIL controller to a precise hardware contract.
         arena_candidates = np.array([11, 33, 77])
         device = self._controller_device(arena_candidates, name="PORTENTA_H7")
         observed_indices: list[int] = []
@@ -2332,7 +2332,7 @@ class HILControllerTests(unittest.TestCase):
 class IntegrationTests(TinyModelMixin, unittest.TestCase):
     @unittest.skipUnless(shutil.which("xxd"), "xxd command required for this test.")
     def test_compile_only_pipeline(self):
-        # Full pipeline smoke test to ensure exporter + HIL plumbing cooperate end-to-end.
+        # Compile-only HIL runs should stop after staging and size accounting without entering runtime measurement.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             tflite_path = tmp_path / "model_full.tflite"

@@ -52,7 +52,7 @@ def _load_manifest_rows() -> list[tuple[str, str, str]]:
 
 class STM32TemplateOwnershipTests(unittest.TestCase):
     def test_manifest_categories_and_paths_are_unique(self) -> None:
-        # Verify that manifest categories and paths are unique.
+        # The LRUN ownership manifest should keep categories and paths unique.
         rows = _load_manifest_rows()
         seen_paths: set[str] = set()
 
@@ -67,13 +67,13 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
                 self.assertEqual(source_path, "")
 
     def test_manifest_kept_files_exist_in_canonical_workspace(self) -> None:
-        # Verify that manifest kept files exist in canonical workspace.
+        # Files marked as kept in the manifest should still exist in the canonical workspace.
         for category, relative_path, _ in _load_manifest_rows():
             if category in {"vendor_derived", "tinyodom_owned", "build_recipe"}:
                 self.assertTrue((CANONICAL_ROOT / relative_path).is_file(), relative_path)
 
     def test_vendor_copy_sources_exist_when_cube_checkout_is_available(self) -> None:
-        # Verify that vendor copy sources exist when cube checkout is available.
+        # Vendor copy sources should exist whenever the Cube checkout is available.
         firmware_root = ROOT_DIR / "tools" / "stm32" / "STM32CubeN6"
         if not firmware_root.is_dir():
             self.skipTest("STM32CubeN6 checkout is not present under tools/stm32")
@@ -83,7 +83,7 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
                 self.assertTrue((firmware_root / source_path).is_file(), relative_path)
 
     def test_gitignore_covers_setup_managed_vendor_copy_and_generated_paths(self) -> None:
-        # Verify that gitignore covers setup managed vendor copy and generated paths.
+        # The repo gitignore should keep covering setup-managed vendor copies and generated paths.
         for category, relative_path, _ in _load_manifest_rows():
             if category not in {"vendor_copy", "generated"}:
                 continue
@@ -95,7 +95,7 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, relative_path)
 
     def test_setup_script_references_lrun_manifest_only(self) -> None:
-        # Verify that setup script references LRUN manifest only.
+        # The setup script should only reference the LRUN manifest it is supposed to manage.
         script_text = (ROOT_DIR / "setup_stm32.sh").read_text(encoding="utf-8")
         self.assertIn("lrun_ownership_manifest.tsv", script_text)
         self.assertIn("prune_materialized_vendor_copy_files", script_text)

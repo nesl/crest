@@ -81,7 +81,7 @@ class OxIODDatasetTests(unittest.TestCase):
         )
 
     def test_load_maps_legacy_splits_into_dataset_bundle(self) -> None:
-        # Verify that load maps legacy splits into dataset bundle.
+        # The OxIOD dataset adapter should map the legacy split loader output into the new DatasetBundle shape.
         train_split = _make_legacy_split()
         val_split = _make_legacy_split()
         test_split = _make_legacy_split()
@@ -102,7 +102,7 @@ class OxIODDatasetTests(unittest.TestCase):
         self.assertIsNone(bundle.calibration)
 
     def test_train_and_validation_calls_preserve_legacy_loader_kwargs(self) -> None:
-        # Verify that train and validation calls preserve legacy loader kwargs.
+        # The adapter should forward the legacy loader kwargs unchanged into each split load.
         train_split = _make_legacy_split()
         val_split = _make_legacy_split()
         test_split = _make_legacy_split()
@@ -131,7 +131,7 @@ class OxIODDatasetTests(unittest.TestCase):
         self.assertNotIn("AugmentationCopies", test_call.kwargs)
 
     def test_missing_calibration_windows_keeps_bundle_calibration_empty(self) -> None:
-        # Verify that missing calibration windows keeps bundle calibration empty.
+        # Missing calibration windows should leave the bundle calibration split empty instead of fabricating one.
         with patch(
             "tinyodom.datasets.oxiod.import_oxiod_dataset",
             side_effect=[_make_legacy_split(), _make_legacy_split(), _make_legacy_split()],
@@ -142,7 +142,7 @@ class OxIODDatasetTests(unittest.TestCase):
         self.assertIs(self.dataset.make_calibration_data(bundle, self.config), bundle.train)
 
     def test_configured_calibration_windows_loads_capped_calibration_split(self) -> None:
-        # Verify that configured calibration windows loads capped calibration split.
+        # Configured calibration windows should load the capped calibration split from the adapter.
         config = Dict(
             directory="data/oxiod/",
             sampling_rate_hz=100,
@@ -202,7 +202,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
         tf.keras.backend.clear_session()
 
     def test_build_target_spec_returns_two_head_regression_contract(self) -> None:
-        # Verify that build target spec returns two head regression contract.
+        # The odometry task should expose the expected two-head regression target contract.
         target_spec = self.task.build_target_spec(self.bundle, {})
 
         self.assertEqual(target_spec.task_type, "regression")
@@ -210,7 +210,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
         self.assertEqual(target_spec.output_shapes, [(1,), (1,)])
 
     def test_metric_contract_returns_expected_rmse_names(self) -> None:
-        # Verify that metric contract returns expected RMSE names.
+        # The odometry task's metric contract should keep the expected RMSE metric names.
         contract = self.task.metric_contract(self.target_spec, {})
 
         self.assertEqual(contract.available_metric_names, {"rmse_vel_x", "rmse_vel_y", "rmse_total"})
@@ -219,7 +219,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
         self.assertEqual(contract.primary_metric_names, {"rmse_total"})
 
     def test_compile_model_uses_adam_and_legacy_loss_map(self) -> None:
-        # Verify that compile model uses adam and legacy loss map.
+        # Task compilation should preserve the legacy Adam optimizer and loss mapping.
         model = MagicMock()
 
         self.task.compile_model(model, {}, self.target_spec)
@@ -230,7 +230,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
         self.assertIsInstance(kwargs["optimizer"], tf.keras.optimizers.Adam)
 
     def test_make_fit_plan_builds_expected_wiring_and_callbacks(self) -> None:
-        # Verify that make fit plan builds expected wiring and callbacks.
+        # The fit-plan helper should wire datasets, callbacks, and checkpointing the way the task expects.
         fit_plan = self.task.make_fit_plan(self.bundle, {}, self.target_spec)
 
         self.assertTrue(np.array_equal(fit_plan.fit_kwargs["x"], self.train_split.inputs))
@@ -243,14 +243,14 @@ class OdometryRegressionTaskTests(unittest.TestCase):
         self.assertEqual(fit_plan.callbacks[1].patience, 17)
 
     def test_make_fit_plan_requires_validation_split(self) -> None:
-        # Verify that make fit plan requires validation split.
+        # The fit-plan helper should reject attempts to train without a validation split.
         bundle = DatasetBundle(train=self.train_split, val=None)
 
         with self.assertRaisesRegex(ValueError, "requires a validation split"):
             self.task.make_fit_plan(bundle, {}, self.target_spec)
 
     def test_evaluate_uses_legacy_prediction_ordering(self) -> None:
-        # Verify that evaluate uses legacy prediction ordering.
+        # Task evaluation should preserve the legacy prediction ordering used by downstream odometry metrics.
         model = MagicMock()
         predictions = [
             np.array([1.0, 2.0, 3.0], dtype=np.float32),
@@ -311,7 +311,7 @@ class TinyOdomTCNFamilyTests(unittest.TestCase):
         tf.keras.backend.clear_session()
 
     def test_sample_hparams_matches_legacy_search_surface(self) -> None:
-        # Verify that sample hparams matches legacy search surface.
+        # The model family should keep exposing the legacy hyperparameter search surface.
         hparams = self.family.sample_hparams(_DummyTrial(), self.ctx, {})
 
         self.assertEqual(
@@ -321,7 +321,7 @@ class TinyOdomTCNFamilyTests(unittest.TestCase):
         self.assertEqual(hparams["dilations"], DILATION_CANDIDATES[2])
 
     def test_build_model_wraps_legacy_payload_with_addict_dict(self) -> None:
-        # Verify that build model wraps legacy payload with addict dict.
+        # Model construction should still wrap legacy payloads in addict.Dict for compatibility.
         hparams = {
             "nb_filters": 8,
             "kernel_size": 5,
@@ -344,7 +344,7 @@ class TinyOdomTCNFamilyTests(unittest.TestCase):
         self.assertEqual(legacy_payload.input_dim, 6)
 
     def test_build_model_preserves_legacy_output_names(self) -> None:
-        # Verify that build model preserves legacy output names.
+        # Model construction should preserve the legacy output names expected by the original TinyOdom heads.
         hparams = {
             "nb_filters": 8,
             "kernel_size": 5,
@@ -359,11 +359,11 @@ class TinyOdomTCNFamilyTests(unittest.TestCase):
         self.assertEqual(model.output_names, ["velx", "vely"])
 
     def test_custom_objects_returns_tcn_mapping(self) -> None:
-        # Verify that custom objects returns TCN mapping.
+        # The TCN family should keep returning the expected custom-objects mapping.
         self.assertIn("TCN", self.family.custom_objects())
 
     def test_validate_hparams_rejects_missing_required_keys(self) -> None:
-        # Verify that validate hparams rejects missing required keys.
+        # Hyperparameter validation should reject missing required keys before model construction starts.
         hparams = {
             "nb_filters": 8,
             "kernel_size": 5,
