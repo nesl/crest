@@ -366,3 +366,4 @@ analysis_scripts/stm32_example_project/smoke_test_stm32_backend_phase4.py
 todo.md
 stm_memory_notes.md
 model_design.md
+things_forgotten_in_the_model_refactor.md

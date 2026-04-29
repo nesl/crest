@@ -29,7 +29,7 @@ from addict import Dict
 from stm32_phase2_candidate import export_perturbed_candidate_tflite
 
 DEFAULT_PROJECT_ROOT = SCRIPT_DIR / "stm32_toy_ai_project" / "FSBL"
-DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "nas_config.yaml"
+DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "config" / "nas_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("/tmp/tinyodom_stm32_toy_generate")
 EXPECTED_OUTPUTS = [
     "network.c",

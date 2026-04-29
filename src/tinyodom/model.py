@@ -38,7 +38,7 @@ from .microcontrollers import (
 )
 from .data import OxIODSplitData
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "nas_config.yaml"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "nas_config.yaml"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # Keep the legacy constant name for compatibility with older callers, but point
 # it at the canonical STM32 LRUN workspace under ``sketches/``.
@@ -1764,7 +1764,8 @@ def load_config(
     Parameters
     ----------
     config_path : str | Path | None
-        Optional override for the YAML location. Defaults to src/nas_config.yaml.
+        Optional override for the YAML location. Defaults to
+        ``src/config/nas_config.yaml``.
     task_metric_names : set[str] | None, optional
         Task-owned metric names that may appear in score or prune configs. When
         omitted, the current odometry RMSE metrics are used.

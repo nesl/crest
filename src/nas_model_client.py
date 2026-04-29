@@ -90,7 +90,8 @@ class NASModelClient:
     ----------
     config_path : Path | str, optional
         Path to the NAS configuration YAML. Defaults to
-        ``src/nas_config.yaml`` via ``DEFAULT_CONFIG_PATH``. The configuration
+        ``src/config/nas_config.yaml`` via ``DEFAULT_CONFIG_PATH``. The
+        configuration
         controls data paths, device settings, NAS options (single vs
         multi-objective), training schedules, output directories, and network
         timeouts.
