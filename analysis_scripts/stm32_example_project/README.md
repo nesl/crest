@@ -17,8 +17,8 @@ and debug-load workflow stay stable.
 
 ## Status Note
 
-This directory is prototype/example tooling, not the canonical production STM
-backend surface.
+This directory is prototype/example tooling, not the production STM backend
+surface.
 
 - The production STM backend stages from `sketches/stm32/tinyodom_tcn_stm32_lrun`
   and is documented in `src/tinyodom/microcontrollers/README.md`.
@@ -61,47 +61,6 @@ For the LRUN track specifically, the durable value is:
 
 The removed manual external-flash boot validation flow is intentionally not
 part of the long-lived NAS path.
-
-## Recommended Reorganization
-
-This folder has grown into a mix of project workspaces, runners, plotting, and
-experiment archives. The next cleanup should group it by responsibility rather
-than by historical order.
-
-Target structure:
-
-- `projects/`
-  - `stm32_toy_ai_project/`
-  - `stm32_cadenced_toy_ai_project/`
-  - `stm32_lrun_toy_ai_project/`
-- `runners/`
-  - build / stage / smoke / HIL entrypoints
-- `analysis/`
-  - sweep wrappers
-  - comparison wrappers
-  - plotting scripts
-- `results/`
-  - ignored local outputs and optional archived exports
-- `README.md`
-  - top-level usage and project-selection guide
-
-Practical migration order:
-
-1. Keep the STM32 project directories where they are until the runners are
-   stable; moving the CubeIDE workspaces first creates churn for little value.
-2. Move Python entrypoints into `runners/` and update shared path constants in
-   one pass.
-3. Move sweep/comparison/plotting scripts into `analysis/`.
-4. Move archived CSV/PNG exports out of the repo or into a clearly ignored
-   `results/archive/` location.
-5. Leave only active docs and active source in the top level.
-
-Until that cleanup happens, treat this directory as having four logical groups:
-
-- board/project workspaces
-- execution wrappers
-- analysis/post-processing scripts
-- ignored outputs and archives
 
 ## Parallel LRUN Track
 
@@ -306,7 +265,7 @@ Useful flags:
 
 ```bash
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --clean
-conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --config src/nas_config.yaml
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --config src/config/nas_config.yaml
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --dut-port /dev/ttyACM0 --harness-port /dev/ttyACM1
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --output analysis_scripts/stm32_example_project/last_metrics.json
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --latency-budget-ms 200.0
@@ -567,7 +526,7 @@ Common commands:
 ```bash
 # Rebuild the default perturbed model and restage the generated network files:
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/generate_and_stage_stm32_toy_ai.py \
-  --config src/nas_config.yaml
+  --config src/config/nas_config.yaml
 
 # Stage a prebuilt TFLite model instead of rebuilding one:
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/generate_and_stage_stm32_toy_ai.py \

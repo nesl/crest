@@ -42,7 +42,7 @@ Common overrides:
 
 ```bash
 python analysis_scripts/cadenced_portenta_h7/run_cadenced_portenta_h7.py \
-  --config src/nas_config.yaml \
+  --config src/config/nas_config.yaml \
   --repeats 3 \
   --cores cm7 cm4 \
   --latency-budget-ms 200 \

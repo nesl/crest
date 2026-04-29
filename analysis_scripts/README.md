@@ -78,8 +78,10 @@ target core exposes a DWT cycle counter, the DUT can now report:
 
 ## Running the INA228 check
 
-These commands assume you have run `./setup_arduino.sh` and that your board is
-Arduino Nano 33 BLE
+These commands assume you have already run `make arduino-setup` and installed
+the Arduino core package needed for the board you are using. The examples below
+use the Nano 33 BLE FQBN because that is the common harness-board setup in this
+repo.
 
 1. Compile:
 

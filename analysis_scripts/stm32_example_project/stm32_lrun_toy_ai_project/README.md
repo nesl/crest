@@ -31,7 +31,7 @@ The previous manual external-flash validation variant was removed because it req
 BOOT strap changes and reset sequencing, which is not usable for unattended
 NAS/HIL loops on the stock board.
 
-## Source Ownership
+## Workspace Layout
 
 The workspace includes ST-derived files plus TinyODOM-specific overlays.
 

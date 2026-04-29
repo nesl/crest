@@ -32,7 +32,7 @@ This folder contains a two-step experiment flow:
 
 ```bash
 python analysis_scripts/hil_noise_analysis/epoch_sweep/train_epoch_sweep.py \
-  --config src/nas_config.yaml \
+  --config src/config/nas_config.yaml \
   --out-dir analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts \
   --artifact-prefix noise_scan_epoch_sweep \
   --max-epochs 500 \
@@ -46,7 +46,7 @@ python analysis_scripts/hil_noise_analysis/epoch_sweep/train_epoch_sweep.py \
 
 ```bash
 python analysis_scripts/hil_noise_analysis/epoch_sweep/train_epoch_sweep.py \
-  --config src/nas_config.yaml \
+  --config src/config/nas_config.yaml \
   --out-dir analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts \
   --plots-dir analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/plots \
   --csv-path analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/epoch_sweep_training_stats.csv \
@@ -76,7 +76,7 @@ scp -r analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts <hil_host>:<rep
 
 ```bash
 python analysis_scripts/hil_noise_analysis/epoch_sweep/hil_epoch_sweep_scan.py \
-  --config src/nas_config.yaml \
+  --config src/config/nas_config.yaml \
   --training-csv analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/epoch_sweep_training_stats.csv \
   --runs 1 \
   --input-modes uniform \
@@ -87,7 +87,7 @@ Verbose logging:
 
 ```bash
 python analysis_scripts/hil_noise_analysis/epoch_sweep/hil_epoch_sweep_scan.py \
-  --config src/nas_config.yaml \
+  --config src/config/nas_config.yaml \
   --training-csv analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/epoch_sweep_training_stats.csv \
   --runs 1 \
   --input-modes uniform \
@@ -98,7 +98,7 @@ Explicit output paths + checkpoint remap (useful when CSV paths came from anothe
 
 ```bash
 python analysis_scripts/hil_noise_analysis/epoch_sweep/hil_epoch_sweep_scan.py \
-  --config src/nas_config.yaml \
+  --config src/config/nas_config.yaml \
   --training-csv analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/epoch_sweep_training_stats.csv \
   --checkpoint-root analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts \
   --csv-path analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/epoch_sweep_hil_metrics.csv \

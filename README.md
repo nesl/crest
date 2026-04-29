@@ -1,251 +1,275 @@
 # TinyODOM-EX
 
+TinyODOM-EX is a hardware-aware neural odometry repo. It combines dataset,
+task, and model-family selection with board-specific hardware-in-the-loop
+measurement so the same training/NAS flow can target Arduino-class boards,
+Portenta H7, and the current STM32 N6 backend.
+
+## Architecture At A Glance
+
+- A dataset adapter loads and normalizes data.
+- A task adapter defines targets, fitting/evaluation behavior, and task-owned
+  metrics.
+- A model family samples hyperparameters, builds models, and materializes the
+  export variant used for HIL.
+- A microcontroller backend stages, compiles, uploads, runs, and measures one
+  candidate on the selected target.
+- Shared scoring, pruning, and trial logging operate on the generic trial
+  outcome produced by those layers.
+
+For the source-level architecture and extension points, see
+[src/README.md](src/README.md).
+
+## Choose Your Workflow
+
+1. **Training only**
+   Use this when you want to run NAS/training without talking to hardware.
+   Start from `src/config/nas_config.yaml`, set `device.hil: false`, and read
+   [src/config/README.md](src/config/README.md) plus [src/README.md](src/README.md).
+
+2. **Arduino HIL**
+   Use this for Arduino CLI-backed DUTs and harness-backed measurement flows.
+   Start from [src/config/nas_config_ble.yaml](src/config/nas_config_ble.yaml)
+   for Nano 33 BLE or
+   [src/config/nas_config_portenta.yaml](src/config/nas_config_portenta.yaml)
+   for Portenta H7. Then read
+   [src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md)
+   and [sketches/README.md](sketches/README.md).
+
+3. **STM32 HIL**
+   Use this for the current STM32 N6 backend.
+   Start from [src/config/nas_config.yaml](src/config/nas_config.yaml), then
+   read [src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md)
+   and the committed STM32 workspace notes under
+   [sketches/stm32/tinyodom_tcn_stm32_lrun/README.md](sketches/stm32/tinyodom_tcn_stm32_lrun/README.md).
+
+4. **Analysis scripts / one-off experiments**
+   Use this for focused measurement or validation runs outside the main NAS
+   loop. Start with [analysis_scripts/README.md](analysis_scripts/README.md),
+   then open the package-specific README for the script family you need.
+
 ## Environment Setup
 
-0. **Ensure Chirale TensorFlow Lite Micro is installed**
-   When cloning, ensure to use `git clone --recurse-submodules <url>`.
-   If this wasn't done, run `git submodule update --init --recursive` to ensure that the Chirale TensorFlow Lite submodule is installed.
+1. **Clone with submodules.**
+   ```bash
+   git clone --recurse-submodules <url>
+   ```
+   If you already cloned without submodules:
+   ```bash
+   git submodule update --init --recursive
+   ```
 
-1. **Create the Conda environment.**  
+2. **Create and activate the Conda environment.**
    ```bash
    conda env create -f environment.yml -n tinyodomex
-   ```
-   This pins all Python dependencies (NumPy, PyTorch, etc.) exactly as expected by the notebooks and scripts in `src/`. Re-run with `--force` if you need to rebuild from scratch after dependency changes.
-
-2. **Activate the environment.**  
-   ```bash
    conda activate tinyodomex
    ```
-   Stay inside this shell for every training or preprocessing command—our tooling scripts expect `CONDA_PREFIX` and `python` to point into this env.
 
-3. **Install the TinyODOM package in editable mode.**  
+3. **Install the repo in editable mode.**
    ```bash
    make install
    ```
 
-4. **(If using GPUs) Install TensorFlow with bundled CUDA wheels.**  
-   TensorFlow ships CUDA/cuDNN wheels via the `and-cuda` extra, so you do **not** need system-level CUDA installs beyond the NVIDIA driver. The latest stable release as of 14 Nov 2025 is `2.20.0`, so pin it explicitly on shared servers:  
+4. **If you are using GPUs, install the repo-tested TensorFlow CUDA wheel set.**
    ```bash
    pip install --upgrade pip
    pip install tensorflow[and-cuda]==2.20.0
-   ```  
-   This pulls CUDA 12.4+ compatible binaries plus matching NCCL/cuDNN wheels recommended by the TensorFlow team.
+   ```
 
-> **Tip:** If you are CPU-only you don't need to do this because the non-CUDA
-> version is automatically installed by the Conda environment.
+If you are CPU-only, the Conda environment already provides the non-CUDA
+dependencies needed by the repo.
 
-## Dataset Preparation (OxIOD)
+## Dataset Preparation
 
-1. **Download OxIOD.** Grab the “Complete Dataset” zip from http://deepio.cs.ox.ac.uk/ and rename it to `OxIOD.zip` once it’s on the server.  
-2. **Run the provided splitter.** From the repo root:  
+1. Download the OxIOD "Complete Dataset" zip from `http://deepio.cs.ox.ac.uk/`.
+2. Rename it to `OxIOD.zip` or pass an explicit path.
+3. Prepare the dataset from the repo root:
    ```bash
    make prepare-dataset
-   # or: make prepare-dataset OXIOD_ZIP=/path/to/OxIOD.zip
+   # or:
+   make prepare-dataset OXIOD_ZIP=/path/to/OxIOD.zip
    ```
-   The script extracts into `data/oxiod`, normalizes folder names, and regenerates the curated `Train.txt`, `Valid.txt`, `Test.txt`, and `Train_Valid.txt` files that match the splits documented in `data/dataset_download_and_splits/README.md`.
-3. **Verify folder structure.** You should now have `data/oxiod/<device>/<syn|raw>/...` plus the four split text files under each activity folder as described in the dataset README.
 
-## Arduino CLI & Microcontroller Tooling
+This extracts the dataset into `data/oxiod`, normalizes folder names such as
+`slow walking -> slow_walking`, and restores the curated tracked split files
+for each activity. The dataset-specific details live in
+[data/dataset_download_and_splits/README.md](data/dataset_download_and_splits/README.md).
 
-All firmware builds happen in a sandboxed `tools/` directory inside this repo so we never touch system locations or `$HOME`.
+## Arduino Tooling Setup
 
-1. **Ensure the Conda env is active** (`conda activate tinyodomex`). The setup script installs Conda activation hooks into `CONDA_PREFIX`.
-2. **Run the bootstrapper:**  
+All Arduino CLI state is kept inside `tools/` so the repo does not need to
+write into `$HOME` or system directories.
+
+1. Ensure `tinyodomex` is active.
+2. Bootstrap Arduino CLI and repo-local hooks:
    ```bash
    make arduino-setup
-   ```  
-   This script:
-   - Downloads the Arduino CLI binary into `tools/bin` without requiring root.  
-   - Generates `tools/arduino-cli.yaml` and points `directories.data/downloads/user` to `tools/arduino-*` so cores, caches, and libraries stay inside the repo.  
-   - Copies the hook templates from `env_setup/` into `$CONDA_PREFIX/etc/conda/{activate.d,deactivate.d}/arduino.sh`, ensuring every future `conda activate tinyodomex` automatically sets `PATH`, `ARDUINO_DIRECTORIES_*`, and `ARDUINO_CONFIG_FILE`.
-3. **Reactivate the environment** so the new hooks run:  
+   ```
+3. Reactivate the environment so the new hooks are loaded:
    ```bash
    conda deactivate
    conda activate tinyodomex
    ```
-4. **Verify the CLI:**  
+4. Verify the CLI:
    ```bash
    arduino-cli --config-file tools/arduino-cli.yaml version
    ```
-5. **Install the required board packages** (example for Nano 33 BLE):  
+5. Install the board package you need. Example for Nano 33 BLE:
    ```bash
    arduino-cli core install arduino:mbed_nano --config-file tools/arduino-cli.yaml
    ```
 
-6. **Adding another Arduino board?**  
-   See `src/tinyodom/microcontrollers/README.md` for the board authoring checklist and required integration points.
+If Portenta uploads on Linux fail with `LIBUSB_ERROR_ACCESS`, add the udev
+rules documented in
+[src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md).
 
-7. **Linux-only: enable USB permissions for Portenta DFU uploads (udev).**  
-   Portenta uploads on Linux use `dfu-util`. If upload fails with `LIBUSB_ERROR_ACCESS`, add udev rules for Portenta USB IDs.  
-   ```bash
-   sudo tee /etc/udev/rules.d/49-portenta-h7.rules >/dev/null <<'EOF'
-   SUBSYSTEM=="usb", ATTR{idVendor}=="2341", ATTR{idProduct}=="025b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
-   SUBSYSTEM=="usb", ATTR{idVendor}=="2341", ATTR{idProduct}=="035b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
-   SUBSYSTEM=="usb", ATTR{idVendor}=="2341", ATTR{idProduct}=="045b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
-   SUBSYSTEM=="usb", ATTR{idVendor}=="2341", ATTR{idProduct}=="055b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
-   EOF
+## STM32 Setup
 
-   sudo udevadm control --reload-rules
-   sudo udevadm trigger
-   ```
-   Then unplug/replug the board (or reset into bootloader) before retrying upload.
+The STM32 flow keeps `STM32CubeCLT` installed outside the repo while cloning
+the STM32CubeN6 firmware package into `tools/stm32/STM32CubeN6`.
 
-> **OS note:** This udev step is Linux-specific. macOS typically does not require it.
+Run STM32 bootstrap only on the machine that is physically connected to the
+STM32 board and will run `python src/hil_server.py`.
 
-> **Why this flow?** This setup allows us to run the needed modules without modifying `$HOME` or using `apt`. Keeping binaries + caches in `tools/` allows everything to be contained within the folder, and the Conda hooks ensure our pipelines (training, conversion, firmware compile) always see the same CLI without editing shell rc files.
+Before running the bootstrap, ensure these tools are on your shell `PATH`:
 
-## STM32CubeCLT & STM32 N6 Firmware
+- `ST-LINK_gdbserver`
+- `arm-none-eabi-gdb`
+- `STM32_Programmer_CLI`
+- `arm-none-eabi-gcc`
+- `arm-none-eabi-size`
+- `arm-none-eabi-objdump`
+- `STM32_SigningTool_CLI` or `STM32TrustedPackageCreator_CLI`
 
-The STM32 example uses a split setup:
+Then run:
 
-- `STM32CubeCLT` stays installed outside the repo and is not downloaded into `tools/`
-- the STM32 N6 firmware package is cloned into `tools/stm32/STM32CubeN6`
-- the supported firmware baseline is pinned to `v1.3.0`
+```bash
+make stm32-setup
+```
 
-Important host split:
+That script validates the toolchain, clones or repairs
+`tools/stm32/STM32CubeN6`, checks out the pinned `v1.3.0` baseline, and
+refreshes the repo-local STM32 vendor subsets.
 
-- Run the STM32 bootstrap only on the machine that is physically connected to the STM32 board and will run `python src/hil_server.py`
-- The GPU server does not need `make stm32-setup`, `STM32CubeCLT`, `STM32CubeN6`, or other STM32-only tooling when it is only running `python3 src/nas_model_client.py`
+## Config Files
 
-First-time STM32 setup:
+The shipped starting points are:
 
-1. Install `STM32CubeCLT` manually from ST:
-   `https://www.st.com/en/development-tools/stm32cubeclt.html`
-2. Ensure the CLT tools are on your shell `PATH`. The STM32 bootstrap expects:
-   - `ST-LINK_gdbserver`
-   - `arm-none-eabi-gdb`
-   - `STM32_Programmer_CLI`
-3. Run the bootstrapper:
-   ```bash
-   make stm32-setup
-   ```
+- [src/config/nas_config.yaml](src/config/nas_config.yaml)
+  Default STM32-oriented config for the current `STM32_NUCLEO_N657X0_Q`
+  backend. This is the main starting point for STM32 runs and the general
+  example config for the repo.
+- [src/config/nas_config_ble.yaml](src/config/nas_config_ble.yaml)
+  BLE-focused starting point for `ARDUINO_NANO_33_BLE_SENSE`.
+- [src/config/nas_config_portenta.yaml](src/config/nas_config_portenta.yaml)
+  Portenta H7-focused starting point.
 
-After that, the STM32 wrapper uses those same CLT tools from `PATH`.
+The highest-signal fields for a first pass are:
 
-## Quick Checklist
-- [ ] Clone with submodules: `git clone --recurse-submodules <url>`
-- [ ] `conda env create -f environment.yml -n tinyodomex`
-- [ ] `conda activate tinyodomex`
-- [ ] `make install`
-- [ ] (GPU) `pip install tensorflow[and-cuda]==2.20.0`
-- [ ] Download OxIOD and run `make prepare-dataset` (or `make prepare-dataset OXIOD_ZIP=/path/to/OxIOD.zip`)
-- [ ] (Arduino devices only) `make arduino-setup` then `conda deactivate && conda activate tinyodomex`
-- [ ] (STM32 device host only) install STM32CubeCLT, ensure its tools are on `PATH`, then run `make stm32-setup`
-- [ ] `arduino-cli --config-file tools/arduino-cli.yaml version`
-- [ ] Start HIL server on the device host: `python src/hil_server.py`
-- [ ] SSH to the GPU box with reverse tunnel: `ssh -R "6001:127.0.0.1:6001" <gpu_server>`
-- [ ] On the GPU box, run NAS: `python3 src/nas_model_client.py --study-name <name>` (no STM32 bootstrap required there)
+- `device.*`
+  Target selection, HIL enable/disable, serial ports, runtime mode, and
+  backend-specific nested options.
+- `data.*`
+  OxIOD sampling rate, window size, stride, dataset location, and calibration
+  subset sizing.
+- `training.*`
+  NAS epochs/trials, full-training epochs, quantization, and the runtime-side
+  `energy_aware` / `input_mode` switches.
+- `nas.*`
+  Score and prune configuration.
+- `dataset`, `task`, `model`
+  Modular component selection blocks when you want to override the built-in
+  defaults explicitly.
 
-## NAS configuration (`src/nas_config.yaml`)
+For the full config reference, score/prune schema, and current runtime caveats,
+see [src/config/README.md](src/config/README.md).
 
-Before running long NAS jobs, skim and adjust `src/nas_config.yaml`:
+## Running NAS And HIL
 
-For the full NAS policy/config reference, including the `nas.score` and
-`nas.prune` schema, available metrics, derived metrics, and scalar term types,
-see
-[src/README.md](src/README.md).
-
-- **Device block (`device.*`)**
-   - `serial_port`: set to your board’s serial device (e.g. `/dev/cu.usbmodem*` on macOS, `/dev/ttyACM*` on Linux).
-   - `hil`: keep `true` for full hardware-in-the-loop, or set `false` to run latency/energy proxies without talking to a board.
-   - `measured_inference_runs`: number of on-device inference invokes averaged into one measured HIL attempt; defaults to `10`.
-   - Shared device keys include `device.measured_inference_runs` and `device.runtime_mode`, while board subtrees such as `device.portenta.*` and `device.stm32.*` remain for board-specific knobs.
-   - `runtime_mode`: set under `device.runtime_mode`; `back_to_back` by default, or `cadenced` to run the canonical STM32 back-to-back pass followed by a second cadenced pass.
-   - STM32-specific timing knobs live under `device.stm32.*`.
-     - `wake_margin_us`: cadenced wake-up guard band before each release time.
-     - `min_sleep_us`: cadenced minimum Stop-mode sleep request.
-- **Data block (`data.*`)**
-   - `directory`: root of the OxIOD dataset if you didn’t use the default `data/oxiod/` location.
-   - `calibration_windows`: reduce for faster experiments, increase or set `null` for more representative calibration.
-- **Training block (`training.*`)**
-   - `nas_trials`, `nas_epochs`, `model_epochs`: trade off search depth vs wall-clock time.
-   - `energy_aware`: enable harness-based energy measurement when available; this is now a runtime measurement flag, not the scoring-mode selector.
-   - `input_mode`: choose Arduino-side inference input source.
-     - `uniform`: random values in `[0, 5]` using shared uniform sketches (`sketches/tinyodom_tcn_energy.ino` when `energy_aware=true`, `sketches/tinyodom_tcn_no_energy.ino` when `energy_aware=false`).
-     - `representative`: synthetic OxIOD-shaped values using `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino`.
-     - `real`: fixed real OxIOD windows using `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino`.
-   - Runtime behavior for specific targets/cores is adjusted via compile-time
-     defines from the Python device layer (for example Portenta CM4 autostart
-     and serial-wait skip), while keeping shared uniform sketch sources.
-   - Portenta CM4 note: runtime telemetry is harness-based (`harness_only`), and
-     TinyODOM may upload a CM7 boot-helper sketch first to bring up CM4 before
-     uploading the DUT sketch.
-- **NAS policy block (`nas.*`)**
-   - `nas.score.type`: choose `scoring-function` or `multi-objective`.
-   - `nas.score.params.objectives`: for multi-objective runs, list `{metric, direction}` entries such as `rmse_total` and `latency_ms`.
-   - `nas.score.params.terms`: for scalar runs, compose terms such as `weighted`, `normalized-weighted`, `boundary`, and `target`.
-   - `nas.score.metrics`: optional derived metrics; see [src/README.md](src/README.md) for the current supported metric types and examples.
-   - `nas.prune.rules`: optional pre-training hard-reject rules for scalar NAS runs.
-   - STM32 cadenced policy metrics are documented in [src/README.md](src/README.md), including the difference between `latency_ms` and `cadenced_active_inference_latency_ms`, and between `energy_mj_per_inference`, `cadenced_energy_mj_per_window`, and `cadenced_energy_mj_per_trial`.
-- **Outputs and network (`outputs.*`, `network.*`)**
-   - `models_dir`, `tcn_dir`: where Optuna DBs, metrics, and TFLite/C++ artifacts are written.
-   - `host`, `port`: must match the HIL server and SSH tunnel; defaults (`127.0.0.1:6001`) usually work as-is.
-
-## Running NAS and HIL
-
-TinyODOM-EX runs a hardware-in-the-loop NAS loop between a GPU box (training) and a device host (Arduino Nano 33 BLE Sense).
+TinyODOM-EX runs a NAS/training client on a training host and talks to the HIL
+server running on the board-connected device host.
 
 ### 1. Start the HIL server on the device host
-
-On the machine physically connected to the board:
 
 ```bash
 cd /path/to/TinyODOM-EX
 conda activate tinyodomex
-# STM32 board host only:
-# install STM32CubeCLT separately, ensure its tools are on PATH, then run:
-# make stm32-setup
 python src/hil_server.py
 ```
 
-This starts a ZeroMQ REP server on `tcp://127.0.0.1:6001` (see `src/nas_config.yaml` for `network.host`/`network.port`).
+For STM32, install `STM32CubeCLT`, ensure its tools are on `PATH`, and run
+`make stm32-setup` on that same host before starting the server.
 
-### 2. Open a reverse SSH tunnel to the GPU server
-
-From the device host, create a tunnel so the GPU server can reach the local HIL port:
+### 2. Open a reverse SSH tunnel from the device host to the training host
 
 ```bash
 ssh -R "6001:127.0.0.1:6001" <gpu_server>
 ```
 
-After this, processes on `<gpu_server>` can talk to the HIL server via `127.0.0.1:6001` using the default config.
+The default configs expect the HIL server at `127.0.0.1:6001`.
 
-### 3. Run the NAS client on the GPU server
-
-On the GPU box (inside the repo, with the environment created/activated):
+### 3. Run the NAS client on the training host
 
 ```bash
 cd /path/to/TinyODOM-EX
-conda activate tinyodomex  # or an equivalent env with the same deps
+conda activate tinyodomex
 
-# No STM32 bootstrap is needed here unless this same machine is also the
-# board-connected HIL host.
+# Quick smoke pass
+python3 src/nas_model_client.py --smoke-test 3 --study-name smoke_run
 
-# Quick smoke test (few trials, good for sanity checks)
-python3 src/nas_model_client.py --smoke-test 3 --study-name smoke_nano33
-
-# Full NAS + scoring run (uses config.training.nas_trials, HIL enabled)
-python3 src/nas_model_client.py --study-name tinyodom_nas_nano33
+# Full NAS run
+python3 src/nas_model_client.py --study-name tinyodom_run
 ```
 
 Useful flags:
 
-- `--smoke-test N` – run a short NAS smoke test with `N` trials (no final long retrain).
-- `--study-name` – label used for the Optuna study and artifact directory.
+- `--config /path/to/config.yaml`
+- `--smoke-test N`
+- `--study-name NAME`
 
-Smoke tests use the NAS policy from `src/nas_config.yaml` and, by default, also
-use that file's `device.hil` setting.
+### 4. Outputs
 
-### 4. Where outputs go
+Artifacts are written under the configured `outputs.models_dir` and
+`outputs.tcn_dir`. Typical outputs include:
 
-Artifacts are organized under `models/`:
+- `models/<study_name>/optuna.db`
+- `models/<study_name>/trials.csv`
+- `models/<study_name>/train_history.json`
+- `models/<study_name>/summary.json`
+- generated TFLite and `.keras` artifacts
 
-- `models/<study_name>/optuna.db` – Optuna study storage.
-- `models/<study_name>/trials.csv` – per-trial metrics and hyperparameters.
-- `models/<study_name>/train_history.json` and `*_loss.png` – training curves.
-- `models/<study_name>/summary.json` – summary bundle with best params and key metrics.
-- TFLite and `.keras` checkpoints are written under `tinyodom_tcn/` and `models/` as configured in `src/nas_config.yaml`.
+## Smoke Tests
 
-Additional one-off hardware analysis runners live under
-`analysis_scripts/`. Start with `analysis_scripts/README.md` for the current
-Portenta H7 cadence, baseline-load, arena-sweep, and clock-tick workflows.
+- Quick HIL sanity check:
+  [analysis_scripts/hil_single_run/README.md](analysis_scripts/hil_single_run/README.md)
+- STM32 toy AI smoke test:
+  [analysis_scripts/stm32_example_project/README.md](analysis_scripts/stm32_example_project/README.md)
+- Additional one-off hardware analysis packages:
+  [analysis_scripts/README.md](analysis_scripts/README.md)
+
+## Docs Map
+
+- [src/README.md](src/README.md)
+  Source architecture, shared abstractions, trial logging, and extension seams.
+- [src/config/README.md](src/config/README.md)
+  Full config reference and scoring/pruning semantics.
+- [src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md)
+  Backend contracts, bring-up, staging, compile, upload, and runtime flows.
+- [src/tinyodom/model_families/README.md](src/tinyodom/model_families/README.md)
+  Model-family-specific extension guide.
+- [sketches/README.md](sketches/README.md)
+  Shared Arduino sketch and STM32 workspace layout.
+- [analysis_scripts/README.md](analysis_scripts/README.md)
+  One-off analysis and validation utilities.
+- [data/dataset_download_and_splits/README.md](data/dataset_download_and_splits/README.md)
+  OxIOD preparation and split details.
+
+## Troubleshooting
+
+- If training-only runs should not touch hardware, set `device.hil: false`.
+- If Arduino uploads fail on Linux with `LIBUSB_ERROR_ACCESS`, apply the udev
+  rules documented in the MCU README.
+- If STM32 bootstrap fails, confirm the full `STM32CubeCLT` toolchain is on
+  `PATH` before rerunning `make stm32-setup`.
+- If dataset preparation fails, confirm the OxIOD zip exists and that the repo
+  still contains the tracked split templates under `data/oxiod/<activity>/`.

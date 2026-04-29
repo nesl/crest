@@ -1,6 +1,6 @@
 # STM32 LRUN Production Workspace
 
-This is the canonical repo-local LRUN `dev_boot` workspace for the STM32
+This is the repo-local LRUN `dev_boot` workspace for the STM32
 NUCLEO-N657X0-Q production backend.
 
 ## Upstream Base And Local Modifications
@@ -60,7 +60,7 @@ Manual BOOT strap changes and reset sequencing are intentionally out of scope
 for this workspace because they are not usable for unattended NAS/HIL loops on
 the stock board.
 
-## Source Ownership
+## Workspace Layout
 
 The checked-in files form a minimal LRUN overlay. `setup_stm32.sh` materializes
 the broader vendor workspace around that overlay and records the materialized
