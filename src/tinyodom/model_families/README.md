@@ -8,9 +8,7 @@ measurement, use
 [`../microcontrollers/README.md`](../microcontrollers/README.md).
 
 For the broader `src/` architecture map, see
-[`../../README.md`](../../README.md). For current refactor leftovers that affect
-this layer, see
-[`../../../things_forgotten_in_the_model_refactor.md`](../../../things_forgotten_in_the_model_refactor.md).
+[`../../README.md`](../../README.md).
 
 ## Key Files
 
@@ -183,6 +181,3 @@ Microcontroller backend work:
 
 Do not put board or toolchain logic in a model family. Do not put
 architecture/search logic in a microcontroller backend.
-
-For current interface/runtime mismatches that still need cleanup, see
-[`../../../things_forgotten_in_the_model_refactor.md`](../../../things_forgotten_in_the_model_refactor.md).

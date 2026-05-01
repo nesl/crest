@@ -373,33 +373,33 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
                            inputs_orig=X_orig)
 
 def abs_heading(cur_x, cur_y, prev_x, prev_y):
-        """Compute the repository's absolute heading signal between 2D points.
+    """Compute the repository's absolute heading signal between 2D points.
 
-        Parameters
-        ----------
-        cur_x : float
-            Current x-coordinate.
-        cur_y : float
-            Current y-coordinate.
-        prev_x : float
-            Previous x-coordinate.
-        prev_y : float
-            Previous y-coordinate.
+    Parameters
+    ----------
+    cur_x : float
+        Current x-coordinate.
+    cur_y : float
+        Current y-coordinate.
+    prev_x : float
+        Previous x-coordinate.
+    prev_y : float
+        Previous y-coordinate.
 
-        Returns
-        -------
-        float
-            Heading angle in degrees using the repository's
-            ``atan2(delta_x, delta_y)`` convention. When both deltas are zero,
-            ``atan2(0, 0)`` yields ``0.0``.
-        """
-        dely = (cur_y - prev_y)
-        delx = (cur_x - prev_x)
-        # This repository measures heading from the +y axis by swapping the
-        # usual ``atan2(y, x)`` argument order.
-        delh= atan2(delx,dely)*57.2958
-        return delh
-    
+    Returns
+    -------
+    float
+        Heading angle in degrees using the repository's
+        ``atan2(delta_x, delta_y)`` convention. When both deltas are zero,
+        ``atan2(0, 0)`` yields ``0.0``.
+    """
+    dely = (cur_y - prev_y)
+    delx = (cur_x - prev_x)
+    # This repository measures heading from the +y axis by swapping the
+    # usual ``atan2(y, x)`` argument order.
+    delh= atan2(delx,dely)*57.2958
+    return delh
+
 def abs_heading_sin_cos(cur_x, cur_y, prev_x, prev_y, eps=1e-4):
     """Compute normalized endpoint-direction components between 2D points.
 

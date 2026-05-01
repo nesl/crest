@@ -100,7 +100,6 @@ Examples of STM32-owned keys currently supported in code include:
 
 - `template_root`
 - `project_root`
-- `project_layout`
 - `gdbserver`
 - `gdb`
 - `cubeprog_bin`
@@ -124,6 +123,8 @@ Important current caveats:
 - `device.runtime_mode` must be `back_to_back` or `cadenced`.
 - `device.stm32.runtime_mode` is no longer supported. Use
   `device.runtime_mode` instead.
+- `device.stm32.project_layout` is no longer supported. LRUN `dev_boot` is
+  implicit for the current STM32 backend.
 - `device.latency_budget_ms` must be positive when set.
 - `device.measured_inference_runs` must be an integer `>= 1`.
 - `device.cpu_clock_mhz_options` must be a non-empty integer list when set.

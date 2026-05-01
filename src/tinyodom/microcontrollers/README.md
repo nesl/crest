@@ -463,7 +463,6 @@ Supported STM options today:
 4. STM32 workspace/layout options:
    - `template_root`
    - `project_root`
-   - `project_layout`
 5. STM32 runtime/storage options:
    - `weight_storage_mode`: `embedded` or `external_flash`
    - `appli_flash_address`
@@ -488,7 +487,9 @@ Important current caveats:
 
 1. `device.stm32.cpu_clock_mhz` is not the current config shape. Use the
    shared top-level `device.cpu_clock_mhz_options` instead.
-2. `device.stm32.runtime_mode` is no longer supported. Use the shared
+2. `device.stm32.project_layout` is no longer accepted. LRUN `dev_boot` is
+   implied automatically for this board.
+3. `device.stm32.runtime_mode` is no longer supported. Use the shared
    top-level `device.runtime_mode` instead.
 
 ### Required Host Tools
