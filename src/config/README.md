@@ -66,9 +66,10 @@ Common keys:
   `back_to_back` or `cadenced`.
 - `device.latency_budget_ms`
   Optional shared cadence-budget override. When omitted, the runtime derives
-  it from the active dataset sampling cadence
-  (`dataset.params.stride / dataset.params.sampling_rate_hz * 1000` for the
-  built-in `oxiod` dataset).
+  it from the active dataset cadence: first `dataset.params.batch_period_ms`
+  when present, then legacy
+  `dataset.params.stride / dataset.params.sampling_rate_hz * 1000` for the
+  built-in `oxiod` dataset.
 - `device.serial_port`
   DUT serial port.
 - `device.measured_inference_runs`

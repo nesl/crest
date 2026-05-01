@@ -3,7 +3,7 @@ device:
   name: STM32_NUCLEO_N657X0_Q
   hil: true
   runtime_mode: cadenced                     # Shared runtime control: `back_to_back` or `cadenced`.
-  # latency_budget_ms: 200.0                # Optional shared cadence-budget override. Defaults to stride / sampling_rate_hz * 1000.
+  # latency_budget_ms: 200.0                # Optional shared cadence-budget override. Defaults to dataset batch_period_ms, then stride / sampling_rate_hz * 1000.
   serial_port: "/dev/ttyACM0"
   measured_inference_runs: 10                # Number of on-device inference invokes averaged into one measured HIL attempt.
   dut_ready_timeout_s: 12.0                    # Time to wait for STM32_AI_INIT / DUT READY before sending START.

@@ -122,7 +122,7 @@ class AttrDict(dict):
 
 
 def _derive_default_latency_budget_ms(server: Any) -> float:
-    """Compute cadence budget from stride and sampling rate.
+    """Resolve the default logical cadence budget for the active dataset.
 
     Parameters
     ----------
@@ -132,7 +132,8 @@ def _derive_default_latency_budget_ms(server: Any) -> float:
     Returns
     -------
     float
-        ``(stride / sampling_rate_hz) * 1000`` in milliseconds.
+        Cadence budget in milliseconds. Explicit dataset batch periods take
+        precedence over legacy stride/sample-rate cadence.
     """
 
     from tinyodom.analysis_support import derive_latency_budget_ms
@@ -505,7 +506,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Cadence budget in milliseconds for the cadenced phase. "
-            "Defaults to stride cadence: (stride / sampling_rate_hz) * 1000."
+            "Defaults to dataset batch_period_ms, then legacy stride cadence."
         ),
     )
     parser.add_argument(

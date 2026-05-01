@@ -424,6 +424,15 @@ class DetermineMetricsTests(HILServerTestCase):
         )
 
     def test_collect_metrics_uses_device_latency_budget_override(self) -> None:
+        """Device-level latency-budget overrides should win over dataset cadence.
+
+        Returns
+        -------
+        None
+            Asserts the normalized metrics request carries the explicit device
+            latency budget.
+        """
+
         # Device-level latency-budget overrides should win when the request explicitly provides them.
         server = self.build_server()
         self.config.device.latency_budget_ms = 75.0
@@ -444,6 +453,102 @@ class DetermineMetricsTests(HILServerTestCase):
 
         request = collect_mock.call_args.args[0]
         self.assertEqual(request.latency_budget_ms, 75.0)
+
+    def test_collect_metrics_uses_dataset_batch_period_metadata(self) -> None:
+        """Synthetic feature-batch metadata should drive HIL cadence.
+
+        Returns
+        -------
+        None
+            Asserts metadata-owned batch periods flow into the collected
+            metrics request without requiring legacy stride fields.
+        """
+
+        server = self.build_server()
+        self.config.dataset.params = Dict(directory="data", calibration_windows=100)
+        FakeDataset.bundle = DatasetBundle(
+            train=DataSplit(
+                inputs=np.zeros((1, 201, 64), dtype=np.float32),
+                targets=np.zeros((1,), dtype=np.int64),
+            ),
+            input_shape=(201, 64),
+            input_dtype="float32",
+            metadata={"batch_period_ms": 2000, "window_size": 201, "input_dim": 64},
+        )
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = False
+        fake_device.requires_training_data.return_value = False
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.collect_metrics", return_value={"ok": True}) as collect_mock:
+            server.determine_metrics(
+                self.request_family_hparams(),
+                self.request_runtime_metadata(flops=999, timesteps=201, input_dim=64),
+            )
+
+        request = collect_mock.call_args.args[0]
+        self.assertEqual(request.latency_budget_ms, 2000.0)
+        self.assertEqual(request.window_size, 201)
+        self.assertEqual(request.input_dim, 64)
+
+    def test_dataset_batch_period_failure_metrics_survive_request_errors(self) -> None:
+        """Bootstrapped request failures should report loaded batch cadence.
+
+        Returns
+        -------
+        None
+            Asserts already-loaded dataset metadata is reused when malformed
+            request metrics are generated.
+        """
+
+        server = self.build_server()
+        self.config.dataset.params = Dict(directory="data")
+        FakeDataset.bundle = DatasetBundle(
+            train=self.train_split,
+            input_shape=(32, 6),
+            input_dtype="float32",
+            metadata={"batch_period_ms": 1500, "window_size": 32, "input_dim": 6},
+        )
+        server._ensure_pipeline_bootstrapped()
+
+        with patch("hil_server.get_microcontroller_device") as device_mock:
+            metrics = server.determine_metrics(
+                self.request_family_hparams(),
+                Dict(flops=123, input_dim=6),
+            )
+
+        device_mock.assert_not_called()
+        self.assertEqual(metrics["backend_error_kind"], "request")
+        self.assertEqual(metrics["latency_budget_ms"], 1500.0)
+
+    def test_unbootstrapped_request_failures_do_not_load_dataset(self) -> None:
+        """Malformed request failures should not force dataset loading.
+
+        Returns
+        -------
+        None
+            Asserts config-owned batch cadence can populate failure metrics
+            without bootstrapping the dataset.
+        """
+
+        self.config.dataset.params = Dict(directory="data", batch_period_ms=2000)
+        server = self.build_server()
+        FakeDataset.load_calls = []
+
+        with patch("hil_server.get_microcontroller_device") as device_mock:
+            metrics = server.determine_metrics(
+                self.request_family_hparams(),
+                Dict(flops=123, input_dim=6),
+            )
+
+        device_mock.assert_not_called()
+        self.assertEqual(FakeDataset.load_calls, [])
+        self.assertEqual(metrics["backend_error_kind"], "request")
+        self.assertEqual(metrics["latency_budget_ms"], 2000.0)
 
     def test_determine_metrics_rejects_missing_timesteps(self) -> None:
         # Missing timesteps should be rejected before the server stages any backend work.

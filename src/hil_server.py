@@ -23,6 +23,7 @@ from addict import Dict
 import numpy as np
 
 from tinyodom.builtin_components import ensure_builtin_components_registered
+from tinyodom.cadence import resolve_batch_period_ms
 from tinyodom.component_selection import cfg_get, resolve_component_selection
 from tinyodom.devices import CandidatePrepareRequest, _sync_arduino_sketch_variant_for_config
 from tinyodom.hardware import (
@@ -737,13 +738,23 @@ class HILServer:
         return str(getattr(self.config.device, "name", "")).strip().upper()
 
     def _effective_latency_budget_ms(self) -> float:
-        """Return the resolved latency budget for the active configuration."""
-        configured_budget = getattr(self.config.device, "latency_budget_ms", None)
-        if configured_budget is not None:
-            return float(configured_budget)
-        stride = self._resolve_dataset_numeric_setting("stride")
-        sampling_rate_hz = self._resolve_dataset_numeric_setting("sampling_rate_hz")
-        return (stride / sampling_rate_hz) * 1000
+        """Return the resolved logical latency budget.
+
+        Returns
+        -------
+        float
+            Positive finite cadence budget in milliseconds. Already-loaded
+            dataset metadata is used when available, but malformed request
+            handling must not bootstrap the dataset just to build failure
+            metrics.
+        """
+
+        metadata = {} if self.dataset_bundle is None else dict(self.dataset_bundle.metadata)
+        return resolve_batch_period_ms(
+            self.dataset_config,
+            dataset_metadata=metadata,
+            device_config=self.config.device,
+        )
 
     def _configured_runtime_mode(self) -> str:
         """Return the normalized configured runtime mode."""

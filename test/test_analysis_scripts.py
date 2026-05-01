@@ -68,6 +68,116 @@ clock_tick_latency = _load_module(
     "clock_tick_latency",
     "analysis_scripts/clock_tick_latency/run_clock_tick_latency.py",
 )
+stm32_lrun_common = _load_module(
+    "stm32_lrun_common_for_tests",
+    "analysis_scripts/stm32_example_project/stm32_lrun_common.py",
+)
+
+
+class AnalysisCadenceHelperTests(unittest.TestCase):
+    """Validate analysis helper cadence defaults for batch and legacy configs."""
+
+    def test_analysis_support_uses_batch_period_before_legacy_cadence(self):
+        """Analysis cadence helper should accept audio-style batch periods.
+
+        Returns
+        -------
+        None
+            Asserts explicit batch cadence takes precedence over legacy fields.
+        """
+
+        from tinyodom.analysis_support import derive_latency_budget_ms
+
+        budget_ms = derive_latency_budget_ms(
+            Namespace(batch_period_ms=2000, stride=20, sampling_rate_hz=100)
+        )
+
+        self.assertEqual(budget_ms, 2000.0)
+
+    def test_analysis_support_preserves_legacy_stride_cadence(self):
+        """Analysis cadence helper should preserve odometry stride cadence.
+
+        Returns
+        -------
+        None
+            Asserts legacy stride/sample-rate configs still derive the same
+            latency budget.
+        """
+
+        from tinyodom.analysis_support import derive_latency_budget_ms
+
+        budget_ms = derive_latency_budget_ms(Namespace(stride=20, sampling_rate_hz=100))
+
+        self.assertEqual(budget_ms, 200.0)
+
+    def test_analysis_support_missing_cadence_raises_value_error(self):
+        """Analysis cadence helper should fail clearly when cadence is absent.
+
+        Returns
+        -------
+        None
+            Asserts incomplete audio-style configs raise ``ValueError`` instead
+            of leaking ``AttributeError`` from legacy field access.
+        """
+
+        from tinyodom.analysis_support import derive_latency_budget_ms
+
+        with self.assertRaisesRegex(ValueError, "stride"):
+            derive_latency_budget_ms(Namespace())
+
+    def test_lrun_device_defaults_use_dataset_batch_period(self):
+        """LRUN device defaults should resolve batch periods through config.
+
+        Returns
+        -------
+        None
+            Asserts LRUN defaults use `dataset.params.batch_period_ms`.
+        """
+
+        defaults = stm32_lrun_common.device_defaults(
+            {
+                "device": {"runtime_mode": "cadenced"},
+                "dataset": {"params": {"batch_period_ms": 2000}},
+            }
+        )
+
+        self.assertEqual(defaults["latency_budget_ms"], 2000.0)
+
+    def test_lrun_device_defaults_preserve_legacy_stride_cadence(self):
+        """LRUN device defaults should keep odometry stride-derived cadence.
+
+        Returns
+        -------
+        None
+            Asserts LRUN defaults retain the legacy odometry cadence formula.
+        """
+
+        defaults = stm32_lrun_common.device_defaults(
+            {
+                "device": {"runtime_mode": "cadenced"},
+                "dataset": {"params": {"stride": 20, "sampling_rate_hz": 100}},
+            }
+        )
+
+        self.assertEqual(defaults["latency_budget_ms"], 200.0)
+
+    def test_lrun_translates_invalid_cadence_to_workflow_error(self):
+        """LRUN helper errors should stay WorkflowError-compatible.
+
+        Returns
+        -------
+        None
+            Asserts invalid cadence values are translated to the LRUN workflow
+            error type expected by callers.
+        """
+
+        with self.assertRaises(stm32_lrun_common.stm32_cube_clt.WorkflowError):
+            stm32_lrun_common.device_defaults(
+                {
+                    "device": {"runtime_mode": "cadenced"},
+                    "dataset": {"params": {"batch_period_ms": 0}},
+                }
+            )
 
 
 class CadencedPortentaSummaryTests(unittest.TestCase):
