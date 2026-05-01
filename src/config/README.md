@@ -17,8 +17,9 @@ reference for the current score/prune surface. Use the BLE and Portenta files
 when you want board-specific starting points for those Arduino-backed targets.
 
 The runtime loader and validator live in
-[`../tinyodom/model.py`](../tinyodom/model.py), especially `load_config(...)`
-and the NAS-policy validation helpers it calls.
+[`../tinyodom/model.py`](../tinyodom/model.py), while the task-aware bootstrap
+that resolves components and validates NAS policy against the active task lives
+in [`../tinyodom/runtime_bootstrap.py`](../tinyodom/runtime_bootstrap.py).
 
 ## Current Shape
 
@@ -181,8 +182,10 @@ Current caveats:
 - `dataset.params` is required for the built-in `oxiod` dataset path
 - dataset classes are instantiated as zero-argument classes
 - model family classes are instantiated as zero-argument classes
-- task classes only receive `checkpoint_path` and
-  `early_stopping_patience` when those exact constructor kwargs are present
+- task classes are expected to use the explicit keyword-only constructor
+  contract `__init__(*, checkpoint_path, early_stopping_patience)`; the runtime
+  no longer probes constructor signatures and does not provide backward-
+  compatibility shims for older task classes
 
 Minimal example:
 

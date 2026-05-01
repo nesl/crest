@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+import numpy as np
 from sklearn.metrics import mean_squared_error
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 from tensorflow.keras.optimizers import Adam
@@ -22,7 +23,12 @@ class OdometryRegressionTask(TaskABC):
     prediction ordering used by the current model stack.
     """
 
-    def __init__(self, checkpoint_path: Path, early_stopping_patience: int = 40) -> None:
+    def __init__(
+        self,
+        *,
+        checkpoint_path: Path,
+        early_stopping_patience: int = 40,
+    ) -> None:
         """Initialize the task-owned training callback configuration.
 
         Parameters
@@ -136,11 +142,43 @@ class OdometryRegressionTask(TaskABC):
         del task_config, target_spec
         model.compile(loss={"velx": "mse", "vely": "mse"}, optimizer=Adam())
 
-    def make_fit_plan(
+    @staticmethod
+    def _stack_target_pair(
+        train_targets: dict[str, Any],
+        val_targets: dict[str, Any] | None,
+    ) -> list[Any]:
+        """Build ordered velocity targets for one fit plan.
+
+        Parameters
+        ----------
+        train_targets : dict[str, Any]
+            Training target mapping.
+        val_targets : dict[str, Any] | None
+            Optional validation target mapping that should be concatenated into
+            training targets.
+
+        Returns
+        -------
+        list[Any]
+            Ordered ``[velx, vely]`` target payload matching the current model
+            head order.
+        """
+
+        if val_targets is None:
+            return [train_targets["velx"], train_targets["vely"]]
+        return [
+            np.concatenate([train_targets["velx"], val_targets["velx"]], axis=0),
+            np.concatenate([train_targets["vely"], val_targets["vely"]], axis=0),
+        ]
+
+    def build_fit_plan(
         self,
         bundle: DatasetBundle,
         task_config: Any,
         target_spec: TargetSpec,
+        *,
+        mode: Literal["search", "final"],
+        combine_train_val: bool,
     ) -> FitPlan:
         """Build the current TinyODOM ``model.fit(...)`` wiring.
 
@@ -152,24 +190,70 @@ class OdometryRegressionTask(TaskABC):
             Task-local configuration subtree.
         target_spec : TargetSpec
             Task-owned target specification.
+        mode : {"search", "final"}
+            Runner phase requesting the fit plan.
+        combine_train_val : bool
+            Whether the validation split should be folded into the training
+            payload.
 
         Returns
         -------
         FitPlan
             Task-owned fit wiring and callbacks. The current plan uses
-            ``bundle.train.inputs`` as ``x``, orders targets as ``[velx,
-            vely]`` for both training and validation data, and monitors
-            ``"val_loss"``.
+            ``bundle.train.inputs`` as ``x`` in search mode, preserves the
+            legacy ``[velx, vely]`` target ordering, and switches to
+            task-owned ``"loss"`` monitoring when validation data is folded
+            into training.
 
         Raises
         ------
         ValueError
-            If the dataset bundle does not contain a validation split.
+            If ``mode`` is invalid or the dataset bundle does not contain a
+            validation split when one is required.
         """
 
         del task_config, target_spec
+        if mode not in {"search", "final"}:
+            raise ValueError("OdometryRegressionTask build_fit_plan mode must be 'search' or 'final'.")
+
+        if combine_train_val:
+            # Final-fit runs intentionally fold validation into training, so
+            # the task must switch monitoring to training loss and rebuild the
+            # merged payload itself instead of relying on orchestration code.
+            train_inputs = bundle.train.inputs
+            train_targets = bundle.train.targets
+            if bundle.val is not None:
+                train_inputs = np.concatenate([bundle.train.inputs, bundle.val.inputs], axis=0)
+                train_targets_ordered = self._stack_target_pair(bundle.train.targets, bundle.val.targets)
+            else:
+                train_targets_ordered = self._stack_target_pair(bundle.train.targets, None)
+
+            checkpoint = ModelCheckpoint(
+                filepath=str(self.checkpoint_path),
+                monitor="loss",
+                mode="min",
+                verbose=1,
+                save_best_only=True,
+            )
+            early_stop = EarlyStopping(
+                monitor="loss",
+                patience=self.early_stopping_patience,
+                mode="min",
+                verbose=1,
+                restore_best_weights=True,
+            )
+            return FitPlan(
+                fit_kwargs={
+                    "x": train_inputs,
+                    "y": train_targets_ordered,
+                    "shuffle": True,
+                },
+                callbacks=[checkpoint, early_stop],
+                monitor_metric="loss",
+            )
+
         if bundle.val is None:
-            raise ValueError("OdometryRegressionTask requires a validation split.")
+            raise ValueError("OdometryRegressionTask requires a validation split when combine_train_val=False.")
 
         checkpoint = ModelCheckpoint(
             filepath=str(self.checkpoint_path),
@@ -199,6 +283,60 @@ class OdometryRegressionTask(TaskABC):
             callbacks=[checkpoint, early_stop],
             monitor_metric="val_loss",
         )
+
+    def history_component_keys(
+        self,
+        target_spec: TargetSpec,
+    ) -> list[tuple[str, str]]:
+        """Return the per-output loss keys emitted by the odometry model.
+
+        Parameters
+        ----------
+        target_spec : TargetSpec
+            Task-owned target specification.
+
+        Returns
+        -------
+        list[tuple[str, str]]
+            Ordered training/validation loss-key pairs for each velocity head.
+        """
+
+        del target_spec
+        return [("velx_loss", "val_velx_loss"), ("vely_loss", "val_vely_loss")]
+
+    def generate_closeout_artifacts(
+        self,
+        model: Any,
+        dataset_bundle: DatasetBundle,
+        task_config: Any,
+        target_spec: TargetSpec,
+        *,
+        output_dir: Path,
+    ) -> dict[str, str]:
+        """Return task-owned closeout artifacts for odometry runs.
+
+        Parameters
+        ----------
+        model : Any
+            Final trained model.
+        dataset_bundle : DatasetBundle
+            Dataset bundle backing the run.
+        task_config : Any
+            Task-local configuration subtree.
+        target_spec : TargetSpec
+            Task-owned target specification.
+        output_dir : Path
+            Directory reserved for task-owned artifacts.
+
+        Returns
+        -------
+        dict[str, str]
+            Empty mapping. The generic runtime no longer assumes odometry
+            trajectory reporting as part of every closeout path.
+        """
+
+        del model, dataset_bundle, task_config, target_spec, output_dir
+        return {}
 
     def evaluate(
         self,

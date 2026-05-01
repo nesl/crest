@@ -22,19 +22,15 @@ if str(SRC_DIR) not in sys.path:
 
 from tinyodom.model import (
     CADENCED_CSV_FIELDS,
-    CollectMetricsRequest,
     DROP_RATE_CHOICES,
-    HarnessConfig,
     TRIAL_LOG_STABLE_COLUMNS,
     TrialOutcome,
     _minimum_stm32_serial_timeout_s,
     _metric_unavailable,
     ScoreConfigEvaluationError,
     apply_combined_perturbation,
-    build_collect_metrics_request,
     collect_bn_layers,
     collect_non_bn_bias_layers,
-    collect_metrics,
     count_flops,
     evaluate_score_config,
     iter_layers,
@@ -46,6 +42,7 @@ from tinyodom.model import (
     validate_loaded_model_input_shape,
 )  # noqa: E402
 from tinyodom.hardware import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
+from tinyodom.hil_runtime import CollectMetricsRequest, HarnessConfig, build_collect_metrics_request, collect_metrics  # noqa: E402, E501
 from tinyodom.microcontrollers import resolve_device_options  # noqa: E402
 import tinyodom.model_families.tinyodom_tcn as tinyodom_tcn_module  # noqa: E402
 from tinyodom.model_families.tinyodom_tcn import TinyOdomTCNFamily  # noqa: E402
@@ -343,7 +340,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["chosen_device"], "ARDUINO_NANO_33_BLE_SENSE")
             return (None, 4096, None, 2048, 0, None)
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=False,
                 energy_aware=False,
@@ -375,7 +372,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["serial_port"], "ttyACM0")
             return (1024, 8192, 25.0, 4096, 0, None)
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -404,7 +401,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["measured_inference_runs"], 7)
             return (1024, 8192, 0.025, 4096, 0, None)
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -444,7 +441,7 @@ class CollectMetricsTests(unittest.TestCase):
                 },
             )
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -492,7 +489,7 @@ class CollectMetricsTests(unittest.TestCase):
                 },
             )
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -524,7 +521,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertTrue(run_hil)
             return (1024, 8192, 0.025, 4096, 0, {"runtime_mode": "back_to_back"})
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -563,7 +560,7 @@ class CollectMetricsTests(unittest.TestCase):
                     self.assertTrue(run_hil)
                     return (1024, 8192, 0.025, 4096, 0, {"runtime_mode": raw_runtime_mode})
 
-                with patch("tinyodom.model.HIL_controller", fake_controller):
+                with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
                     request = CollectMetricsRequest(
                         hil_enabled=True,
                         energy_aware=False,
@@ -613,7 +610,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["harness_done_timeout_s"], 3.6)
             return (1024, 8192, 0.025, 4096, 0, None)
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=True,
@@ -660,7 +657,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["device_options"]["split"], "75_25")
             return (1024, 2048, None, 4096, 0, None)
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=False,
                 energy_aware=False,
@@ -694,7 +691,7 @@ class CollectMetricsTests(unittest.TestCase):
             device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
         )
 
-        with patch("tinyodom.model.HIL_controller") as controller_mock:
+        with patch("tinyodom.hil_runtime.HIL_controller") as controller_mock:
             with self.assertRaises(RuntimeError) as context:
                 collect_metrics(request)
 
@@ -723,7 +720,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["harness_done_timeout_s"], 3.6)
             return (1024, 2048, 0.01, 4096, 0, None)
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -759,7 +756,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
     def _build_request(
         self,
         config: Dict,
-        hyperparams: Dict,
+        runtime_metadata: Dict,
         *,
         latency_budget_ms: float = 200.0,
         dirpath: Path | None = None,
@@ -775,8 +772,8 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         ----------
         config : addict.Dict
             NAS/runtime configuration under test.
-        hyperparams : addict.Dict
-            Hyperparameter payload forwarded into request construction.
+        runtime_metadata : addict.Dict
+            Runtime metadata payload forwarded into request construction.
 
         Returns
         -------
@@ -790,7 +787,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         )
         return build_collect_metrics_request(
             config,
-            hyperparams,
+            runtime_metadata,
             latency_budget_ms=latency_budget_ms,
             dirpath=self._DEFAULT_DIRPATH if dirpath is None else dirpath,
             device_options=resolved_options,
@@ -805,7 +802,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -828,7 +825,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 serial_port="ttyACM0",
                 measured_inference_runs=7,
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -842,7 +839,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -867,7 +864,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 serial_port="ttyACM0",
                 stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -893,7 +890,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 latency_budget_ms=2000.0,
                 stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -919,7 +916,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 serial_timeout_s=120.0,
                 stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -939,7 +936,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
     def _build_request(
         self,
         config: Dict,
-        hyperparams: Dict,
+        runtime_metadata: Dict,
         *,
         latency_budget_ms: float = 200.0,
         dirpath: Path | None = None,
@@ -955,7 +952,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         )
         return build_collect_metrics_request(
             config,
-            hyperparams,
+            runtime_metadata,
             latency_budget_ms=latency_budget_ms,
             dirpath=self._DEFAULT_DIRPATH if dirpath is None else dirpath,
             device_options=resolved_options,
@@ -1005,7 +1002,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 harness_active_timeout_s=30.0,
                 harness_done_timeout_s=5.0,
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1022,7 +1019,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1036,7 +1033,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=True, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1054,7 +1051,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 serial_port="ttyACM0",
                 portenta=Dict(target_core="cm4", split="50_50", security="none"),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1071,7 +1068,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="PORTENTA_H7", serial_port="ttyACM0", portenta=Dict()),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         with self.assertRaises(ValueError):
@@ -1087,7 +1084,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 serial_port="ttyACM0",
                 portenta=Dict(target_core="cm4", split="50_50", security="none"),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1119,7 +1116,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 harness_done_timeout_s=5.0,
                 portenta=Dict(target_core="cm4", split="50_50", security="none"),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1142,7 +1139,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 name="portenta_h7",
                 portenta=Dict(target_core="cm7", split="75_25", security="none"),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1157,7 +1154,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=False, name="ARDUINO_NANO_33_BLE_SENSE"),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1187,7 +1184,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                     server_ready_timeout_s=15.0,
                 ),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1218,7 +1215,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=False, name="STM32_NUCLEO_N657X0_Q"),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
 
@@ -1262,7 +1259,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                         max_external_flash_bytes=123456,
                     ),
                 ),
-                data=Dict(window_size=128),
+                dataset=Dict(params=Dict(window_size=128)),
                 outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
             )
 
@@ -1292,7 +1289,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                     name="STM32_NUCLEO_N657X0_Q",
                     stm32=Dict(project_root=unresolved_root),
                 ),
-                data=Dict(window_size=128),
+                dataset=Dict(params=Dict(window_size=128)),
                 outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
             )
 
@@ -1331,7 +1328,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                         gdb_port=61235,
                     ),
                 ),
-                data=Dict(window_size=128),
+                dataset=Dict(params=Dict(window_size=128)),
                 outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
             )
 

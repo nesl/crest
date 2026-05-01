@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from .pipeline_types import (
     DataSplit,
@@ -192,11 +192,14 @@ class TaskABC(ABC):
         """
 
     @abstractmethod
-    def make_fit_plan(
+    def build_fit_plan(
         self,
         bundle: DatasetBundle,
         task_config: Any,
         target_spec: TargetSpec,
+        *,
+        mode: Literal["search", "final"],
+        combine_train_val: bool,
     ) -> FitPlan:
         """Build task-owned ``model.fit(...)`` wiring.
 
@@ -208,12 +211,75 @@ class TaskABC(ABC):
             Task-local configuration subtree.
         target_spec : TargetSpec
             Task-owned target specification.
+        mode : {"search", "final"}
+            Runner phase requesting the fit plan.
+        combine_train_val : bool
+            Whether the task should fold the validation split into training
+            for this plan.
 
         Returns
         -------
         FitPlan
             Task-owned fit wiring excluding runner-injected schedule policy.
         """
+
+    def history_component_keys(
+        self,
+        target_spec: TargetSpec,
+    ) -> list[tuple[str, str]]:
+        """Return optional per-output history key pairs for closeout plots.
+
+        Parameters
+        ----------
+        target_spec : TargetSpec
+            Task-owned target specification.
+
+        Returns
+        -------
+        list[tuple[str, str]]
+            Ordered ``(train_key, val_key)`` pairs to plot when present in a
+            Keras history dictionary. The default implementation returns an
+            empty list so generic tasks do not need to expose component-loss
+            plots.
+        """
+
+        del target_spec
+        return []
+
+    def generate_closeout_artifacts(
+        self,
+        model: tf.keras.Model,
+        dataset_bundle: DatasetBundle,
+        task_config: Any,
+        target_spec: TargetSpec,
+        *,
+        output_dir: Path,
+    ) -> dict[str, str]:
+        """Generate optional task-owned closeout artifacts after final training.
+
+        Parameters
+        ----------
+        model : tf.keras.Model
+            Final trained model available for task-specific closeout work.
+        dataset_bundle : DatasetBundle
+            Dataset bundle backing the current run.
+        task_config : Any
+            Task-local configuration subtree.
+        target_spec : TargetSpec
+            Task-owned target specification.
+        output_dir : Path
+            Directory where task-owned artifacts should be written.
+
+        Returns
+        -------
+        dict[str, str]
+            Mapping of artifact labels to written paths. The default
+            implementation returns an empty mapping so tasks opt into extra
+            closeout artifacts explicitly.
+        """
+
+        del model, dataset_bundle, task_config, target_spec, output_dir
+        return {}
 
     @abstractmethod
     def evaluate(
@@ -397,6 +463,62 @@ class ModelFamilyABC(ABC):
         """
 
         del hparams, ctx, config
+
+    def decode_trial_hparams(
+        self,
+        raw_params: dict[str, Any],
+        ctx: ModelBuildContext,
+        config: Any,
+    ) -> dict[str, Any]:
+        """Decode persisted trial parameters into build-time hyperparameters.
+
+        Parameters
+        ----------
+        raw_params : dict[str, Any]
+            Raw parameter mapping persisted by the NAS runner.
+        ctx : ModelBuildContext
+            Normalized build-time context.
+        config : Any
+            Model-family configuration subtree.
+
+        Returns
+        -------
+        dict[str, Any]
+            Model-family hyperparameters accepted by :meth:`build_model`.
+
+        Notes
+        -----
+        The default implementation returns ``raw_params`` unchanged so
+        families only need to override this hook when their persisted trial
+        shape differs from their build-time hyperparameter shape.
+        """
+
+        del ctx, config
+        return dict(raw_params)
+
+    def default_seed_trial(
+        self,
+        ctx: ModelBuildContext,
+        config: Any,
+    ) -> dict[str, Any] | None:
+        """Return an optional default seed trial for a new NAS study.
+
+        Parameters
+        ----------
+        ctx : ModelBuildContext
+            Normalized build-time context.
+        config : Any
+            Model-family configuration subtree.
+
+        Returns
+        -------
+        dict[str, Any] | None
+            Raw persisted-trial parameter mapping to enqueue for a new study,
+            or ``None`` when the family does not define a default seed trial.
+        """
+
+        del ctx, config
+        return None
 
     def load_model(
         self,

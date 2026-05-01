@@ -60,9 +60,17 @@ class DummyTask(TaskABC):
         """Accept the compile hook without mutating the supplied model."""
         del model, task_config, target_spec
 
-    def make_fit_plan(self, bundle, task_config, target_spec):
+    def build_fit_plan(
+        self,
+        bundle,
+        task_config,
+        target_spec,
+        *,
+        mode,
+        combine_train_val,
+    ):
         """Return a minimal fit plan with one callback and monitor metric."""
-        del bundle, task_config, target_spec
+        del bundle, task_config, target_spec, mode, combine_train_val
         return FitPlan(
             fit_kwargs={"x": [1.0], "y": [0.0]},
             callbacks=[sentinel.callback],
@@ -199,11 +207,27 @@ class InterfaceDefaultsTests(unittest.TestCase):
         # Task interface defaults should remain no-ops until a concrete task overrides them.
         self.task.validate_config({"ok": True})
         self.task.validate_model_outputs(sentinel.model, self.target_spec)
+        self.assertEqual(self.task.history_component_keys(self.target_spec), [])
+        self.assertEqual(
+            self.task.generate_closeout_artifacts(
+                sentinel.model,
+                self.bundle,
+                {"ok": True},
+                self.target_spec,
+                output_dir=Path("/tmp"),
+            ),
+            {},
+        )
 
     def test_model_family_default_helpers_are_generic(self) -> None:
         # Model-family defaults should keep returning the generic helper behavior the scaffold promises.
         self.model_family.validate_config({"ok": True})
         self.model_family.validate_hparams({"width": 4}, self.ctx, {"ok": True})
+        self.assertEqual(
+            self.model_family.decode_trial_hparams({"width": 4}, self.ctx, {"ok": True}),
+            {"width": 4},
+        )
+        self.assertIsNone(self.model_family.default_seed_trial(self.ctx, {"ok": True}))
         self.assertEqual(self.model_family.custom_objects(), {})
         self.assertTrue(self.model_family.supports_tflite())
 

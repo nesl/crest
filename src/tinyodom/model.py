@@ -316,105 +316,6 @@ class ScoreConfigEvaluationError(ValueError):
     """
 
 
-@dataclass(frozen=True)
-class HarnessConfig:
-    """Energy-aware harness settings forwarded to ``HIL_controller``.
-
-    Parameters
-    ----------
-    harness_serial_port : str | None
-        Serial port for the INA228 harness.
-    harness_fqbn : str | None
-        FQBN used to compile/upload the harness sketch.
-    harness_auto_flash : str | None
-        Harness flashing policy (``once``, ``always``, ``never``).
-    harness_arm_pin : int | None
-        Harness arming GPIO pin.
-    harness_trigger_pin : int | None
-        Harness trigger GPIO pin.
-    dut_arm_hold_ms : int | None
-        Time to hold DUT arm low before trigger observation.
-    harness_stable_low_ms : int | None
-        Required stable-low arming duration.
-    harness_ready_timeout_s : float | None
-        Timeout waiting for ``HARNESS READY``.
-    harness_arm_timeout_s : float | None
-        Timeout waiting for a valid arm/trigger edge.
-    harness_active_timeout_s : float | None
-        Maximum active measurement window.
-    harness_done_timeout_s : float | None
-        Timeout waiting for ``DONE``.
-    """
-
-    harness_serial_port: str | None
-    harness_fqbn: str | None
-    harness_auto_flash: str | None
-    harness_arm_pin: int | None
-    harness_trigger_pin: int | None
-    dut_arm_hold_ms: int | None
-    harness_stable_low_ms: int | None
-    harness_ready_timeout_s: float | None
-    harness_arm_timeout_s: float | None
-    harness_active_timeout_s: float | None
-    harness_done_timeout_s: float | None
-
-
-@dataclass(frozen=True)
-class CollectMetricsRequest:
-    """Normalized request used by :func:`collect_metrics`.
-
-    Parameters
-    ----------
-    hil_enabled : bool
-        Whether to run HIL upload/measurement (vs compile-only proxy mode).
-    energy_aware : bool
-        Whether harness-assisted power measurement is enabled.
-    flops : float
-        Model FLOP estimate for trial bookkeeping.
-    device_name : str
-        Target hardware name.
-    window_size : int
-        Input window length compiled into firmware.
-    input_dim : int
-        Number of input channels compiled into firmware.
-    dirpath : pathlib.Path
-        Firmware project directory containing generated model artifacts.
-    latency_proxy_max_flops : float
-        Maximum FLOPs used by proxy latency normalization.
-    serial_port : str | None
-        DUT serial port used for upload/latency capture during HIL runs.
-    latency_budget_ms : float | None, optional
-        Target inference cadence in milliseconds for normalized latency checks.
-    dut_ready_timeout_s : float | None, optional
-        Timeout waiting for DUT ready handshake.
-    serial_timeout_s : float | None, optional
-        Post-``START`` runtime timeout forwarded to direct-serial backends.
-    measured_inference_runs : int, optional
-        Number of on-device inference invokes averaged into one measured HIL
-        attempt.
-    harness : HarnessConfig | None, optional
-        Harness settings for energy-aware runs. ``None`` for non-energy-aware runs.
-    device_options : dict[str, Any] | None, optional
-        Optional board-specific options forwarded to the device factory.
-    """
-
-    hil_enabled: bool
-    energy_aware: bool
-    flops: float
-    device_name: str
-    window_size: int
-    input_dim: int
-    dirpath: Path
-    latency_proxy_max_flops: float
-    serial_port: str | None
-    latency_budget_ms: float | None = None
-    dut_ready_timeout_s: float | None = None
-    serial_timeout_s: float | None = None
-    measured_inference_runs: int = 10
-    harness: HarnessConfig | None = None
-    device_options: dict[str, Any] | None = None
-
-
 def set_error_code(metrics: dict, code: int) -> None:
     """Attach a numeric error code and its descriptive label to `metrics`."""
     metrics["error_code"] = code
@@ -1719,6 +1620,38 @@ def _validate_nas_config(
     return nas_config
 
 
+def validate_nas_policy_for_task(
+    config: Dict,
+    *,
+    task_metric_names: set[str],
+    training_only_task_metric_names: set[str],
+) -> Dict:
+    """Validate and attach the NAS policy for one concrete task contract.
+
+    Parameters
+    ----------
+    config : Dict
+        Loaded runtime configuration.
+    task_metric_names : set[str]
+        Task-owned metric names that may appear in score or prune configs.
+    training_only_task_metric_names : set[str]
+        Task-owned metric names that are only available after training.
+
+    Returns
+    -------
+    Dict
+        The same config object with its ``nas`` subtree normalized against the
+        supplied task metric contract.
+    """
+
+    config.nas = _validate_nas_config(
+        config,
+        task_metric_names=task_metric_names,
+        training_only_task_metric_names=training_only_task_metric_names,
+    )
+    return config
+
+
 def evaluate_prune_rules(
     metrics: dict[str, Any],
     hyperparams: Dict,
@@ -1816,8 +1749,11 @@ def load_config(
     Notes
     -----
     Besides parsing YAML, this helper normalizes derived artifact paths,
-    validates board/runtime policy, injects harness defaults, and resolves the
-    task-aware NAS score/prune configuration against the active metric sets.
+    validates board/runtime policy, and injects harness defaults. It always
+    performs the generic NAS score/prune validation pass, and when
+    ``task_metric_names`` are supplied it additionally resolves the NAS policy
+    against that concrete task contract instead of the default validation
+    metric set.
     """
     cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
@@ -2003,11 +1939,19 @@ def load_config(
         )
     config.logging = Dict()
     config.logging.level = level_name
-    config.nas = _validate_nas_config(
-        config,
-        task_metric_names=task_metric_names,
-        training_only_task_metric_names=training_only_task_metric_names,
-    )
+    if "score" in config:
+        raise KeyError("Top-level 'score' is no longer supported; move it to 'nas.score'.")
+    if "nas" not in config:
+        raise KeyError("Missing required top-level 'nas' section in the configuration.")
+    config.nas = Dict(config.nas)
+    if task_metric_names is None and training_only_task_metric_names is None:
+        config.nas = _validate_nas_config(config)
+    else:
+        config.nas = _validate_nas_config(
+            config,
+            task_metric_names=task_metric_names,
+            training_only_task_metric_names=training_only_task_metric_names,
+        )
 
     return config
 
@@ -2097,358 +2041,6 @@ def require_logical_input_shape(input_shape: Any) -> tuple[int, int]:
             raise ValueError(error_message)
         resolved_dims.append(resolved_dim)
     return resolved_dims[0], resolved_dims[1]
-
-def build_collect_metrics_request(
-    config: Dict,
-    hyperparams: Dict,
-    latency_budget_ms: float,
-    *,
-    dirpath: Path,
-    device_options: dict[str, Any] | None,
-    hil_enabled: bool | None = None,
-    energy_aware: bool | None = None,
-    window_size: int | None = None,
-    input_dim: int | None = None,
-) -> CollectMetricsRequest:
-    """Build a :class:`CollectMetricsRequest` from full config and hyperparameters.
-
-    Parameters
-    ----------
-    config : addict.Dict
-        Loaded runtime configuration.
-    hyperparams : addict.Dict
-        Trial/model hyperparameters containing at least ``flops`` and, when
-        ``input_dim`` is not passed explicitly, ``input_dim``.
-    latency_budget_ms : float
-        Per-inference latency budget in milliseconds, derived from stride cadence.
-    dirpath : Path
-        Candidate sketch or project directory passed through to the controller.
-    device_options : dict[str, Any] | None
-        Optional backend-specific device overrides that should accompany the
-        request.
-    hil_enabled : bool | None, optional
-        Explicit override for whether runtime HIL should be used.
-    energy_aware : bool | None, optional
-        Explicit override for whether harness energy measurement is required.
-    window_size : int | None, optional
-        Explicit window-size override. Falls back to the loaded dataset config.
-    input_dim : int | None, optional
-        Explicit input-dimension override. Falls back to ``hyperparams``.
-
-    Returns
-    -------
-    CollectMetricsRequest
-        Normalized request payload for :func:`collect_metrics`.
-
-    Raises
-    ------
-    RuntimeError
-        If runtime measurement requires a harness but ``device.harness_serial_port``
-        is not configured.
-
-    Notes
-    -----
-    Request construction resolves config defaults first, then layers caller
-    overrides on top. Some boards still need harness configuration even for
-    non-energy runs when their runtime mode is ``harness_only``.
-    """
-    def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
-        """Read a value from either an ``addict.Dict`` or a namespace-like object.
-
-        Parameters
-        ----------
-        container : Any
-            Config subtree or namespace object to read from.
-        key : str
-            Field name to resolve.
-        default : Any, optional
-            Fallback value when the field is absent.
-
-        Returns
-        -------
-        Any
-            Resolved field value or ``default``.
-        """
-        getter = getattr(container, "get", None)
-        if callable(getter):
-            return getter(key, default)
-        return getattr(container, key, default)
-
-    effective_energy_aware = bool(config.training.energy_aware) if energy_aware is None else bool(energy_aware)
-    harness = None
-    normalized_device_name = str(config.device.name).strip().upper()
-    effective_hil_enabled = bool(config.device.hil) if hil_enabled is None else bool(hil_enabled)
-    request_device_options = None if device_options is None else dict(device_options)
-    if request_device_options is None:
-        request_device_options = {}
-    request_device_options["latency_budget_ms"] = float(latency_budget_ms)
-
-    runtime_mode = "direct_serial"
-    if effective_hil_enabled:
-        try:
-            runtime_device = get_microcontroller_device(
-                normalized_device_name,
-                serial_port=_cfg_get(config.device, "serial_port", None),
-                device_options=request_device_options,
-            )
-        except ValueError:
-            runtime_device = None
-        if runtime_device is not None:
-            runtime_mode_fn = getattr(runtime_device, "runtime_measure_mode", None)
-            if callable(runtime_mode_fn):
-                runtime_mode = str(runtime_mode_fn())
-
-    # Some boards still require the harness even for non-energy runs because
-    # their runtime telemetry is only reliable through the harness path.
-    if effective_energy_aware or runtime_mode == "harness_only":
-        harness_serial_port = _cfg_get(config.device, "harness_serial_port", None)
-        if not harness_serial_port:
-            raise RuntimeError(
-                "Set device.harness_serial_port when runtime measurement requires the harness."
-            )
-        harness = HarnessConfig(
-            harness_serial_port=harness_serial_port,
-            harness_fqbn=_cfg_get(config.device, "harness_fqbn", None),
-            harness_auto_flash=_cfg_get(config.device, "harness_auto_flash", None),
-            harness_arm_pin=_cfg_get(config.device, "harness_arm_pin", None),
-            harness_trigger_pin=_cfg_get(config.device, "harness_trigger_pin", None),
-            dut_arm_hold_ms=_cfg_get(config.device, "dut_arm_hold_ms", None),
-            harness_stable_low_ms=_cfg_get(config.device, "harness_stable_low_ms", None),
-            harness_ready_timeout_s=_cfg_get(config.device, "harness_ready_timeout_s", None),
-            harness_arm_timeout_s=_cfg_get(config.device, "harness_arm_timeout_s", None),
-            harness_active_timeout_s=_cfg_get(config.device, "harness_active_timeout_s", None),
-            harness_done_timeout_s=_cfg_get(config.device, "harness_done_timeout_s", None),
-        )
-
-    dut_ready_timeout = _cfg_get(config.device, "dut_ready_timeout_s", 5.0)
-    if dut_ready_timeout is None:
-        dut_ready_timeout = 5.0
-    measured_inference_runs = int(_cfg_get(config.device, "measured_inference_runs", 10))
-    serial_timeout = _cfg_get(config.device, "serial_timeout_s", 12.0)
-    if serial_timeout is None:
-        serial_timeout = 12.0
-    configured_runtime_mode = _cfg_get(config.device, "runtime_mode", "back_to_back")
-    if effective_hil_enabled and normalized_device_name == "STM32_NUCLEO_N657X0_Q":
-        # Cadenced STM32 runs can legitimately outlive the generic serial
-        # timeout, so inflate the bound from cadence budget and run count.
-        serial_timeout = max(
-            float(serial_timeout),
-            _minimum_stm32_serial_timeout_s(
-                runtime_mode=str(configured_runtime_mode),
-                latency_budget_ms=float(latency_budget_ms),
-                measured_inference_runs=measured_inference_runs,
-            ),
-        )
-
-    resolved_window_size = (
-        int(config.data.window_size)
-        if window_size is None
-        else int(window_size)
-    )
-    resolved_input_dim = (
-        int(hyperparams.input_dim)
-        if input_dim is None
-        else int(input_dim)
-    )
-
-    return CollectMetricsRequest(
-        hil_enabled=effective_hil_enabled,
-        energy_aware=effective_energy_aware,
-        flops=hyperparams.flops,
-        device_name=normalized_device_name,
-        window_size=resolved_window_size,
-        input_dim=resolved_input_dim,
-        dirpath=Path(dirpath).resolve(),
-        latency_proxy_max_flops=config.training.latency_proxy_max_flops,
-        serial_port=_cfg_get(config.device, "serial_port", None),
-        latency_budget_ms=latency_budget_ms,
-        dut_ready_timeout_s=float(dut_ready_timeout),
-        serial_timeout_s=float(serial_timeout),
-        measured_inference_runs=measured_inference_runs,
-        harness=harness,
-        device_options=request_device_options,
-    )
-
-
-def collect_metrics(request: CollectMetricsRequest) -> dict:
-    """Gather RAM/flash/latency metrics from the controller for both HIL and proxy runs.
-
-    Parameters
-    ----------
-    request : CollectMetricsRequest
-        Normalized request containing all required/optional controller inputs.
-
-    Returns
-    -------
-    dict
-        RAM/flash/latency/arena metrics plus error codes shared across the
-        trial, using ``-1`` style sentinels for unavailable numeric values.
-
-    Raises
-    ------
-    RuntimeError
-        If runtime measurement requires a harness but ``request.harness`` is missing.
-    """
-    # Prepare controller kwargs (ease of use and readability)
-    controller_kwargs = {
-        "dirpath": request.dirpath,
-        "chosen_device": request.device_name,
-        "window_size": request.window_size,
-        "number_of_channels": request.input_dim,
-        "measured_inference_runs": request.measured_inference_runs,
-    }
-    if request.device_options is not None:
-        controller_kwargs["device_options"] = request.device_options
-
-    runtime_mode = "direct_serial"
-    if request.hil_enabled:
-        try:
-            runtime_device = get_microcontroller_device(
-                str(request.device_name),
-                serial_port=request.serial_port,
-                device_options=request.device_options,
-            )
-        except ValueError:
-            runtime_device = None
-        if runtime_device is not None:
-            runtime_mode_fn = getattr(runtime_device, "runtime_measure_mode", None)
-            if callable(runtime_mode_fn):
-                runtime_mode = str(runtime_mode_fn())
-
-    if request.energy_aware and request.harness is None:
-        raise RuntimeError(
-            "energy_aware=True requires harness configuration; do not run without harness."
-        )
-    if request.hil_enabled and runtime_mode == "harness_only" and request.harness is None:
-        raise RuntimeError(
-            "Runtime mode requires harness configuration. Set device.harness_serial_port."
-        )
-    
-    if request.hil_enabled and request.serial_port is not None:
-        controller_kwargs["serial_port"] = request.serial_port
-    elif request.hil_enabled and request.serial_port is None:
-        raise RuntimeError(
-            "Set serial_port before enabling HIL runs so uploads know which DUT to target."
-        )
-
-    if request.hil_enabled and request.dut_ready_timeout_s is not None:
-        controller_kwargs["dut_ready_timeout_s"] = request.dut_ready_timeout_s
-    if request.hil_enabled and request.serial_timeout_s is not None:
-        controller_kwargs["serial_timeout_s"] = request.serial_timeout_s
-
-    if (
-        request.hil_enabled
-        and request.harness is not None
-        and (request.energy_aware or runtime_mode == "harness_only")
-    ):
-        controller_kwargs["harness_serial_port"] = request.harness.harness_serial_port
-        controller_kwargs["harness_fqbn"] = request.harness.harness_fqbn
-        controller_kwargs["harness_auto_flash"] = request.harness.harness_auto_flash
-        controller_kwargs["harness_arm_pin"] = request.harness.harness_arm_pin
-        controller_kwargs["harness_trigger_pin"] = request.harness.harness_trigger_pin
-        controller_kwargs["dut_arm_hold_ms"] = request.harness.dut_arm_hold_ms
-        controller_kwargs["harness_stable_low_ms"] = request.harness.harness_stable_low_ms
-        controller_kwargs["harness_ready_timeout_s"] = request.harness.harness_ready_timeout_s
-        controller_kwargs["harness_arm_timeout_s"] = request.harness.harness_arm_timeout_s
-        controller_kwargs["harness_active_timeout_s"] = request.harness.harness_active_timeout_s
-        controller_kwargs["harness_done_timeout_s"] = request.harness.harness_done_timeout_s
-    
-    # Run the HIL controller to get metrics. HIL_controller handles both HIL and proxy runs.
-    logger.info(
-        "collect_metrics: invoking HIL_controller (hil=%s, serial_port=%s, harness_port=%s)",
-        request.hil_enabled,
-        request.serial_port,
-        request.harness.harness_serial_port if request.harness is not None else None,
-    )
-    (
-        ram_bytes,
-        flash_bytes,
-        latency_s,
-        arena_bytes,
-        error_code,
-        power_metrics,
-    ) = HIL_controller(
-        run_hil=request.hil_enabled,
-        **controller_kwargs,
-    )
-    logger.info(
-        "collect_metrics: HIL_controller finished (error_code=%s, latency_s=%s, arena_bytes=%s)",
-        error_code,
-        latency_s,
-        arena_bytes,
-    )
-
-    # Normalize None returns to -1 so scoring and CSV logging can rely on a
-    # consistent sentinel convention across proxy and HIL paths.
-    ram_bytes = ram_bytes if ram_bytes is not None else -1
-    flash_bytes = flash_bytes if flash_bytes is not None else -1
-    latency_ms = latency_s * 1000.0 if latency_s is not None else -1  # convert seconds → milliseconds
-
-    # Normalize latency so downstream scoring logic can remain scale-invariant.
-    latency_budget_entry = -1.0
-    if request.hil_enabled:
-        if request.latency_budget_ms is None:
-            raise ValueError(
-                "latency_budget_ms must be provided when hil_enabled is True so the"
-                " normalized latency penalty has consistent units."
-            )
-        if request.latency_budget_ms <= 0:
-            raise ValueError("latency_budget_ms must be a positive value")
-        latency_budget_entry = request.latency_budget_ms
-    elif request.latency_proxy_max_flops <= 0:
-        raise ValueError("latency_proxy_max_flops must be a positive value")
-
-    # Extract backend-owned detail fields before normalizing the generic power
-    # payload into the flat metrics schema used by scoring and CSV logs.
-    backend_error_kind = None
-    backend_error_detail = None
-    external_flash_bytes = -1
-    weight_storage_mode = "embedded"
-    if power_metrics:
-        backend_error_kind = power_metrics.get("backend_error_kind")
-        backend_error_detail = power_metrics.get("backend_error_detail")
-        raw_external_flash_bytes = power_metrics.get("external_flash_bytes")
-        if raw_external_flash_bytes is not None:
-            try:
-                parsed_external_flash_bytes = int(float(raw_external_flash_bytes))
-            except (TypeError, ValueError):
-                parsed_external_flash_bytes = -1
-            if parsed_external_flash_bytes >= 0:
-                external_flash_bytes = parsed_external_flash_bytes
-        raw_weight_storage_mode = power_metrics.get("weight_storage_mode")
-        if raw_weight_storage_mode:
-            weight_storage_mode = str(raw_weight_storage_mode)
-    normalized_power = normalize_power_metrics(power_metrics)
-    harness_latency_ms = -1.0
-    if normalized_power.get("harness_latency_s", -1.0) >= 0:
-        harness_latency_ms = normalized_power["harness_latency_s"] * 1000.0
-    metrics = {
-        "ram_bytes": ram_bytes,
-        "flash_bytes": flash_bytes,
-        "external_flash_bytes": external_flash_bytes,
-        "latency_ms": latency_ms if request.hil_enabled else -1,
-        "latency_budget_ms": latency_budget_entry,
-        "arena_bytes": arena_bytes,
-        "hil_enabled": request.hil_enabled,
-        "energy_aware": request.energy_aware,
-        "weight_storage_mode": weight_storage_mode,
-        "inference_seq": int(normalized_power["sequence"]) if normalized_power["sequence"] >= 0 else -1,
-        "energy_mj_per_inference": normalized_power["energy_mj_per_inference"],
-        "avg_power_mw": normalized_power["avg_power_mw"],
-        "avg_current_ma": normalized_power["avg_current_ma"],
-        "bus_voltage_v": normalized_power["bus_voltage_v"],
-        "idle_power_mw": normalized_power["idle_power_mw"],
-        "clock_hz": normalized_power["clock_hz"],
-        "harness_latency_ms": harness_latency_ms,
-    }
-    set_error_code(metrics, error_code)
-    apply_cadenced_metric_defaults(metrics, power_metrics)
-    if backend_error_kind is not None:
-        metrics["backend_error_kind"] = str(backend_error_kind)
-    if backend_error_detail is not None:
-        metrics["backend_error_detail"] = str(backend_error_detail)
-
-    return metrics
 
 def _serialize_csv_cell(value: Any) -> Any:
     """Return a CSV-friendly representation for one cell value.

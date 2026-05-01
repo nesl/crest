@@ -17,8 +17,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from tinyodom.datasets.oxiod import OxIODDataset  # noqa: E402
-from tinyodom.model import DILATION_CANDIDATES  # noqa: E402
-from tinyodom.model_families.tinyodom_tcn import TinyOdomTCNFamily  # noqa: E402
+from tinyodom.model_families.tinyodom_tcn import DILATION_CANDIDATES, TinyOdomTCNFamily  # noqa: E402
 from tinyodom.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext, TargetSpec  # noqa: E402
 from tinyodom.tasks.odometry_regression import OdometryRegressionTask  # noqa: E402
 
@@ -229,9 +228,15 @@ class OdometryRegressionTaskTests(unittest.TestCase):
         self.assertEqual(kwargs["loss"], {"velx": "mse", "vely": "mse"})
         self.assertIsInstance(kwargs["optimizer"], tf.keras.optimizers.Adam)
 
-    def test_make_fit_plan_builds_expected_wiring_and_callbacks(self) -> None:
+    def test_build_fit_plan_builds_expected_wiring_and_callbacks(self) -> None:
         # The fit-plan helper should wire datasets, callbacks, and checkpointing the way the task expects.
-        fit_plan = self.task.make_fit_plan(self.bundle, {}, self.target_spec)
+        fit_plan = self.task.build_fit_plan(
+            self.bundle,
+            {},
+            self.target_spec,
+            mode="search",
+            combine_train_val=False,
+        )
 
         self.assertTrue(np.array_equal(fit_plan.fit_kwargs["x"], self.train_split.inputs))
         self.assertEqual(len(fit_plan.fit_kwargs["y"]), 2)
@@ -242,12 +247,41 @@ class OdometryRegressionTaskTests(unittest.TestCase):
         self.assertEqual(fit_plan.callbacks[0].filepath, str(Path(self.tempdir.name) / "best.keras"))
         self.assertEqual(fit_plan.callbacks[1].patience, 17)
 
-    def test_make_fit_plan_requires_validation_split(self) -> None:
+    def test_build_fit_plan_requires_validation_split_when_not_combining(self) -> None:
         # The fit-plan helper should reject attempts to train without a validation split.
         bundle = DatasetBundle(train=self.train_split, val=None)
 
         with self.assertRaisesRegex(ValueError, "requires a validation split"):
-            self.task.make_fit_plan(bundle, {}, self.target_spec)
+            self.task.build_fit_plan(
+                bundle,
+                {},
+                self.target_spec,
+                mode="search",
+                combine_train_val=False,
+            )
+
+    def test_build_fit_plan_combines_train_and_val_for_final_mode(self) -> None:
+        # Final-fit plans should merge train and validation data and switch monitoring to training loss.
+        fit_plan = self.task.build_fit_plan(
+            self.bundle,
+            {},
+            self.target_spec,
+            mode="final",
+            combine_train_val=True,
+        )
+
+        self.assertEqual(fit_plan.monitor_metric, "loss")
+        self.assertNotIn("validation_data", fit_plan.fit_kwargs)
+        self.assertEqual(fit_plan.fit_kwargs["x"].shape[0], 6)
+        self.assertEqual(fit_plan.fit_kwargs["y"][0].shape[0], 6)
+        self.assertEqual(fit_plan.fit_kwargs["y"][1].shape[0], 6)
+
+    def test_history_component_keys_return_velocity_loss_pairs(self) -> None:
+        # Odometry closeout plots should be driven by task-owned history-key declarations.
+        self.assertEqual(
+            self.task.history_component_keys(self.target_spec),
+            [("velx_loss", "val_velx_loss"), ("vely_loss", "val_vely_loss")],
+        )
 
     def test_evaluate_uses_legacy_prediction_ordering(self) -> None:
         # Task evaluation should preserve the legacy prediction ordering used by downstream odometry metrics.
@@ -320,8 +354,14 @@ class TinyOdomTCNFamilyTests(unittest.TestCase):
         )
         self.assertEqual(hparams["dilations"], DILATION_CANDIDATES[2])
 
-    def test_build_model_wraps_legacy_payload_with_addict_dict(self) -> None:
-        # Model construction should still wrap legacy payloads in addict.Dict for compatibility.
+    def test_dilation_candidates_preserve_legacy_search_surface(self) -> None:
+        # The family-owned dilation table should preserve the original TinyODOM search surface exactly.
+        self.assertEqual(len(DILATION_CANDIDATES), 465)
+        self.assertEqual(DILATION_CANDIDATES[0], [1, 2, 4])
+        self.assertEqual(DILATION_CANDIDATES[107], [1, 4, 8, 64])
+
+    def test_build_model_passes_plain_hparams_into_local_builder(self) -> None:
+        # Model construction should use the family-owned builder with plain hyperparameters.
         hparams = {
             "nb_filters": 8,
             "kernel_size": 5,
@@ -338,10 +378,10 @@ class TinyOdomTCNFamilyTests(unittest.TestCase):
             self.family.build_model(hparams, self.ctx, {})
 
         build_mock.assert_called_once()
-        legacy_payload = build_mock.call_args.args[0]
-        self.assertIsInstance(legacy_payload, Dict)
-        self.assertEqual(legacy_payload.timesteps, 20)
-        self.assertEqual(legacy_payload.input_dim, 6)
+        build_hparams = build_mock.call_args.args[0]
+        self.assertIsInstance(build_hparams, dict)
+        self.assertEqual(build_hparams["timesteps"], 20)
+        self.assertEqual(build_hparams["input_dim"], 6)
 
     def test_build_model_preserves_legacy_output_names(self) -> None:
         # Model construction should preserve the legacy output names expected by the original TinyOdom heads.
@@ -361,6 +401,52 @@ class TinyOdomTCNFamilyTests(unittest.TestCase):
     def test_custom_objects_returns_tcn_mapping(self) -> None:
         # The TCN family should keep returning the expected custom-objects mapping.
         self.assertIn("TCN", self.family.custom_objects())
+
+    def test_decode_trial_hparams_expands_dilations_index(self) -> None:
+        # Persisted trial params should be decoded by the family rather than by NAS orchestration.
+        decoded = self.family.decode_trial_hparams(
+            {
+                "nb_filters": 8,
+                "kernel_size": 5,
+                "dropout_rate": 0.1,
+                "use_skip_connections": True,
+                "norm_flag": False,
+                "dilations_index": 2,
+            },
+            self.ctx,
+            {},
+        )
+
+        self.assertNotIn("dilations_index", decoded)
+        self.assertEqual(decoded["dilations"], DILATION_CANDIDATES[2])
+
+    def test_default_seed_trial_matches_raw_trial_surface(self) -> None:
+        # The family should own the default persisted trial seed for new studies.
+        seed = self.family.default_seed_trial(self.ctx, {})
+
+        self.assertIsNotNone(seed)
+        self.assertEqual(seed["dilations_index"], 107)
+        self.assertEqual(
+            self.family.decode_trial_hparams(seed, self.ctx, {})["dilations"],
+            [1, 4, 8, 64],
+        )
+
+    def test_count_flops_returns_positive_estimate(self) -> None:
+        # The family should expose a working FLOP counter through the model-family contract.
+        hparams = {
+            "nb_filters": 8,
+            "kernel_size": 5,
+            "dropout_rate": 0.1,
+            "use_skip_connections": True,
+            "norm_flag": False,
+            "dilations": [1, 2, 4],
+        }
+        model = self.family.build_model(hparams, self.ctx, {})
+
+        flops = self.family.count_flops(model, self.ctx, {})
+
+        self.assertIsInstance(flops, int)
+        self.assertGreater(flops, 0)
 
     def test_validate_hparams_rejects_missing_required_keys(self) -> None:
         # Hyperparameter validation should reject missing required keys before model construction starts.

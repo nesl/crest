@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, sentinel
 
 import numpy as np
 import optuna
@@ -114,7 +114,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
         validate_config=MagicMock(),
         validate_model_outputs=MagicMock(),
         compile_model=MagicMock(),
-        make_fit_plan=MagicMock(
+        build_fit_plan=MagicMock(
             return_value=FitPlan(
                 fit_kwargs={
                     "x": bundle.train.inputs,
@@ -129,6 +129,10 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
                 monitor_metric="val_loss",
             )
         ),
+        history_component_keys=MagicMock(
+            return_value=[("velx_loss", "val_velx_loss"), ("vely_loss", "val_vely_loss")]
+        ),
+        generate_closeout_artifacts=MagicMock(return_value={}),
         evaluate=MagicMock(
             return_value=EvaluationResult(
                 metrics={"rmse_vel_x": 0.1, "rmse_vel_y": 0.2, "rmse_total": 0.3},
@@ -151,6 +155,24 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
         validate_hparams=MagicMock(),
         build_model=MagicMock(return_value=fake_built_model),
         load_model=MagicMock(return_value=fake_loaded_model),
+        count_flops=MagicMock(return_value=1234),
+        supports_tflite=MagicMock(return_value=True),
+        default_seed_trial=MagicMock(
+            return_value={
+                "nb_filters": 10,
+                "kernel_size": 12,
+                "dropout_rate": 0.0,
+                "use_skip_connections": False,
+                "norm_flag": True,
+                "dilations_index": 107,
+            }
+        ),
+        decode_trial_hparams=MagicMock(
+            side_effect=lambda raw_params, _ctx, _config: {
+                **{key: value for key, value in raw_params.items() if key != "dilations_index"},
+                "dilations": [1, 2] if "dilations_index" in raw_params else raw_params.get("dilations", [1, 2]),
+            }
+        ),
     )
 
     # Artifact, socket, and config defaults: mirror the production config shape
@@ -275,7 +297,7 @@ class HILRequestTests(unittest.TestCase):
         metrics = {"ram_bytes": 1024}
         client.socket.recv_json.return_value = metrics
 
-        payload = {"hyperparams": {"nb_filters": 4}}
+        payload = {"family_hparams": {"nb_filters": 4}, "runtime_metadata": {"flops": 1, "timesteps": 16, "input_dim": 3}}
         result = client._hil_request(payload)
 
         client.socket.send_json.assert_called_once_with(payload)
@@ -289,7 +311,7 @@ class HILRequestTests(unittest.TestCase):
         client.socket.recv_json.side_effect = zmq.error.Again()
 
         with self.assertRaises(RuntimeError):
-            client._hil_request({"hyperparams": {"nb_filters": 8}})
+            client._hil_request({"family_hparams": {"nb_filters": 8}, "runtime_metadata": {"flops": 1, "timesteps": 16, "input_dim": 3}})
 
         client.socket.send_json.assert_called_once()
 
@@ -381,37 +403,43 @@ class InitializationTests(unittest.TestCase):
         fake_context = MagicMock()
         fake_context.socket.return_value = fake_socket
 
+        fake_pipeline = SimpleNamespace(
+            selection={
+                "dataset_name": "oxiod",
+                "task_name": "odometry_regression",
+                "model_family_name": "tinyodom_tcn",
+                "dataset_config": config.dataset.params,
+                "task_config": config.task.params,
+                "model_config": {"family": "tinyodom_tcn", "params": {}, "search": {}},
+            },
+            dataset=sentinel.dataset,
+            task=fake_task,
+            model_family=sentinel.model_family,
+            bundle=fake_bundle,
+            target_spec=target_spec,
+            metric_contract=metric_contract,
+            model_build_context=ModelBuildContext(
+                input_shape=fake_bundle.input_shape,
+                input_dtype=fake_bundle.input_dtype,
+                target_spec=target_spec,
+            ),
+        )
+
         with patch("nas_model_client.ensure_builtin_components_registered"), patch(
             "nas_model_client.load_config",
-            side_effect=[config, config],
-        ) as mock_load_config, patch.object(
-            NASModelClient,
-            "_load_dataset_bundle",
-            return_value=fake_bundle,
-        ) as mock_load_bundle, patch.object(
-            NASModelClient,
-            "_instantiate_task",
-            return_value=fake_task,
-        ), patch.object(
-            NASModelClient,
-            "_initialize_component_state",
-        ), patch(
+            return_value=config,
+        ) as mock_load_config, patch(
+            "nas_model_client.bootstrap_pipeline",
+            return_value=fake_pipeline,
+        ) as bootstrap_mock, patch(
             "nas_model_client.zmq.Context.instance",
             return_value=fake_context,
         ):
             client = NASModelClient(base / "config.yaml")
 
         self.assertIsInstance(client, NASModelClient)
-        self.assertEqual(mock_load_bundle.call_count, 1)
-        self.assertEqual(mock_load_config.call_count, 2)
-        self.assertEqual(
-            mock_load_config.call_args_list[1].kwargs["task_metric_names"],
-            metric_contract.available_metric_names,
-        )
-        self.assertEqual(
-            mock_load_config.call_args_list[1].kwargs["training_only_task_metric_names"],
-            metric_contract.training_only_metric_names,
-        )
+        mock_load_config.assert_called_once_with(base / "config.yaml")
+        bootstrap_mock.assert_called_once_with(config)
         fake_socket.connect.assert_called_once()
 
     def test_refresh_legacy_split_aliases_tolerates_non_odometry_targets(self) -> None:
@@ -452,11 +480,9 @@ class ObjectiveTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = _build_test_client()
 
-        self.count_patcher = patch("nas_model_client.count_flops", return_value=1234)
         self.hw_specs_patcher = patch("nas_model_client.return_hardware_specs", return_value=(2048, 4096))
         self.log_patcher = patch("nas_model_client.log_trial")
 
-        self.mock_count = self.count_patcher.start()
         self.mock_hw_specs = self.hw_specs_patcher.start()
         self.mock_log = self.log_patcher.start()
 
@@ -474,7 +500,7 @@ class ObjectiveTests(unittest.TestCase):
 
         self.mock_log.assert_called_once()
         self.assertEqual(trial.report_calls, [(-float("inf"), 0)])
-        self.client.task.make_fit_plan.assert_not_called()
+        self.client.task.build_fit_plan.assert_not_called()
 
     def test_objective_prune_logging_populates_cadenced_sentinels(self) -> None:
         """Early-pruned trials should still log stable cadenced metric defaults."""
@@ -502,7 +528,7 @@ class ObjectiveTests(unittest.TestCase):
 
         self.mock_log.assert_called_once()
         self.assertEqual(trial.report_calls, [(-float("inf"), 0)])
-        self.client.task.make_fit_plan.assert_not_called()
+        self.client.task.build_fit_plan.assert_not_called()
 
     def test_objective_raises_on_device_not_found(self) -> None:
         """Device-not-found errors should abort the NAS run instead of pruning every trial."""
@@ -526,7 +552,7 @@ class ObjectiveTests(unittest.TestCase):
         self.client._hil_request.assert_not_called()
 
         self.mock_log.assert_not_called()
-        self.client.task.make_fit_plan.assert_not_called()
+        self.client.task.build_fit_plan.assert_not_called()
 
     def test_objective_handles_resource_failure(self) -> None:
         """Exceeding estimated resources should skip training and log a fatal code."""
@@ -544,7 +570,7 @@ class ObjectiveTests(unittest.TestCase):
         with self.assertRaises(optuna.TrialPruned):
             self.client.objective(trial)
 
-        self.client.task.make_fit_plan.assert_not_called()
+        self.client.task.build_fit_plan.assert_not_called()
         self.assertEqual(trial.report_calls, [(-float("inf"), 0)])
 
 
@@ -563,8 +589,18 @@ class ObjectiveTests(unittest.TestCase):
 
         result = self.client.objective(trial)
 
-        self.mock_count.assert_called_once()
-        self.client.task.make_fit_plan.assert_called_once()
+        self.client.model_family.count_flops.assert_called_once_with(
+            self.client.model_family.build_model.return_value,
+            self.client.model_build_context,
+            self.client.model_config,
+        )
+        self.client.task.build_fit_plan.assert_called_once_with(
+            self.client.dataset_bundle,
+            self.client.task_config,
+            self.client.target_spec,
+            mode="search",
+            combine_train_val=False,
+        )
         self.client.task.evaluate.assert_called_once()
         self.assertEqual(result, -0.3)
         self.mock_log.assert_called_once()
@@ -600,7 +636,7 @@ class ObjectiveTests(unittest.TestCase):
         with self.assertRaises(optuna.TrialPruned):
             self.client.objective(trial)
 
-        self.client.task.make_fit_plan.assert_not_called()
+        self.client.task.build_fit_plan.assert_not_called()
         self.mock_log.assert_called_once()
         self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "latency_budget")
         self.assertEqual(
@@ -639,7 +675,7 @@ class ObjectiveTests(unittest.TestCase):
         with self.assertRaises(optuna.TrialPruned):
             self.client.objective(trial)
 
-        self.client.task.make_fit_plan.assert_not_called()
+        self.client.task.build_fit_plan.assert_not_called()
         self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "rule_0")
         self.assertIn("Configured prune metric unavailable", self.mock_log.call_args.kwargs["prune_reason"])
 
@@ -684,7 +720,7 @@ class ObjectiveTests(unittest.TestCase):
         self.client._hil_request = MagicMock(return_value=metrics)
         trial = DummyTrial()
 
-        with patch.object(self.client.task, "make_fit_plan", side_effect=ValueError("bad shape")):
+        with patch.object(self.client.task, "build_fit_plan", side_effect=ValueError("bad shape")):
             with self.assertRaisesRegex(ValueError, "bad shape"):
                 self.client.objective(trial)
 
@@ -737,9 +773,11 @@ class ObjectiveTests(unittest.TestCase):
         self.client.objective(trial)
 
         sent_payload = self.client._hil_request.call_args.args[0]
-        self.assertIn("hyperparams", sent_payload)
+        self.assertIn("family_hparams", sent_payload)
+        self.assertIn("runtime_metadata", sent_payload)
         self.assertEqual(sent_payload["device_options_overrides"], {"cpu_clock_mhz": 200})
-        self.assertNotIn("cpu_clock_mhz", sent_payload["hyperparams"])
+        self.assertNotIn("cpu_clock_mhz", sent_payload["family_hparams"])
+        self.assertEqual(sent_payload["runtime_metadata"]["flops"], 1234)
         self.assertEqual(trial.params["cpu_clock_mhz_index"], 0)
 
     def test_objective_omits_device_overrides_when_clock_options_are_null(self) -> None:
@@ -759,7 +797,7 @@ class ObjectiveTests(unittest.TestCase):
         self.client.objective(trial)
 
         sent_payload = self.client._hil_request.call_args.args[0]
-        self.assertEqual(set(sent_payload.keys()), {"hyperparams"})
+        self.assertEqual(set(sent_payload.keys()), {"family_hparams", "runtime_metadata"})
 
     def test_objective_stm_phase1_allows_arena_sentinel(self) -> None:
         """Ensure STM Phase 1 does not get pruned solely for ``arena_bytes=-1``.
@@ -783,7 +821,13 @@ class ObjectiveTests(unittest.TestCase):
 
         result = self.client.objective(trial)
 
-        self.client.task.make_fit_plan.assert_called_once()
+        self.client.task.build_fit_plan.assert_called_once_with(
+            self.client.dataset_bundle,
+            self.client.task_config,
+            self.client.target_spec,
+            mode="search",
+            combine_train_val=False,
+        )
         self.assertEqual(result, -0.3)
         self.mock_log.assert_called_once()
         logged_outcome = self.mock_log.call_args.kwargs["trial_outcome"]
@@ -1202,7 +1246,7 @@ class TrainBestTrialTests(unittest.TestCase):
             built_model = client.model_family.build_model.return_value
             built_model.fit.return_value = SimpleNamespace(history={"loss": [1.0], "val_loss": [0.5]})
             fit_task = MagicMock()
-            fit_task.make_fit_plan.return_value = FitPlan(
+            fit_task.build_fit_plan.return_value = FitPlan(
                 fit_kwargs={
                     "x": client.dataset_bundle.train.inputs,
                     "y": [client.dataset_bundle.train.targets["velx"], client.dataset_bundle.train.targets["vely"]],
@@ -1245,10 +1289,17 @@ class TrainBestTrialTests(unittest.TestCase):
                 checkpoint_path=base / "best.keras",
                 early_stopping_patience=7,
             )
-            fit_task.make_fit_plan.assert_called_once_with(
+            fit_task.build_fit_plan.assert_called_once_with(
                 client.dataset_bundle,
                 client.task_config,
                 client.target_spec,
+                mode="final",
+                combine_train_val=False,
+            )
+            client.model_family.decode_trial_hparams.assert_called_once_with(
+                dict(best_trial.params),
+                client.model_build_context,
+                client.model_config,
             )
             built_model.fit.assert_called_once()
             fit_call = built_model.fit.call_args.kwargs
@@ -1389,6 +1440,21 @@ class EvaluateCheckpointTests(unittest.TestCase):
                 np.array_equal(mock_convert.call_args.kwargs["training_data"], calibration_inputs)
             )
 
+    def test_evaluate_checkpoint_rejects_tflite_when_family_does_not_support_it(self) -> None:
+        # TFLite export should fail fast when the active model family opts out of export support.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            client.model_family.supports_tflite.return_value = False
+
+            with self.assertRaisesRegex(ValueError, "does not support TFLite export"):
+                client.evaluate_checkpoint(
+                    checkpoint_path=base / "ckpt.keras",
+                    metrics_path=base / "metrics.json",
+                    export_tflite=True,
+                    tflite_path=base / "model.tflite",
+                )
+
 
 class TrajectoryMetricsTests(unittest.TestCase):
     """Trajectory metrics/plots should be generated with stubbed models."""
@@ -1487,7 +1553,7 @@ class SummaryBundleTests(unittest.TestCase):
             history_path.write_text("{}")
             loss_plots = {"loss_plot": str(base / "loss.png")}
             test_metrics = {"checkpoint_path": str(base / "ckpt.keras"), "tflite_path": None}
-            traj_metrics = {"ate_mean": 0.1}
+            closeout_artifacts = {"ate_mean": 0.1}
 
             class DummyStudy:
                 def __init__(self):
@@ -1500,7 +1566,7 @@ class SummaryBundleTests(unittest.TestCase):
                     history_path=history_path,
                     loss_plots=loss_plots,
                     test_metrics=test_metrics,
-                    traj_metrics=traj_metrics,
+                    closeout_artifacts=closeout_artifacts,
                     summary_path=base / "summary.json",
                 )
 
@@ -1509,7 +1575,7 @@ class SummaryBundleTests(unittest.TestCase):
             self.assertEqual(content["best_params"], {"nb_filters": 8})
             self.assertEqual(content["loss_plots"], loss_plots)
             self.assertEqual(content["test_metrics"], test_metrics)
-            self.assertEqual(content["trajectory_metrics"], traj_metrics)
+            self.assertEqual(content["task_closeout_artifacts"], closeout_artifacts)
 
 
 class CloseTests(unittest.TestCase):

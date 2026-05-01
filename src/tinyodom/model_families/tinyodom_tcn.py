@@ -1,38 +1,188 @@
-"""TinyODOM TCN family adapter built on the legacy model implementation.
-
-This module bridges :class:`ModelFamilyABC` onto the current TinyODOM TCN
-builder and the family-specific export-materialization flow that still lives on
-top of the legacy model stack.
-"""
+"""TinyODOM TCN family implementation and family-owned helpers."""
 
 from __future__ import annotations
 
+import itertools
 import logging
 from pathlib import Path
+from collections import deque
 from typing import Any
 
-from addict import Dict
+import numpy as np
+import tensorflow as tf
 from tcn import TCN
+from tensorflow.keras import Model
+from tensorflow.keras.layers import Dense, Flatten, Input, MaxPooling1D, Reshape
+from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
 
 from ..interfaces import ModelFamilyABC
 from ..pipeline_types import ModelBuildContext
-from ..model import (
-    DILATION_CANDIDATES,
-    DROP_RATE_CHOICES,
-    apply_combined_perturbation,
-    build_tinyodom_model,
-)
 
 logger = logging.getLogger(__name__)
+
+MIN_TCN_LAYERS = 3
+MAX_TCN_LAYERS = 8
+DILATION_POOL = [1, 2, 4, 8, 16, 32, 64, 128, 256]
+DILATION_CANDIDATES = [
+    list(combo)
+    for layer_count in range(MIN_TCN_LAYERS, MAX_TCN_LAYERS + 1)
+    for combo in itertools.combinations(DILATION_POOL, layer_count)
+]
+DROP_RATE_CHOICES = [0.0, 0.1, 0.2, 0.3, 0.4]
+
+
+def build_tinyodom_model(hyperparams: dict[str, Any]) -> Model:
+    """Build the TinyODOM TCN architecture from plain hyperparameters.
+
+    Parameters
+    ----------
+    hyperparams : dict[str, Any]
+        Hyperparameter mapping containing the TinyODOM TCN build fields.
+
+    Returns
+    -------
+    tensorflow.keras.Model
+        Uncompiled two-head velocity model.
+    """
+
+    inputs = Input(shape=(int(hyperparams["timesteps"]), int(hyperparams["input_dim"])))
+    features = TCN(
+        nb_filters=int(hyperparams["nb_filters"]),
+        kernel_size=int(hyperparams["kernel_size"]),
+        dilations=list(hyperparams["dilations"]),
+        dropout_rate=float(hyperparams["dropout_rate"]),
+        use_skip_connections=bool(hyperparams["use_skip_connections"]),
+        use_batch_norm=bool(hyperparams["norm_flag"]),
+    )(inputs)
+
+    # Preserve the original TinyODOM post-processing stack so the family keeps
+    # the same symbolic output contract while owning the implementation locally.
+    features = Reshape((int(hyperparams["nb_filters"]), 1))(features)
+    features = MaxPooling1D(pool_size=2)(features)
+    features = Flatten()(features)
+    features = Dense(32, activation="linear", name="pre")(features)
+    vel_x = Dense(1, activation="linear", name="velx")(features)
+    vel_y = Dense(1, activation="linear", name="vely")(features)
+    return Model(inputs=[inputs], outputs=[vel_x, vel_y])
+
+
+def _iter_layers(model: tf.keras.Model) -> list[tf.keras.layers.Layer]:
+    """Return all reachable layers from a Keras model graph.
+
+    Parameters
+    ----------
+    model : tensorflow.keras.Model
+        Model to inspect.
+
+    Returns
+    -------
+    list[tensorflow.keras.layers.Layer]
+        Reachable layers in breadth-first traversal order.
+    """
+
+    queue = deque([model])
+    seen_nodes: set[int] = set()
+    layers: list[tf.keras.layers.Layer] = []
+    while queue:
+        node = queue.popleft()
+        node_id = id(node)
+        if node_id in seen_nodes:
+            continue
+        seen_nodes.add(node_id)
+        if isinstance(node, tf.keras.layers.Layer):
+            layers.append(node)
+        for child in getattr(node, "layers", []) or []:
+            queue.append(child)
+    return layers
+
+
+def apply_combined_perturbation(
+    model: tf.keras.Model,
+    seed: int = 1337,
+) -> tuple[int, int]:
+    """Apply the TinyODOM deterministic BN/bias perturbation pass.
+
+    Parameters
+    ----------
+    model : tensorflow.keras.Model
+        Model whose BN statistics and non-BN biases are perturbed in place.
+    seed : int, optional
+        Random seed used to keep perturbation deterministic.
+
+    Returns
+    -------
+    tuple[int, int]
+        Number of BN layers touched and number of non-BN bias layers touched.
+    """
+
+    rng = np.random.default_rng(int(seed))
+    bn_touched = 0
+    bias_touched = 0
+    for layer in _iter_layers(model):
+        if isinstance(layer, tf.keras.layers.BatchNormalization):
+            if layer.gamma is not None:
+                layer.gamma.assign(rng.uniform(0.7, 1.3, size=layer.gamma.shape).astype(np.float32))
+            if layer.beta is not None:
+                layer.beta.assign(rng.uniform(-0.3, 0.3, size=layer.beta.shape).astype(np.float32))
+            if layer.moving_mean is not None:
+                layer.moving_mean.assign(
+                    rng.uniform(-0.5, 0.5, size=layer.moving_mean.shape).astype(np.float32)
+                )
+            if layer.moving_variance is not None:
+                layer.moving_variance.assign(
+                    rng.uniform(0.3, 2.0, size=layer.moving_variance.shape).astype(np.float32)
+                )
+            bn_touched += 1
+            continue
+
+        bias = getattr(layer, "bias", None)
+        if bias is None:
+            continue
+        bias.assign(rng.uniform(-0.3, 0.3, size=bias.shape).astype(np.float32))
+        bias_touched += 1
+    return bn_touched, bias_touched
+
+
+def _count_flops(model: tf.keras.Model, input_shape: tuple[int, int]) -> int:
+    """Estimate TinyODOM TCN FLOPs from a frozen TensorFlow graph.
+
+    Parameters
+    ----------
+    model : tensorflow.keras.Model
+        Built Keras model to profile.
+    input_shape : tuple[int, int]
+        Logical `(timesteps, input_dim)` input shape.
+
+    Returns
+    -------
+    int
+        Forward-pass FLOP count for batch size 1.
+    """
+
+    concrete = tf.function(model).get_concrete_function(
+        tf.TensorSpec([1, *input_shape], tf.float32)
+    )
+    frozen = convert_variables_to_constants_v2(concrete)
+    graph_def = frozen.graph.as_graph_def()
+    with tf.Graph().as_default() as graph:
+        tf.compat.v1.import_graph_def(graph_def, name="")
+        options = (
+            tf.compat.v1.profiler.ProfileOptionBuilder(
+                tf.compat.v1.profiler.ProfileOptionBuilder.float_operation()
+            )
+            .with_empty_output()
+            .build()
+        )
+        flops = tf.compat.v1.profiler.profile(graph, options=options)
+    return int(flops.total_float_ops)
 
 
 class TinyOdomTCNFamily(ModelFamilyABC):
     """TCN model family matching the current TinyODOM architecture surface.
 
-    The adapter exposes the stable ``"tinyodom_tcn"`` family name, preserves
-    the legacy NAS hyperparameter surface, bridges the generic model-family
-    interface onto the legacy builder, and owns the current export-model
-    materialization path for TinyODOM TCN variants.
+    The family exposes the stable ``"tinyodom_tcn"`` name, owns the TinyODOM
+    search surface, model builder, FLOP estimation, persisted-trial decoding,
+    and export-model materialization path.
     """
 
     @property
@@ -68,8 +218,6 @@ class TinyOdomTCNFamily(ModelFamilyABC):
         -------
         dict[str, Any]
             Sampled family hyperparameters without runner-owned fields.
-            ``dilations`` is selected indirectly through
-            ``dilations_index`` into :data:`DILATION_CANDIDATES`.
         """
 
         del ctx, config
@@ -83,13 +231,73 @@ class TinyOdomTCNFamily(ModelFamilyABC):
             "dilations": DILATION_CANDIDATES[dilations_index],
         }
 
+    def decode_trial_hparams(
+        self,
+        raw_params: dict[str, Any],
+        ctx: ModelBuildContext,
+        config: Any,
+    ) -> dict[str, Any]:
+        """Decode persisted Optuna trial parameters for the TinyODOM family.
+
+        Parameters
+        ----------
+        raw_params : dict[str, Any]
+            Raw persisted Optuna parameter mapping.
+        ctx : ModelBuildContext
+            Build-time context. Unused for the current decode logic.
+        config : Any
+            Model-family configuration subtree. Unused for the current decode logic.
+
+        Returns
+        -------
+        dict[str, Any]
+            Build-time TinyODOM hyperparameters with ``dilations`` expanded.
+        """
+
+        del ctx, config
+        decoded = dict(raw_params)
+        if "dilations_index" in decoded and "dilations" not in decoded:
+            decoded["dilations"] = DILATION_CANDIDATES[int(decoded["dilations_index"])]
+        decoded.pop("dilations_index", None)
+        return decoded
+
+    def default_seed_trial(
+        self,
+        ctx: ModelBuildContext,
+        config: Any,
+    ) -> dict[str, Any] | None:
+        """Return the built-in baseline TinyODOM NAS seed trial.
+
+        Parameters
+        ----------
+        ctx : ModelBuildContext
+            Build-time context. Unused for the current seed trial.
+        config : Any
+            Model-family configuration subtree. Unused for the current seed trial.
+
+        Returns
+        -------
+        dict[str, Any] | None
+            Raw trial parameters matching the NAS sampling surface.
+        """
+
+        del ctx, config
+        return {
+            "nb_filters": 10,
+            "kernel_size": 12,
+            "dropout_rate": 0.0,
+            "use_skip_connections": False,
+            "norm_flag": True,
+            "dilations_index": 107,
+        }
+
     def build_model(
         self,
         hparams: dict[str, Any],
         ctx: ModelBuildContext,
         config: Any,
     ) -> Any:
-        """Build the current TinyODOM TCN model through the legacy builder.
+        """Build the current TinyODOM TCN model.
 
         Parameters
         ----------
@@ -103,7 +311,7 @@ class TinyOdomTCNFamily(ModelFamilyABC):
         Returns
         -------
         Any
-            Uncompiled Keras model returned by the legacy builder.
+            Uncompiled Keras model returned by the family-owned builder.
 
         Raises
         ------
@@ -117,14 +325,12 @@ class TinyOdomTCNFamily(ModelFamilyABC):
         if ctx.input_shape is None or len(ctx.input_shape) < 2:
             raise ValueError("TinyOdomTCNFamily requires a 2D input shape: (timesteps, input_dim).")
 
-        legacy_payload = {
+        build_hparams = {
             **hparams,
             "timesteps": int(ctx.input_shape[0]),
             "input_dim": int(ctx.input_shape[1]),
         }
-        # The legacy model builder still expects addict.Dict-style attribute
-        # access, so Phase 2 bridges the new plain-dict contract here.
-        return build_tinyodom_model(Dict(legacy_payload))
+        return build_tinyodom_model(build_hparams)
 
     def validate_hparams(
         self,
@@ -178,6 +384,39 @@ class TinyOdomTCNFamily(ModelFamilyABC):
         """
 
         return {"TCN": TCN}
+
+    def count_flops(
+        self,
+        model: tf.keras.Model,
+        ctx: ModelBuildContext,
+        config: Any,
+    ) -> int:
+        """Estimate FLOPs for one TinyODOM TCN model.
+
+        Parameters
+        ----------
+        model : tensorflow.keras.Model
+            Built model to profile.
+        ctx : ModelBuildContext
+            Build-time context containing the logical input shape.
+        config : Any
+            Model-family configuration subtree.
+
+        Returns
+        -------
+        int
+            Estimated forward-pass FLOP count.
+
+        Raises
+        ------
+        ValueError
+            If the model build context does not expose a usable logical input shape.
+        """
+
+        del config
+        if ctx.input_shape is None or len(ctx.input_shape) < 2:
+            raise ValueError("TinyOdomTCNFamily requires a 2D input shape: (timesteps, input_dim).")
+        return _count_flops(model, (int(ctx.input_shape[0]), int(ctx.input_shape[1])))
 
     def materialize_export_model(
         self,

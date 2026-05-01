@@ -59,8 +59,15 @@ points above.
   [`tinyodom/microcontrollers/README.md`](tinyodom/microcontrollers/README.md)
   for bring-up details.
 - [`tinyodom/model.py`](tinyodom/model.py)
-  Shared runtime helpers for config loading, score evaluation, metric
-  normalization, and HIL request construction.
+  Shared runtime helpers for config loading, score evaluation, and generic
+  metric normalization.
+- [`tinyodom/runtime_bootstrap.py`](tinyodom/runtime_bootstrap.py)
+  Shared task-aware bootstrap path used by both `nas_model_client.py` and
+  `hil_server.py` to resolve component selection, instantiate dataset/task/
+  family components, and validate NAS policy against the active task contract.
+- [`tinyodom/hil_runtime.py`](tinyodom/hil_runtime.py)
+  Runtime-owned HIL request construction and metric collection helpers used by
+  the HIL server and related tests.
 - [`tinyodom/devices.py`](tinyodom/devices.py)
   Shared device dataclasses and the `DeviceInterface` contract used by
   hardware backends.
@@ -97,17 +104,21 @@ At a high level, the source tree is wired like this:
    `ensure_builtin_components_registered()` from
    [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py) so the
    default dataset, task, and model family are available by name.
-3. The entry point resolves the active component selection through
-   `resolve_component_selection(...)` in
-   [`tinyodom/component_selection.py`](tinyodom/component_selection.py).
+3. The entry point runs the shared bootstrap in
+   [`tinyodom/runtime_bootstrap.py`](tinyodom/runtime_bootstrap.py), which
+   resolves component selection, instantiates the selected dataset/task/model
+   family, derives the target spec, and validates `nas.score` / `nas.prune`
+   against the task metric contract.
 4. The selected dataset adapter loads data and produces a normalized
    `DatasetBundle`.
 5. The selected task adapter builds the target contract and training/evaluation
    behavior.
 6. The selected model family samples hyperparameters, builds models, and
    materializes export variants.
-7. The selected microcontroller backend stages, compiles, uploads, and
-   measures one candidate when hardware metrics are needed.
+7. When hardware metrics are needed, the HIL path builds a normalized request
+   through [`tinyodom/hil_runtime.py`](tinyodom/hil_runtime.py), then the
+   selected microcontroller backend stages, compiles, uploads, and measures
+   one candidate.
 8. Shared scoring, pruning, and result-shaping code combines task metrics and
    backend metrics into the values used by NAS and reporting.
 
@@ -183,6 +194,20 @@ declaration shared with orchestration code. It tells the shared pipeline:
 
 This is how the task layer advertises metrics such as `rmse_total` without
 hardcoding them into the shared NAS/logging layer.
+
+### Task-Owned Fit And Closeout Hooks
+
+`TaskABC` now owns both fit-plan construction and task-specific closeout hooks.
+
+- `build_fit_plan(...)`
+  Returns the `FitPlan` used by NAS-time training and final retraining,
+  including the `combine_train_val=True` path.
+- `history_component_keys(...)`
+  Advertises which per-output training curves should be plotted for the active
+  task.
+- `generate_closeout_artifacts(...)`
+  Produces task-specific closeout artifacts without forcing generic NAS code to
+  assume odometry trajectory reporting.
 
 ### Score Resolution
 

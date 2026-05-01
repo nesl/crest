@@ -7,7 +7,6 @@ and the lazy bootstrap path for dataset, task, and model-family components.
 
 import argparse
 from collections.abc import Mapping
-import inspect
 import logging
 import math
 import shutil
@@ -21,6 +20,7 @@ import tensorflow as tf
 # import tensorflow_model_optimization as tfmot
 import zmq
 from addict import Dict
+import numpy as np
 
 from tinyodom.builtin_components import ensure_builtin_components_registered
 from tinyodom.component_selection import cfg_get, resolve_component_selection
@@ -29,6 +29,7 @@ from tinyodom.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
     describe_error_code,
 )
+from tinyodom.hil_runtime import build_collect_metrics_request, collect_metrics
 from tinyodom.errors import HIL_ERROR_OK, HIL_MASTER_FATAL
 from tinyodom.microcontrollers import (
     get_device as get_microcontroller_device,
@@ -41,15 +42,14 @@ from tinyodom.microcontrollers.stm32_nucleo_n657x0 import (
 from tinyodom.microcontrollers import stm32_cube_clt, stm32_runtime
 from tinyodom.model import (
     DEFAULT_CONFIG_PATH,
-    build_collect_metrics_request,
-    collect_metrics,
     load_config,
     require_logical_input_shape,
     set_error_code,
     validate_model_input_shape,
 )
 from tinyodom.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
-from tinyodom.registry import dataset_registry, model_family_registry, task_registry
+from tinyodom.registry import dataset_registry, model_family_registry
+from tinyodom.runtime_bootstrap import bootstrap_pipeline, instantiate_task_component
 
 # Reduce noisy TensorFlow / absl logging at import time for CLI and server use.
 tf.get_logger().setLevel(logging.ERROR)
@@ -259,25 +259,25 @@ class HILServer:
 
         if self._pipeline_bootstrapped:
             return
-        if self.dataset_bundle is not None:
-            dataset_cls = dataset_registry.get(self.dataset_name)
-            dataset = self.dataset if self.dataset is not None else dataset_cls()
-            dataset.validate_config(self.dataset_config)
-            bundle = self.dataset_bundle
-        else:
-            dataset, bundle = self._load_dataset_bundle(
-                self.dataset_name,
-                self.dataset_config,
-            )
-        selection = {
-            "dataset_name": self.dataset_name,
-            "task_name": self.task_name,
-            "model_family_name": self.model_family_name,
-            "dataset_config": self.dataset_config,
-            "task_config": self.task_config,
-            "model_config": self.model_config,
-        }
-        self._initialize_component_state(selection, dataset, bundle)
+        pipeline = bootstrap_pipeline(
+            self.config,
+            dataset=self.dataset,
+            bundle=self.dataset_bundle,
+        )
+        self.dataset_name = pipeline.selection["dataset_name"]
+        self.task_name = pipeline.selection["task_name"]
+        self.model_family_name = pipeline.selection["model_family_name"]
+        self.dataset = pipeline.dataset
+        self.task = pipeline.task
+        self.model_family = pipeline.model_family
+        self.dataset_bundle = pipeline.bundle
+        self.target_spec = pipeline.target_spec
+        self.metric_contract = pipeline.metric_contract
+        self.model_build_context = pipeline.model_build_context
+        self.dataset_config = pipeline.selection["dataset_config"]
+        self.task_config = pipeline.selection["task_config"]
+        self.model_config = pipeline.selection["model_config"]
+        self._pipeline_bootstrapped = True
 
     def _resolve_component_selection(self, config: Any) -> dict[str, Any]:
         """Resolve active dataset, task, and model-family selections.
@@ -300,7 +300,7 @@ class HILServer:
         task_name: str,
         task_config: Any,
     ) -> Any:
-        """Instantiate the configured task with compatibility constructor args.
+        """Instantiate the configured task using the explicit runtime contract.
 
         Parameters
         ----------
@@ -315,16 +315,11 @@ class HILServer:
             Instantiated task component.
         """
 
-        task_cls = task_registry.get(task_name)
-        signature = inspect.signature(task_cls)
-        kwargs: dict[str, Any] = {}
-        if "checkpoint_path" in signature.parameters:
-            kwargs["checkpoint_path"] = Path(self.config.outputs.checkpoint_path)
-        if "early_stopping_patience" in signature.parameters:
-            kwargs["early_stopping_patience"] = int(
-                self._cfg_get(task_config, "early_stopping_patience", 40)
-            )
-        return task_cls(**kwargs)
+        return instantiate_task_component(
+            task_name,
+            self.config,
+            task_config,
+        )
 
     def _load_dataset_bundle(
         self,
@@ -426,30 +421,31 @@ class HILServer:
         self.model_config = selection["model_config"]
         self._pipeline_bootstrapped = True
 
-    def _split_request_hparams(self, hyperparams: Mapping[str, Any]) -> tuple[dict[str, Any], Dict]:
-        """Split inbound request fields into family and runtime-owned values.
-
-        Parameters
-        ----------
-        hyperparams : Mapping[str, Any]
-            Inbound HIL request payload.
+    def get_runtime_dimensions(self) -> tuple[int, int]:
+        """Return the resolved runtime `(window_size, input_dim)` pair.
 
         Returns
         -------
-        tuple[dict[str, Any], Dict]
-            Model-family hyperparameters plus runner-owned runtime metadata.
+        tuple[int, int]
+            Resolved runtime dimensions for the active dataset/model context.
         """
 
-        runtime_keys = {"flops", "timesteps", "input_dim", "batch_size"}
-        family_hparams = {key: value for key, value in hyperparams.items() if key not in runtime_keys}
-        runtime_metadata = Dict(
-            {
-                key: value
-                for key, value in hyperparams.items()
-                if key in runtime_keys
-            }
-        )
-        return family_hparams, runtime_metadata
+        return self._resolve_runtime_dimensions()
+
+    def get_calibration_inputs(self) -> np.ndarray | None:
+        """Return representative calibration inputs when available.
+
+        Returns
+        -------
+        np.ndarray | None
+            Calibration inputs for export-capable backends, or ``None`` when
+            the active dataset does not expose calibration data.
+        """
+
+        calibration_split = self._ensure_calibration_split()
+        if calibration_split is None:
+            return None
+        return calibration_split.inputs
 
     @staticmethod
     def _parse_required_runtime_int(
@@ -883,9 +879,10 @@ class HILServer:
                 payload = self.socket.recv_json()
                 print(f"[HIL REP] Received payload: {payload}")
                 try:
-                    hyperparams, device_options_overrides = self._normalize_request_payload(payload)
+                    family_hparams, runtime_metadata, device_options_overrides = self._normalize_request_payload(payload)
                     metrics = self.determine_metrics(
-                        hyperparams,
+                        family_hparams=family_hparams,
+                        runtime_metadata=runtime_metadata,
                         device_options_overrides=device_options_overrides,
                     )
                 except ValueError as exc:
@@ -909,8 +906,8 @@ class HILServer:
             self.context.term()
 
     @staticmethod
-    def _normalize_request_payload(payload: object) -> tuple[Dict, dict | None]:
-        """Normalize legacy and structured REQ payloads into one internal shape.
+    def _normalize_request_payload(payload: object) -> tuple[Dict, Dict, dict | None]:
+        """Normalize one structured REQ payload into internal request parts.
 
         Parameters
         ----------
@@ -919,23 +916,25 @@ class HILServer:
 
         Returns
         -------
-        tuple[Dict, dict | None]
-            Model hyperparameters plus optional device option overrides.
+        tuple[Dict, Dict, dict | None]
+            Family hyperparameters, runtime metadata, and optional device
+            option overrides.
         """
         if not isinstance(payload, Mapping):
             raise ValueError("HIL request payload must be a JSON object.")
-        if "hyperparams" in payload:
-            raw_hyperparams = payload.get("hyperparams", {})
-            if not isinstance(raw_hyperparams, Mapping):
-                raise ValueError("HIL request field `hyperparams` must be a JSON object.")
-            raw_overrides = payload.get("device_options_overrides", None)
-            if raw_overrides is not None and not isinstance(raw_overrides, Mapping):
-                raise ValueError(
-                    "HIL request field `device_options_overrides` must be a JSON object when provided."
-                )
-            overrides = dict(raw_overrides) if raw_overrides is not None else None
-            return Dict(dict(raw_hyperparams)), overrides
-        return Dict(dict(payload)), None
+        raw_family_hparams = payload.get("family_hparams", None)
+        raw_runtime_metadata = payload.get("runtime_metadata", None)
+        if not isinstance(raw_family_hparams, Mapping):
+            raise ValueError("HIL request field `family_hparams` must be a JSON object.")
+        if not isinstance(raw_runtime_metadata, Mapping):
+            raise ValueError("HIL request field `runtime_metadata` must be a JSON object.")
+        raw_overrides = payload.get("device_options_overrides", None)
+        if raw_overrides is not None and not isinstance(raw_overrides, Mapping):
+            raise ValueError(
+                "HIL request field `device_options_overrides` must be a JSON object when provided."
+            )
+        overrides = dict(raw_overrides) if raw_overrides is not None else None
+        return Dict(dict(raw_family_hparams)), Dict(dict(raw_runtime_metadata)), overrides
 
     def _request_boundary_failure_metrics(
         self,
@@ -960,7 +959,8 @@ class HILServer:
 
     def determine_metrics(
         self,
-        hyperparams: Dict,
+        family_hparams: Mapping[str, Any],
+        runtime_metadata: Mapping[str, Any],
         device_options_overrides: dict | None = None,
         checkpoint_path: Path | str | None = None,
         model_variant: str = APPROX_TRAINED_VARIANT_NAME,
@@ -970,9 +970,11 @@ class HILServer:
 
         Parameters
         ----------
-        hyperparams : Dict
-            Inbound request payload containing both model-family hyperparameters
-            and runner-owned runtime metadata such as ``flops``.
+        family_hparams : Mapping[str, Any]
+            Model-family-owned hyperparameters for candidate construction.
+        runtime_metadata : Mapping[str, Any]
+            Runtime-owned request metadata such as ``flops``, ``timesteps``,
+            ``input_dim``, and ``batch_size``.
         checkpoint_path : Path | str | None, optional
             Checkpoint path used when ``model_variant`` starts with ``"trained"``.
         model_variant : str, optional
@@ -998,7 +1000,6 @@ class HILServer:
         FileNotFoundError
             If a requested trained checkpoint does not exist.
         """
-        family_hparams, runtime_metadata = self._split_request_hparams(hyperparams)
         try:
             runtime_metadata = self._normalize_runtime_metadata(runtime_metadata)
         except ValueError as exc:
@@ -1122,7 +1123,7 @@ class HILServer:
             try:
                 request_metrics_args = build_collect_metrics_request(
                     config=self.config,
-                    hyperparams=runtime_metadata,
+                    runtime_metadata=runtime_metadata,
                     latency_budget_ms=latency_budget_ms,
                     dirpath=prepared_dir,
                     device_options=merged_device_options,
