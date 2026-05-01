@@ -2405,6 +2405,55 @@ class LoadSettingsTests(unittest.TestCase):
                 training_only_task_metric_names=set(),
             )
 
+    def test_validate_nas_policy_for_task_accepts_audio_classification_metrics(self) -> None:
+        """Task-aware validation should accept audio metrics without RMSE.
+
+        Returns
+        -------
+        None
+            Asserts `accuracy` and `macro_f1` are sufficient task metrics for
+            a classification score config.
+        """
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: accuracy",
+                        "          weight: 1.0",
+                        "        - type: weighted",
+                        "          metric: macro_f1",
+                        "          weight: 0.1",
+                        "  prune:",
+                        "    rules: []",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'audio'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+            validated = validate_nas_policy_for_task(
+                settings,
+                task_metric_names={"loss", "accuracy", "macro_f1"},
+                training_only_task_metric_names=set(),
+            )
+
+        self.assertEqual(validated.nas.score.params.terms[0].metric, "accuracy")
+
     def test_load_settings_accepts_derived_metric_that_references_custom_task_metric(self) -> None:
         """Derived score metrics may depend on caller-supplied task metrics."""
         # Derived metric that references custom task metric should remain a supported config shape.

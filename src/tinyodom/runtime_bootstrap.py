@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from numbers import Integral
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,32 @@ from .component_selection import cfg_get, resolve_component_selection
 from .model import validate_nas_policy_for_task
 from .pipeline_types import DatasetBundle, ModelBuildContext, TargetSpec, TaskMetricContract
 from .registry import dataset_registry, model_family_registry, task_registry
+
+
+def _resolve_early_stopping_patience(raw_value: Any) -> int:
+    """Validate and normalize task early-stopping patience.
+
+    Parameters
+    ----------
+    raw_value : Any
+        Raw patience value from task config or an explicit caller override.
+
+    Returns
+    -------
+    int
+        Positive integer patience.
+
+    Raises
+    ------
+    ValueError
+        If the value is not a non-boolean positive integer.
+    """
+
+    if isinstance(raw_value, bool) or not isinstance(raw_value, Integral):
+        raise ValueError("task.params.early_stopping_patience must be a positive integer.")
+    if int(raw_value) <= 0:
+        raise ValueError("task.params.early_stopping_patience must be a positive integer.")
+    return int(raw_value)
 
 
 @dataclass(frozen=True)
@@ -81,11 +108,12 @@ def instantiate_task_component(
         if checkpoint_path is None
         else Path(checkpoint_path)
     )
-    resolved_patience = int(
+    raw_patience = (
         cfg_get(task_config, "early_stopping_patience", 40)
         if early_stopping_patience is None
         else early_stopping_patience
     )
+    resolved_patience = _resolve_early_stopping_patience(raw_patience)
     return task_cls(
         checkpoint_path=resolved_checkpoint_path,
         early_stopping_patience=resolved_patience,

@@ -14,6 +14,8 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from tinyodom.interfaces import DatasetABC, ModelFamilyABC, TaskABC  # noqa: E402
+from tinyodom.builtin_components import ensure_builtin_components_registered  # noqa: E402
+from tinyodom.datasets.urbansound8k_mel import UrbanSound8KMelDataset  # noqa: E402
 from tinyodom.pipeline_types import (  # noqa: E402
     DataSplit,
     DatasetBundle,
@@ -23,7 +25,8 @@ from tinyodom.pipeline_types import (  # noqa: E402
     TargetSpec,
     TaskMetricContract,
 )
-from tinyodom.registry import ComponentRegistry  # noqa: E402
+from tinyodom.registry import ComponentRegistry, dataset_registry, task_registry  # noqa: E402
+from tinyodom.tasks.sound_classification import SoundClassificationTask  # noqa: E402
 
 
 class DummyDataset(DatasetABC):
@@ -170,6 +173,22 @@ class RegistryTests(unittest.TestCase):
 
         with self.assertRaises(KeyError):
             _ = registry["missing"]
+
+    def test_builtin_registration_includes_audio_components(self) -> None:
+        """Built-in registration should include audio dataset and task.
+
+        Returns
+        -------
+        None
+            Asserts repeated registration calls are idempotent and global
+            registries expose the new Phase 3 components.
+        """
+
+        ensure_builtin_components_registered()
+        ensure_builtin_components_registered()
+
+        self.assertIs(dataset_registry["urbansound8k_mel"], UrbanSound8KMelDataset)
+        self.assertIs(task_registry["sound_classification"], SoundClassificationTask)
 
 
 class InterfaceDefaultsTests(unittest.TestCase):
