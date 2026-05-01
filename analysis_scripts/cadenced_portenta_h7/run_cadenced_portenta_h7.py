@@ -135,10 +135,12 @@ def _derive_default_latency_budget_ms(server: Any) -> float:
         ``(stride / sampling_rate_hz) * 1000`` in milliseconds.
     """
 
-    return (float(server.config.data.stride) / float(server.config.data.sampling_rate_hz)) * 1000.0
+    from tinyodom.analysis_support import derive_latency_budget_ms
+
+    return derive_latency_budget_ms(server.dataset_config)
 
 
-def _build_hyperparams(server: Any, build_tinyodom_model_fn: Any, count_flops_fn: Any) -> AttrDict:
+def _build_hyperparams(server: Any) -> AttrDict:
     """Construct the fixed TinyODOM hyperparameter set and FLOP count.
 
     Parameters
@@ -152,20 +154,15 @@ def _build_hyperparams(server: Any, build_tinyodom_model_fn: Any, count_flops_fn
         Hyperparameter bundle consumed by ``determine_metrics``.
     """
 
-    hyperparams = AttrDict(
-        nb_filters=10,
-        kernel_size=12,
-        dilations=[1, 4, 8, 64],
-        dropout_rate=0.0,
-        use_skip_connections=False,
-        norm_flag=True,
-        batch_size=256,
-        timesteps=server.config.data.window_size,
-        input_dim=server.training_data.inputs.shape[2],
+    from tinyodom.analysis_support import build_fixed_tinyodom_hyperparams
+
+    window_size, input_dim = server.get_runtime_dimensions()
+    return AttrDict(
+        build_fixed_tinyodom_hyperparams(
+            window_size=window_size,
+            input_dim=input_dim,
+        )
     )
-    model = build_tinyodom_model_fn(hyperparams)
-    hyperparams.flops = count_flops_fn(model, (hyperparams.timesteps, hyperparams.input_dim))
-    return hyperparams
 
 
 def _ensure_portenta_runtime_config(server: Any, core: str) -> None:
@@ -551,11 +548,12 @@ def main() -> int:
 
     sys.path.insert(0, os.path.abspath(str(REPO_ROOT / "src")))
     from hil_server import HILServer
-    from tinyodom.model import build_tinyodom_model, count_flops
+    from tinyodom.analysis_support import split_hil_request_hyperparams
 
     server = HILServer(config_path=Path(args.config))
     experiment_cfg = _resolve_experiment_config(args, server)
-    hyperparams = _build_hyperparams(server, build_tinyodom_model, count_flops)
+    hyperparams = _build_hyperparams(server)
+    family_hparams, runtime_metadata = split_hil_request_hyperparams(hyperparams)
 
     attempts: list[Dict[str, Any]] = []
     timestamp_utc = datetime.now(timezone.utc).isoformat()
@@ -570,7 +568,8 @@ def main() -> int:
                     latency_budget_ms=experiment_cfg.latency_budget_ms,
                 )
                 metrics = server.determine_metrics(
-                    hyperparams,
+                    family_hparams,
+                    runtime_metadata,
                     model_variant=MODEL_VARIANT_NAME,
                 )
                 record = _build_attempt_record(

@@ -11,7 +11,7 @@ import tensorflow as tf
 from test.test_support import ROOT_DIR, _cli_exists
 
 from tinyodom.hardware import convert_to_cpp_model, convert_to_tflite_model
-from tinyodom.model import CollectMetricsRequest, collect_metrics
+from tinyodom.hil_runtime import CollectMetricsRequest, collect_metrics
 
 
 @unittest.skipUnless(_cli_exists(), "Arduino CLI not installed")

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from addict import Dict
 
-from tinyodom.model import build_tinyodom_model, count_flops
+from tinyodom.analysis_support import build_fixed_tinyodom_hyperparams
 
 
 def build_noise_scan_hyperparams(window_size: int, input_dim: int) -> Dict:
@@ -26,18 +26,7 @@ def build_noise_scan_hyperparams(window_size: int, input_dim: int) -> Dict:
     addict.Dict
         Hyperparameters including computed FLOPs.
     """
-    hyperparams = Dict(
-        nb_filters=10,
-        kernel_size=12,
-        dilations=[1, 4, 8, 64],
-        dropout_rate=0.0,
-        use_skip_connections=False,
-        norm_flag=True,
-        batch_size=256,
-        timesteps=int(window_size),
+    return build_fixed_tinyodom_hyperparams(
+        window_size=int(window_size),
         input_dim=int(input_dim),
     )
-    model = build_tinyodom_model(hyperparams)
-    hyperparams.flops = count_flops(model, (hyperparams.timesteps, hyperparams.input_dim))
-    return hyperparams
-

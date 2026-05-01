@@ -17,8 +17,9 @@ reference for the current score/prune surface. Use the BLE and Portenta files
 when you want board-specific starting points for those Arduino-backed targets.
 
 The runtime loader and validator live in
-[`../tinyodom/model.py`](../tinyodom/model.py), especially `load_config(...)`
-and the NAS-policy validation helpers it calls.
+[`../tinyodom/model.py`](../tinyodom/model.py), while the task-aware bootstrap
+that resolves components and validates NAS policy against the active task lives
+in [`../tinyodom/runtime_bootstrap.py`](../tinyodom/runtime_bootstrap.py).
 
 ## Current Shape
 
@@ -27,8 +28,13 @@ The main top-level blocks in the current config surface are:
 - `device`
   Hardware target, HIL runtime behavior, timing, harness options, and
   backend-owned device options.
-- `data`
-  Dataset sampling/preprocessing settings used by the built-in OxIOD path.
+- `dataset`
+  Required dataset selection block. The built-in OxIOD dataset uses
+  `dataset.name: oxiod` plus the keys under `dataset.params`.
+- `task`
+  Required task selection block.
+- `model`
+  Required model-family selection block.
 - `training`
   NAS and training limits plus runtime-side training switches such as
   `energy_aware` and `input_mode`.
@@ -41,14 +47,10 @@ The main top-level blocks in the current config surface are:
 - `logging`
   Runtime log level.
 
-The modular component-selection blocks also exist:
-
-- `dataset`
-- `task`
-- `model`
-
-Those are resolved by
-[`../tinyodom/component_selection.py`](../tinyodom/component_selection.py).
+Those component blocks are resolved by
+[`../tinyodom/component_selection.py`](../tinyodom/component_selection.py), and
+they are now mandatory. The older top-level `data` block is no longer part of
+the supported config contract.
 
 ## `device`
 
@@ -64,7 +66,9 @@ Common keys:
   `back_to_back` or `cadenced`.
 - `device.latency_budget_ms`
   Optional shared cadence-budget override. When omitted, the runtime derives
-  it from `data.stride / data.sampling_rate_hz * 1000`.
+  it from the active dataset sampling cadence
+  (`dataset.params.stride / dataset.params.sampling_rate_hz * 1000` for the
+  built-in `oxiod` dataset).
 - `device.serial_port`
   DUT serial port.
 - `device.measured_inference_runs`
@@ -133,25 +137,6 @@ Important current caveats:
 - For `PORTENTA_H7` and `ARDUINO_NANO_33_BLE_SENSE`, cadenced mode currently
   requires `training.input_mode: uniform`.
 
-## `data`
-
-The built-in OxIOD dataset path still uses the top-level `data` block by
-default.
-
-Current built-in keys used by [`../tinyodom/datasets/oxiod.py`](../tinyodom/datasets/oxiod.py):
-
-- `data.directory`
-- `data.sampling_rate_hz`
-- `data.window_size`
-- `data.stride`
-- `data.calibration_windows`
-
-Current caveats:
-
-- these values are required for the built-in `oxiod` dataset path
-- `sampling_rate_hz`, `window_size`, and `stride` must be positive
-- `calibration_windows` must be positive when set
-
 ## `training`
 
 The `training` block still owns the main NAS/training runtime switches.
@@ -193,12 +178,14 @@ Current keys:
 
 Current caveats:
 
-- `dataset.params` overrides the top-level `data` block when present
-- the shipped default YAML does not yet include a full modular example
+- `dataset`, `task`, and `model` are required top-level blocks
+- `dataset.params` is required for the built-in `oxiod` dataset path
 - dataset classes are instantiated as zero-argument classes
 - model family classes are instantiated as zero-argument classes
-- task classes only receive `checkpoint_path` and
-  `early_stopping_patience` when those exact constructor kwargs are present
+- task classes are expected to use the explicit keyword-only constructor
+  contract `__init__(*, checkpoint_path, early_stopping_patience)`; the runtime
+  no longer probes constructor signatures and does not provide backward-
+  compatibility shims for older task classes
 
 Minimal example:
 

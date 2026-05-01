@@ -22,6 +22,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from analysis_scripts.hil_noise_analysis.noise_scan_model_spec import build_noise_scan_hyperparams
 from hil_server import HILServer, logger
+from tinyodom.analysis_support import split_hil_request_hyperparams
 from tinyodom.model import DEFAULT_CONFIG_PATH
 
 
@@ -302,10 +303,12 @@ def main() -> int:
         server.config.training.energy_aware = True
         server.set_input_mode(server.config.training.get("input_mode", "uniform"))
 
+    window_size, input_dim = server.get_runtime_dimensions()
     hyperparams = build_noise_scan_hyperparams(
-        window_size=server.config.data.window_size,
-        input_dim=server.training_data.inputs.shape[2],
+        window_size=window_size,
+        input_dim=input_dim,
     )
+    family_hparams, runtime_metadata = split_hil_request_hyperparams(hyperparams)
 
     run_rows: list[dict[str, object]] = []
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
@@ -327,7 +330,8 @@ def main() -> int:
                 server.set_input_mode(mode)
                 for run_idx in range(1, args.runs + 1):
                     metrics = server.determine_metrics(
-                        hyperparams,
+                        family_hparams,
+                        runtime_metadata,
                         checkpoint_path=checkpoint_path,
                         model_variant=model_variant,
                     )

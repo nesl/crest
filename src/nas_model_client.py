@@ -1,16 +1,12 @@
 """Top-level NAS orchestration client for TinyODOM experiments.
 
 This module bridges the modular dataset/task/model-family registry system to
-the legacy Optuna, HIL RPC, final-training, and artifact-reporting workflow.
-It also maintains compatibility shims that adapt ``DatasetBundle`` /
-``DataSplit`` objects into the older split views still consumed by some
-training and reporting paths.
+the current Optuna, HIL RPC, final-training, and artifact-reporting workflow.
 """
 
 import argparse
 from collections.abc import Mapping
 import csv
-import inspect
 import json
 import logging
 import shutil
@@ -18,7 +14,6 @@ import socket
 import time
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import zmq
@@ -29,7 +24,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import optuna
 import tensorflow as tf
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 from optuna.trial import TrialState
 from tinyodom.hardware import (
     HIL_MASTER_ARENA_EXHAUSTED,
@@ -51,9 +45,7 @@ from tinyodom.model import (
     NONNEGATIVE_METRICS,
     ScoreConfigEvaluationError,
     build_trial_outcome,
-    DILATION_CANDIDATES,
     apply_cadenced_metric_defaults,
-    count_flops,
     evaluate_prune_rules,
     evaluate_score_config,
     get_score_config_directions,
@@ -67,7 +59,8 @@ from tinyodom.model import (
     set_error_code,
 )
 from tinyodom.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
-from tinyodom.registry import dataset_registry, model_family_registry, task_registry
+from tinyodom.registry import dataset_registry, model_family_registry
+from tinyodom.runtime_bootstrap import bootstrap_pipeline
 
 tf.get_logger().setLevel(logging.ERROR)
 absl.logging.set_verbosity(absl.logging.ERROR)
@@ -75,18 +68,6 @@ logging.getLogger("absl").setLevel(logging.ERROR)
 tf.autograph.set_verbosity(0)
 
 logger = logging.getLogger(__name__)
-
-
-class _LegacySplitView(SimpleNamespace):
-    """Compatibility shim backed by the modular ``DataSplit`` contract.
-
-    The resulting namespace may expose fields such as ``inputs``, ``x_vel``,
-    ``y_vel``, ``disp``, ``heading``, ``position``, ``x0``, ``y0``,
-    ``size_of_each``, ``head_s``, ``head_c``, and ``inputs_orig``. It is a
-    projection of modular metadata and targets, not an independently validated
-    data model.
-    """
-
 
 class NASModelClient:
     """Client that orchestrates HIL-assisted NAS, training, and evaluation.
@@ -124,10 +105,6 @@ class NASModelClient:
     socket : zmq.Socket
         REQ socket used to send hyperparameters and receive HIL metrics. Send
         and receive timeouts are configured from the YAML.
-    training_data, validation_data, test_data : object
-        OXIOD dataset splits as loaded by ``import_oxiod_dataset``; each split
-        exposes tensors like ``inputs``, ``x_vel``, ``y_vel`` and sequence
-        bookkeeping metadata.
     study_name : str
         Name used for Optuna study registration and artifact prefixes.
 
@@ -168,55 +145,15 @@ class NASModelClient:
 
         Notes
         -----
-        Initialization intentionally performs a two-pass config load. The first
-        pass loads enough dataset/task state to derive the task metric
-        contract, then the config is reloaded with those metric names so NAS
-        score/prune validation reflects the active task.
+        Initialization now performs a single task-aware bootstrap. The config
+        is parsed once, the active dataset/task/model-family pipeline is
+        bootstrapped, and only then is the NAS policy validated against the
+        concrete task metric contract.
         """
         self.config_path = Path(config_path)
         ensure_builtin_components_registered()
-        # First load enough task state to discover the active metric contract;
-        # the second config load validates NAS score/prune rules against that
-        # task-specific metric set.
-        preliminary_config = load_config(self.config_path)
-        preliminary_selection = self._resolve_component_selection(preliminary_config)
-        preliminary_dataset, preliminary_bundle = self._coerce_loaded_dataset_bundle(
-            preliminary_selection["dataset_name"],
-            self._load_dataset_bundle(
-                preliminary_selection["dataset_name"],
-                preliminary_selection["dataset_config"],
-            ),
-        )
-        preliminary_task = self._instantiate_task(
-            preliminary_selection["task_name"],
-            preliminary_config,
-            preliminary_selection["task_config"],
-        )
-        preliminary_target_spec = preliminary_task.build_target_spec(
-            preliminary_bundle,
-            preliminary_selection["task_config"],
-        )
-        preliminary_metric_contract = preliminary_task.metric_contract(
-            preliminary_target_spec,
-            preliminary_selection["task_config"],
-        )
-        self.config = load_config(
-            self.config_path,
-            task_metric_names=preliminary_metric_contract.available_metric_names,
-            training_only_task_metric_names=preliminary_metric_contract.training_only_metric_names,
-        )
-        final_selection = self._resolve_component_selection(self.config)
-        dataset = preliminary_dataset
-        bundle = preliminary_bundle
-        if not self._same_component_selection(preliminary_selection, final_selection):
-            dataset, bundle = self._coerce_loaded_dataset_bundle(
-                final_selection["dataset_name"],
-                self._load_dataset_bundle(
-                    final_selection["dataset_name"],
-                    final_selection["dataset_config"],
-                ),
-            )
-        self._initialize_component_state(final_selection, dataset, bundle)
+        self.config = load_config(self.config_path)
+        self._attach_bootstrapped_pipeline(bootstrap_pipeline(self.config))
 
         if self.config.device.hil is False:
             logger.warning("HIL is disabled in the configuration.")
@@ -235,6 +172,35 @@ class NASModelClient:
         print(f"[REQ] Connected to HIL server at {endpoint}")
 
         self.study_name = "default_study"
+
+    def _attach_bootstrapped_pipeline(self, pipeline: Any) -> None:
+        """Attach one bootstrapped modular pipeline to this client.
+
+        Parameters
+        ----------
+        pipeline : Any
+            Bootstrap result containing selection metadata plus instantiated
+            dataset, task, model-family, and task metric contract objects.
+
+        Returns
+        -------
+        None
+            The client state is populated from the supplied bootstrap result.
+        """
+
+        self.dataset = pipeline.dataset
+        self.dataset_name = pipeline.selection["dataset_name"]
+        self.task = pipeline.task
+        self.task_name = pipeline.selection["task_name"]
+        self.model_family = pipeline.model_family
+        self.model_family_name = pipeline.selection["model_family_name"]
+        self.dataset_bundle = pipeline.bundle
+        self.target_spec = pipeline.target_spec
+        self.metric_contract = pipeline.metric_contract
+        self.model_build_context = pipeline.model_build_context
+        self.dataset_config = pipeline.selection["dataset_config"]
+        self.task_config = pipeline.selection["task_config"]
+        self.model_config = pipeline.selection["model_config"]
 
     @staticmethod
     def _normalize_config_value(value: Any) -> Any:
@@ -318,7 +284,7 @@ class NASModelClient:
         checkpoint_path: Path | None = None,
         early_stopping_patience: int | None = None,
     ) -> Any:
-        """Instantiate one task component with compatibility constructor args.
+        """Instantiate one task component using the explicit runtime contract.
 
         Parameters
         ----------
@@ -334,22 +300,15 @@ class NASModelClient:
         Any
             Instantiated task component.
         """
-        task_cls = task_registry.get(task_name)
-        signature = inspect.signature(task_cls)
-        kwargs: dict[str, Any] = {}
-        if "checkpoint_path" in signature.parameters:
-            kwargs["checkpoint_path"] = (
-                Path(config.outputs.checkpoint_path)
-                if checkpoint_path is None
-                else Path(checkpoint_path)
-            )
-        if "early_stopping_patience" in signature.parameters:
-            kwargs["early_stopping_patience"] = int(
-                self._cfg_get(task_config, "early_stopping_patience", 40)
-                if early_stopping_patience is None
-                else early_stopping_patience
-            )
-        return task_cls(**kwargs)
+        from tinyodom.runtime_bootstrap import instantiate_task_component
+
+        return instantiate_task_component(
+            task_name,
+            config,
+            task_config,
+            checkpoint_path=checkpoint_path,
+            early_stopping_patience=early_stopping_patience,
+        )
 
     def _load_dataset_bundle(
         self,
@@ -407,61 +366,6 @@ class NASModelClient:
         if isinstance(loaded, tuple) and len(loaded) == 2:
             return loaded
         return None, loaded
-
-    @staticmethod
-    def _make_legacy_split_view(split: DataSplit | None) -> _LegacySplitView | None:
-        """Convert a modular split into the legacy view expected downstream.
-
-        Parameters
-        ----------
-        split : DataSplit | None
-            Modular split to adapt.
-
-        Returns
-        -------
-        _LegacySplitView | None
-            Namespace exposing the legacy TinyODOM split fields.
-
-        Notes
-        -----
-        The view simply re-keys targets/metadata into the historical shape. It
-        does not infer missing odometry fields or validate that every legacy
-        consumer requirement is present.
-        """
-        if split is None:
-            return None
-        metadata = dict(split.metadata)
-        targets = split.targets if isinstance(split.targets, Mapping) else {}
-        return _LegacySplitView(
-            inputs=split.inputs,
-            x_vel=targets.get("velx"),
-            y_vel=targets.get("vely"),
-            disp=metadata.get("disp"),
-            heading=metadata.get("heading"),
-            position=metadata.get("position"),
-            x0=metadata.get("x0"),
-            y0=metadata.get("y0"),
-            size_of_each=metadata.get("size_of_each"),
-            head_s=metadata.get("head_s"),
-            head_c=metadata.get("head_c"),
-            inputs_orig=metadata.get("inputs_orig"),
-        )
-
-    def _refresh_legacy_split_aliases(self, bundle: DatasetBundle) -> None:
-        """Refresh legacy split aliases from one modular dataset bundle.
-
-        Parameters
-        ----------
-        bundle : DatasetBundle
-            Modular dataset bundle backing this client.
-
-        Returns
-        -------
-        None
-        """
-        self.training_data = self._make_legacy_split_view(bundle.train)
-        self.validation_data = self._make_legacy_split_view(bundle.val)
-        self.test_data = self._make_legacy_split_view(bundle.test)
 
     def _build_model_context(
         self,
@@ -545,7 +449,6 @@ class NASModelClient:
         self.dataset_config = selection["dataset_config"]
         self.task_config = selection["task_config"]
         self.model_config = selection["model_config"]
-        self._refresh_legacy_split_aliases(bundle)
 
     @staticmethod
     def _cfg_get(container, key: str, default=None):
@@ -689,18 +592,15 @@ class NASModelClient:
             # Give stdout time to flush before tearing the socket down.
             time.sleep(0.1)
 
-    def _assemble_runtime_hyperparams(
+    def _build_runtime_metadata(
         self,
-        family_hparams: dict[str, Any],
         flops: int,
         batch_size: int,
     ) -> Dict:
-        """Assemble the legacy hyperparameter payload shared across runtime uses.
+        """Build runtime-owned request metadata for HIL and scoring paths.
 
         Parameters
         ----------
-        family_hparams : dict[str, Any]
-            Model-family sampled or reconstructed hyperparameters.
         flops : int
             FLOP count for the built model.
         batch_size : int
@@ -709,15 +609,14 @@ class NASModelClient:
         Returns
         -------
         Dict
-            Legacy hyperparameter payload used by HIL, pruning, scoring, and
-            CSV logging.
+            Runtime-owned metadata used by HIL transport, pruning, scoring,
+            and CSV logging.
         """
         timesteps, input_dim = require_logical_input_shape(
             None if self.model_build_context is None else self.model_build_context.input_shape
         )
         return Dict(
             {
-                **family_hparams,
                 "batch_size": int(batch_size),
                 "timesteps": timesteps,
                 "input_dim": input_dim,
@@ -762,148 +661,6 @@ class NASModelClient:
                 metrics[metric_name] = raw_value.item()
             else:
                 metrics[metric_name] = raw_value
-
-    @staticmethod
-    def _expand_best_params_to_family_hparams(best_params: dict[str, Any]) -> dict[str, Any]:
-        """Convert Optuna best-trial params into model-family build hparams.
-
-        Parameters
-        ----------
-        best_params : dict[str, Any]
-            Raw Optuna trial parameters.
-
-        Returns
-        -------
-        dict[str, Any]
-            Model-family hyperparameters accepted by ``build_model(...)``.
-        """
-        family_hparams = dict(best_params)
-        if "dilations_index" in family_hparams and "dilations" not in family_hparams:
-            family_hparams["dilations"] = DILATION_CANDIDATES[int(family_hparams["dilations_index"])]
-        family_hparams.pop("dilations_index", None)
-        return family_hparams
-
-    @staticmethod
-    def _concatenate_split_payload(
-        train_value: Any,
-        val_value: Any,
-        *,
-        context_name: str,
-    ) -> Any:
-        """Concatenate one train/validation payload for combine-train-val mode.
-
-        Parameters
-        ----------
-        train_value : Any
-            Training split payload.
-        val_value : Any
-            Validation split payload.
-        context_name : str
-            Human-readable field name used in errors.
-
-        Returns
-        -------
-        Any
-            Concatenated payload.
-
-        Raises
-        ------
-        ValueError
-            If the payload shape is unsupported for concatenation.
-        """
-
-        if isinstance(train_value, np.ndarray) and isinstance(val_value, np.ndarray):
-            return np.concatenate([train_value, val_value], axis=0)
-        if isinstance(train_value, Mapping) and isinstance(val_value, Mapping):
-            if set(train_value) != set(val_value):
-                raise ValueError(
-                    f"combine_train_val=True requires matching mapping keys for {context_name}."
-                )
-            return {
-                key: NASModelClient._concatenate_split_payload(
-                    train_value[key],
-                    val_value[key],
-                    context_name=f"{context_name}.{key}",
-                )
-                for key in train_value
-            }
-        if train_value is None and val_value is None:
-            return None
-        raise ValueError(
-            "combine_train_val=True only supports NumPy arrays or dicts of NumPy arrays; "
-            f"unsupported payload encountered for {context_name}."
-        )
-
-    def _merge_train_and_val_splits(self) -> DataSplit:
-        """Merge train and validation splits for compatibility final training.
-
-        Returns
-        -------
-        DataSplit
-            Concatenated training split.
-
-        Raises
-        ------
-        ValueError
-            If no validation split is available or if the payloads are not
-            concatenable under the compatibility rules.
-        """
-
-        train_split = self.dataset_bundle.train
-        val_split = self.dataset_bundle.val
-        if val_split is None:
-            raise ValueError("combine_train_val=True requires a validation split.")
-        return DataSplit(
-            inputs=self._concatenate_split_payload(
-                train_split.inputs,
-                val_split.inputs,
-                context_name="inputs",
-            ),
-            targets=self._concatenate_split_payload(
-                train_split.targets,
-                val_split.targets,
-                context_name="targets",
-            ),
-            sample_weights=self._concatenate_split_payload(
-                train_split.sample_weights,
-                val_split.sample_weights,
-                context_name="sample_weights",
-            ),
-            metadata=dict(train_split.metadata),
-        )
-
-    def _fit_targets_for_split(self, split: DataSplit) -> Any:
-        """Return task targets in model-output order for manual fit paths.
-
-        Parameters
-        ----------
-        split : DataSplit
-            Dataset split to adapt.
-
-        Returns
-        -------
-        Any
-            Model.fit-compatible target payload.
-
-        Raises
-        ------
-        ValueError
-            If the split targets are missing declared output names.
-        """
-
-        if isinstance(split.targets, Mapping):
-            missing = [
-                output_name
-                for output_name in self.target_spec.output_names
-                if output_name not in split.targets
-            ]
-            if missing:
-                raise ValueError(
-                    "Split targets do not satisfy the active task output contract; "
-                    f"missing targets: {', '.join(missing)}."
-                )
-            return [split.targets[output_name] for output_name in self.target_spec.output_names]
-        return split.targets
 
     def _resolve_dataset_numeric_setting(
         self,
@@ -952,13 +709,14 @@ class NASModelClient:
             )
         return value
 
-    def _trajectory_split_view(self) -> _LegacySplitView:
-        """Return an odometry-oriented view of the test split for reporting.
+    def _require_trajectory_split(self) -> DataSplit:
+        """Return the active odometry test split for trajectory reporting.
 
         Returns
         -------
-        _LegacySplitView
-            Legacy-compatible test-split view for trajectory analysis.
+        DataSplit
+            Test split with the odometry-specific targets and metadata needed
+            by the trajectory reporting helpers.
 
         Raises
         ------
@@ -980,21 +738,18 @@ class NASModelClient:
                 "Trajectory reporting remains odometry-specific and requires "
                 "velocity targets named 'velx' and 'vely'."
             )
-        legacy_view = self._make_legacy_split_view(split)
-        if legacy_view is None:
-            raise ValueError("Trajectory reporting requires a held-out test split.")
         required_fields = ("size_of_each", "x0", "y0")
         missing = [
             field_name
             for field_name in required_fields
-            if getattr(legacy_view, field_name, None) in (None, "")
+            if split.metadata.get(field_name) in (None, "")
         ]
         if missing:
             raise ValueError(
                 "Trajectory reporting remains odometry-specific and requires test-split metadata "
                 f"for: {', '.join(missing)}."
             )
-        return legacy_view
+        return split
 
     def objective(self, trial: optuna.Trial) -> float | tuple:
         """Optimize TinyODOM architecture and training hyperparameters.
@@ -1071,15 +826,16 @@ class NASModelClient:
         )
         self.task.validate_model_outputs(model, self.target_spec)
         self.task.compile_model(model, self.task_config, self.target_spec)
-        logical_input_shape = require_logical_input_shape(
-            None if self.model_build_context is None else self.model_build_context.input_shape
+        flops = self.model_family.count_flops(
+            model,
+            self.model_build_context,
+            self.model_config,
         )
-        flops = count_flops(model, logical_input_shape)
-        hyperparams = self._assemble_runtime_hyperparams(
-            family_hparams,
+        runtime_metadata = self._build_runtime_metadata(
             flops,
             batch_size,
         )
+        hyperparams = Dict({**family_hparams, **runtime_metadata})
 
         # Treat CPU clock as a trial variable, but keep it separate from model
         # hyperparameters because it changes board runtime conditions rather
@@ -1102,7 +858,10 @@ class NASModelClient:
             )
 
         # Ask the HIL server to evaluate the candidate for resource usage and latency.
-        request_payload = {"hyperparams": hyperparams}
+        request_payload = {
+            "family_hparams": family_hparams,
+            "runtime_metadata": runtime_metadata,
+        }
         if device_options_overrides is not None:
             request_payload["device_options_overrides"] = device_options_overrides
         metrics = self._hil_request(request_payload)
@@ -1281,10 +1040,12 @@ class NASModelClient:
                     hyperparams=dict(hyperparams),
                 )
             else:
-                fit_plan = self.task.make_fit_plan(
+                fit_plan = self.task.build_fit_plan(
                     self.dataset_bundle,
                     self.task_config,
                     self.target_spec,
+                    mode="search",
+                    combine_train_val=False,
                 )
                 model.fit(
                     **fit_plan.fit_kwargs,
@@ -1538,16 +1299,12 @@ class NASModelClient:
         # Enqueue the best-known config from the non-energy NAS run as a baseline trial.
         # Only enqueue if the study is new to avoid duplicates.
         if len(study.trials) == 0:
-            study.enqueue_trial(
-                {
-                    "nb_filters": 10,
-                    "kernel_size": 12,
-                    "dropout_rate": 0.0,
-                    "use_skip_connections": False,
-                    "norm_flag": True,
-                    "dilations_index": 107,
-                }
+            seed_trial = self.model_family.default_seed_trial(
+                self.model_build_context,
+                self.model_config,
             )
+            if seed_trial is not None:
+                study.enqueue_trial(seed_trial)
 
         def _trial_counts():
             """Count completed, pruned, and failed Optuna trials.
@@ -1686,10 +1443,18 @@ class NASModelClient:
             export_tflite=True,
         )
 
-        # 5) Optional: compute trajectory metrics and plots (ATE/RTE-style).
-        traj_metrics = self.trajectory_metrics_and_plots(
-            study_name=study_name,
-            plot_dir=artifacts_dir / "trajectories",
+        # 5) Let the task decide whether it owns any extra closeout artifacts.
+        closeout_model = self.model_family.load_model(
+            Path(self.config.outputs.checkpoint_path),
+            self.model_build_context,
+            self.model_config,
+        )
+        closeout_artifacts = self.task.generate_closeout_artifacts(
+            closeout_model,
+            self.dataset_bundle,
+            self.task_config,
+            self.target_spec,
+            output_dir=artifacts_dir / "task_closeout",
         )
 
         # 6) Collect a summary bundle for reporting.
@@ -1699,7 +1464,7 @@ class NASModelClient:
             history_path=history_path,
             loss_plots=loss_plots,
             test_metrics=test_metrics,
-            traj_metrics=traj_metrics,
+            closeout_artifacts=closeout_artifacts,
             summary_path=artifacts_dir / "summary.json",
         ) 
 
@@ -1806,7 +1571,11 @@ class NASModelClient:
         best_params = best_trial.params
 
         batch_size = 256  # Use the same fixed batch size as in NAS search.
-        family_hparams = self._expand_best_params_to_family_hparams(dict(best_params))
+        family_hparams = self.model_family.decode_trial_hparams(
+            dict(best_params),
+            self.model_build_context,
+            self.model_config,
+        )
         fit_task = self._instantiate_task(
             self.task_name,
             self.config,
@@ -1822,39 +1591,15 @@ class NASModelClient:
         fit_task.validate_model_outputs(model, self.target_spec)
         fit_task.compile_model(model, self.task_config, self.target_spec)
 
-        if combine_train_val:
-            # With validation folded into training there is no held-out metric
-            # to monitor, so rebuild callbacks around training loss instead of
-            # reusing the default fit plan.
-            merged_train_split = self._merge_train_and_val_splits()
-            checkpoint_cb = ModelCheckpoint(
-                filepath=str(ckpt_path),
-                monitor="loss",
-                mode="min",
-                verbose=1,
-                save_best_only=True,
-            )
-            early_stop_cb = EarlyStopping(
-                monitor="loss",
-                patience=patience,
-                mode="min",
-                verbose=1,
-                restore_best_weights=True,
-            )
-            fit_kwargs = {
-                "x": merged_train_split.inputs,
-                "y": self._fit_targets_for_split(merged_train_split),
-                "shuffle": True,
-                "callbacks": [checkpoint_cb, early_stop_cb],
-            }
-        else:
-            fit_plan = fit_task.make_fit_plan(
-                self.dataset_bundle,
-                self.task_config,
-                self.target_spec,
-            )
-            fit_kwargs = dict(fit_plan.fit_kwargs)
-            fit_kwargs["callbacks"] = list(fit_plan.callbacks)
+        fit_plan = fit_task.build_fit_plan(
+            self.dataset_bundle,
+            self.task_config,
+            self.target_spec,
+            mode="final",
+            combine_train_val=combine_train_val,
+        )
+        fit_kwargs = dict(fit_plan.fit_kwargs)
+        fit_kwargs["callbacks"] = list(fit_plan.callbacks)
         fit_kwargs["epochs"] = self.config.training.model_epochs
         fit_kwargs["batch_size"] = batch_size
         history = model.fit(**fit_kwargs)
@@ -1921,10 +1666,7 @@ class NASModelClient:
 
         # Optional per-output losses if Keras exposed them.
         extra_png = None
-        component_keys = [
-            ("velx_loss", "val_velx_loss"),
-            ("vely_loss", "val_vely_loss"),
-        ]
+        component_keys = self.task.history_component_keys(self.target_spec)
         if any(k in history for pair in component_keys for k in pair):
             extra_png = output_dir / f"{study_name or 'history'}_loss_components.png"
             fig, ax = plt.subplots()
@@ -2015,6 +1757,10 @@ class NASModelClient:
         # Optionally emit a TFLite artifact for downstream deployment.
         tflite_written = None
         if export_tflite:
+            if not self.model_family.supports_tflite():
+                raise ValueError(
+                    f"Model family '{self.model_family_name}' does not support TFLite export."
+                )
             tflite_path = Path(tflite_path) if tflite_path else Path(self.config.outputs.tflite_model_path)
             representative_split = self.dataset_bundle.calibration or self.dataset_bundle.train
             convert_to_tflite_model(
@@ -2088,7 +1834,7 @@ class NASModelClient:
         plot_dir = Path(plot_dir) if plot_dir else Path(self.config.outputs.models_dir) / "trajectories"
         plot_dir.mkdir(parents=True, exist_ok=True)
         test_split = self.dataset_bundle.test
-        trajectory_split = self._trajectory_split_view()
+        trajectory_split = self._require_trajectory_split()
         stride = (
             float(stride)
             if stride is not None
@@ -2151,15 +1897,21 @@ class NASModelClient:
         plot_paths = []
 
         idx_start = 0
-        for i, length in enumerate(trajectory_split.size_of_each):
+        size_of_each = trajectory_split.metadata["size_of_each"]
+        start_x_values = trajectory_split.metadata["x0"]
+        start_y_values = trajectory_split.metadata["y0"]
+        vel_x_targets = trajectory_split.targets["velx"]
+        vel_y_targets = trajectory_split.targets["vely"]
+
+        for i, length in enumerate(size_of_each):
             idx_end = idx_start + length
             # Flatten in case datasets store (n, 1) vectors.
-            gt_vx = trajectory_split.x_vel[idx_start:idx_end].ravel()
-            gt_vy = trajectory_split.y_vel[idx_start:idx_end].ravel()
+            gt_vx = vel_x_targets[idx_start:idx_end].ravel()
+            gt_vy = vel_y_targets[idx_start:idx_end].ravel()
             pred_vx = preds[0][idx_start:idx_end].ravel()
             pred_vy = preds[1][idx_start:idx_end].ravel()
-            start_x = trajectory_split.x0[i]
-            start_y = trajectory_split.y0[i]
+            start_x = start_x_values[i]
+            start_y = start_y_values[i]
 
             gt_x, gt_y = integrate_track(gt_vx, gt_vy, start_x, start_y)
             pd_x, pd_y = integrate_track(pred_vx, pred_vy, start_x, start_y)
@@ -2230,7 +1982,7 @@ class NASModelClient:
         history_path: Path,
         loss_plots: dict,
         test_metrics: dict,
-        traj_metrics: dict | None = None,
+        closeout_artifacts: dict | None = None,
         summary_path: Path | None = None,
     ) -> Path:
         """
@@ -2248,8 +2000,9 @@ class NASModelClient:
             Mapping from plot labels to saved PNG paths.
         test_metrics : dict
             Output from `evaluate_checkpoint`.
-        traj_metrics : dict | None, optional
-            Output from `trajectory_metrics_and_plots` if computed.
+        closeout_artifacts : dict | None, optional
+            Task-owned closeout artifact summary when the active task emits
+            extra report outputs.
         summary_path : Path | None, optional
             Destination for the summary JSON. Defaults to `models_dir/{study_name}_summary.json`.
 
@@ -2274,7 +2027,7 @@ class NASModelClient:
             "history_path": str(history_path),
             "loss_plots": loss_plots,
             "test_metrics": test_metrics,
-            "trajectory_metrics": traj_metrics,
+            "task_closeout_artifacts": closeout_artifacts,
             "checkpoint_path": test_metrics.get("checkpoint_path"),
             "tflite_path": test_metrics.get("tflite_path"),
         }

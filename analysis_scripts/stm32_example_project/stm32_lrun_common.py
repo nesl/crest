@@ -99,9 +99,17 @@ def default_latency_budget_ms(config: dict[str, Any]) -> float:
     device = dict(config.get("device") or {})
     if device.get("latency_budget_ms") is not None:
         return float(device["latency_budget_ms"])
-    data = dict(config.get("data") or {})
-    stride = float(data.get("stride", 20))
-    sampling_rate_hz = float(data.get("sampling_rate_hz", 100))
+
+    # The LRUN helpers now require the modular dataset block instead of
+    # silently falling back to the removed top-level `data` config shape.
+    dataset = dict(config.get("dataset") or {})
+    dataset_params = dict(dataset.get("params") or {})
+    if not dataset_params:
+        raise stm32_cube_clt.WorkflowError(
+            "LRUN defaults require config.dataset.params to define stride and sampling_rate_hz."
+        )
+    stride = float(dataset_params["stride"])
+    sampling_rate_hz = float(dataset_params["sampling_rate_hz"])
     return (stride / sampling_rate_hz) * 1000.0
 
 

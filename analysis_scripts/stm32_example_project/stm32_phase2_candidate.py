@@ -7,21 +7,20 @@ from typing import Any
 
 from addict import Dict
 
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from tinyodom.analysis_support import (
+    build_fixed_tinyodom_hyperparams,
+    require_calibration_inputs,
+)
+from tinyodom.builtin_components import ensure_builtin_components_registered
+from tinyodom.model import load_config
+from tinyodom.runtime_bootstrap import bootstrap_pipeline
+
 DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "config" / "nas_config.yaml"
 PERTURBED_VARIANT_NAME = "approx_trained"
-OXIOD_SUB_FOLDERS = [
-    "handbag/",
-    "handheld/",
-    "pocket/",
-    "running/",
-    "slow_walking/",
-    "trolley/",
-]
 
 
 @dataclass(frozen=True)
@@ -29,78 +28,45 @@ class Phase2CandidateBundle:
     """Shared fixed candidate bundle used by STM Phase 2 scripts."""
 
     config: Dict
-    training_data: Any
+    calibration_inputs: Any
     hyperparams: Dict
     model: Any
     metadata: Dict
-
-
-def build_fixed_hyperparams(*, window_size: int, input_dim: int) -> Dict:
-    """Build the fixed perturbed-model hyperparameter bundle."""
-    from tinyodom.model import build_tinyodom_model, count_flops
-
-    hyperparams = Dict(
-        nb_filters=10,
-        kernel_size=12,
-        dilations=[1, 4, 8, 64],
-        dropout_rate=0.0,
-        use_skip_connections=False,
-        norm_flag=True,
-        batch_size=256,
-        timesteps=window_size,
-        input_dim=input_dim,
-    )
-    model = build_tinyodom_model(hyperparams)
-    hyperparams.flops = count_flops(model, (hyperparams.timesteps, hyperparams.input_dim))
-    return hyperparams
-
-
-def load_training_data(config: Dict):
-    """Load the calibration/training windows used for STM candidate export."""
-    from tinyodom.data import import_oxiod_dataset
-
-    return import_oxiod_dataset(
-        type_flag=2,
-        useMagnetometer=True,
-        useStepCounter=True,
-        AugmentationCopies=0,
-        dataset_folder=config.data.directory,
-        sub_folders=OXIOD_SUB_FOLDERS,
-        sampling_rate=config.data.sampling_rate_hz,
-        window_size=config.data.window_size,
-        stride=config.data.stride,
-        verbose=False,
-        max_windows=config.data.calibration_windows,
-    )
+    window_size: int
+    input_dim: int
 
 
 def load_or_build_perturbed_candidate(config_path: Path) -> Phase2CandidateBundle:
     """Build the fixed perturbed TinyODOM candidate used by STM Phase 2 flows."""
-    from tensorflow.keras import optimizers
-
-    from tinyodom.model import (
-        apply_combined_perturbation,
-        build_tinyodom_model,
-        load_config,
-    )
-
+    ensure_builtin_components_registered()
     config = load_config(config_path)
-    training_data = load_training_data(config)
-    hyperparams = build_fixed_hyperparams(
-        window_size=int(config.data.window_size),
-        input_dim=int(training_data.inputs.shape[2]),
+    pipeline = bootstrap_pipeline(config)
+    calibration_split = pipeline.dataset.make_calibration_data(
+        pipeline.bundle,
+        pipeline.selection["dataset_config"],
     )
-    model = build_tinyodom_model(hyperparams)
-    bn_touched, bias_touched = apply_combined_perturbation(model=model, seed=1337)
-    model.compile(loss={"velx": "mse", "vely": "mse"}, optimizer=optimizers.Adam())
+    calibration_inputs = require_calibration_inputs(
+        None if calibration_split is None else calibration_split.inputs
+    )
+    window_size = int(pipeline.model_build_context.input_shape[0])
+    input_dim = int(pipeline.model_build_context.input_shape[1])
+    hyperparams = build_fixed_tinyodom_hyperparams(
+        window_size=window_size,
+        input_dim=input_dim,
+    )
+    model = pipeline.model_family.materialize_export_model(
+        dict(hyperparams),
+        pipeline.model_build_context,
+        pipeline.selection["model_config"],
+        model_variant=PERTURBED_VARIANT_NAME,
+    )
+    pipeline.task.compile_model(model, pipeline.selection["task_config"], pipeline.target_spec)
 
     metadata = Dict(
         model_variant=PERTURBED_VARIANT_NAME,
         input_mode="uniform",
         energy_aware=True,
         quantization=bool(config.training.quantization),
-        bn_layers_touched=int(bn_touched),
-        non_bn_bias_layers_touched=int(bias_touched),
         hyperparams={
             "nb_filters": int(hyperparams.nb_filters),
             "kernel_size": int(hyperparams.kernel_size),
@@ -116,10 +82,12 @@ def load_or_build_perturbed_candidate(config_path: Path) -> Phase2CandidateBundl
     )
     return Phase2CandidateBundle(
         config=config,
-        training_data=training_data,
+        calibration_inputs=calibration_inputs,
         hyperparams=hyperparams,
         model=model,
         metadata=metadata,
+        window_size=window_size,
+        input_dim=input_dim,
     )
 
 
@@ -134,7 +102,7 @@ def export_perturbed_candidate_tflite(config_path: Path, output_root: Path) -> t
     tflite_path = model_dir / f"TinyOdomEx_OxIOD_{device_name}_{PERTURBED_VARIANT_NAME}.tflite"
     convert_to_tflite_model(
         model=bundle.model,
-        training_data=bundle.training_data.inputs,
+        training_data=bundle.calibration_inputs,
         quantization=bool(bundle.config.training.quantization),
         output_name=tflite_path,
     )

@@ -16,15 +16,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
-from tensorflow.keras import optimizers
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 from tensorflow.keras.models import load_model
 from tcn import TCN
 
 sys.path.insert(0, os.path.abspath("src"))
 
+from tinyodom.analysis_support import (
+    build_model_context,
+    resolve_model_family_contract,
+    resolve_task_contract,
+)
 from tinyodom.hardware import convert_to_tflite_model
-from tinyodom.model import DEFAULT_CONFIG_PATH, build_tinyodom_model, load_config
+from tinyodom.model import DEFAULT_CONFIG_PATH, load_config
+from tinyodom.pipeline_types import DataSplit, DatasetBundle
 
 from noise_scan_model_spec import build_noise_scan_hyperparams
 
@@ -84,7 +89,7 @@ def _load_split_numpy(config, type_flag: int) -> SplitData:
         raise ValueError(f"Unsupported type_flag for fallback loader: {type_flag}")
     split_file_name = split_name_map[type_flag]
 
-    dataset_root = Path(config.data.directory)
+    dataset_root = Path(config.dataset.params.directory)
     inputs_list: list[np.ndarray] = []
     vx_list: list[np.ndarray] = []
     vy_list: list[np.ndarray] = []
@@ -120,8 +125,16 @@ def _load_split_numpy(config, type_flag: int) -> SplitData:
             features = np.concatenate((features, step_channel), axis=1)
 
             gt_xy = gt_raw[:, GT_COL_POSE_XY]
-            feat_windows = _window_2d(features, config.data.window_size, config.data.stride)
-            gt_windows = _window_2d(gt_xy, config.data.window_size, config.data.stride)
+            feat_windows = _window_2d(
+                features,
+                config.dataset.params.window_size,
+                config.dataset.params.stride,
+            )
+            gt_windows = _window_2d(
+                gt_xy,
+                config.dataset.params.window_size,
+                config.dataset.params.stride,
+            )
             if feat_windows.shape[0] == 0 or gt_windows.shape[0] == 0:
                 continue
 
@@ -187,11 +200,11 @@ def _load_split(config, type_flag: int) -> tuple[SplitData, str]:
         useMagnetometer=True,
         useStepCounter=True,
         AugmentationCopies=0,
-        dataset_folder=config.data.directory,
+        dataset_folder=config.dataset.params.directory,
         sub_folders=SUB_FOLDERS,
-        sampling_rate=config.data.sampling_rate_hz,
-        window_size=config.data.window_size,
-        stride=config.data.stride,
+        sampling_rate=config.dataset.params.sampling_rate_hz,
+        window_size=config.dataset.params.window_size,
+        stride=config.dataset.params.stride,
         verbose=False,
     )
     return SplitData(inputs=split.inputs, x_vel=split.x_vel, y_vel=split.y_vel), "tinyodom.data"
@@ -249,11 +262,38 @@ def main() -> int:
     print(f"Loaded validation data via: {valid_loader_name}")
 
     hyperparams = build_noise_scan_hyperparams(
-        window_size=config.data.window_size,
+        window_size=config.dataset.params.window_size,
         input_dim=training_data.inputs.shape[2],
     )
-    model = build_tinyodom_model(hyperparams)
-    model.compile(loss={"velx": "mse", "vely": "mse"}, optimizer=optimizers.Adam())
+    bundle = DatasetBundle(
+        train=DataSplit(
+            inputs=training_data.inputs,
+            targets={"velx": training_data.x_vel, "vely": training_data.y_vel},
+            metadata={},
+        ),
+        val=DataSplit(
+            inputs=validation_data.inputs,
+            targets={"velx": validation_data.x_vel, "vely": validation_data.y_vel},
+            metadata={},
+        ),
+        test=None,
+        input_shape=(int(hyperparams.timesteps), int(hyperparams.input_dim)),
+        input_dtype="float32",
+        metadata=dict(config.dataset.params),
+    )
+    task, task_config, target_spec = resolve_task_contract(
+        config,
+        bundle,
+        checkpoint_path=checkpoint_path,
+        early_stopping_patience=40,
+    )
+    model_family, model_config = resolve_model_family_contract(config)
+    model = model_family.build_model(
+        dict(hyperparams),
+        build_model_context(bundle, target_spec),
+        model_config,
+    )
+    task.compile_model(model, task_config, target_spec)
 
     checkpoint_cb = ModelCheckpoint(
         filepath=str(checkpoint_path),
@@ -309,7 +349,7 @@ def main() -> int:
         "data_loader_train": train_loader_name,
         "data_loader_valid": valid_loader_name,
         "quantization": bool(config.training.quantization),
-        "window_size": int(config.data.window_size),
+        "window_size": int(config.dataset.params.window_size),
         "input_dim": int(training_data.inputs.shape[2]),
         "hyperparams": {
             "nb_filters": int(hyperparams.nb_filters),

@@ -4,6 +4,20 @@ This folder collects small, self-contained utilities for HIL experiments and
 hardware checks. It is intentionally separate from the core training/runtime
 code so you can run diagnostics without touching the main workflow.
 
+Current script contract:
+
+- HIL analysis runners should derive runtime dimensions from
+  `HILServer.get_runtime_dimensions()`.
+- Export-oriented runners should read representative inputs from
+  `HILServer.get_calibration_inputs()` or the bootstrapped dataset bundle,
+  rather than from ad hoc `training_data` aliases.
+- HIL request scripts should call
+  `HILServer.determine_metrics(family_hparams, runtime_metadata, ...)` with
+  the structured request shape introduced by the runtime refactor.
+- Fixed TinyODOM helper scripts should route through
+  `tinyodom.analysis_support` instead of importing build/FLOP helpers from
+  `tinyodom.model`.
+
 Recent Portenta H7 analysis packages in this folder rely on shared DUT clock
 telemetry emitted by `sketches/common/tinyodom_clock_telemetry.h`. When the
 target core exposes a DWT cycle counter, the DUT can now report:

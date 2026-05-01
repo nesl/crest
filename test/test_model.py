@@ -22,30 +22,27 @@ if str(SRC_DIR) not in sys.path:
 
 from tinyodom.model import (
     CADENCED_CSV_FIELDS,
-    CollectMetricsRequest,
     DROP_RATE_CHOICES,
-    HarnessConfig,
     TRIAL_LOG_STABLE_COLUMNS,
     TrialOutcome,
     _minimum_stm32_serial_timeout_s,
     _metric_unavailable,
     ScoreConfigEvaluationError,
     apply_combined_perturbation,
-    build_collect_metrics_request,
     collect_bn_layers,
     collect_non_bn_bias_layers,
-    collect_metrics,
     count_flops,
     evaluate_score_config,
     iter_layers,
     load_config,
     log_trial,
     score_config_uses_training_metrics,
-    train_and_score,
+    validate_nas_policy_for_task,
     validate_model_input_shape,
     validate_loaded_model_input_shape,
 )  # noqa: E402
 from tinyodom.hardware import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
+from tinyodom.hil_runtime import CollectMetricsRequest, HarnessConfig, build_collect_metrics_request, collect_metrics  # noqa: E402, E501
 from tinyodom.microcontrollers import resolve_device_options  # noqa: E402
 import tinyodom.model_families.tinyodom_tcn as tinyodom_tcn_module  # noqa: E402
 from tinyodom.model_families.tinyodom_tcn import TinyOdomTCNFamily  # noqa: E402
@@ -343,7 +340,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["chosen_device"], "ARDUINO_NANO_33_BLE_SENSE")
             return (None, 4096, None, 2048, 0, None)
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=False,
                 energy_aware=False,
@@ -375,7 +372,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["serial_port"], "ttyACM0")
             return (1024, 8192, 25.0, 4096, 0, None)
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -404,7 +401,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["measured_inference_runs"], 7)
             return (1024, 8192, 0.025, 4096, 0, None)
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -444,7 +441,7 @@ class CollectMetricsTests(unittest.TestCase):
                 },
             )
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -492,7 +489,7 @@ class CollectMetricsTests(unittest.TestCase):
                 },
             )
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -524,7 +521,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertTrue(run_hil)
             return (1024, 8192, 0.025, 4096, 0, {"runtime_mode": "back_to_back"})
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -563,7 +560,7 @@ class CollectMetricsTests(unittest.TestCase):
                     self.assertTrue(run_hil)
                     return (1024, 8192, 0.025, 4096, 0, {"runtime_mode": raw_runtime_mode})
 
-                with patch("tinyodom.model.HIL_controller", fake_controller):
+                with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
                     request = CollectMetricsRequest(
                         hil_enabled=True,
                         energy_aware=False,
@@ -613,7 +610,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["harness_done_timeout_s"], 3.6)
             return (1024, 8192, 0.025, 4096, 0, None)
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=True,
@@ -660,7 +657,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["device_options"]["split"], "75_25")
             return (1024, 2048, None, 4096, 0, None)
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=False,
                 energy_aware=False,
@@ -694,7 +691,7 @@ class CollectMetricsTests(unittest.TestCase):
             device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
         )
 
-        with patch("tinyodom.model.HIL_controller") as controller_mock:
+        with patch("tinyodom.hil_runtime.HIL_controller") as controller_mock:
             with self.assertRaises(RuntimeError) as context:
                 collect_metrics(request)
 
@@ -723,7 +720,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["harness_done_timeout_s"], 3.6)
             return (1024, 2048, 0.01, 4096, 0, None)
 
-        with patch("tinyodom.model.HIL_controller", fake_controller):
+        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -759,7 +756,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
     def _build_request(
         self,
         config: Dict,
-        hyperparams: Dict,
+        runtime_metadata: Dict,
         *,
         latency_budget_ms: float = 200.0,
         dirpath: Path | None = None,
@@ -775,8 +772,8 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         ----------
         config : addict.Dict
             NAS/runtime configuration under test.
-        hyperparams : addict.Dict
-            Hyperparameter payload forwarded into request construction.
+        runtime_metadata : addict.Dict
+            Runtime metadata payload forwarded into request construction.
 
         Returns
         -------
@@ -790,7 +787,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         )
         return build_collect_metrics_request(
             config,
-            hyperparams,
+            runtime_metadata,
             latency_budget_ms=latency_budget_ms,
             dirpath=self._DEFAULT_DIRPATH if dirpath is None else dirpath,
             device_options=resolved_options,
@@ -805,7 +802,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -828,7 +825,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 serial_port="ttyACM0",
                 measured_inference_runs=7,
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -842,7 +839,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -857,6 +854,35 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertEqual(request.window_size, 32)
         self.assertEqual(request.input_dim, 3)
 
+    def test_build_request_accepts_plain_dict_config_and_runtime_metadata(self) -> None:
+        # Request construction should accept plain dict payloads, not just addict.Dict wrappers.
+        config = {
+            "training": {"energy_aware": False, "latency_proxy_max_flops": 20_000_000},
+            "device": {"hil": True, "name": "ARDUINO_NANO_33_BLE_SENSE", "serial_port": "ttyACM0"},
+            "dataset": {"params": {"window_size": 128}},
+            "outputs": {"tcn_dir": Path("tinyodom_tcn")},
+        }
+        runtime_metadata = {"flops": 123.0, "input_dim": 6}
+
+        request = self._build_request(config, runtime_metadata, device_options={})
+
+        self.assertEqual(request.window_size, 128)
+        self.assertEqual(request.input_dim, 6)
+        self.assertEqual(request.flops, 123.0)
+
+    def test_build_request_raises_value_error_for_missing_runtime_input_dim(self) -> None:
+        # Missing runtime input_dim should surface as ValueError instead of leaking AttributeError.
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
+            dataset=Dict(params=Dict(window_size=128)),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        runtime_metadata = Dict(flops=123.0)
+
+        with self.assertRaisesRegex(ValueError, "input_dim"):
+            self._build_request(config, runtime_metadata, device_options={})
+
     def test_build_request_defaults_stm_serial_timeout(self) -> None:
         # STM32 requests should fall back to the backend minimum serial timeout so short configs cannot under-budget board bring-up.
         config = Dict(
@@ -867,7 +893,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 serial_port="ttyACM0",
                 stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -893,7 +919,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 latency_budget_ms=2000.0,
                 stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -919,7 +945,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 serial_timeout_s=120.0,
                 stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -939,7 +965,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
     def _build_request(
         self,
         config: Dict,
-        hyperparams: Dict,
+        runtime_metadata: Dict,
         *,
         latency_budget_ms: float = 200.0,
         dirpath: Path | None = None,
@@ -955,7 +981,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         )
         return build_collect_metrics_request(
             config,
-            hyperparams,
+            runtime_metadata,
             latency_budget_ms=latency_budget_ms,
             dirpath=self._DEFAULT_DIRPATH if dirpath is None else dirpath,
             device_options=resolved_options,
@@ -1005,7 +1031,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 harness_active_timeout_s=30.0,
                 harness_done_timeout_s=5.0,
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1022,7 +1048,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1036,7 +1062,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=True, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1054,7 +1080,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 serial_port="ttyACM0",
                 portenta=Dict(target_core="cm4", split="50_50", security="none"),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1071,7 +1097,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="PORTENTA_H7", serial_port="ttyACM0", portenta=Dict()),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         with self.assertRaises(ValueError):
@@ -1087,7 +1113,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 serial_port="ttyACM0",
                 portenta=Dict(target_core="cm4", split="50_50", security="none"),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1119,7 +1145,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 harness_done_timeout_s=5.0,
                 portenta=Dict(target_core="cm4", split="50_50", security="none"),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1142,7 +1168,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 name="portenta_h7",
                 portenta=Dict(target_core="cm7", split="75_25", security="none"),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1157,7 +1183,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=False, name="ARDUINO_NANO_33_BLE_SENSE"),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1187,7 +1213,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                     server_ready_timeout_s=15.0,
                 ),
             ),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
@@ -1218,7 +1244,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=False, name="STM32_NUCLEO_N657X0_Q"),
-            data=Dict(window_size=128),
+            dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
         )
 
@@ -1262,7 +1288,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                         max_external_flash_bytes=123456,
                     ),
                 ),
-                data=Dict(window_size=128),
+                dataset=Dict(params=Dict(window_size=128)),
                 outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
             )
 
@@ -1292,7 +1318,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                     name="STM32_NUCLEO_N657X0_Q",
                     stm32=Dict(project_root=unresolved_root),
                 ),
-                data=Dict(window_size=128),
+                dataset=Dict(params=Dict(window_size=128)),
                 outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
             )
 
@@ -1331,7 +1357,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                         gdb_port=61235,
                     ),
                 ),
-                data=Dict(window_size=128),
+                dataset=Dict(params=Dict(window_size=128)),
                 outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
             )
 
@@ -1341,31 +1367,20 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         self.assertEqual(resolved["gdb_port"], 61235)
 
 
-class TrainAndScoreTests(unittest.TestCase):
-    """Ensure scoring uses backend-effective energy semantics."""
+class ScoreEvaluationHelperTests(unittest.TestCase):
+    """Ensure score evaluation stays aligned with the supported NAS path."""
 
-    def test_train_and_score_uses_effective_energy_flag_from_metrics(self) -> None:
+    def test_evaluate_score_config_uses_effective_energy_flag_from_metrics(self) -> None:
         """STM Phase 1 should score on latency when energy was disabled upstream."""
         # Scoring should trust the effective energy flag reported by metrics so STM32 phase-one proxy runs do not pretend energy was measured.
-        config = Dict(
-            training=Dict(
-                energy_aware=True,
-                train=False,
-                latency_proxy_max_flops=20_000_000,
+        score_config = Dict(
+            type="scoring-function",
+            metrics=Dict(),
+            params=Dict(
+                terms=[
+                    Dict(type="weighted", metric="latency_ms", weight=-1.0),
+                ]
             ),
-            nas=Dict(
-                score=Dict(
-                    type="scoring-function",
-                    metrics=Dict(),
-                    params=Dict(
-                        terms=[
-                            Dict(type="weighted", metric="latency_ms", weight=-1.0),
-                        ]
-                    ),
-                ),
-                prune=Dict(rules=[]),
-            ),
-            outputs=Dict(checkpoint_path=Path("unused.keras")),
         )
         metrics = {
             "energy_aware": False,
@@ -1378,54 +1393,36 @@ class TrainAndScoreTests(unittest.TestCase):
         }
         hyperparams = Dict(flops=1_000)
 
-        scoring_result = train_and_score(
-            model=MagicMock(),
-            batch_size=1,
-            hyperparams=hyperparams,
+        scoring_result = evaluate_score_config(
             metrics=metrics,
-            max_ram=1_024,
-            max_flash=2_048,
-            training_data=MagicMock(),
-            validation_data=MagicMock(),
-            config=config,
+            hyperparams=hyperparams,
+            score_config=score_config,
         )
 
         self.assertEqual(scoring_result.score, -12.5)
-        self.assertEqual(metrics["rmse_total"], -1.0)
 
-    def test_train_and_score_supports_normalized_weighted_terms(self) -> None:
-        """Normalized weighted terms should use the injected device limits."""
+    def test_evaluate_score_config_supports_normalized_weighted_terms(self) -> None:
+        """Normalized weighted terms should use the provided device limits."""
         # Normalized score terms should use the active device limits so scoring never falls back to stale reference values.
-        config = Dict(
-            training=Dict(
-                energy_aware=False,
-                train=False,
-                latency_proxy_max_flops=20_000_000,
-            ),
-            nas=Dict(
-                score=Dict(
-                    type="scoring-function",
-                    metrics=Dict(),
-                    params=Dict(
-                        terms=[
-                            Dict(
-                                type="normalized-weighted",
-                                metric="ram_bytes",
-                                weight=0.5,
-                                reference=Dict(type="metric", metric="max_ram_bytes"),
-                            ),
-                            Dict(
-                                type="normalized-weighted",
-                                metric="flash_bytes",
-                                weight=-2.0,
-                                reference=Dict(type="metric", metric="max_flash_bytes"),
-                            ),
-                        ]
+        score_config = Dict(
+            type="scoring-function",
+            metrics=Dict(),
+            params=Dict(
+                terms=[
+                    Dict(
+                        type="normalized-weighted",
+                        metric="ram_bytes",
+                        weight=0.5,
+                        reference=Dict(type="metric", metric="max_ram_bytes"),
                     ),
-                ),
-                prune=Dict(rules=[]),
+                    Dict(
+                        type="normalized-weighted",
+                        metric="flash_bytes",
+                        weight=-2.0,
+                        reference=Dict(type="metric", metric="max_flash_bytes"),
+                    ),
+                ]
             ),
-            outputs=Dict(checkpoint_path=Path("unused.keras")),
         )
         metrics = {
             "energy_aware": False,
@@ -1435,58 +1432,41 @@ class TrainAndScoreTests(unittest.TestCase):
             "error_code": 0,
             "ram_bytes": 128,
             "flash_bytes": 256,
+            "max_ram_bytes": 1_024.0,
+            "max_flash_bytes": 2_048.0,
         }
         hyperparams = Dict(flops=1_000)
 
-        scoring_result = train_and_score(
-            model=MagicMock(),
-            batch_size=1,
-            hyperparams=hyperparams,
+        scoring_result = evaluate_score_config(
             metrics=metrics,
-            max_ram=1_024,
-            max_flash=2_048,
-            training_data=MagicMock(),
-            validation_data=MagicMock(),
-            config=config,
+            hyperparams=hyperparams,
+            score_config=score_config,
         )
 
         self.assertAlmostEqual(scoring_result.score, -0.1875)
-        self.assertEqual(metrics["max_ram_bytes"], 1_024.0)
-        self.assertEqual(metrics["max_flash_bytes"], 2_048.0)
 
-    def test_train_and_score_supports_energy_budget_from_power_metric(self) -> None:
+    def test_evaluate_score_config_supports_energy_budget_from_power_metric(self) -> None:
         """Energy budget derived metrics should resolve from power and duration."""
         # Derived energy budgets should resolve from power and duration so score terms can express device-level energy envelopes.
-        config = Dict(
-            training=Dict(
-                energy_aware=True,
-                train=False,
-                latency_proxy_max_flops=20_000_000,
+        score_config = Dict(
+            type="scoring-function",
+            metrics=Dict(
+                energy_budget_mj=Dict(
+                    type="energy-budget-from-power",
+                    power_mw=Dict(type="literal", value=100.0),
+                    duration_ms=Dict(type="metric", metric="latency_budget_ms"),
+                )
             ),
-            nas=Dict(
-                score=Dict(
-                    type="scoring-function",
-                    metrics=Dict(
-                        energy_budget_mj=Dict(
-                            type="energy-budget-from-power",
-                            power_mw=Dict(type="literal", value=100.0),
-                            duration_ms=Dict(type="metric", metric="latency_budget_ms"),
-                        )
+            params=Dict(
+                terms=[
+                    Dict(
+                        type="target",
+                        metric="energy_mj_per_inference",
+                        weight=0.15,
+                        reference=Dict(type="metric", metric="energy_budget_mj"),
                     ),
-                    params=Dict(
-                        terms=[
-                            Dict(
-                                type="target",
-                                metric="energy_mj_per_inference",
-                                weight=0.15,
-                                reference=Dict(type="metric", metric="energy_budget_mj"),
-                            ),
-                        ]
-                    )
-                ),
-                prune=Dict(rules=[]),
+                ]
             ),
-            outputs=Dict(checkpoint_path=Path("unused.keras")),
         )
         metrics = {
             "energy_aware": True,
@@ -1500,103 +1480,56 @@ class TrainAndScoreTests(unittest.TestCase):
         }
         hyperparams = Dict(flops=1_000)
 
-        scoring_result = train_and_score(
-            model=MagicMock(),
-            batch_size=1,
-            hyperparams=hyperparams,
+        scoring_result = evaluate_score_config(
             metrics=metrics,
-            max_ram=1_024,
-            max_flash=2_048,
-            training_data=MagicMock(),
-            validation_data=MagicMock(),
-            config=config,
+            hyperparams=hyperparams,
+            score_config=score_config,
         )
 
         self.assertAlmostEqual(scoring_result.score, -0.15)
 
-    def test_train_and_score_supports_generic_task_sentinels_when_training_disabled(self) -> None:
-        """The legacy no-train path should allow generic task metric names."""
-        # No-train scoring should still emit generic task sentinels so multi-objective search can log disabled-training trials consistently.
-        config = Dict(
-            training=Dict(
-                energy_aware=False,
-                train=False,
-                latency_proxy_max_flops=20_000_000,
+    def test_evaluate_score_config_supports_multiobjective_custom_metrics(self) -> None:
+        """Multi-objective evaluation should honor arbitrary task metric names."""
+        # Generic task metrics should flow through score evaluation without requiring the old no-training wrapper.
+        score_config = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="signed_bias", direction="maximize"),
+                    Dict(metric="signed_offset", direction="maximize"),
+                ]
             ),
-            nas=Dict(
-                score=Dict(
-                    type="multi-objective",
-                    metrics=Dict(),
-                    params=Dict(
-                        objectives=[
-                            Dict(metric="signed_bias", direction="maximize"),
-                            Dict(metric="signed_offset", direction="maximize"),
-                        ]
-                    ),
-                ),
-                prune=Dict(rules=[]),
-            ),
-            outputs=Dict(checkpoint_path=Path("unused.keras")),
         )
-        metrics = {
-            "energy_aware": False,
-            "energy_mj_per_inference": -1.0,
-            "latency_ms": 12.5,
-            "hil_enabled": True,
-            "error_code": 0,
-            "ram_bytes": 128,
-            "flash_bytes": 256,
-        }
+        metrics = {"signed_bias": -1.0, "signed_offset": -1.0, "latency_ms": 12.5}
         hyperparams = Dict(flops=1_000)
 
-        trial_outcome = train_and_score(
-            model=MagicMock(),
-            batch_size=1,
-            hyperparams=hyperparams,
+        result = evaluate_score_config(
             metrics=metrics,
-            max_ram=1_024,
-            max_flash=2_048,
-            training_data=MagicMock(),
-            validation_data=MagicMock(),
-            config=config,
-            task_metric_names={"signed_bias", "signed_offset"},
+            hyperparams=hyperparams,
+            score_config=score_config,
             task_nonnegative_metric_names=set(),
         )
 
-        self.assertIsNone(trial_outcome.score)
-        self.assertEqual(trial_outcome.objective_values, [-1.0, -1.0])
-        self.assertEqual(
-            trial_outcome.task_metrics,
-            {"signed_bias": -1.0, "signed_offset": -1.0},
-        )
+        self.assertIsNone(result.score)
+        self.assertEqual(result.objective_values, [-1.0, -1.0])
 
-    def test_train_and_score_raises_dedicated_exception_for_unavailable_score_metric(self) -> None:
+    def test_evaluate_score_config_raises_dedicated_exception_for_unavailable_score_metric(self) -> None:
         """Unavailable score metrics should raise ScoreConfigEvaluationError."""
         # Unavailable score metrics should raise the dedicated evaluation error so NAS pruning can treat them as configuration problems.
-        config = Dict(
-            training=Dict(
-                energy_aware=True,
-                train=False,
-                latency_proxy_max_flops=20_000_000,
-            ),
-            nas=Dict(
-                score=Dict(
-                    type="scoring-function",
-                    metrics=Dict(),
-                    params=Dict(
-                        terms=[
-                            Dict(
-                                type="target",
-                                metric="energy_mj_per_inference",
-                                weight=0.15,
-                                reference=Dict(type="metric", metric="latency_budget_ms"),
-                            ),
-                        ]
+        score_config = Dict(
+            type="scoring-function",
+            metrics=Dict(),
+            params=Dict(
+                terms=[
+                    Dict(
+                        type="target",
+                        metric="energy_mj_per_inference",
+                        weight=0.15,
+                        reference=Dict(type="metric", metric="latency_budget_ms"),
                     ),
-                ),
-                prune=Dict(rules=[]),
+                ]
             ),
-            outputs=Dict(checkpoint_path=Path("unused.keras")),
         )
         metrics = {
             "energy_aware": True,
@@ -1611,16 +1544,10 @@ class TrainAndScoreTests(unittest.TestCase):
         hyperparams = Dict(flops=1_000)
 
         with self.assertRaises(ScoreConfigEvaluationError):
-            train_and_score(
-                model=MagicMock(),
-                batch_size=1,
-                hyperparams=hyperparams,
+            evaluate_score_config(
                 metrics=metrics,
-                max_ram=1_024,
-                max_flash=2_048,
-                training_data=MagicMock(),
-                validation_data=MagicMock(),
-                config=config,
+                hyperparams=hyperparams,
+                score_config=score_config,
             )
 
     def test_evaluate_score_config_matches_scalar_scoring_semantics(self) -> None:
@@ -2239,8 +2166,9 @@ class LoadSettingsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "only supported"):
                 load_config(config_path=cfg)
 
-    def test_load_settings_rejects_prune_rules_that_depend_on_training_metrics(self) -> None:
-        # Prune rules must stay independent of training outputs so pre-fit pruning does not depend on metrics that do not exist yet.
+    def test_load_settings_defers_prune_rules_that_depend_on_training_metrics_until_task_validation(self) -> None:
+        """Task-dependent prune validation should run after the task contract is known."""
+        # Prune rules that depend on task-owned training metrics should survive generic config load and fail only once task-aware validation runs.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2279,11 +2207,18 @@ class LoadSettingsTests(unittest.TestCase):
                 )
             )
 
-            with self.assertRaisesRegex(ValueError, "training-only"):
-                load_config(config_path=cfg)
+            settings = load_config(config_path=cfg)
 
-    def test_load_settings_rejects_weight_storage_mode_in_score_terms(self) -> None:
-        # Invalid weight storage mode in score terms should fail during config load so unsupported NAS settings never reach execution.
+            with self.assertRaisesRegex(ValueError, "training-only"):
+                validate_nas_policy_for_task(
+                    settings,
+                    task_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
+                    training_only_task_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
+                )
+
+    def test_load_settings_defers_unknown_metric_terms_until_task_validation(self) -> None:
+        """Generic config load should not guess whether a metric is task-owned."""
+        # Unknown-looking metric names should remain intact through generic load and fail only when a concrete task contract excludes them.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2309,8 +2244,15 @@ class LoadSettingsTests(unittest.TestCase):
                 )
             )
 
-            with self.assertRaisesRegex(ValueError, "unknown metric"):
-                load_config(config_path=cfg)
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.score.params.terms[0].metric, "weight_storage_mode")
+        with self.assertRaisesRegex(ValueError, "unknown metric"):
+            validate_nas_policy_for_task(
+                settings,
+                task_metric_names={"custom_metric"},
+                training_only_task_metric_names=set(),
+            )
 
     def test_load_settings_accepts_custom_task_metric_in_score_term(self) -> None:
         """Task-aware validation should allow caller-supplied task metrics."""
@@ -2348,9 +2290,9 @@ class LoadSettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.nas.score.params.terms[0].metric, "custom_metric")
 
-    def test_load_settings_rejects_unknown_custom_task_metric_without_task_context(self) -> None:
-        """Unknown task metrics should still fail without caller-supplied context."""
-        # Invalid unknown custom task metric without task context should fail during config load so unsupported NAS settings never reach execution.
+    def test_load_settings_accepts_unknown_custom_task_metric_without_task_context(self) -> None:
+        """Generic config load should preserve potential task metrics verbatim."""
+        # Unknown task metric names should remain intact until a concrete task contract is available.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2376,8 +2318,46 @@ class LoadSettingsTests(unittest.TestCase):
                 )
             )
 
-            with self.assertRaisesRegex(ValueError, "unknown metric"):
-                load_config(config_path=cfg)
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.score.params.terms[0].metric, "custom_metric")
+
+    def test_validate_nas_policy_for_task_rejects_unknown_custom_task_metric(self) -> None:
+        """Task-aware validation should reject undeclared task metric names."""
+        # Once the task contract is known, undeclared custom metric names should fail immediately.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: custom_metric",
+                        "          weight: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        with self.assertRaisesRegex(ValueError, "unknown metric"):
+            validate_nas_policy_for_task(
+                settings,
+                task_metric_names={"different_metric"},
+                training_only_task_metric_names=set(),
+            )
 
     def test_load_settings_accepts_derived_metric_that_references_custom_task_metric(self) -> None:
         """Derived score metrics may depend on caller-supplied task metrics."""

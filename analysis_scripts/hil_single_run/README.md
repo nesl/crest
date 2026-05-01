@@ -4,6 +4,13 @@ This folder provides a minimal, single-pass HIL sanity check. It builds a
 fixed TinyODOM model, runs the HIL controller once, and prints the returned
 metrics (latency/energy/RAM/flash/etc.).
 
+The current scripts use the modular runtime surface:
+
+- runtime dimensions come from `HILServer.get_runtime_dimensions()`
+- representative export inputs come from `HILServer.get_calibration_inputs()`
+- the HIL request is split into `family_hparams` and `runtime_metadata`
+  before calling `HILServer.determine_metrics(...)`
+
 When the active DUT sketch emits clock telemetry, the returned metrics can also
 include `clock_hz` and `dwt_cycles_per_inference`.
 

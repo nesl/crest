@@ -39,6 +39,7 @@ venv.bak/
 
 # Editors
 .vscode/
+AGENTS.md
 
 # Linters
 .ruff_cache/
@@ -368,3 +369,7 @@ stm_memory_notes.md
 model_design.md
 things_forgotten_in_the_model_refactor.md
 src/two_board_hil_notes.txt
+plan_call_site_docs_test_surface_gaps_breaking_update.md
+plan_config_and_component_selection_gaps_breaking_update.md
+plan_model_family_boundary_gaps_breaking_update.md
+plan_task_and_runtime_orchestration_gaps_breaking_update.md

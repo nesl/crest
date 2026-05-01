@@ -1,9 +1,8 @@
-"""Legacy TinyODOM model, scoring, and runtime-request helpers.
+"""Shared TinyODOM scoring, config-validation, and model helpers.
 
-This module still carries the shared NAS scoring DSL, YAML config validation,
-runtime metric collection request shaping, CSV trial logging, and the legacy
-TinyODOM model/training helpers that bridge the older pipeline to the newer
-componentized architecture.
+This module carries the shared NAS scoring DSL, YAML config validation,
+runtime metric normalization, CSV trial logging, and the built-in TinyODOM
+model helpers that are still reused across the componentized runtime.
 """
 
 import csv
@@ -23,12 +22,9 @@ import numpy as np
 import tensorflow as tf
 import yaml
 from addict import Dict
-from sklearn.metrics import mean_squared_error
 
 # import optuna
 from tcn import TCN
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
-from tensorflow.keras.models import load_model
 from tensorflow.keras import Input, Model
 from tensorflow.keras.layers import Dense, Flatten, MaxPooling1D, Reshape
 from tensorflow.python.framework.convert_to_constants import (
@@ -44,8 +40,6 @@ from .microcontrollers import (
     get_device as get_microcontroller_device,
     resolve_device_options,
 )
-from .data import OxIODSplitData
-
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "nas_config.yaml"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # Keep the legacy constant name for compatibility with older callers, but point
@@ -123,8 +117,8 @@ INFRASTRUCTURE_SCORE_METRICS = {
 }
 DEFAULT_TASK_SCORE_METRICS = {"rmse_vel_x", "rmse_vel_y", "rmse_total"}
 DEFAULT_TRAINING_ONLY_TASK_METRICS = {"rmse_vel_x", "rmse_vel_y", "rmse_total"}
-# Keep these legacy names for compatibility, but Phase 3 validation should rely
-# on resolved metric sets instead of these static aliases.
+# These constants describe the built-in odometry task only. Task-aware NAS
+# validation must not treat them as the implicit contract for arbitrary tasks.
 TRAINING_ONLY_METRICS = DEFAULT_TRAINING_ONLY_TASK_METRICS
 BUILTIN_SCORE_METRICS = INFRASTRUCTURE_SCORE_METRICS | DEFAULT_TASK_SCORE_METRICS
 
@@ -314,105 +308,6 @@ class ScoreConfigEvaluationError(ValueError):
     metrics, invalid runtime references, or derived metrics that cannot be
     computed from the current trial context.
     """
-
-
-@dataclass(frozen=True)
-class HarnessConfig:
-    """Energy-aware harness settings forwarded to ``HIL_controller``.
-
-    Parameters
-    ----------
-    harness_serial_port : str | None
-        Serial port for the INA228 harness.
-    harness_fqbn : str | None
-        FQBN used to compile/upload the harness sketch.
-    harness_auto_flash : str | None
-        Harness flashing policy (``once``, ``always``, ``never``).
-    harness_arm_pin : int | None
-        Harness arming GPIO pin.
-    harness_trigger_pin : int | None
-        Harness trigger GPIO pin.
-    dut_arm_hold_ms : int | None
-        Time to hold DUT arm low before trigger observation.
-    harness_stable_low_ms : int | None
-        Required stable-low arming duration.
-    harness_ready_timeout_s : float | None
-        Timeout waiting for ``HARNESS READY``.
-    harness_arm_timeout_s : float | None
-        Timeout waiting for a valid arm/trigger edge.
-    harness_active_timeout_s : float | None
-        Maximum active measurement window.
-    harness_done_timeout_s : float | None
-        Timeout waiting for ``DONE``.
-    """
-
-    harness_serial_port: str | None
-    harness_fqbn: str | None
-    harness_auto_flash: str | None
-    harness_arm_pin: int | None
-    harness_trigger_pin: int | None
-    dut_arm_hold_ms: int | None
-    harness_stable_low_ms: int | None
-    harness_ready_timeout_s: float | None
-    harness_arm_timeout_s: float | None
-    harness_active_timeout_s: float | None
-    harness_done_timeout_s: float | None
-
-
-@dataclass(frozen=True)
-class CollectMetricsRequest:
-    """Normalized request used by :func:`collect_metrics`.
-
-    Parameters
-    ----------
-    hil_enabled : bool
-        Whether to run HIL upload/measurement (vs compile-only proxy mode).
-    energy_aware : bool
-        Whether harness-assisted power measurement is enabled.
-    flops : float
-        Model FLOP estimate for trial bookkeeping.
-    device_name : str
-        Target hardware name.
-    window_size : int
-        Input window length compiled into firmware.
-    input_dim : int
-        Number of input channels compiled into firmware.
-    dirpath : pathlib.Path
-        Firmware project directory containing generated model artifacts.
-    latency_proxy_max_flops : float
-        Maximum FLOPs used by proxy latency normalization.
-    serial_port : str | None
-        DUT serial port used for upload/latency capture during HIL runs.
-    latency_budget_ms : float | None, optional
-        Target inference cadence in milliseconds for normalized latency checks.
-    dut_ready_timeout_s : float | None, optional
-        Timeout waiting for DUT ready handshake.
-    serial_timeout_s : float | None, optional
-        Post-``START`` runtime timeout forwarded to direct-serial backends.
-    measured_inference_runs : int, optional
-        Number of on-device inference invokes averaged into one measured HIL
-        attempt.
-    harness : HarnessConfig | None, optional
-        Harness settings for energy-aware runs. ``None`` for non-energy-aware runs.
-    device_options : dict[str, Any] | None, optional
-        Optional board-specific options forwarded to the device factory.
-    """
-
-    hil_enabled: bool
-    energy_aware: bool
-    flops: float
-    device_name: str
-    window_size: int
-    input_dim: int
-    dirpath: Path
-    latency_proxy_max_flops: float
-    serial_port: str | None
-    latency_budget_ms: float | None = None
-    dut_ready_timeout_s: float | None = None
-    serial_timeout_s: float | None = None
-    measured_inference_runs: int = 10
-    harness: HarnessConfig | None = None
-    device_options: dict[str, Any] | None = None
 
 
 def set_error_code(metrics: dict, code: int) -> None:
@@ -1179,7 +1074,13 @@ def evaluate_score_config(
     )
 
 
-def _validate_typed_reference(reference: Any, allowed_metrics: set[str], context_name: str) -> Dict:
+def _validate_typed_reference(
+    reference: Any,
+    allowed_metrics: set[str],
+    context_name: str,
+    *,
+    allow_unknown_metric_names: bool = False,
+) -> Dict:
     """Validate and normalize a typed reference entry.
 
     Parameters
@@ -1210,7 +1111,7 @@ def _validate_typed_reference(reference: Any, allowed_metrics: set[str], context
     normalized_reference.type = ref_type
     if ref_type == "metric":
         metric_name = str(normalized_reference.get("metric", "")).strip()
-        if metric_name not in allowed_metrics:
+        if metric_name not in allowed_metrics and not allow_unknown_metric_names:
             raise ValueError(f"{context_name} references unknown metric '{metric_name}'.")
         normalized_reference.metric = metric_name
     else:
@@ -1231,10 +1132,11 @@ def _resolve_validation_metric_sets(
     ----------
     task_metric_names : set[str] | None, optional
         Task-owned metric names that may appear in score or prune configs.
-        When omitted, the current odometry RMSE set is used.
+        When omitted, task-aware validation is disabled and only
+        infrastructure metrics are considered known.
     training_only_task_metric_names : set[str] | None, optional
         Task-owned metric names that are only available after training. When
-        omitted, the current odometry RMSE set is used.
+        omitted, no task metrics are treated as training-only.
 
     Returns
     -------
@@ -1245,17 +1147,19 @@ def _resolve_validation_metric_sets(
     Raises
     ------
     ValueError
-        If task metrics overlap infrastructure metrics or if the training-only
-        set is not a subset of the task metric set.
+        If task metrics overlap infrastructure metrics, if the training-only
+        set is supplied without task metrics, or if the training-only set is
+        not a subset of the task metric set.
     """
-
-    if task_metric_names is None and training_only_task_metric_names is None:
-        effective_task_metric_names = set(DEFAULT_TASK_SCORE_METRICS)
-        effective_training_only_metric_names = set(DEFAULT_TRAINING_ONLY_TASK_METRICS)
+    if task_metric_names is None:
+        if training_only_task_metric_names is not None:
+            raise ValueError(
+                "training_only_task_metric_names requires task_metric_names for task-aware validation."
+            )
+        effective_task_metric_names = set()
+        effective_training_only_metric_names = set()
     else:
-        effective_task_metric_names = set(
-            DEFAULT_TASK_SCORE_METRICS if task_metric_names is None else task_metric_names
-        )
+        effective_task_metric_names = set(task_metric_names)
         effective_training_only_metric_names = set(
             set() if training_only_task_metric_names is None else training_only_task_metric_names
         )
@@ -1414,6 +1318,8 @@ def _validate_score_config(
     score_input: Any,
     allowed_base_metric_names: set[str],
     has_legacy_multiobjective: bool = False,
+    *,
+    allow_unknown_metric_names: bool = False,
 ) -> Dict:
     """Validate and normalize the NAS score configuration.
 
@@ -1486,7 +1392,7 @@ def _validate_score_config(
             normalized_metric_list = []
             for child_metric in metric_list:
                 child_name = str(child_metric).strip()
-                if child_name not in allowed_metric_names:
+                if child_name not in allowed_metric_names and not allow_unknown_metric_names:
                     raise ValueError(
                         f"score.metrics.{metric_name} references unknown metric '{child_name}'."
                     )
@@ -1508,11 +1414,13 @@ def _validate_score_config(
                 metric_cfg.get("power_mw", metric_cfg.get("power")),
                 allowed_metric_names,
                 f"score.metrics.{metric_name}.power_mw",
+                allow_unknown_metric_names=allow_unknown_metric_names,
             )
             metric_cfg.duration_ms = _validate_typed_reference(
                 metric_cfg.get("duration_ms", metric_cfg.get("duration")),
                 allowed_metric_names,
                 f"score.metrics.{metric_name}.duration_ms",
+                allow_unknown_metric_names=allow_unknown_metric_names,
             )
             if (
                 metric_cfg.duration_ms.type == "literal"
@@ -1541,16 +1449,17 @@ def _validate_score_config(
                     f"score.params.terms[{idx}].type must be one of: {sorted(VALID_TERM_TYPES)}."
                 )
             metric_name = str(term.get("metric", "")).strip()
-            if metric_name not in allowed_metric_names:
-                raise ValueError(f"score.params.terms[{idx}] references unknown metric '{metric_name}'.")
             term.type = term_type
             term.metric = metric_name
             term.weight = float(term.get("weight", 1.0))
+            if metric_name not in allowed_metric_names and not allow_unknown_metric_names:
+                raise ValueError(f"score.params.terms[{idx}] references unknown metric '{metric_name}'.")
             if term_type in {"normalized-weighted", "boundary", "target"}:
                 term.reference = _validate_typed_reference(
                     term.get("reference"),
                     allowed_metric_names,
                     f"score.params.terms[{idx}]",
+                    allow_unknown_metric_names=allow_unknown_metric_names,
                 )
                 if (
                     term_type == "normalized-weighted"
@@ -1571,7 +1480,7 @@ def _validate_score_config(
             objective = Dict(raw_objective)
             metric_name = str(objective.get("metric", "")).strip()
             direction = str(objective.get("direction", "")).strip().lower()
-            if metric_name not in allowed_metric_names:
+            if metric_name not in allowed_metric_names and not allow_unknown_metric_names:
                 raise ValueError(f"score.params.objectives[{idx}] references unknown metric '{metric_name}'.")
             if direction not in VALID_OBJECTIVE_DIRECTIONS:
                 raise ValueError(
@@ -1589,6 +1498,8 @@ def _validate_prune_config(
     score_config: Dict,
     allowed_base_metric_names: set[str],
     training_only_metric_names: set[str],
+    *,
+    allow_unknown_metric_names: bool = False,
 ) -> Dict:
     """Validate and normalize NAS prune policy.
 
@@ -1629,7 +1540,7 @@ def _validate_prune_config(
         rule_cfg = Dict(raw_rule)
         metric_name = str(rule_cfg.get("metric", "")).strip()
         condition = str(rule_cfg.get("condition", "")).strip().lower()
-        if metric_name not in allowed_metric_names:
+        if metric_name not in allowed_metric_names and not allow_unknown_metric_names:
             raise ValueError(f"nas.prune.rules[{idx}] references unknown metric '{metric_name}'.")
         if condition not in VALID_PRUNE_CONDITIONS:
             raise ValueError(
@@ -1647,6 +1558,7 @@ def _validate_prune_config(
             rule_cfg.get("reference"),
             allowed_metric_names,
             f"nas.prune.rules[{idx}]",
+            allow_unknown_metric_names=allow_unknown_metric_names,
         )
         if reference.type == "metric" and _metric_depends_on_training(
             str(reference.metric),
@@ -1671,6 +1583,8 @@ def _validate_nas_config(
     config: Dict,
     task_metric_names: set[str] | None = None,
     training_only_task_metric_names: set[str] | None = None,
+    *,
+    allow_unknown_metric_names: bool = False,
 ) -> Dict:
     """Validate and normalize the top-level NAS policy configuration.
 
@@ -1707,16 +1621,50 @@ def _validate_nas_config(
         nas_config.get("score"),
         allowed_base_metric_names=allowed_base_metric_names,
         has_legacy_multiobjective="nas_multiobjective" in config.training,
+        allow_unknown_metric_names=allow_unknown_metric_names,
     )
     prune_config = _validate_prune_config(
         nas_config.get("prune", {}),
         score_config,
         allowed_base_metric_names,
         effective_training_only_metric_names,
+        allow_unknown_metric_names=allow_unknown_metric_names,
     )
     nas_config.score = score_config
     nas_config.prune = prune_config
     return nas_config
+
+
+def validate_nas_policy_for_task(
+    config: Dict,
+    *,
+    task_metric_names: set[str],
+    training_only_task_metric_names: set[str],
+) -> Dict:
+    """Validate and attach the NAS policy for one concrete task contract.
+
+    Parameters
+    ----------
+    config : Dict
+        Loaded runtime configuration.
+    task_metric_names : set[str]
+        Task-owned metric names that may appear in score or prune configs.
+    training_only_task_metric_names : set[str]
+        Task-owned metric names that are only available after training.
+
+    Returns
+    -------
+    Dict
+        The same config object with its ``nas`` subtree normalized against the
+        supplied task metric contract.
+    """
+
+    config.nas = _validate_nas_config(
+        config,
+        task_metric_names=task_metric_names,
+        training_only_task_metric_names=training_only_task_metric_names,
+    )
+    return config
 
 
 def evaluate_prune_rules(
@@ -1792,16 +1740,16 @@ def load_config(
         ``src/config/nas_config.yaml``.
     task_metric_names : set[str] | None, optional
         Task-owned metric names that may appear in score or prune configs. When
-        omitted, the current odometry RMSE metrics are used.
+        omitted, only generic NAS-policy validation runs during config load.
     training_only_task_metric_names : set[str] | None, optional
         Task-owned metric names that are only available after training. When
-        omitted, the current odometry RMSE metrics are used.
+        omitted, task-aware validation treats no task metrics as training-only.
 
     Returns
     -------
     addict.Dict
         Configuration tree with derived paths (models_dir, checkpoint paths,
-        etc.) and a task-aware validated NAS policy.
+        etc.) and a generically validated NAS policy.
 
     Raises
     ------
@@ -1816,8 +1764,11 @@ def load_config(
     Notes
     -----
     Besides parsing YAML, this helper normalizes derived artifact paths,
-    validates board/runtime policy, injects harness defaults, and resolves the
-    task-aware NAS score/prune configuration against the active metric sets.
+    validates board/runtime policy, and injects harness defaults. It always
+    performs the generic NAS score/prune validation pass. When
+    ``task_metric_names`` are supplied, it additionally validates the NAS
+    policy against that concrete task contract instead of deferring task-owned
+    metric checks to the later bootstrap step.
     """
     cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
@@ -2003,10 +1954,20 @@ def load_config(
         )
     config.logging = Dict()
     config.logging.level = level_name
+    if "score" in config:
+        raise KeyError("Top-level 'score' is no longer supported; move it to 'nas.score'.")
+    if "nas" not in config:
+        raise KeyError("Missing required top-level 'nas' section in the configuration.")
+    config.nas = Dict(config.nas)
+    has_task_context = (
+        task_metric_names is not None
+        or training_only_task_metric_names is not None
+    )
     config.nas = _validate_nas_config(
         config,
         task_metric_names=task_metric_names,
         training_only_task_metric_names=training_only_task_metric_names,
+        allow_unknown_metric_names=not has_task_context,
     )
 
     return config
@@ -2097,358 +2058,6 @@ def require_logical_input_shape(input_shape: Any) -> tuple[int, int]:
             raise ValueError(error_message)
         resolved_dims.append(resolved_dim)
     return resolved_dims[0], resolved_dims[1]
-
-def build_collect_metrics_request(
-    config: Dict,
-    hyperparams: Dict,
-    latency_budget_ms: float,
-    *,
-    dirpath: Path,
-    device_options: dict[str, Any] | None,
-    hil_enabled: bool | None = None,
-    energy_aware: bool | None = None,
-    window_size: int | None = None,
-    input_dim: int | None = None,
-) -> CollectMetricsRequest:
-    """Build a :class:`CollectMetricsRequest` from full config and hyperparameters.
-
-    Parameters
-    ----------
-    config : addict.Dict
-        Loaded runtime configuration.
-    hyperparams : addict.Dict
-        Trial/model hyperparameters containing at least ``flops`` and, when
-        ``input_dim`` is not passed explicitly, ``input_dim``.
-    latency_budget_ms : float
-        Per-inference latency budget in milliseconds, derived from stride cadence.
-    dirpath : Path
-        Candidate sketch or project directory passed through to the controller.
-    device_options : dict[str, Any] | None
-        Optional backend-specific device overrides that should accompany the
-        request.
-    hil_enabled : bool | None, optional
-        Explicit override for whether runtime HIL should be used.
-    energy_aware : bool | None, optional
-        Explicit override for whether harness energy measurement is required.
-    window_size : int | None, optional
-        Explicit window-size override. Falls back to the loaded dataset config.
-    input_dim : int | None, optional
-        Explicit input-dimension override. Falls back to ``hyperparams``.
-
-    Returns
-    -------
-    CollectMetricsRequest
-        Normalized request payload for :func:`collect_metrics`.
-
-    Raises
-    ------
-    RuntimeError
-        If runtime measurement requires a harness but ``device.harness_serial_port``
-        is not configured.
-
-    Notes
-    -----
-    Request construction resolves config defaults first, then layers caller
-    overrides on top. Some boards still need harness configuration even for
-    non-energy runs when their runtime mode is ``harness_only``.
-    """
-    def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
-        """Read a value from either an ``addict.Dict`` or a namespace-like object.
-
-        Parameters
-        ----------
-        container : Any
-            Config subtree or namespace object to read from.
-        key : str
-            Field name to resolve.
-        default : Any, optional
-            Fallback value when the field is absent.
-
-        Returns
-        -------
-        Any
-            Resolved field value or ``default``.
-        """
-        getter = getattr(container, "get", None)
-        if callable(getter):
-            return getter(key, default)
-        return getattr(container, key, default)
-
-    effective_energy_aware = bool(config.training.energy_aware) if energy_aware is None else bool(energy_aware)
-    harness = None
-    normalized_device_name = str(config.device.name).strip().upper()
-    effective_hil_enabled = bool(config.device.hil) if hil_enabled is None else bool(hil_enabled)
-    request_device_options = None if device_options is None else dict(device_options)
-    if request_device_options is None:
-        request_device_options = {}
-    request_device_options["latency_budget_ms"] = float(latency_budget_ms)
-
-    runtime_mode = "direct_serial"
-    if effective_hil_enabled:
-        try:
-            runtime_device = get_microcontroller_device(
-                normalized_device_name,
-                serial_port=_cfg_get(config.device, "serial_port", None),
-                device_options=request_device_options,
-            )
-        except ValueError:
-            runtime_device = None
-        if runtime_device is not None:
-            runtime_mode_fn = getattr(runtime_device, "runtime_measure_mode", None)
-            if callable(runtime_mode_fn):
-                runtime_mode = str(runtime_mode_fn())
-
-    # Some boards still require the harness even for non-energy runs because
-    # their runtime telemetry is only reliable through the harness path.
-    if effective_energy_aware or runtime_mode == "harness_only":
-        harness_serial_port = _cfg_get(config.device, "harness_serial_port", None)
-        if not harness_serial_port:
-            raise RuntimeError(
-                "Set device.harness_serial_port when runtime measurement requires the harness."
-            )
-        harness = HarnessConfig(
-            harness_serial_port=harness_serial_port,
-            harness_fqbn=_cfg_get(config.device, "harness_fqbn", None),
-            harness_auto_flash=_cfg_get(config.device, "harness_auto_flash", None),
-            harness_arm_pin=_cfg_get(config.device, "harness_arm_pin", None),
-            harness_trigger_pin=_cfg_get(config.device, "harness_trigger_pin", None),
-            dut_arm_hold_ms=_cfg_get(config.device, "dut_arm_hold_ms", None),
-            harness_stable_low_ms=_cfg_get(config.device, "harness_stable_low_ms", None),
-            harness_ready_timeout_s=_cfg_get(config.device, "harness_ready_timeout_s", None),
-            harness_arm_timeout_s=_cfg_get(config.device, "harness_arm_timeout_s", None),
-            harness_active_timeout_s=_cfg_get(config.device, "harness_active_timeout_s", None),
-            harness_done_timeout_s=_cfg_get(config.device, "harness_done_timeout_s", None),
-        )
-
-    dut_ready_timeout = _cfg_get(config.device, "dut_ready_timeout_s", 5.0)
-    if dut_ready_timeout is None:
-        dut_ready_timeout = 5.0
-    measured_inference_runs = int(_cfg_get(config.device, "measured_inference_runs", 10))
-    serial_timeout = _cfg_get(config.device, "serial_timeout_s", 12.0)
-    if serial_timeout is None:
-        serial_timeout = 12.0
-    configured_runtime_mode = _cfg_get(config.device, "runtime_mode", "back_to_back")
-    if effective_hil_enabled and normalized_device_name == "STM32_NUCLEO_N657X0_Q":
-        # Cadenced STM32 runs can legitimately outlive the generic serial
-        # timeout, so inflate the bound from cadence budget and run count.
-        serial_timeout = max(
-            float(serial_timeout),
-            _minimum_stm32_serial_timeout_s(
-                runtime_mode=str(configured_runtime_mode),
-                latency_budget_ms=float(latency_budget_ms),
-                measured_inference_runs=measured_inference_runs,
-            ),
-        )
-
-    resolved_window_size = (
-        int(config.data.window_size)
-        if window_size is None
-        else int(window_size)
-    )
-    resolved_input_dim = (
-        int(hyperparams.input_dim)
-        if input_dim is None
-        else int(input_dim)
-    )
-
-    return CollectMetricsRequest(
-        hil_enabled=effective_hil_enabled,
-        energy_aware=effective_energy_aware,
-        flops=hyperparams.flops,
-        device_name=normalized_device_name,
-        window_size=resolved_window_size,
-        input_dim=resolved_input_dim,
-        dirpath=Path(dirpath).resolve(),
-        latency_proxy_max_flops=config.training.latency_proxy_max_flops,
-        serial_port=_cfg_get(config.device, "serial_port", None),
-        latency_budget_ms=latency_budget_ms,
-        dut_ready_timeout_s=float(dut_ready_timeout),
-        serial_timeout_s=float(serial_timeout),
-        measured_inference_runs=measured_inference_runs,
-        harness=harness,
-        device_options=request_device_options,
-    )
-
-
-def collect_metrics(request: CollectMetricsRequest) -> dict:
-    """Gather RAM/flash/latency metrics from the controller for both HIL and proxy runs.
-
-    Parameters
-    ----------
-    request : CollectMetricsRequest
-        Normalized request containing all required/optional controller inputs.
-
-    Returns
-    -------
-    dict
-        RAM/flash/latency/arena metrics plus error codes shared across the
-        trial, using ``-1`` style sentinels for unavailable numeric values.
-
-    Raises
-    ------
-    RuntimeError
-        If runtime measurement requires a harness but ``request.harness`` is missing.
-    """
-    # Prepare controller kwargs (ease of use and readability)
-    controller_kwargs = {
-        "dirpath": request.dirpath,
-        "chosen_device": request.device_name,
-        "window_size": request.window_size,
-        "number_of_channels": request.input_dim,
-        "measured_inference_runs": request.measured_inference_runs,
-    }
-    if request.device_options is not None:
-        controller_kwargs["device_options"] = request.device_options
-
-    runtime_mode = "direct_serial"
-    if request.hil_enabled:
-        try:
-            runtime_device = get_microcontroller_device(
-                str(request.device_name),
-                serial_port=request.serial_port,
-                device_options=request.device_options,
-            )
-        except ValueError:
-            runtime_device = None
-        if runtime_device is not None:
-            runtime_mode_fn = getattr(runtime_device, "runtime_measure_mode", None)
-            if callable(runtime_mode_fn):
-                runtime_mode = str(runtime_mode_fn())
-
-    if request.energy_aware and request.harness is None:
-        raise RuntimeError(
-            "energy_aware=True requires harness configuration; do not run without harness."
-        )
-    if request.hil_enabled and runtime_mode == "harness_only" and request.harness is None:
-        raise RuntimeError(
-            "Runtime mode requires harness configuration. Set device.harness_serial_port."
-        )
-    
-    if request.hil_enabled and request.serial_port is not None:
-        controller_kwargs["serial_port"] = request.serial_port
-    elif request.hil_enabled and request.serial_port is None:
-        raise RuntimeError(
-            "Set serial_port before enabling HIL runs so uploads know which DUT to target."
-        )
-
-    if request.hil_enabled and request.dut_ready_timeout_s is not None:
-        controller_kwargs["dut_ready_timeout_s"] = request.dut_ready_timeout_s
-    if request.hil_enabled and request.serial_timeout_s is not None:
-        controller_kwargs["serial_timeout_s"] = request.serial_timeout_s
-
-    if (
-        request.hil_enabled
-        and request.harness is not None
-        and (request.energy_aware or runtime_mode == "harness_only")
-    ):
-        controller_kwargs["harness_serial_port"] = request.harness.harness_serial_port
-        controller_kwargs["harness_fqbn"] = request.harness.harness_fqbn
-        controller_kwargs["harness_auto_flash"] = request.harness.harness_auto_flash
-        controller_kwargs["harness_arm_pin"] = request.harness.harness_arm_pin
-        controller_kwargs["harness_trigger_pin"] = request.harness.harness_trigger_pin
-        controller_kwargs["dut_arm_hold_ms"] = request.harness.dut_arm_hold_ms
-        controller_kwargs["harness_stable_low_ms"] = request.harness.harness_stable_low_ms
-        controller_kwargs["harness_ready_timeout_s"] = request.harness.harness_ready_timeout_s
-        controller_kwargs["harness_arm_timeout_s"] = request.harness.harness_arm_timeout_s
-        controller_kwargs["harness_active_timeout_s"] = request.harness.harness_active_timeout_s
-        controller_kwargs["harness_done_timeout_s"] = request.harness.harness_done_timeout_s
-    
-    # Run the HIL controller to get metrics. HIL_controller handles both HIL and proxy runs.
-    logger.info(
-        "collect_metrics: invoking HIL_controller (hil=%s, serial_port=%s, harness_port=%s)",
-        request.hil_enabled,
-        request.serial_port,
-        request.harness.harness_serial_port if request.harness is not None else None,
-    )
-    (
-        ram_bytes,
-        flash_bytes,
-        latency_s,
-        arena_bytes,
-        error_code,
-        power_metrics,
-    ) = HIL_controller(
-        run_hil=request.hil_enabled,
-        **controller_kwargs,
-    )
-    logger.info(
-        "collect_metrics: HIL_controller finished (error_code=%s, latency_s=%s, arena_bytes=%s)",
-        error_code,
-        latency_s,
-        arena_bytes,
-    )
-
-    # Normalize None returns to -1 so scoring and CSV logging can rely on a
-    # consistent sentinel convention across proxy and HIL paths.
-    ram_bytes = ram_bytes if ram_bytes is not None else -1
-    flash_bytes = flash_bytes if flash_bytes is not None else -1
-    latency_ms = latency_s * 1000.0 if latency_s is not None else -1  # convert seconds → milliseconds
-
-    # Normalize latency so downstream scoring logic can remain scale-invariant.
-    latency_budget_entry = -1.0
-    if request.hil_enabled:
-        if request.latency_budget_ms is None:
-            raise ValueError(
-                "latency_budget_ms must be provided when hil_enabled is True so the"
-                " normalized latency penalty has consistent units."
-            )
-        if request.latency_budget_ms <= 0:
-            raise ValueError("latency_budget_ms must be a positive value")
-        latency_budget_entry = request.latency_budget_ms
-    elif request.latency_proxy_max_flops <= 0:
-        raise ValueError("latency_proxy_max_flops must be a positive value")
-
-    # Extract backend-owned detail fields before normalizing the generic power
-    # payload into the flat metrics schema used by scoring and CSV logs.
-    backend_error_kind = None
-    backend_error_detail = None
-    external_flash_bytes = -1
-    weight_storage_mode = "embedded"
-    if power_metrics:
-        backend_error_kind = power_metrics.get("backend_error_kind")
-        backend_error_detail = power_metrics.get("backend_error_detail")
-        raw_external_flash_bytes = power_metrics.get("external_flash_bytes")
-        if raw_external_flash_bytes is not None:
-            try:
-                parsed_external_flash_bytes = int(float(raw_external_flash_bytes))
-            except (TypeError, ValueError):
-                parsed_external_flash_bytes = -1
-            if parsed_external_flash_bytes >= 0:
-                external_flash_bytes = parsed_external_flash_bytes
-        raw_weight_storage_mode = power_metrics.get("weight_storage_mode")
-        if raw_weight_storage_mode:
-            weight_storage_mode = str(raw_weight_storage_mode)
-    normalized_power = normalize_power_metrics(power_metrics)
-    harness_latency_ms = -1.0
-    if normalized_power.get("harness_latency_s", -1.0) >= 0:
-        harness_latency_ms = normalized_power["harness_latency_s"] * 1000.0
-    metrics = {
-        "ram_bytes": ram_bytes,
-        "flash_bytes": flash_bytes,
-        "external_flash_bytes": external_flash_bytes,
-        "latency_ms": latency_ms if request.hil_enabled else -1,
-        "latency_budget_ms": latency_budget_entry,
-        "arena_bytes": arena_bytes,
-        "hil_enabled": request.hil_enabled,
-        "energy_aware": request.energy_aware,
-        "weight_storage_mode": weight_storage_mode,
-        "inference_seq": int(normalized_power["sequence"]) if normalized_power["sequence"] >= 0 else -1,
-        "energy_mj_per_inference": normalized_power["energy_mj_per_inference"],
-        "avg_power_mw": normalized_power["avg_power_mw"],
-        "avg_current_ma": normalized_power["avg_current_ma"],
-        "bus_voltage_v": normalized_power["bus_voltage_v"],
-        "idle_power_mw": normalized_power["idle_power_mw"],
-        "clock_hz": normalized_power["clock_hz"],
-        "harness_latency_ms": harness_latency_ms,
-    }
-    set_error_code(metrics, error_code)
-    apply_cadenced_metric_defaults(metrics, power_metrics)
-    if backend_error_kind is not None:
-        metrics["backend_error_kind"] = str(backend_error_kind)
-    if backend_error_detail is not None:
-        metrics["backend_error_detail"] = str(backend_error_detail)
-
-    return metrics
 
 def _serialize_csv_cell(value: Any) -> Any:
     """Return a CSV-friendly representation for one cell value.
@@ -2775,179 +2384,6 @@ def log_trial(
         trial.set_user_attr(f"hparam__{hyperparam_name}", value)
     for field_name in CADENCED_ALL_FIELDS:
         trial.set_user_attr(field_name, metrics.get(field_name))
-
-
-
-def train_and_score(
-    model,
-    batch_size: int,
-    hyperparams: Dict,
-    metrics: dict,
-    max_ram: float,
-    max_flash: float,
-    training_data: Any,
-    validation_data: Any,
-    config: Dict,
-    *,
-    task_metric_names: set[str] | None = None,
-    task_nonnegative_metric_names: set[str] | None = None,
-):
-    """Legacy TinyODOM training helper retained for compatibility.
-
-    Parameters
-    ----------
-    model : tf.keras.Model
-        Model instance to train.
-    batch_size : int
-        Mini-batch size for SGD.
-    hyperparams : addict.Dict
-        Trial hyperparameters. Required to have flops key.
-    metrics : dict
-        Shared resource metrics dict updated in-place.
-    max_ram : float
-        Maximum usable RAM on the device. Exposed to scoring as
-        ``max_ram_bytes``.
-    max_flash : float
-        Maximum usable flash on the device. Exposed to scoring as
-        ``max_flash_bytes``.
-    training_data : Any
-        Training dataset payload. The legacy training path expects TinyODOM
-        split attributes such as ``inputs``, ``x_vel``, and ``y_vel``.
-    validation_data : Any
-        Validation dataset payload. The legacy training path expects TinyODOM
-        split attributes such as ``inputs``, ``x_vel``, and ``y_vel``.
-    config : addict.Dict
-        NAS configuration tree.
-    task_metric_names : set[str] | None, optional
-        Task metric names available to the no-training sentinel path. When
-        omitted, the TinyODOM RMSE metric set is used.
-    task_nonnegative_metric_names : set[str] | None, optional
-        Task metric names that should treat negative values as unavailable
-        sentinels during score evaluation. When omitted, the TinyODOM RMSE
-        metric set is used.
-
-    Returns
-    -------
-    TrialOutcome
-        Generic trial outcome containing score/objective values, task metrics,
-        and the resolved hyperparameter payload.
-
-    Raises
-    ------
-    ValueError
-        If the active scoring configuration references unavailable metrics, or
-        when the legacy training path is asked to train a non-TinyODOM task.
-
-    Notes
-    -----
-    The production modular NAS path does not call this helper. The no-training
-    path accepts generic task metric names, but the training path remains
-    TinyODOM-specific because it still computes velocity RMSE from the legacy
-    split structure.
-    """
-    effective_task_metric_names = set(
-        DEFAULT_TASK_SCORE_METRICS
-        if task_metric_names is None
-        else task_metric_names
-    )
-    effective_task_nonnegative_metric_names = set(
-        DEFAULT_TASK_SCORE_METRICS
-        if task_nonnegative_metric_names is None
-        else task_nonnegative_metric_names
-    )
-
-    # Surface device resource caps inside the scoring context so scalar terms
-    # can normalize usage directly against the target hardware limits.
-    metrics["max_ram_bytes"] = float(max_ram)
-    metrics["max_flash_bytes"] = float(max_flash)
-
-    if not config.training.train:
-        # Keep the no-training path scoreable by emitting task-metric
-        # sentinels through the same evaluation pipeline as real runs.
-        task_metrics = {
-            metric_name: -1.0
-            for metric_name in sorted(effective_task_metric_names)
-        }
-        metrics.update(task_metrics)
-        if (not metrics["hil_enabled"]) and metrics.get("error_code", 0) == 0:
-            metrics["latency_ms"] = -1  # keep CSV compatibility for non-HIL trials
-            set_error_code(metrics, 1)
-        return build_trial_outcome(
-            score_result=_evaluate_score_config(
-                metrics=metrics,
-                hyperparams=hyperparams,
-                score_config=config.nas.score,
-                task_nonnegative_metric_names=effective_task_nonnegative_metric_names,
-            ),
-            task_metrics=task_metrics,
-            hyperparams=dict(hyperparams),
-        )
-
-    if effective_task_metric_names != set(DEFAULT_TASK_SCORE_METRICS):
-        raise ValueError(
-            "train_and_score(train=True) is a legacy TinyODOM helper and only "
-            "supports task metrics {'rmse_vel_x', 'rmse_vel_y', 'rmse_total'}."
-        )
-    
-    # Train the model with early stopping and checkpointing
-    checkpoint = ModelCheckpoint(
-        str(config.outputs.checkpoint_path),
-        monitor="val_loss",
-        mode="min",
-        verbose=1,
-        save_best_only=True,
-    )
-    # Early stopping to prevent overfitting
-    early_stop = EarlyStopping(
-        monitor="val_loss",
-        patience=40,
-        mode="min",
-        verbose=1,
-        restore_best_weights=True,
-    )
-
-    # Fit the model with validation loss
-    model.fit(
-        x=training_data.inputs,
-        y=[training_data.x_vel, training_data.y_vel],
-        epochs=config.training.nas_epochs,
-        shuffle=True,
-        callbacks=[checkpoint, early_stop],
-        batch_size=batch_size,
-        validation_data=(validation_data.inputs, [validation_data.x_vel, validation_data.y_vel]),
-    )
-
-    # Load the best model from checkpoint
-    model = load_model(str(config.outputs.checkpoint_path), custom_objects={"TCN": TCN})
-    
-    # Compute validation RMSE
-    y_pred = model.predict(validation_data.inputs)
-    rmse_vel_x = mean_squared_error(validation_data.x_vel, y_pred[0], squared=False)
-    rmse_vel_y = mean_squared_error(validation_data.y_vel, y_pred[1], squared=False)
-    task_metrics = {
-        "rmse_vel_x": float(rmse_vel_x),
-        "rmse_vel_y": float(rmse_vel_y),
-        "rmse_total": float(rmse_vel_x + rmse_vel_y),
-    }
-    metrics.update(task_metrics)
-    # Populate the built-in aggregate RMSE metric once so all downstream score
-    # terms and objectives reference the same value.
-    
-    # Set error code for non-HIL trials that passed resource checks
-    if (not metrics["hil_enabled"]) and metrics.get("error_code", 0) == 0:
-        metrics["latency_ms"] = -1  # keep CSV compatibility for non-HIL trials
-        set_error_code(metrics, 1)
-    return build_trial_outcome(
-        score_result=_evaluate_score_config(
-            metrics=metrics,
-            hyperparams=hyperparams,
-            score_config=config.nas.score,
-            task_nonnegative_metric_names=effective_task_nonnegative_metric_names,
-        ),
-        task_metrics=task_metrics,
-        hyperparams=dict(hyperparams),
-    )
-
 
 def build_tinyodom_model(hyperparams: Dict) -> Model:
     """Build a TinyODOM Keras model based on given hyperparameters.

@@ -21,7 +21,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from tensorflow.keras import optimizers
 from tensorflow.keras.callbacks import Callback
 from tensorflow.lite.python import schema_py_generated as schema_fb
 
@@ -32,8 +31,14 @@ sys.path.insert(0, str(REPO_ROOT / "analysis_scripts" / "hil_noise_analysis"))
 
 from analysis_scripts.hil_noise_analysis.noise_scan_model_spec import build_noise_scan_hyperparams
 from analysis_scripts.hil_noise_analysis.train_noise_scan_model import _git_commit, _load_split
+from tinyodom.analysis_support import (
+    build_model_context,
+    resolve_model_family_contract,
+    resolve_task_contract,
+)
 from tinyodom.hardware import convert_to_tflite_model
-from tinyodom.model import DEFAULT_CONFIG_PATH, build_tinyodom_model, load_config
+from tinyodom.model import DEFAULT_CONFIG_PATH, load_config
+from tinyodom.pipeline_types import DataSplit, DatasetBundle
 
 
 def _to_utc_timestamp() -> str:
@@ -360,18 +365,46 @@ def main() -> int:
     print(f"Loaded validation data via: {valid_loader_name}")
 
     hyperparams = build_noise_scan_hyperparams(
-        window_size=config.data.window_size,
+        window_size=config.dataset.params.window_size,
         input_dim=training_data.inputs.shape[2],
     )
-    model = build_tinyodom_model(hyperparams)
-    model.compile(loss={"velx": "mse", "vely": "mse"}, optimizer=optimizers.Adam())
+    bundle = DatasetBundle(
+        train=DataSplit(
+            inputs=training_data.inputs,
+            targets={"velx": training_data.x_vel, "vely": training_data.y_vel},
+            metadata={},
+        ),
+        val=DataSplit(
+            inputs=validation_data.inputs,
+            targets={"velx": validation_data.x_vel, "vely": validation_data.y_vel},
+            metadata={},
+        ),
+        test=None,
+        input_shape=(int(hyperparams.timesteps), int(hyperparams.input_dim)),
+        input_dtype="float32",
+        metadata=dict(config.dataset.params),
+    )
+    checkpoint_path = out_dir / f"{args.artifact_prefix}.keras"
+    task, task_config, target_spec = resolve_task_contract(
+        config,
+        bundle,
+        checkpoint_path=checkpoint_path,
+        early_stopping_patience=int(args.patience),
+    )
+    model_family, model_config = resolve_model_family_contract(config)
+    model = model_family.build_model(
+        dict(hyperparams),
+        build_model_context(bundle, target_spec),
+        model_config,
+    )
+    task.compile_model(model, task_config, target_spec)
 
     config_sha256 = hashlib.sha256(cfg_path.read_bytes()).hexdigest()
     static_metadata = {
         "config_path": str(cfg_path),
         "config_sha256": config_sha256,
         "git_commit": _git_commit(REPO_ROOT) or "",
-        "window_size": int(config.data.window_size),
+        "window_size": int(config.dataset.params.window_size),
         "input_dim": int(training_data.inputs.shape[2]),
         "nb_filters": int(hyperparams.nb_filters),
         "kernel_size": int(hyperparams.kernel_size),
