@@ -1,3 +1,5 @@
+"""Pytest collection helpers for the TinyODOM test suite."""
+
 import os
 from pathlib import Path
 

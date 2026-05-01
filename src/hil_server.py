@@ -1,3 +1,10 @@
+"""ZeroMQ REP server entry point for TinyODOM HIL metric requests.
+
+This module owns the host-side HIL server surface, including import-time
+TensorFlow/absl logging suppression, exported sketch-variant name constants,
+and the lazy bootstrap path for dataset, task, and model-family components.
+"""
+
 import argparse
 from collections.abc import Mapping
 import inspect
@@ -44,6 +51,7 @@ from tinyodom.model import (
 from tinyodom.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
 from tinyodom.registry import dataset_registry, model_family_registry, task_registry
 
+# Reduce noisy TensorFlow / absl logging at import time for CLI and server use.
 tf.get_logger().setLevel(logging.ERROR)
 absl.logging.set_verbosity(absl.logging.ERROR)
 logging.getLogger("absl").setLevel(logging.ERROR)
@@ -64,11 +72,13 @@ def _configure_logging(level_name: str) -> None:
     Parameters
     ----------
     level_name : str
-        Logging level name (e.g., INFO, DEBUG).
+        Logging level name (e.g., INFO, DEBUG). Unknown names fall back to
+        ``INFO``.
 
     Returns
     -------
     None
+        Configures the root logger through :func:`logging.basicConfig`.
     """
     level_value = getattr(logging, level_name.upper(), logging.INFO)
     logging.basicConfig(
@@ -104,6 +114,10 @@ def _build_backend_failure_metrics(
     -------
     dict
         Metrics-shaped failure payload compatible with the HIL server contract.
+        Numeric metrics are populated with sentinel values, backend error
+        fields are stringified, ``latency_budget_ms`` is preserved only for
+        HIL-enabled requests, and the fatal master error code is stamped into
+        the result.
     """
     metrics = {
         "ram_bytes": -1,
@@ -131,6 +145,11 @@ def _build_backend_failure_metrics(
 
 class HILServer:
     """Serve HIL metric requests over a ZeroMQ REP socket.
+
+    Construction resolves the active dataset/task/model-family selection but
+    defers registry-backed component instantiation and dataset loading until
+    the pipeline is first needed. The REP socket is created in ``__init__``
+    and bound later by :meth:`start`.
 
     Attributes
     ----------
@@ -170,10 +189,15 @@ class HILServer:
         Returns
         -------
         None
+            Resolves component-selection state immediately, initializes lazy
+            pipeline caches, derives sketch-path locations, and creates the
+            shared ZeroMQ context / REP socket.
         """
         ensure_builtin_components_registered()
         self.config = config if config is not None else load_config(config_path)
         selection = self._resolve_component_selection(self.config)
+        # Cache the selected component names and config blocks up front; the
+        # registry-backed component objects are instantiated lazily later.
         self.dataset_name = selection["dataset_name"]
         self.task_name = selection["task_name"]
         self.model_family_name = selection["model_family_name"]
@@ -229,6 +253,8 @@ class HILServer:
         -------
         None
             Subsequent calls are no-ops after the first successful bootstrap.
+            When ``dataset_bundle`` has already been injected, that bundle is
+            validated and reused instead of reloading the dataset.
         """
 
         if self._pipeline_bootstrapped:

@@ -12,7 +12,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "nas_config.yaml"
+DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "config" / "nas_config.yaml"
 PERTURBED_VARIANT_NAME = "approx_trained"
 OXIOD_SUB_FOLDERS = [
     "handbag/",

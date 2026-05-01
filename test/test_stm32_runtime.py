@@ -1,3 +1,5 @@
+"""Unit tests for STM32 runtime parsing and serial-session helpers."""
+
 from __future__ import annotations
 
 import queue
@@ -17,7 +19,10 @@ from tinyodom.microcontrollers import stm32_runtime  # noqa: E402
 
 
 class _FakeSerial:
+    """Small serial-port double used by STM32 runtime session tests."""
+
     def __init__(self, port: str, baud: int, timeout: float) -> None:
+        """Capture serial settings and initialize an in-memory line queue."""
         del timeout
         self.port = port
         self.baud = baud
@@ -26,6 +31,7 @@ class _FakeSerial:
         self.writes: list[bytes] = []
 
     def readline(self) -> bytes:
+        """Return the next queued line or an empty payload on timeout."""
         if not self.is_open:
             return b""
         try:
@@ -34,40 +40,53 @@ class _FakeSerial:
             return b""
 
     def write(self, payload: bytes) -> int:
+        """Record writes and report the written byte count."""
         self.writes.append(payload)
         return len(payload)
 
     def flush(self) -> None:
+        """Match the serial API without performing extra work."""
         return None
 
     def close(self) -> None:
+        """Mark the fake port closed."""
         self.is_open = False
 
     def push_line(self, text: str) -> None:
+        """Queue one newline-terminated UTF-8 line for later reads."""
         self._lines.put(f"{text}\r\n".encode("utf-8"))
 
 
 class _FakeMonitor:
+    """History-based serial monitor double for runtime session tests."""
+
     def __init__(self, lines: list[str]) -> None:
+        """Seed the monitor with a fixed transcript."""
         self._lines = lines
         self.writes: list[str] = []
 
     def wait_for_match(self, predicate, timeout_s: float, stage: str, *, start_index: int = 0):
+        """Scan transcript lines from ``start_index`` and return the next match."""
         del timeout_s, stage
+        # The cursor-style ``start_index`` contract lets tests replay one shared
+        # transcript across multiple sequential wait phases.
         for index in range(start_index, len(self._lines)):
             if predicate(self._lines[index]):
                 return self._lines[index], index + 1
         return None, len(self._lines)
 
     def write_line(self, text: str) -> None:
+        """Record writes emitted back to the DUT monitor."""
         self.writes.append(text)
 
     def snapshot_lines(self) -> list[str]:
+        """Return a shallow copy of the transcript history."""
         return list(self._lines)
 
 
 class STM32RuntimeParserTests(unittest.TestCase):
     def test_parse_runtime_lines_accepts_required_back_to_back_grammar(self) -> None:
+        # Back-to-back runtime parsing should accept the required telemetry grammar.
         lines = [
             "STM32_BOOT=START",
             "STM32_AI_INIT=OK",
@@ -95,6 +114,7 @@ class STM32RuntimeParserTests(unittest.TestCase):
         self.assertEqual(telemetry.power_metrics["deadline_miss_count"], -1)
 
     def test_parse_runtime_lines_rejects_fail_tokens(self) -> None:
+        # Runtime parsing should reject explicit FAIL tokens instead of returning partial telemetry.
         with self.assertRaises(stm32_runtime.STM32RuntimeProtocolError) as context:
             stm32_runtime.parse_stm32_runtime_lines(
                 [
@@ -107,6 +127,7 @@ class STM32RuntimeParserTests(unittest.TestCase):
         self.assertEqual(context.exception.kind, "runtime_protocol")
 
     def test_parse_runtime_lines_requires_latency_token(self) -> None:
+        # Back-to-back runtime parsing should require the latency token before returning success.
         with self.assertRaises(stm32_runtime.STM32RuntimeProtocolError) as context:
             stm32_runtime.parse_stm32_runtime_lines(
                 [
@@ -122,6 +143,7 @@ class STM32RuntimeParserTests(unittest.TestCase):
         self.assertEqual(context.exception.kind, "runtime_latency")
 
     def test_parse_runtime_lines_accepts_cadenced_grammar(self) -> None:
+        # Cadenced runtime parsing should accept the extended cadence telemetry grammar.
         lines = [
             "STM32_BOOT=START",
             "STM32_AI_INIT=OK",
@@ -157,6 +179,7 @@ class STM32RuntimeParserTests(unittest.TestCase):
 
 class SerialMonitorTests(unittest.TestCase):
     def test_serial_monitor_replays_history_and_writes_lines(self) -> None:
+        # The serial monitor should replay prior history and capture new lines into the live log stream.
         fake_serial = _FakeSerial("/dev/ttyACM0", 115200, 0.2)
 
         with patch("tinyodom.microcontrollers.stm32_runtime.serial.Serial", return_value=fake_serial):
@@ -187,6 +210,7 @@ class SerialMonitorTests(unittest.TestCase):
 
 class STM32RuntimeSessionTests(unittest.TestCase):
     def test_execute_runtime_session_waits_for_init_then_ready_then_run(self) -> None:
+        # Runtime sessions should wait for INIT, READY, then RUN so the harness protocol stays ordered.
         monitor = _FakeMonitor(
             [
                 "STM32_BOOT=START",
@@ -210,6 +234,7 @@ class STM32RuntimeSessionTests(unittest.TestCase):
         self.assertAlmostEqual(telemetry.latency_s, 0.0005)
 
     def test_execute_runtime_session_times_out_before_init(self) -> None:
+        # Runtime sessions should time out cleanly if INIT never appears.
         monitor = _FakeMonitor(["STM32_BOOT=START"])
 
         with self.assertRaises(stm32_runtime.STM32RuntimeProtocolError) as context:

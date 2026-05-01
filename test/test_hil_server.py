@@ -1,3 +1,5 @@
+"""Unit tests for the HIL server bootstrap and request pipeline."""
+
 import sys
 import tempfile
 import unittest
@@ -53,6 +55,22 @@ class FakeDataset:
         bundle: DatasetBundle,
         dataset_config: object,
     ) -> DataSplit | None:
+        """Return calibration data using the same fallback order as production.
+
+        Parameters
+        ----------
+        bundle : DatasetBundle
+            Loaded dataset bundle under test.
+        dataset_config : object
+            Dataset configuration object forwarded by the server.
+
+        Returns
+        -------
+        DataSplit | None
+            Explicit override when configured, otherwise the bundle's
+            calibration split.
+        """
+
         type(self).calibration_calls.append((bundle, dataset_config))
         if type(self).calibration_split_override is not None:
             return type(self).calibration_split_override
@@ -85,6 +103,7 @@ class FakeTask:
         checkpoint_path: Path | None = None,
         early_stopping_patience: int = 40,
     ) -> None:
+        """Record the constructor arguments that the server passes through."""
         type(self).init_kwargs.append(
             {
                 "checkpoint_path": checkpoint_path,
@@ -100,6 +119,7 @@ class FakeTask:
         bundle: DatasetBundle,
         task_config: object,
     ) -> TargetSpec:
+        """Return the shared target spec while recording the bootstrap inputs."""
         type(self).build_target_spec_calls.append((bundle, task_config))
         return type(self).target_spec
 
@@ -132,6 +152,7 @@ class FakeModelFamily:
         model_variant: str,
         checkpoint_path: Path | str | None = None,
     ) -> object:
+        """Record export requests and return the configured fake model object."""
         type(self).materialize_calls.append(
             {
                 "hparams": dict(hparams),
@@ -246,7 +267,19 @@ class HILServerTestCase(unittest.TestCase):
 
     @staticmethod
     def request_hparams(**overrides: object) -> Dict:
-        """Build a valid HIL request hyperparameter payload for tests."""
+        """Build a valid HIL request hyperparameter payload for tests.
+
+        Parameters
+        ----------
+        **overrides : object
+            Field overrides merged into the default minimal request payload.
+
+        Returns
+        -------
+        addict.Dict
+            Hyperparameter payload containing the required FLOP/input-shape
+            fields expected by ``HILServer.determine_metrics``.
+        """
         payload = {"flops": 1, "timesteps": 32, "input_dim": 6}
         payload.update(overrides)
         return Dict(payload)
@@ -257,6 +290,7 @@ class DetermineMetricsTests(HILServerTestCase):
 
     def test_conversion_pipeline_invoked_in_order(self) -> None:
         """Backend preparation should feed the request builder and metric collection."""
+        # The conversion pipeline should run in a fixed order so later stages always see the expected intermediate artifact.
         server = self.build_server()
         fake_model = MagicMock()
         fake_model.input_shape = (None, 32, 6)
@@ -291,6 +325,7 @@ class DetermineMetricsTests(HILServerTestCase):
 
     def test_collect_metrics_receives_expected_fields(self) -> None:
         """Key hyperparameters should flow through untouched to the controller."""
+        # The HIL request builder should hand collect_metrics the exact resolved fields needed for hardware evaluation.
         server = self.build_server()
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
@@ -304,7 +339,7 @@ class DetermineMetricsTests(HILServerTestCase):
             hyperparams = self.request_hparams(flops=999, input_dim=6)
             server.determine_metrics(hyperparams)
 
-        # Verify that collect_metrics gets a normalized request object.
+        # The normalized request should carry the resolved dimensions and latency target into collect_metrics.
         request = collect_mock.call_args.args[0]
         self.assertEqual(request.flops, 999)
         self.assertEqual(request.input_dim, 6)
@@ -316,6 +351,7 @@ class DetermineMetricsTests(HILServerTestCase):
         )
 
     def test_collect_metrics_uses_device_latency_budget_override(self) -> None:
+        # Device-level latency-budget overrides should win when the request explicitly provides them.
         server = self.build_server()
         self.config.device.latency_budget_ms = 75.0
         fake_device = MagicMock()
@@ -334,6 +370,7 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertEqual(request.latency_budget_ms, 75.0)
 
     def test_determine_metrics_rejects_missing_timesteps(self) -> None:
+        # Missing timesteps should be rejected before the server stages any backend work.
         server = self.build_server()
 
         with patch("hil_server.get_microcontroller_device") as device_mock:
@@ -344,6 +381,7 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertIn("timesteps", metrics["backend_error_detail"])
 
     def test_determine_metrics_rejects_missing_input_dim(self) -> None:
+        # Missing input_dim should be rejected before the server stages any backend work.
         server = self.build_server()
 
         with patch("hil_server.get_microcontroller_device") as device_mock:
@@ -354,6 +392,7 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertIn("input_dim", metrics["backend_error_detail"])
 
     def test_determine_metrics_rejects_non_integer_runtime_fields(self) -> None:
+        # Non-integer runtime dimensions should fail request validation before any backend is touched.
         server = self.build_server()
 
         with patch("hil_server.get_microcontroller_device") as device_mock:
@@ -364,6 +403,7 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertIn("timesteps", metrics["backend_error_detail"])
 
     def test_determine_metrics_rejects_dimension_mismatches(self) -> None:
+        # Shape mismatches should be rejected before the server tries to prepare a candidate for hardware.
         server = self.build_server()
 
         with patch("hil_server.get_microcontroller_device") as device_mock:
@@ -374,6 +414,7 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertIn("do not match", metrics["backend_error_detail"])
 
     def test_determine_metrics_rejects_invalid_model_build_context_input_shapes(self) -> None:
+        # Invalid model-build context shapes should come back as request errors instead of backend failures.
         server = self.build_server()
         server._ensure_pipeline_bootstrapped()
 
@@ -387,6 +428,7 @@ class DetermineMetricsTests(HILServerTestCase):
                 self.assertIn("2D logical input shape", metrics["backend_error_detail"])
 
     def test_determine_metrics_runs_arduino_cadenced_second_pass_after_successful_base_run(self) -> None:
+        # Cadenced Arduino runs should only schedule the second pass after the base latency pass succeeds, otherwise follow-up telemetry hides the primary failure.
         server = self.build_server()
         self.config.device.name = "ARDUINO_NANO_33_BLE_SENSE"
         self.config.device.runtime_mode = "cadenced"
@@ -429,6 +471,7 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertAlmostEqual(metrics["cadenced_energy_mj_per_trial"], 15.0)
 
     def test_determine_metrics_discards_arduino_cadenced_second_pass_latency(self) -> None:
+        # The Arduino cadenced follow-up should contribute energy data without overwriting the latency from the primary pass.
         server = self.build_server()
         self.config.device.name = "ARDUINO_NANO_33_BLE_SENSE"
         self.config.device.runtime_mode = "cadenced"
@@ -466,6 +509,7 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertEqual(metrics["cadenced_active_inference_latency_ms"], -1.0)
 
     def test_determine_metrics_uses_override_clock_for_runtime_options_only(self) -> None:
+        # Clock overrides should affect runtime measurement options without mutating the static model-build context.
         server = self.build_server()
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
@@ -490,6 +534,7 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertEqual(request.device_options["cpu_clock_mhz"], 400)
 
     def test_determine_metrics_unsampled_stm_clock_logs_minus_one(self) -> None:
+        # If the STM32 backend does not report a sampled clock, the server should emit the stable sentinel rather than fabricating a value.
         server = self.build_server()
         self.config.device.name = "STM32_NUCLEO_N657X0_Q"
         fake_device = MagicMock()
@@ -507,6 +552,7 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertEqual(metrics["cpu_clock_mhz_requested"], -1)
 
     def test_determine_metrics_invalid_clock_override_returns_request_error(self) -> None:
+        # Invalid clock overrides should return a structured request error before any backend work starts.
         server = self.build_server()
 
         with patch("hil_server.resolve_device_options", return_value={"cpu_clock_mhz": 600}), patch(
@@ -528,6 +574,7 @@ class StartLoopTests(HILServerTestCase):
 
     def test_start_binds_and_serves_single_request(self) -> None:
         """The server should bind, process one payload, and send a reply."""
+        # The REP loop should bind, process one payload, and reply before cleanup so the happy path stays observable in tests.
         server = self.build_server()
         hyperparams = {"flops": 1, "timesteps": 32, "input_dim": 2}
         metrics = {"flash_bytes": 2048}
@@ -547,6 +594,7 @@ class StartLoopTests(HILServerTestCase):
         self.context.term.assert_called_once()
 
     def test_start_normalizes_structured_payload(self) -> None:
+        # Structured network payloads should normalize into the same call signature used by simpler requests.
         server = self.build_server()
         payload = {
             "hyperparams": {"flops": 1, "timesteps": 32, "input_dim": 2},
@@ -564,6 +612,7 @@ class StartLoopTests(HILServerTestCase):
         )
 
     def test_start_returns_request_error_for_malformed_payload(self) -> None:
+        # Malformed network payloads should come back as structured request errors instead of exploding the server loop.
         server = self.build_server()
         payload = {
             "hyperparams": None,
@@ -581,6 +630,7 @@ class StartLoopTests(HILServerTestCase):
 
     def test_start_interrupt_cleans_up_resources(self) -> None:
         """If recv_json immediately raises, we should still close the socket."""
+        # Keyboard interrupts should still close the REP socket and terminate the context cleanly.
         server = self.build_server()
         self.socket.recv_json.side_effect = KeyboardInterrupt()
 
@@ -596,6 +646,7 @@ class InitializationTests(HILServerTestCase):
     """Ensure constructor wiring uses modular bootstrap and lazy calibration."""
 
     def test_constructor_uses_default_component_names_and_model_config_shape(self) -> None:
+        # Constructor defaults should defer component bootstrap while still shaping the default model-config blocks.
         server = self.build_server()
 
         self.dataset_registry_mock.assert_not_called()
@@ -606,6 +657,7 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(server.model_config.search, Dict())
 
     def test_constructor_preserves_model_params_and_search_blocks(self) -> None:
+        # Preloaded model params and search blocks should survive construction unchanged.
         self.config.model = SimpleNamespace(
             family="custom_family",
             params=Dict(width=8),
@@ -625,6 +677,7 @@ class InitializationTests(HILServerTestCase):
         -------
         None
         """
+        # Constructor setup should not resolve calibration data until a backend path actually needs it.
         server = self.build_server()
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
@@ -643,6 +696,7 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(len(FakeDataset.calibration_calls), 1)
 
     def test_pipeline_bootstraps_once_across_multiple_requests(self) -> None:
+        # The server should cache the modular bootstrap so repeated requests do not reload datasets or rebuild component state.
         server = self.build_server()
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
@@ -662,6 +716,7 @@ class InitializationTests(HILServerTestCase):
 
     def test_preloaded_config_uses_single_stage_bootstrap(self) -> None:
         """Ensure preloaded config bypasses ``load_config`` and stays lazy until needed."""
+        # Passing a preloaded config should bypass load_config while keeping the lazy modular bootstrap behavior.
         server = HILServer(config=self.config)
 
         self.load_settings_mock.assert_not_called()
@@ -669,6 +724,7 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(len(FakeTask.build_target_spec_calls), 0)
 
     def test_latency_budget_fallback_uses_dataset_config_without_legacy_data_block(self) -> None:
+        # Latency-budget fallback should prefer dataset params even when the legacy data block is absent.
         self.config.dataset = SimpleNamespace(
             name="oxiod",
             params=Dict(directory="data", sampling_rate_hz=100, window_size=32, stride=4),
@@ -691,6 +747,7 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(request.latency_budget_ms, 40.0)
 
     def test_require_calibration_split_raises_when_dataset_has_no_calibration_data(self) -> None:
+        # Calibration-dependent requests should fail with a clear error when the dataset cannot supply any calibration split.
         server = self.build_server()
         server.dataset_bundle = DatasetBundle(
             train=self.train_split,
@@ -706,6 +763,7 @@ class InitializationTests(HILServerTestCase):
             server._require_calibration_split()
 
     def test_determine_metrics_returns_config_error_when_calibration_data_is_missing(self) -> None:
+        # Missing calibration data should surface as a structured config error rather than a backend crash.
         server = self.build_server()
         server.dataset_bundle = DatasetBundle(
             train=self.train_split,
@@ -733,6 +791,7 @@ class InitializationTests(HILServerTestCase):
         fake_device.prepare_candidate.assert_not_called()
 
     def test_determine_metrics_uses_dataset_calibration_fallback_when_bundle_calibration_missing(self) -> None:
+        # If the bundle omits a calibration split, the server should ask the dataset adapter for one before failing the request.
         FakeDataset.bundle = DatasetBundle(
             train=self.train_split,
             val=self.train_split,
@@ -766,6 +825,7 @@ class InitializationTests(HILServerTestCase):
         -------
         None
         """
+        # STM32 runtime backends should keep HIL enabled when the backend can measure on real hardware instead of silently downgrading to proxy mode.
         self.config.device.name = "STM32_NUCLEO_N657X0_Q"
         self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
         server = self.build_server()
@@ -816,6 +876,7 @@ class InitializationTests(HILServerTestCase):
         -------
         None
         """
+        # STM32 backends that support energy measurement should preserve energy-aware requests instead of downgrading them.
         self.config.training.energy_aware = True
         self.config.device.name = "STM32_NUCLEO_N657X0_Q"
         self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
@@ -866,6 +927,7 @@ class InitializationTests(HILServerTestCase):
         -------
         None
         """
+        # Arduino and STM32 staging should split at the active-sketch boundary so each backend owns the files it is responsible for.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
 
@@ -948,6 +1010,7 @@ class InitializationTests(HILServerTestCase):
 
     def test_stm_prepare_candidate_failure_returns_structured_backend_metrics(self) -> None:
         """STM staging failures should become metrics-shaped backend errors."""
+        # Backend staging failures should come back as structured metrics so callers can surface the exact hardware-side failure without crashing the request.
         self.config.device.name = "STM32_NUCLEO_N657X0_Q"
         self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
         server = self.build_server()
@@ -971,6 +1034,7 @@ class InitializationTests(HILServerTestCase):
 
     def test_request_build_failure_returns_structured_backend_metrics(self) -> None:
         """Request-building config failures should not crash the REP loop."""
+        # Request-build failures should still return structured backend metrics so the caller can report the exact stage that failed.
         self.config.training.energy_aware = True
         server = self.build_server()
         fake_device = MagicMock()
@@ -1002,6 +1066,7 @@ class InitializationTests(HILServerTestCase):
         -------
         None
         """
+        # STM32 phase-one input-mode changes should delegate to the backend so sketch generation stays backend-owned.
         self.config.device.name = "STM32_NUCLEO_N657X0_Q"
         self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
         server = self.build_server()
@@ -1070,6 +1135,7 @@ class SketchVariantTests(unittest.TestCase):
         path.write_text(f"// {label}\n")
 
     def test_selects_uniform_energy_sketch(self) -> None:
+        # Uniform energy runs should pick the energy-enabled sketch variant so the DUT exports the expected telemetry.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
@@ -1082,6 +1148,7 @@ class SketchVariantTests(unittest.TestCase):
             self.assertIn("uniform_shared", out_path.read_text())
 
     def test_selects_cadenced_uniform_sketch(self) -> None:
+        # Cadenced energy runs must switch to the cadenced uniform sketch so the harness and DUT share the same timing protocol.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
@@ -1094,6 +1161,7 @@ class SketchVariantTests(unittest.TestCase):
             self.assertIn("cadenced_shared", out_path.read_text())
 
     def test_selects_uniform_energy_sketch_for_portenta_cm7(self) -> None:
+        # Uniform energy runs should pick the energy-enabled sketch variant so the DUT exports the expected telemetry.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
@@ -1113,6 +1181,7 @@ class SketchVariantTests(unittest.TestCase):
             self.assertIn("uniform_shared_cm7", out_path.read_text())
 
     def test_selects_uniform_no_energy_sketch_for_portenta_cm4(self) -> None:
+        # Portenta CM4 uniform runs without energy measurement should select the no-energy sketch variant.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
@@ -1132,6 +1201,7 @@ class SketchVariantTests(unittest.TestCase):
             self.assertIn("no_energy_shared_cm4", out_path.read_text())
 
     def test_selects_representative_variant_and_copies_header(self) -> None:
+        # Representative input-mode runs should switch sketches and copy the generated header that drives the sample payload.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
@@ -1150,6 +1220,7 @@ class SketchVariantTests(unittest.TestCase):
             self.assertTrue((tcn_dir / header.name).exists())
 
     def test_selects_real_variant_and_copies_header(self) -> None:
+        # Real-input runs should stage the real-data sketch and copy the matching generated header.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
@@ -1168,6 +1239,7 @@ class SketchVariantTests(unittest.TestCase):
             self.assertTrue((tcn_dir / header.name).exists())
 
     def test_missing_header_raises_for_representative(self) -> None:
+        # Representative-mode staging should fail fast if the generated header is missing.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
@@ -1181,6 +1253,7 @@ class SketchVariantTests(unittest.TestCase):
                 server._sync_sketch_variant()
 
     def test_invalid_input_mode_raises(self) -> None:
+        # Unknown input modes should fail before sketch selection can stage the wrong artifact.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
@@ -1190,6 +1263,7 @@ class SketchVariantTests(unittest.TestCase):
                 server._sync_sketch_variant()
 
     def test_cadenced_runtime_requires_uniform_input_mode(self) -> None:
+        # Cadenced runtime mode should reject non-uniform input modes because the timing harness expects fixed windows.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
@@ -1205,6 +1279,7 @@ class SketchVariantTests(unittest.TestCase):
                 server.set_input_mode("representative", runtime_phase="cadenced")
 
     def test_portenta_uniform_requires_target_core(self) -> None:
+        # Uniform Portenta sketch selection needs an explicit target core so the server does not guess between CM4 and CM7.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
@@ -1221,6 +1296,7 @@ class SketchVariantTests(unittest.TestCase):
                 server._sync_sketch_variant()
 
     def test_energy_aware_false_uses_no_energy_sketch(self) -> None:
+        # Turning off energy awareness should switch to the no-energy sketch variant to avoid unnecessary harness instrumentation.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"
@@ -1233,6 +1309,7 @@ class SketchVariantTests(unittest.TestCase):
             self.assertIn("no_energy_shared", out_path.read_text())
 
     def test_set_input_mode_updates_config_and_path(self) -> None:
+        # Input-mode switching should update both the active config and the selected sketch path together.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             tcn_dir = Path(tmpdir) / "tinyodom_tcn"

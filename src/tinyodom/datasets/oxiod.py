@@ -1,4 +1,9 @@
-"""OxIOD dataset adapter for the modular TinyODOM pipeline."""
+"""OxIOD dataset adapter built on top of the legacy split loader.
+
+This module wraps :func:`import_oxiod_dataset`, normalizes the returned legacy
+splits into :class:`DatasetBundle`, and optionally loads a capped calibration
+subset when representative-data limits are configured.
+"""
 
 from __future__ import annotations
 
@@ -43,7 +48,13 @@ def _cfg_get(config: Any, key: str, default: Any = None) -> Any:
 
 
 class OxIODDataset(DatasetABC):
-    """Dataset adapter that exposes the current OxIOD loader via ``DatasetABC``."""
+    """Dataset adapter that exposes the current OxIOD loader via ``DatasetABC``.
+
+    The adapter translates legacy OxIOD split payloads into generic
+    ``DatasetBundle`` / ``DataSplit`` objects, preserves compatibility metadata
+    needed by later phases, and implements the current calibration fallback
+    behavior used by the modular pipeline.
+    """
 
     @property
     def name(self) -> str:
@@ -63,7 +74,10 @@ class OxIODDataset(DatasetABC):
         Parameters
         ----------
         dataset_config : Any
-            Dataset-local configuration subtree.
+            Dataset-local configuration subtree. The current adapter requires
+            ``directory``, ``sampling_rate_hz``, ``window_size``, and
+            ``stride``. ``calibration_windows`` is optional but must be
+            positive when provided.
 
         Returns
         -------
@@ -95,13 +109,23 @@ class OxIODDataset(DatasetABC):
         Parameters
         ----------
         dataset_config : Any
-            Dataset-local configuration subtree.
+            Dataset-local configuration subtree. The current adapter consumes
+            ``directory``, ``sampling_rate_hz``, ``window_size``, ``stride``,
+            and optional ``calibration_windows``.
 
         Returns
         -------
         DatasetBundle
             Generic bundle containing the current TinyODOM train, validation,
-            test, and optional calibration splits.
+            test, and optional calibration splits. Train/validation/test are
+            loaded through the legacy split selector, with train/validation
+            explicitly enabling magnetometer and pedometer features while the
+            test split preserves the legacy default call shape by omitting
+            those kwargs. When ``calibration_windows`` is configured, the
+            adapter performs one additional capped training-split load to
+            populate ``bundle.calibration``. Bundle metadata currently includes
+            ``sampling_rate_hz``, ``window_size``, ``stride``, and
+            ``input_dim``.
         """
 
         self.validate_config(dataset_config)
@@ -186,7 +210,8 @@ class OxIODDataset(DatasetABC):
         DataSplit | None
             Explicitly capped calibration data when configured, otherwise the
             full training split to preserve the legacy ``max_windows=None``
-            representative-data behavior.
+            representative-data behavior. When no cap is configured, the
+            fallback intentionally returns ``bundle.train``.
         """
 
         calibration_windows = _cfg_get(dataset_config, "calibration_windows", None)
@@ -205,7 +230,9 @@ class OxIODDataset(DatasetABC):
         Returns
         -------
         DataSplit
-            Generic split retaining task-specific metadata for later phases.
+            Generic split with ``velx`` / ``vely`` targets and compatibility
+            metadata retaining legacy trajectory and evaluation fields for
+            later phases.
         """
 
         return DataSplit(

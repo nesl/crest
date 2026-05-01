@@ -1,3 +1,12 @@
+"""Shared payload contracts passed between dataset, task, and model code.
+
+This module centralizes the lightweight dataclasses that move structured
+payloads across the TinyOdom pipeline. The payload fields intentionally stay
+permissive so dataset, task, and model-family implementations can exchange
+arrays, tensors, and other runtime-specific objects without forcing the
+pipeline onto one concrete backend representation.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -8,11 +17,14 @@ from typing import Any
 class DataSplit:
     """Container for one dataset partition.
 
+    This dataclass is a passive transport container. It groups split payloads
+    without validating, coercing, or copying them on construction.
+
     Parameters
     ----------
     inputs : Any
-        Model-ready inputs for one split. The exact runtime type is intentionally
-        left broad in Phase 1 so later dataset implementations can supply arrays,
+        Model-ready inputs for one split. The exact runtime type is
+        intentionally left broad so dataset implementations can supply arrays,
         tensors, or other Keras-compatible structures.
     targets : Any
         Split targets interpreted by the owning task.
@@ -31,6 +43,10 @@ class DataSplit:
 @dataclass(eq=False)
 class DatasetBundle:
     """Normalized dataset package returned by a dataset implementation.
+
+    A valid bundle always includes a training split. Validation, test, and
+    calibration splits are optional attachments populated only when the dataset
+    can supply them.
 
     Parameters
     ----------
@@ -86,6 +102,10 @@ class TargetSpec:
 class ModelBuildContext:
     """Normalized build-time context supplied to a model family.
 
+    This context is the model-family-facing handoff assembled from dataset and
+    task outputs. Unlike :class:`DatasetBundle`, it carries only the build-time
+    contract needed to construct a model, not the raw split payloads.
+
     Parameters
     ----------
     input_shape : tuple[int, ...] | None
@@ -140,8 +160,8 @@ class EvaluationResult:
         orchestration logic.
     artifacts : dict[str, Any] | None, optional
         Optional flat structured payload describing task-owned evaluation
-        artifacts. This field is metadata-oriented in Phase 1 and does not
-        imply that files must be written during every evaluation call.
+        artifacts. This field is metadata-oriented and does not imply that
+        files must be written during every evaluation call.
     predictions : Any | None, optional
         Optional predictions or prediction-like payloads needed by later
         task-owned analysis code.

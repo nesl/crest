@@ -21,7 +21,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 
 DEFAULT_PROJECT_ROOT = SCRIPT_DIR / "stm32_lrun_toy_ai_project"
-DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "nas_config.yaml"
+DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "config" / "nas_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("/tmp/tinyodom_stm32_lrun_generate")
 DEFAULT_OUTPUT_JSON = SCRIPT_DIR / "stm32_lrun_toy_ai_metrics.json"
 DEFAULT_DUT_PORT = "/dev/ttyACM0"

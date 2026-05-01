@@ -14,7 +14,13 @@ from ..pipeline_types import DataSplit, DatasetBundle, EvaluationResult, FitPlan
 
 
 class OdometryRegressionTask(TaskABC):
-    """Two-head velocity-regression task matching the current TinyODOM behavior."""
+    """Two-head velocity-regression task matching the current TinyODOM behavior.
+
+    This task exposes the stable ``"odometry_regression"`` name, a fixed
+    two-output regression contract for ``velx`` and ``vely``, task-owned fit
+    wiring and callbacks, and RMSE-based evaluation that preserves the legacy
+    prediction ordering used by the current model stack.
+    """
 
     def __init__(self, checkpoint_path: Path, early_stopping_patience: int = 40) -> None:
         """Initialize the task-owned training callback configuration.
@@ -22,9 +28,10 @@ class OdometryRegressionTask(TaskABC):
         Parameters
         ----------
         checkpoint_path : Path
-            Path where the best model checkpoint should be written.
+            Path stored for the task-owned ``ModelCheckpoint`` callback.
         early_stopping_patience : int, optional
-            Patience used by the task-owned early stopping callback.
+            Patience used by the task-owned early stopping callback. The value
+            is normalized to ``int`` during initialization.
         """
 
         self.checkpoint_path = Path(checkpoint_path)
@@ -59,7 +66,9 @@ class OdometryRegressionTask(TaskABC):
         Returns
         -------
         TargetSpec
-            Current TinyODOM output contract.
+            Current TinyODOM output contract: ``task_type="regression"``,
+            output heads ``["velx", "vely"]``, and metadata carrying the
+            bundle input shape.
         """
 
         del task_config
@@ -87,7 +96,8 @@ class OdometryRegressionTask(TaskABC):
         Returns
         -------
         TaskMetricContract
-            Metric declaration for the current odometry task.
+            Metric declaration for the current odometry task, with
+            ``rmse_total`` exposed as the primary metric.
         """
 
         del target_spec, task_config
@@ -118,6 +128,9 @@ class OdometryRegressionTask(TaskABC):
         Returns
         -------
         None
+            The current implementation compiles the model with per-head MSE
+            losses for ``velx`` and ``vely`` and an ``Adam`` optimizer.
+            ``task_config`` and ``target_spec`` are not currently consulted.
         """
 
         del task_config, target_spec
@@ -143,7 +156,10 @@ class OdometryRegressionTask(TaskABC):
         Returns
         -------
         FitPlan
-            Task-owned fit wiring and callbacks.
+            Task-owned fit wiring and callbacks. The current plan uses
+            ``bundle.train.inputs`` as ``x``, orders targets as ``[velx,
+            vely]`` for both training and validation data, and monitors
+            ``"val_loss"``.
 
         Raises
         ------
@@ -207,7 +223,11 @@ class OdometryRegressionTask(TaskABC):
         Returns
         -------
         EvaluationResult
-            Flat RMSE metrics and raw predictions.
+            Flat RMSE metrics and raw predictions. The current implementation
+            uses ``model.predict(split.inputs)`` directly, interprets
+            ``predictions[0]`` as ``velx`` and ``predictions[1]`` as ``vely``,
+            and computes ``rmse_total`` as the sum of the two per-head RMSE
+            values.
         """
 
         del task_config, target_spec

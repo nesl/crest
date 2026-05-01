@@ -1,631 +1,338 @@
-# Source Overview
+# Source Guide
 
-This folder contains the Python entry points and core library code for the
+This directory contains the Python entry points and core library code for the
 TinyODOM-EX training, hardware-in-the-loop, and deployment flow.
 
-## NAS Policy Configuration
-
-NAS evaluation policy is configured from the top-level `nas:` block in the NAS
-YAML files. This replaces the old hard-coded `training.nas_multiobjective`
-behavior.
-
-### Score modes
-
-- `nas.score.type: multi-objective`
-  - Optuna receives one objective value per entry in `nas.score.params.objectives`.
-  - Each objective must define:
-    - `metric`
-    - `direction`
-  - `direction` must be either `minimize` or `maximize`.
-
-- `nas.score.type: scoring-function`
-  - Optuna receives one scalar score.
-  - The scalar score is the sum of all terms in `nas.score.params.terms`.
-  - Each term must define:
-    - `type`
-    - `metric`
-  - `weight` is optional and defaults to `1.0`.
-
-### Prune policy
-
-There are two kinds of pruning in the NAS flow:
-
-- Automatic pruning
-  - Built-in infrastructure checks can stop a trial before training even when
-    `nas.prune.rules` is empty.
-  - This includes hard failures such as RAM overflow, flash overflow,
-    arena-allocation failures, and fatal HIL/controller errors.
-  - In practice, RAM overflow is the most common automatic prune: if the model
-    does not fit in device memory, the trial is rejected immediately rather
-    than spending time on training.
-  - Automatic prunes populate `prune_reason` in the CSV and Optuna user attrs.
-    They leave `prune_rule` empty because they did not come from a config rule.
-
-- Config-driven pruning
-- `nas.prune.rules`
-  - Optional list of pre-training hard reject rules.
-  - Rules are evaluated after HIL/proxy/resource metrics are collected and
-    before model training begins.
-  - V1 pruning is supported only when `nas.score.type: scoring-function`.
-  - Pruned trials do not submit final objective values to Optuna.
-  - `prune_reason` is the human-readable explanation recorded in the CSV and
-    trial user attrs.
-  - `prune_rule` is the stable machine-readable identifier recorded in the CSV
-    and trial user attrs.
-  - Supported rule conditions are `gt`, `gte`, `lt`, and `lte`.
-  - Rules reuse the same typed `reference` shape as score terms.
-
-Example:
-
-```yaml
-nas:
-  score:
-    type: scoring-function
-    params:
-      terms:
-        - type: weighted
-          metric: rmse_total
-          weight: -1.0
-  prune:
-    rules:
-      - rule: latency_budget
-        metric: latency_ms
-        condition: gt
-        reference:
-          type: metric
-          metric: latency_budget_ms
-        reason: "Latency exceeds deployment budget"
-```
-
-### Available metric names
-
-Built-in metrics that can be referenced directly from `nas.score.params.objectives`,
-`nas.score.params.terms`, `nas.prune.rules`, or derived metrics:
-
-- `rmse_vel_x`
-  - Validation RMSE for the predicted X-axis velocity component.
-- `rmse_vel_y`
-  - Validation RMSE for the predicted Y-axis velocity component.
-- `rmse_total`
-  - Built-in aggregate metric equal to `rmse_vel_x + rmse_vel_y`.
-- `ram_bytes`
-  - Estimated or measured peak RAM usage for the deployed model on the target.
-- `flash_bytes`
-  - Program-storage bytes consumed in the target's main/internal flash.
-- `max_ram_bytes`
-  - Device RAM capacity used for normalized RAM penalties and prune rules.
-- `max_flash_bytes`
-  - Device flash capacity used for normalized flash penalties and prune rules.
-- `external_flash_bytes`
-  - Additional model-storage bytes placed in external flash, if the DUT
-    supports external weight storage.
-- `flops`
-  - Estimated floating-point operation count for one inference of the sampled
-    architecture.
-- `latency_ms`
-  - Measured on-device inference latency in milliseconds for the current trial.
-- `energy_mj_per_inference`
-  - Measured energy in millijoules consumed by one inference attempt.
-- `cadenced_active_inference_latency_ms`
-  - Active compute time for one inference during the second cadenced pass.
-    This excludes the intentional sleep/idle time used to hold the release
-    schedule. Currently populated by STM32 only. Available when
-    `device.runtime_mode` is set to `cadenced`.
-- `cadenced_window_latency_ms`
-  - Full scheduled cadenced-window duration from the second pass. Currently
-    populated by STM32 only. Available when `device.runtime_mode` is set to
-    `cadenced`.
-- `cadenced_energy_mj_per_window`
-  - Average energy for one cadenced release window from the second runtime
-    pass. Available when `device.runtime_mode` is set to `cadenced`.
-  - This is the total cadenced measurement energy divided by
-    `measured_inference_runs`, so it represents one scheduled cadence slot
-    rather than the full second-pass run.
-- `cadenced_energy_mj_per_trial`
-  - Total energy for the full cadenced measurement trial. This is computed in
-    backend code as `cadenced_energy_mj_per_window *`
-    `measured_inference_runs`. Available when `device.runtime_mode` is set to
-    `cadenced`.
-- `cadenced_rtc_sleep_ms`
-  - Total RTC-driven sleep time accumulated during the cadenced window.
-    Currently populated by STM32 only.
-- `cadenced_deadline_miss_count`
-  - Number of missed cadenced release slots during the second pass. Currently
-    populated by STM32 only.
-- `cadenced_error_code`
-  - Numeric phase-local result code for the cadenced second pass.
-  - This can be referenced directly from score terms or prune rules when you
-    want cadenced-pass failures to affect NAS selection.
-- `avg_power_mw`
-  - Average DUT power during the measured inference window, in milliwatts.
-- `avg_current_ma`
-  - Average DUT current during the measured inference window, in milliamps.
-- `bus_voltage_v`
-  - Average measured DUT supply voltage during the inference window, in volts.
-- `cpu_clock_mhz_requested`
-  - Requested CPU clock preset for the trial, in MHz, when the DUT supports
-    per-trial clock selection.
-- `clock_hz`
-  - Reported DUT CPU clock frequency for the trial, in Hz, when the backend
-    provides it.
-- `latency_budget_ms`
-  - Configured latency budget passed into HIL/proxy evaluation and reusable in
-    score terms or prune rules.
-- `arena_bytes`
-  - Tensor arena size required or reported by the backend for the deployed
-    model.
-- `error_code`
-  - Numeric HIL/controller status code for the trial outcome.
-
-Notes:
-
-- Metrics with negative sentinel values are treated as unavailable for scoring
-  when the metric is expected to be non-negative.
-- `energy_mj_per_inference` is usually only available when HIL and energy-aware
-  measurement are both enabled.
-- `latency_ms` is unavailable in non-HIL proxy runs.
-- Cadenced policy metrics are only available when
-  `device.runtime_mode: cadenced`.
-- `cadenced_active_inference_latency_ms` and
-  `cadenced_energy_mj_per_window` are per-slot metrics from the second
-  cadenced pass. STM32 exposes the richer timing subset; Portenta H7 and
-  Nano 33 BLE v1 only expose the minimal cadenced energy/error subset.
-- `cadenced_window_latency_ms` is the full second-pass window duration and is
-  currently STM32-only.
-- `cadenced_energy_mj_per_trial` is a whole-trial metric, not a per-slot
-  metric.
-- `cpu_clock_mhz_requested` is optional and backend-dependent.
-- `weight_storage_mode` is logged as trial metadata, but it is not part of the
-  numeric scoring/pruning metric registry.
-- If you disable HIL, avoid score terms and prune rules that reference
-  `latency_ms`, `energy_mj_per_inference`, or the cadenced policy metrics.
-
-### Cadenced Runtime Mode
-
-Cadenced runtime is controlled by the shared top-level `device.runtime_mode`
-setting:
-
-- `device.runtime_mode: back_to_back`
-  - Default behavior. TinyODOM runs one canonical HIL session and returns the
-    standard metrics.
-- `device.runtime_mode: cadenced`
-  - TinyODOM runs a canonical `back_to_back` pass first, then a second
-    cadenced pass.
-
-Optional shared cadence-budget override:
-
-- `device.latency_budget_ms`
-  - Overrides the default cadence budget used during HIL evaluation.
-  - When omitted, TinyODOM derives the budget from
-    `data.stride / data.sampling_rate_hz * 1000`.
-
-Board support:
-
-- STM32
-  - Exposes the full current cadenced timing/energy subset.
-- Portenta H7 and Arduino Nano 33 BLE Sense
-  - Use a minimal v1 cadenced second pass.
-  - Only `training.input_mode: uniform` is supported in cadenced mode.
-  - Only these user-facing cadenced fields are guaranteed:
-    - `runtime_mode`
-    - `cadenced_error_code`
-    - `cadenced_error_label`
-    - `cadenced_energy_mj_per_window`
-    - `cadenced_energy_mj_per_trial`
-
-Important semantics:
-
-- `latency_ms` remains the canonical `back_to_back` latency metric.
-- `cadenced_active_inference_latency_ms` is not the same thing as
-  `latency_ms`. It measures only the active inference compute time inside a
-  cadenced slot and excludes the intentional wait/sleep time between releases.
-- `cadenced_window_latency_ms` is the total scheduled window length for the
-  cadenced pass, not a per-slot active-compute metric.
-- `energy_mj_per_inference` remains the canonical `back_to_back` per-inference
-  energy metric.
-- `cadenced_energy_mj_per_window` is the average energy for one scheduled
-  cadenced slot.
-- `cadenced_energy_mj_per_trial` is the total energy for the full cadenced
-  measurement trial.
-- In `multi-objective` NAS, cadenced overload is currently surfaced as
-  telemetry, not as an automatic feasibility failure. For example, STM32 may
-  report `cadenced_deadline_miss_count > 0` or
-  `cadenced_active_inference_latency_ms > latency_budget_ms` while the trial
-  still completes successfully and remains visible on the Pareto frontier.
-- If you want cadenced schedulability to be a hard pre-training gate, switch to
-  `nas.score.type: scoring-function` and express that policy with
-  `nas.prune.rules`. Multi-objective configs intentionally do not support prune
-  rules today.
-
-Additional STM32 knobs:
-
-- `device.stm32.wake_margin_us`
-  - Wake-up guard band used by the cadenced STM32 runtime before each release
-    time.
-- `device.stm32.min_sleep_us`
-  - Minimum Stop-mode sleep request used by the cadenced STM32 runtime.
-
-Export behavior:
-
-- The main trial CSV includes the small user-facing cadenced subset:
-  - `runtime_mode`
-  - `cadenced_active_inference_latency_ms`
-  - `cadenced_window_latency_ms`
-  - `cadenced_energy_mj_per_window`
-  - `cadenced_energy_mj_per_trial`
-  - `cadenced_rtc_sleep_ms`
-  - `cadenced_deadline_miss_count`
-  - `cadenced_error_code`
-  - `cadenced_error_label`
-- STM32 still exposes the fuller cadenced diagnostics in normalized metrics and
-  Optuna trial attrs.
-- Portenta H7 and Nano 33 BLE Sense v1 leave unsupported cadenced fields at
-  their sentinel defaults for schema stability.
-- When `runtime_mode: back_to_back`, the cadenced fields are still present for
-  schema stability. Numeric fields use negative sentinels and string fields are
-  `None`.
-
-### Derived metrics
-
-You can define custom derived metrics under `nas.score.metrics`.
-
-The supported derived metric types right now are:
-
-- `add`
-- `energy-budget-from-power`
-
-Example:
-
-```yaml
-nas:
-  score:
-    type: multi-objective
-    metrics:
-      model_size_bytes:
-        type: add
-        metrics:
-          - flash_bytes
-          - external_flash_bytes
-    params:
-      objectives:
-        - metric: rmse_total
-          direction: minimize
-        - metric: model_size_bytes
-          direction: minimize
-```
-
-`add` behavior:
-
-- It sums the listed metrics.
-- If any input metric is unavailable, the derived metric is also unavailable.
-- Built-in metrics cannot be redefined inside `nas.score.metrics`.
-
-`energy-budget-from-power` behavior:
-
-- It computes `power_mw * duration_ms / 1000`.
-- The result is an energy budget in `mJ`.
-- `power_mw` and `duration_ms` both use the same typed reference shape used by scalar
-  score terms:
-  - metric reference: `{type: metric, metric: latency_budget_ms}`
-  - literal reference: `{type: literal, value: 100.0}`
-- `duration_ms` must resolve to a value greater than zero.
-- `power_mw` must resolve to a non-negative value.
-
-Example:
-
-```yaml
-nas:
-  score:
-    type: scoring-function
-    metrics:
-      energy_budget_mj:
-        type: energy-budget-from-power
-        power_mw:
-          type: literal
-          value: 100.0
-        duration_ms:
-          type: metric
-          metric: latency_budget_ms
-    params:
-      terms:
-        - type: target
-          metric: energy_mj_per_inference
-          weight: 0.15
-          reference:
-            type: metric
-            metric: energy_budget_mj
-```
-
-That example creates an energy budget target from a 100 mW power budget and the
-configured latency budget. If `latency_budget_ms` is `20.0`, the derived metric
-resolves to `2.0 mJ`.
-
-### Scalar term types
-
-There are four scalar term types.
-
-#### 1. `weighted`
-
-This adds `weight * metric_value` to the total score.
-
-Use it when you want a metric to contribute directly to the scalar score.
-
-Example:
-
-```yaml
-nas:
-  score:
-    type: scoring-function
-    params:
-      terms:
-        - type: weighted
-          metric: rmse_total
-          weight: -1.0
-```
-
-That example rewards smaller RMSE because the weight is negative.
-
-#### 2. `normalized-weighted`
-
-This adds `weight * (metric / reference)` to the total score.
-
-Use it when you want a metric to be scaled by a hardware budget or some other
-reference value before it contributes to the score.
-
-This is the term to use for things like:
-
-- RAM usage normalized by available RAM
-- flash usage normalized by available flash
-- latency normalized by a latency budget
-
-Example:
-
-```yaml
-nas:
-  score:
-    type: scoring-function
-    params:
-      terms:
-        - type: normalized-weighted
-          metric: ram_bytes
-          weight: 0.01
-          reference:
-            type: metric
-            metric: max_ram_bytes
-```
-
-That example contributes `0.01 * (ram_bytes / max_ram_bytes)` to the total
-score.
-
-The `reference` value must resolve to something greater than zero.
-
-#### 3. `boundary`
-
-This penalizes a metric only when it exceeds a threshold.
-
-Formula:
-
-```text
--weight * max(0, metric - reference)
-```
-
-Use it when a metric is acceptable below a limit and should only be penalized
- once it crosses that limit.
-
-Example with a literal threshold:
-
-```yaml
-nas:
-  score:
-    type: scoring-function
-    params:
-      terms:
-        - type: boundary
-          metric: latency_ms
-          weight: 1.0
-          reference:
-            type: literal
-            value: 50.0
-```
-
-Example with another metric as the threshold:
-
-```yaml
-nas:
-  score:
-    type: scoring-function
-    params:
-      terms:
-        - type: boundary
-          metric: latency_ms
-          weight: 1.0
-          reference:
-            type: metric
-            metric: latency_budget_ms
-```
-
-#### 4. `target`
-
-This penalizes distance from a target value.
-
-Formula:
-
-```text
--weight * abs(metric - reference)
-```
-
-Use it when the metric should stay close to some ideal point rather than just
- stay below a limit.
-
-Example:
-
-```yaml
-nas:
-  score:
-    type: scoring-function
-    params:
-      terms:
-        - type: target
-          metric: latency_ms
-          weight: 0.5
-          reference:
-            type: literal
-            value: 20.0
-```
-
-### Full examples
-
-Multi-objective example:
-
-```yaml
-nas:
-  score:
-    type: multi-objective
-    params:
-      objectives:
-        - metric: rmse_total
-          direction: minimize
-        - metric: latency_ms
-          direction: minimize
-  prune:
-    rules: []
-```
-
-When this example is used with `device.runtime_mode: cadenced`, treat
-cadenced-overload metrics such as `cadenced_deadline_miss_count` and
-`cadenced_active_inference_latency_ms` as feasibility telemetry that you
-post-filter after the run. They do not automatically exclude trials from the
-Pareto frontier.
-
-Scalar scoring example:
-
-```yaml
-nas:
-  score:
-    type: scoring-function
-    metrics:
-      total_model_flash:
-        type: add
-        metrics:
-          - flash_bytes
-          - external_flash_bytes
-      energy_budget_mj:
-        type: energy-budget-from-power
-        power_mw:
-          type: literal
-          value: 100.0
-        duration_ms:
-          type: metric
-          metric: latency_budget_ms
-    params:
-      terms:
-        - type: weighted
-          metric: rmse_total
-          weight: -1.0
-        - type: normalized-weighted
-          metric: ram_bytes
-          weight: 0.01
-          reference:
-            type: metric
-            metric: max_ram_bytes
-        - type: boundary
-          metric: latency_ms
-          weight: 1.0
-          reference:
-            type: metric
-            metric: latency_budget_ms
-        - type: target
-          metric: energy_mj_per_inference
-          weight: 0.15
-          reference:
-            type: metric
-            metric: energy_budget_mj
-        - type: weighted
-          metric: total_model_flash
-          weight: -0.000001
-  prune:
-    rules:
-      - rule: latency_budget
-        metric: latency_ms
-        condition: gt
-        reference:
-          type: metric
-          metric: latency_budget_ms
-        reason: "Latency exceeds deployment budget"
-```
-
-### Practical limitations
-
-The current scalar scoring DSL is intentionally small.
-
-It does support:
-
-- direct weighted sums
-- normalized weighted ratios against a literal or metric reference
-- threshold penalties
-- target penalties
-- simple additive derived metrics
-- simple energy-budget derivation from power and duration
-
-It does not support:
-
-- arbitrary nested division between metrics
-- min/max clipping beyond the built-in `boundary` behavior
-- nested arithmetic expressions beyond `add`
-- piecewise formulas more complex than the provided term types
-
-If you need a scalar score that depends on ratios, caps, or multi-step derived
-quantities, the config may only be able to approximate the old hard-coded
-formula rather than reproduce it exactly.
-
-## Top-level entry points
-
-- `hil_server.py`
-  - ZeroMQ REP server that builds model variants, exports TFLite/C++, flashes
-    firmware, and returns HIL metrics.
-- `nas_model_client.py`
-  - ZeroMQ REQ client that runs NAS/training workflows and queries the HIL
-    server for hardware metrics.
-- `nas_config.yaml`
-  - Default configuration for dataset paths, training, score definition,
-    device selection, network settings, and output paths.
-- `nas_config_ble.yaml`
-  - Alternate BLE-oriented configuration.
-- `two_board_hil_notes.txt`
-  - Notes on the two-board DUT/harness measurement setup.
-
-## Python package
-
-The `tinyodom/` package holds the reusable logic shared by the scripts above.
-
-- `tinyodom/data.py`
-  - OxIOD dataset import and split handling.
-- `tinyodom/model.py`
-  - Model construction, config loading, metric-collection request building, and
-    training utilities.
-- `tinyodom/hardware.py`
-  - Export, compile, upload, and metric normalization helpers.
-- `tinyodom/hil_protocol.py`
-  - DUT/harness serial handshake and telemetry collection protocol.
-- `tinyodom/devices.py`
-  - Device abstraction layer and board-spec plumbing.
-- `tinyodom/geometry.py`
-  - Geometry and trajectory helper functions.
-- `tinyodom/errors.py`
-  - Shared error-code definitions and helpers.
-- `tinyodom/microcontrollers/`
-  - Board-specific Arduino and non-Arduino backends.
-  - Arduino boards follow the integration guide in
-    `src/tinyodom/microcontrollers/README.md`.
-  - The STM32 backend is split into:
-    - `stm32_nucleo_n657x0.py` for the concrete `DeviceInterface`
-      implementation
-    - `stm32_cube_clt.py` for build/load/toolchain helpers
-    - `stm32_runtime.py` for direct-serial runtime protocol handling
-
-## Notes
-
-- Generated or cache-like artifacts such as `__pycache__/` and
-  `tinyodom.egg-info/` may appear here during local development.
-- Analysis utilities that sit outside the core runtime live under
-  `analysis_scripts/`, not in this folder.
+This guide maps the training, HIL, and extension surfaces under `src/`.
+
+Related docs:
+
+- Repository setup, dataset preparation, and operator workflow live in
+  [`../README.md`](../README.md).
+- Config block meanings, NAS policy shape, and runtime config caveats live in
+  [`config/README.md`](config/README.md).
+- Microcontroller and hardware-backend bring-up live in
+  [`tinyodom/microcontrollers/README.md`](tinyodom/microcontrollers/README.md).
+- Known rough edges from the component/model-family refactor are tracked in
+  [`../things_forgotten_in_the_model_refactor.md`](../things_forgotten_in_the_model_refactor.md).
+
+## Top-Level Entry Points
+
+- [`nas_model_client.py`](nas_model_client.py)
+  Runs NAS, training, scoring, artifact export, and the client side of the
+  hardware-in-the-loop workflow.
+- [`hil_server.py`](hil_server.py)
+  Runs the ZeroMQ HIL server that materializes models, stages device-specific
+  candidates, and returns compile/runtime metrics.
+- [`config/nas_config.yaml`](config/nas_config.yaml)
+  Default runtime configuration for device selection, dataset parameters,
+  training controls, NAS scoring/pruning, outputs, logging, and network
+  settings.
+
+## Package Map
+
+The `tinyodom/` package holds the reusable implementation behind the entry
+points above.
+
+- [`tinyodom/component_selection.py`](tinyodom/component_selection.py)
+  Resolves the active dataset, task, and model-family selections from config.
+- [`tinyodom/registry.py`](tinyodom/registry.py)
+  Defines the string-keyed registries for datasets, tasks, and model families.
+- [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py)
+  Registers the built-in dataset, task, and model-family implementations.
+- [`tinyodom/interfaces.py`](tinyodom/interfaces.py)
+  Defines the core abstraction contracts:
+  `DatasetABC`, `TaskABC`, and `ModelFamilyABC`.
+- [`tinyodom/pipeline_types.py`](tinyodom/pipeline_types.py)
+  Defines shared typed payloads passed between the modular pipeline layers.
+- [`tinyodom/datasets/`](tinyodom/datasets)
+  Dataset adapters. Today this repo ships the built-in
+  [`oxiod.py`](tinyodom/datasets/oxiod.py) adapter.
+- [`tinyodom/tasks/`](tinyodom/tasks)
+  Task adapters. Today this repo ships the built-in
+  [`odometry_regression.py`](tinyodom/tasks/odometry_regression.py) task.
+- [`tinyodom/model_families/`](tinyodom/model_families)
+  Model-family implementations. Today this repo ships the built-in
+  [`tinyodom_tcn.py`](tinyodom/model_families/tinyodom_tcn.py) family.
+- [`tinyodom/microcontrollers/`](tinyodom/microcontrollers)
+  Hardware backends and backend registry/factory logic. See
+  [`tinyodom/microcontrollers/README.md`](tinyodom/microcontrollers/README.md)
+  for bring-up details.
+- [`tinyodom/model.py`](tinyodom/model.py)
+  Shared runtime helpers for config loading, score evaluation, metric
+  normalization, and HIL request construction.
+- [`tinyodom/devices.py`](tinyodom/devices.py)
+  Shared device dataclasses and the `DeviceInterface` contract used by
+  hardware backends.
+- [`tinyodom/hardware.py`](tinyodom/hardware.py)
+  Legacy/shared hardware utility layer used by the current HIL/NAS flow.
+
+## Shared Abstractions
+
+The modular runtime is built around three main interfaces plus a small set of
+typed payloads shared across orchestration code.
+
+- `DatasetABC` in [`tinyodom/interfaces.py`](tinyodom/interfaces.py)
+  Loads raw data and returns a normalized [`DatasetBundle`](tinyodom/pipeline_types.py)
+  with train/validation/test/calibration splits plus dataset metadata.
+- `TaskABC` in [`tinyodom/interfaces.py`](tinyodom/interfaces.py)
+  Defines the target/output contract, task-owned fitting behavior, evaluation
+  behavior, and the metric contract that shared NAS/scoring code consumes.
+- `ModelFamilyABC` in [`tinyodom/interfaces.py`](tinyodom/interfaces.py)
+  Samples hyperparameters, builds models, validates family-local config, and
+  materializes the export variant passed into HIL.
+- Shared typed payloads in [`tinyodom/pipeline_types.py`](tinyodom/pipeline_types.py)
+  carry the normalized information exchanged between those layers:
+  `DatasetBundle`, `TargetSpec`, `ModelBuildContext`, `FitPlan`,
+  `EvaluationResult`, and `TaskMetricContract`.
+
+## End-to-End Flow
+
+At a high level, the source tree is wired like this:
+
+1. `nas_model_client.py` or `hil_server.py` loads
+   [`config/nas_config.yaml`](config/nas_config.yaml) through shared helpers in
+   [`tinyodom/model.py`](tinyodom/model.py).
+2. The entry point calls
+   `ensure_builtin_components_registered()` from
+   [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py) so the
+   default dataset, task, and model family are available by name.
+3. The entry point resolves the active component selection through
+   `resolve_component_selection(...)` in
+   [`tinyodom/component_selection.py`](tinyodom/component_selection.py).
+4. The selected dataset adapter loads data and produces a normalized
+   `DatasetBundle`.
+5. The selected task adapter builds the target contract and training/evaluation
+   behavior.
+6. The selected model family samples hyperparameters, builds models, and
+   materializes export variants.
+7. The selected microcontroller backend stages, compiles, uploads, and
+   measures one candidate when hardware metrics are needed.
+8. Shared scoring, pruning, and result-shaping code combines task metrics and
+   backend metrics into the values used by NAS and reporting.
+
+That split is important:
+
+- Dataset/task/model-family code owns the ML-side behavior.
+- Microcontroller backend code owns the build/upload/runtime measurement path.
+- The top-level scripts own orchestration and policy.
+
+NAS and HIL both use the same component-selection path. The same config-driven
+dataset/task/model-family selection is resolved before the code branches into
+training/NAS behavior or board/backend behavior.
+
+## Component Selection
+
+The current modular selection surface is resolved in
+[`tinyodom/component_selection.py`](tinyodom/component_selection.py).
+
+The main config knobs are:
+
+- `dataset.name`
+  Selects the dataset adapter. Defaults to `oxiod`.
+- `dataset.params`
+  Optional dataset-local config block. When omitted, the current code falls
+  back to the legacy top-level `data` block.
+- `task.name`
+  Selects the task adapter. Defaults to `odometry_regression`.
+- `task.params`
+  Optional task-local config block.
+- `model.family`
+  Selects the model family. Defaults to `tinyodom_tcn`.
+- `model.params`
+  Model-family-local configuration.
+- `model.search`
+  Model-family-local search-space configuration.
+
+See [`config/README.md`](config/README.md) for the current shipped config shape.
+
+## Registration Model
+
+TinyODOM-EX does not currently auto-discover components from the filesystem.
+The registry model is explicit:
+
+- [`tinyodom/registry.py`](tinyodom/registry.py) defines
+  `dataset_registry`, `task_registry`, and `model_family_registry`.
+- [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py) registers
+  the built-in components under their stable string keys.
+- The entry points call `ensure_builtin_components_registered()` before they
+  resolve component names from config.
+
+If you add a new dataset, task, or model family, it is not available until
+something registers it under the name you intend to use in config.
+
+Known extension limits and refactor leftovers are tracked in
+[`../things_forgotten_in_the_model_refactor.md`](../things_forgotten_in_the_model_refactor.md).
+
+## Shared Scoring And Trial Outputs
+
+The shared score/logging path no longer assumes one fixed TinyODOM model shape
+or one fixed metric schema.
+
+### Task Metric Declaration
+
+[`TaskMetricContract`](tinyodom/pipeline_types.py) is the task-owned
+declaration shared with orchestration code. It tells the shared pipeline:
+
+- which metrics the task can produce
+- which metrics only exist after full training
+- which metrics are guaranteed nonnegative
+- which metrics are the task's primary headline metrics
+
+This is how the task layer advertises metrics such as `rmse_total` without
+hardcoding them into the shared NAS/logging layer.
+
+### Score Resolution
+
+[`ScoreEvaluationResult`](tinyodom/model.py) is the shared representation of
+the resolved score/objective values for one trial.
+
+- Scalar runs set `score` and leave the objective lists as the configured
+  single-objective projection.
+- Multi-objective runs leave `score` as `None` and instead carry ordered
+  objective names, values, and directions.
+
+### Generic Trial Outcome
+
+[`TrialOutcome`](tinyodom/model.py) is the generic payload written to CSV and
+mirrored into Optuna trial attributes. It carries:
+
+- resolved scalar/objective values
+- `task_metrics`
+- resolved trial `hyperparams`
+- optional task-owned `artifact_summary`
+
+The shared logging code does not need to know which task or model family
+produced those values.
+
+### CSV And Optuna Logging
+
+[`log_trial(...)`](tinyodom/model.py) writes a stable infrastructure column set
+plus dynamic task/hyperparameter columns.
+
+Stable shared columns include:
+
+- study/timestamp fields
+- shared hardware metrics such as RAM, flash, latency, power, energy, and
+  error codes
+- score/objective metadata (`score_type`, `objective_*_json`)
+- pruning metadata
+- `artifact_summary_json`
+- cadenced runtime telemetry fields when present
+
+Dynamic columns are added per trial outcome:
+
+- task metrics become `metric__{name}`
+- hyperparameters become `hparam__{name}`
+
+The same information is also mirrored into `trial.user_attrs`, including the
+fully expanded `metric__*` and `hparam__*` keys.
+
+## Extension Paths
+
+### Add A New Model Family
+
+If you mean a new trainable/exportable model family, this is the primary
+extension path in the current codebase.
+
+Key files:
+
+- [`tinyodom/interfaces.py`](tinyodom/interfaces.py)
+  `ModelFamilyABC` defines the contract.
+- [`tinyodom/model_families/tinyodom_tcn.py`](tinyodom/model_families/tinyodom_tcn.py)
+  Concrete example of the built-in family.
+- [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py)
+  Built-in registration.
+- [`tinyodom/component_selection.py`](tinyodom/component_selection.py)
+  Config selection and default names.
+- [`hil_server.py`](hil_server.py) and
+  [`nas_model_client.py`](nas_model_client.py)
+  Entry-point orchestration that consumes the selected family.
+
+Typical steps:
+
+1. Add a new module under [`tinyodom/model_families/`](tinyodom/model_families).
+2. Implement a `ModelFamilyABC` subclass.
+3. Register it in the appropriate registry path.
+   The built-in pattern today is
+   [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py).
+4. Set `model.family` in config to the registered name.
+5. Put family-local knobs under `model.params` and `model.search` when needed.
+6. Verify export/materialization semantics if the family needs custom model
+   loading, custom objects, or variant handling.
+
+Important boundary:
+
+- Model families own model construction and export-oriented materialization.
+- Hardware backends own candidate staging, compile, upload, and runtime
+  measurement.
+
+### Add A New Dataset
+
+Key files:
+
+- [`tinyodom/interfaces.py`](tinyodom/interfaces.py) for `DatasetABC`
+- [`tinyodom/datasets/oxiod.py`](tinyodom/datasets/oxiod.py) as the built-in
+  example
+- [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py) for the
+  current registration pattern
+
+Typical steps:
+
+1. Add a new dataset adapter under [`tinyodom/datasets/`](tinyodom/datasets).
+2. Implement `DatasetABC`.
+3. Register it under a stable string key.
+4. Select it with `dataset.name`.
+5. Put dataset-local knobs under `dataset.params`, or keep using the bridged
+   `data` block where appropriate.
+
+### Add A New Task
+
+Key files:
+
+- [`tinyodom/interfaces.py`](tinyodom/interfaces.py) for `TaskABC`
+- [`tinyodom/tasks/odometry_regression.py`](tinyodom/tasks/odometry_regression.py)
+  as the built-in example
+- [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py) for the
+  current registration pattern
+
+Typical steps:
+
+1. Add a new task adapter under [`tinyodom/tasks/`](tinyodom/tasks).
+2. Implement `TaskABC`.
+3. Register it under a stable string key.
+4. Select it with `task.name`.
+5. Keep task-owned training, evaluation, and metric-contract logic inside the
+   task adapter.
+
+### Add A New Microcontroller Or Hardware Backend
+
+Key files:
+
+- [`tinyodom/microcontrollers/README.md`](tinyodom/microcontrollers/README.md)
+  for the bring-up guide
+- [`tinyodom/devices.py`](tinyodom/devices.py) for `DeviceInterface`
+- [`tinyodom/microcontrollers/__init__.py`](tinyodom/microcontrollers/__init__.py)
+  for backend registration/factory plumbing
+
+That path is intentionally separate from model-family work. Board bring-up,
+toolchain integration, upload flow, runtime telemetry, and backend-owned
+device options belong to the microcontroller backend layer, not to
+`ModelFamilyABC`.
+
+Important caveat:
+
+- a new non-Arduino backend must be wired into the registry metadata in
+  [`tinyodom/microcontrollers/__init__.py`](tinyodom/microcontrollers/__init__.py)
+  or it is unreachable except through the Arduino FQBN fallback path
+
+## NAS Policy And HIL Details
+
+For the current scoring, pruning, and runtime knobs, use:
+
+- [`config/README.md`](config/README.md) for the config reference
+- [`config/nas_config.yaml`](config/nas_config.yaml) for the default config shape
+- [`tinyodom/model.py`](tinyodom/model.py) for score/prune evaluation and HIL
+  request construction
+- [`hil_server.py`](hil_server.py) for the HIL-side request handling and
+  backend failure shaping

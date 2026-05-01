@@ -22,6 +22,15 @@ SPLIT_FILES = ("Train.txt", "Valid.txt", "Test.txt", "Train_Valid.txt")
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for the OxIOD preparation workflow.
+
+    Returns
+    -------
+    argparse.Namespace
+        Parsed command-line arguments describing the archive location, the
+        destination dataset root, and the tracked split template directory.
+    """
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--zip-path",
@@ -43,12 +52,33 @@ def parse_args() -> argparse.Namespace:
 
 
 def capture_templates(template_root: Path) -> dict[Path, dict[str, str]]:
-    """Read the tracked split files into memory before we blow away the folder."""
+    """Capture the tracked split templates before replacing the dataset tree.
+
+    Parameters
+    ----------
+    template_root : Path
+        Directory that currently contains the curated split files tracked by
+        the repository.
+
+    Returns
+    -------
+    dict[Path, dict[str, str]]
+        Mapping from activity-relative directory to a mapping of split
+        filename to text contents.
+
+    Raises
+    ------
+    RuntimeError
+        Raised when no tracked split templates can be found.
+    """
+
     templates: dict[Path, dict[str, str]] = {}
     for activity_dir in template_root.iterdir():
         if not activity_dir.is_dir():
             continue
         splits = {}
+        # Preserve only the curated split text files. The extracted archive will
+        # replace the rest of the dataset tree from scratch.
         for split_name in SPLIT_FILES:
             split_path = activity_dir / split_name
             if split_path.exists():
@@ -64,15 +94,34 @@ def capture_templates(template_root: Path) -> dict[Path, dict[str, str]]:
 
 
 def locate_dataset_root(tmp_path: Path) -> Path:
-    """Find the folder inside the extracted archive that holds the activities."""
+    """Locate the extracted OxIOD dataset root inside a temporary directory.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Temporary extraction directory containing the unzipped archive.
+
+    Returns
+    -------
+    Path
+        Directory that contains the canonical OxIOD activity folders.
+
+    Raises
+    ------
+    RuntimeError
+        Raised when the extraction layout does not match any known OxIOD
+        archive layout.
+    """
+
     candidates = [
         tmp_path / "data" / "oxiod",
         tmp_path / "Oxford Inertial Odometry Dataset",
     ]
+    # Check the known archive layouts first so the common case stays simple.
     for candidate in candidates:
         if candidate.exists():
             return candidate
-    # fallback: find a folder that has the canonical activity directories
+    # Fall back to a structural search when the archive has been repackaged.
     activity_markers = {"handbag", "handheld", "pocket"}
     for folder in tmp_path.rglob("*"):
         if folder.is_dir() and activity_markers.issubset(
@@ -83,19 +132,37 @@ def locate_dataset_root(tmp_path: Path) -> Path:
 
 
 def extract_archive(zip_path: Path, dest_root: Path) -> None:
-    """Extract only the oxiod portion of the archive into dest_root."""
+    """Extract the OxIOD archive into the repository dataset directory.
+
+    Parameters
+    ----------
+    zip_path : Path
+        Path to the downloaded OxIOD zip archive.
+    dest_root : Path
+        Destination directory that should contain the prepared OxIOD tree.
+    """
+
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
         with zipfile.ZipFile(zip_path) as archive:
             archive.extractall(tmp_path)
         extracted_root = locate_dataset_root(tmp_path)
         if dest_root.exists():
+            # Replace the dataset wholesale so stale extracted files cannot
+            # survive from an older archive layout.
             shutil.rmtree(dest_root)
         shutil.copytree(extracted_root, dest_root)
 
 
 def normalize_folder_names(dest_root: Path) -> None:
-    """Match the repo's folder naming (handle slow walking -> slow_walking)."""
+    """Normalize extracted folder names to match repository conventions.
+
+    Parameters
+    ----------
+    dest_root : Path
+        Root directory of the prepared OxIOD dataset tree.
+    """
+
     slow_original = dest_root / "slow walking"
     slow_target = dest_root / "slow_walking"
     if slow_original.exists():
@@ -105,15 +172,28 @@ def normalize_folder_names(dest_root: Path) -> None:
 
 
 def restore_templates(dest_root: Path, templates: dict[Path, dict[str, str]]) -> None:
-    """Write the stored split files back into each activity folder."""
+    """Restore the curated split text files into the extracted dataset tree.
+
+    Parameters
+    ----------
+    dest_root : Path
+        Root directory of the prepared OxIOD dataset tree.
+    templates : dict[Path, dict[str, str]]
+        Split file contents captured before the dataset directory was replaced.
+    """
+
     for rel_path, splits in templates.items():
         folder = dest_root / rel_path
+        # Ensure the destination activity folder exists even if the archive
+        # layout changed slightly from the tracked template tree.
         folder.mkdir(parents=True, exist_ok=True)
         for split_name, content in splits.items():
             (folder / split_name).write_text(content, encoding="utf-8")
 
 
 def main() -> None:
+    """Run the OxIOD extraction and split-restoration workflow."""
+
     args = parse_args()
     zip_path = Path(args.zip_path)
     dest_root = Path(args.dest_root)
@@ -124,6 +204,8 @@ def main() -> None:
     if not template_root.exists():
         raise FileNotFoundError(f"Template directory not found: {template_root}")
 
+    # Preserve the repository-authored split files first, then rebuild the
+    # dataset tree from the downloaded archive, then put the splits back.
     templates = capture_templates(template_root)
     extract_archive(zip_path, dest_root)
     normalize_folder_names(dest_root)

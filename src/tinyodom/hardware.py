@@ -1,3 +1,11 @@
+"""Legacy HIL orchestration helpers and export utilities for TinyODOM.
+
+This module still owns the compatibility path that exports Keras models to
+TFLite/C arrays, resolves device resource limits, performs single-attempt HIL
+runs, and searches tensor-arena sizes while the backend migration to dedicated
+device classes is in progress.
+"""
+
 from __future__ import annotations
 
 import shutil
@@ -40,7 +48,14 @@ from .microcontrollers.arduino_base import normalize_power_metrics
 from .microcontrollers import get_device as get_microcontroller_device
 
 def _probe_xxd() -> Optional[str]:
-    """Return the resolved xxd path when available."""
+    """Return the resolved ``xxd`` path when available.
+
+    Returns
+    -------
+    str | None
+        Resolved ``xxd`` executable path when the binary exists and responds
+        to a simple version probe, otherwise ``None``.
+    """
     candidate = shutil.which("xxd")
     if not candidate:
         return None
@@ -59,7 +74,18 @@ def _probe_xxd() -> Optional[str]:
 
 
 def _xxd_supports_custom_names(xxd_path: Optional[str]) -> bool:
-    """Detect whether the host xxd binary accepts the `-n` flag."""
+    """Detect whether the host ``xxd`` binary accepts the ``-n`` flag.
+
+    Parameters
+    ----------
+    xxd_path : str | None
+        Candidate ``xxd`` executable path.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``xxd -i -n ...`` succeeds on the current host.
+    """
     if not xxd_path:
         return False
     temp_file: Optional[tempfile.NamedTemporaryFile] = None
@@ -105,7 +131,9 @@ def convert_to_tflite_model(
     model : tf.keras.Model
         Source Keras model to serialize.
     training_data : array-like
-        Calibration samples used when `quantization` is enabled.
+        Calibration samples used when ``quantization`` is enabled. The array
+        must include a sample axis because representative batches are emitted
+        one sample at a time.
     quantization : bool, optional
         Whether to apply post-training int8 quantization.
     output_name : Union[str, Path], optional
@@ -114,6 +142,12 @@ def convert_to_tflite_model(
     Returns
     -------
     None
+
+    Notes
+    -----
+    The representative dataset is capped at the first 100 samples. Input and
+    output dtypes stay ``float32`` unless post-training int8 quantization is
+    enabled.
     """
     output_path = Path(output_name)
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
@@ -179,6 +213,8 @@ def convert_to_cpp_model(
     Tuple[pathlib.Path, pathlib.Path]
         Absolute paths to the generated `model.cc` and `model.h` files.
     """
+    # Choose the export path once from the module-level capability probe so
+    # repeated conversions do not keep rediscovering `xxd`.
     if XXD_BIN:
         return _convert_to_cpp_model_xxd(
             tflite_path,
@@ -303,7 +339,8 @@ def _convert_to_cpp_model_xxd(
     Tuple[pathlib.Path, pathlib.Path]
         Absolute paths to the generated source and header files.
     """
-    # Use a temporary file so we can post-process the xxd output before copying it into the sketch.
+    # Use a temporary file so the raw `xxd` output can be normalized to the
+    # TensorFlow Lite Micro style expected by downstream sources.
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -365,6 +402,12 @@ def return_hardware_specs(
     -------
     Tuple[int, int]
         Maximum RAM bytes and flash bytes allowed on the device.
+
+    Notes
+    -----
+    ``device_name`` is normalized to uppercase before lookup. Dynamic boards
+    such as Portenta H7 resolve limits through their backend wrapper when
+    ``device_options`` are provided.
     """
     normalized_name = str(device_name).strip().upper()
     if normalized_name == "PORTENTA_H7" and not device_options:
@@ -411,6 +454,12 @@ def get_model_memory_usage(
     -------
     float
         Total estimated memory usage in bytes.
+
+    Notes
+    -----
+    This is an estimation helper based on layer output shapes and parameter
+    counts. It is useful for relative comparisons, but it is not an allocator-
+    accurate replacement for real device-side memory measurements.
     """
     shapes_mem_count = 0
     internal_model_mem_count = 0
@@ -427,7 +476,8 @@ def get_model_memory_usage(
         single_layer_mem = 1
         out_shape = getattr(layer, 'output_shape', None)
         if out_shape is None:
-            # Some layers (e.g., InputLayer in newer Keras) do not expose output_shape.
+            # Some layers (for example newer InputLayer variants) do not expose
+            # output_shape, so skip them rather than guessing activation size.
             continue
         if type(out_shape) is list:
             out_shape = out_shape[0]
@@ -528,7 +578,21 @@ _HIL_MASTER_ERROR_LABELS = {
 
 
 def describe_error_code(code: int, *, prefer_master: bool = True) -> str:
-    """Return the symbolic name for a HIL or master error code."""
+    """Return the symbolic name for a HIL or master error code.
+
+    Parameters
+    ----------
+    code : int
+        Shared HIL or controller/master error code.
+    prefer_master : bool, optional
+        Whether master/controller labels should take precedence when both
+        namespaces define the same numeric code.
+
+    Returns
+    -------
+    str
+        Stable symbolic label for ``code``.
+    """
     lookup_order = (
         (_HIL_MASTER_ERROR_LABELS, _HIL_ERROR_LABELS)
         if prefer_master
@@ -545,13 +609,26 @@ _retry_hint_bytes: Optional[int] = None
 
 
 def _store_retry_hint_bytes(value: Optional[int]) -> None:
-    """Cache arena retry guidance for the most recent HIL_spec call."""
+    """Cache arena retry guidance for the most recent ``HIL_spec`` call.
+
+    Parameters
+    ----------
+    value : int | None
+        Suggested next arena size in bytes, when the backend can infer one.
+    """
     global _retry_hint_bytes
     _retry_hint_bytes = value
 
 
 def _pop_retry_hint_bytes() -> Optional[int]:
-    """Fetch and clear the most recent arena retry hint (in bytes)."""
+    """Fetch and clear the most recent arena retry hint.
+
+    Returns
+    -------
+    int | None
+        Suggested next arena size in bytes, or ``None`` when no hint was
+        recorded.
+    """
     global _retry_hint_bytes
     value = _retry_hint_bytes
     _retry_hint_bytes = None
@@ -626,9 +703,13 @@ def HIL_spec(
         Tuple of (RAM bytes, flash bytes, latency seconds, arena bytes, error flag,
         optional power telemetry parsed from the serial log).
     """
-    _store_retry_hint_bytes(None)  # clear any stale hint from a previous call
+    # Retry hints are a side channel from one attempt back to
+    # ``HIL_controller`` so stale advice must be cleared before every run.
+    _store_retry_hint_bytes(None)
     requested_device = chosen_device
     if device is not None:
+        # An injected backend object already resolved the authoritative device
+        # identity, so prefer its spec over the caller's string.
         chosen_device = device.spec.name
     logger.info(
         "HIL_spec: start attempt (requested_device=%s, resolved_device=%s, idx=%d, run_hil=%s, device_options=%s)",
@@ -774,6 +855,16 @@ def HIL_controller(
     Tuple[int, int, float, int, int, Optional[Dict[str, Optional[float]]]]
         Final RAM bytes, flash bytes, latency seconds, arena bytes, error code, and
         optional power telemetry captured from the winning firmware run.
+
+    Notes
+    -----
+    The search maintains an open interval where ``low_idx`` is the largest
+    known failing arena and ``high_idx`` is the smallest known successful
+    arena. Successful runs search downward for a smaller arena, undersized or
+    latency failures search upward, and RAM overflow shrinks the upper bound.
+    When a backend already produced one successful run, that last-success
+    metric set is retained even if a later probe exits with a non-success
+    master code.
     """
     if device is None:
         device = get_microcontroller_device(
@@ -792,6 +883,8 @@ def HIL_controller(
     last_success_metrics: Optional[Tuple[int, int, float, int, Optional[Dict[str, Optional[float]]]]] = None
     had_retry_failures = False
 
+    # Start with the full arena sweep interval open: no known failing lower
+    # bound and no known successful upper bound yet.
     low_idx = -1
     high_idx = len(arena_sweep_list)
 
@@ -842,6 +935,8 @@ def HIL_controller(
         current_idx = next_idx
         bounds_signature = (low_idx, high_idx)
         previous_bounds = tested_bounds.get(current_idx)
+        # Guard against a backend repeatedly returning the same hint or branch
+        # outcome without shrinking the search bracket.
         if previous_bounds == bounds_signature:
             logger.error(
                 "HIL_controller detected repeated idx=%d without bracket shrink (low=%d high=%d); aborting sweep.",
@@ -930,6 +1025,8 @@ def HIL_controller(
             low_idx = max(low_idx, current_idx)
             candidate = min(current_idx + 1, (low_idx + high_idx) // 2)
             if retry_hint_bytes is not None:
+                # Backends may report the first arena size likely to fit; jump
+                # forward to that point when it narrows the sweep faster.
                 target_idx = next(
                     (i for i, kb in enumerate(arena_sweep_list) if kb * 1024 >= retry_hint_bytes),
                     None,
@@ -1003,6 +1100,8 @@ def HIL_controller(
             masterError = HIL_MASTER_FATAL
 
     if masterError != HIL_MASTER_SUCCESS and last_success_metrics is not None:
+        # Preserve the smallest known good arena metrics even if a later probe
+        # fails while exploring nearby bounds.
         finRAM, finFlash, finLatency, idealArenaBytes, finPower_metrics = last_success_metrics
 
     if masterError == HIL_MASTER_PENDING:

@@ -335,10 +335,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config",
         type=Path,
-        default=REPO_ROOT / "src" / "nas_config.yaml",
+        default=REPO_ROOT / "src" / "config" / "nas_config.yaml",
         help=(
             "TinyODOM NAS configuration YAML used for staging the perturbed model. "
-            "Example: src/nas_config.yaml"
+            "Example: src/config/nas_config.yaml"
         ),
     )
     parser.add_argument(

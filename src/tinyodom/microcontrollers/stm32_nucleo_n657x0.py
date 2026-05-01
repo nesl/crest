@@ -1,3 +1,10 @@
+"""STM32 Nucleo N657X0-Q backend for staged TinyODOM evaluation.
+
+This module owns the LRUN workspace contract, ST Edge AI code-generation flow,
+staged manifest bookkeeping, and runtime/programming behavior for the
+production STM32 backend.
+"""
+
 from __future__ import annotations
 
 import json
@@ -517,9 +524,28 @@ def _resolve_workspace_paths(
     *,
     project_root: Path | str,
 ) -> STM32WorkspacePaths:
-    """Resolve STM32 LRUN workspace paths."""
+    """Resolve STM32 LRUN workspace paths.
+
+    Parameters
+    ----------
+    project_root : Path | str
+        Staged LRUN workspace root.
+
+    Returns
+    -------
+    STM32WorkspacePaths
+        Resolved path bundle for the staged workspace.
+
+    Notes
+    -----
+    The LRUN flow validates both the Boot and AppS subprojects up front
+    because later build, signing, and debug-load steps span both halves of the
+    staged workspace.
+    """
     root = Path(project_root).expanduser().resolve()
     resolved_root = root
+    # The staged LRUN workspace must retain both the trusted boot path and the
+    # application project because candidate generation touches both.
     for required_dir in (
         resolved_root / "FSBL",
         resolved_root / "Appli",
@@ -579,7 +605,18 @@ def _find_linker_script(paths: STM32WorkspacePaths) -> Path:
 
 
 def _find_boot_linker_script(paths: STM32WorkspacePaths) -> Path:
-    """Locate the first boot linker script under an STM32 workspace."""
+    """Locate the first boot linker script under an STM32 workspace.
+
+    Parameters
+    ----------
+    paths : STM32WorkspacePaths
+        Resolved workspace paths for the staged candidate.
+
+    Returns
+    -------
+    Path
+        Boot linker script path for the active workspace.
+    """
     linker_scripts = sorted(paths.boot_project_root.glob("*.ld"))
     if not linker_scripts:
         raise stm32_cube_clt.WorkflowError(
@@ -673,6 +710,8 @@ def _write_phase_config_header(
     pathlib.Path
         Path to the generated phase-config header.
     """
+    # Choose the runtime phase macro first so validation and file generation
+    # share one normalized policy decision.
     normalized_phase = _resolve_runtime_mode(selected_phase)
     selected_phase_macro = (
         "TCN_DUT_PHASE_CADENCED"
@@ -680,6 +719,8 @@ def _write_phase_config_header(
         else "TCN_DUT_PHASE_BACK_TO_BACK"
     )
     header_path = paths.inc_dir / "tcn_dut_phase_config.h"
+    # Render one self-contained header because downstream STM32 builds consume
+    # these runtime settings strictly through generated preprocessor macros.
     header_text = (
         "#ifndef TCN_DUT_PHASE_CONFIG_H\n"
         "#define TCN_DUT_PHASE_CONFIG_H\n\n"
@@ -917,7 +958,18 @@ def _manifest_path(paths: STM32WorkspacePaths) -> Path:
 
 
 def _sha256_file(path: Path) -> str:
-    """Return the SHA-256 digest for a single file."""
+    """Return the SHA-256 digest for a single file.
+
+    Parameters
+    ----------
+    path : Path
+        File to hash.
+
+    Returns
+    -------
+    str
+        Hex-encoded SHA-256 digest.
+    """
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(65536), b""):
@@ -926,7 +978,20 @@ def _sha256_file(path: Path) -> str:
 
 
 def _hash_paths(entries: list[Path], *, root: Path) -> str:
-    """Return a stable SHA-256 digest for a collection of files/directories."""
+    """Return a stable SHA-256 digest for a collection of files/directories.
+
+    Parameters
+    ----------
+    entries : list[Path]
+        Files or directories to include in the composite hash.
+    root : Path
+        Root used to normalize relative names before hashing.
+
+    Returns
+    -------
+    str
+        Hex digest that changes when file contents or relative paths change.
+    """
     digest = hashlib.sha256()
     seen: set[Path] = set()
     resolved_root = root.resolve()
@@ -1329,7 +1394,14 @@ def _strip_stale_debug_artifacts(paths: STM32WorkspacePaths) -> None:
 
 
 def _keep_staged_candidates_enabled() -> bool:
-    """Return whether staged STM32 candidate roots should be preserved."""
+    """Return whether staged STM32 candidate roots should be preserved.
+
+    Returns
+    -------
+    bool
+        ``True`` when the debug environment variable requests that staged
+        candidate workspaces stay on disk after evaluation.
+    """
     keep_candidates = str(os.environ.get(KEEP_STAGED_CANDIDATES_ENV, "")).strip().lower()
     return keep_candidates in {"1", "true", "yes", "on"}
 
@@ -1344,6 +1416,7 @@ def _ensure_staging_tools() -> None:
     Returns
     -------
     None
+        Raises immediately when required staging tools are unavailable.
     """
     stm32_cube_clt.resolve_required_tool_path(
         None,
@@ -1376,6 +1449,8 @@ def _run_stedgeai_analyze(
     )
     workspace_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
+    # Analyze is a preflight step: it validates the candidate and surfaces
+    # compatibility or memory issues before the heavier code-generation phase.
     cmd = [
         str(stedgeai),
         "analyze",
@@ -1453,6 +1528,8 @@ def _run_stedgeai_generate(
     )
     workspace_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
+    # Inject external-flash arguments only when the staged workspace uses
+    # split weight storage; embedded builds keep the simpler default command.
     cmd = [
         str(stedgeai),
         "generate",

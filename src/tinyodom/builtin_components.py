@@ -1,4 +1,8 @@
-"""Built-in component registration for the modular TinyODOM pipeline."""
+"""Built-in component registration for the modular TinyODOM pipeline.
+
+This module centralizes registration of the repository-owned dataset, task,
+and model-family implementations that ship with TinyODOM.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +19,8 @@ def ensure_builtin_components_registered() -> None:
     -------
     None
         The function mutates the module-level registries only when a built-in
-        component has not already been registered by name.
+        component has not already been registered by name. Existing registry
+        entries are left untouched so repeated calls are idempotent.
     """
 
     if "oxiod" not in dataset_registry:

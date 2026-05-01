@@ -1,3 +1,12 @@
+"""Top-level NAS orchestration client for TinyODOM experiments.
+
+This module bridges the modular dataset/task/model-family registry system to
+the legacy Optuna, HIL RPC, final-training, and artifact-reporting workflow.
+It also maintains compatibility shims that adapt ``DatasetBundle`` /
+``DataSplit`` objects into the older split views still consumed by some
+training and reporting paths.
+"""
+
 import argparse
 from collections.abc import Mapping
 import csv
@@ -69,7 +78,14 @@ logger = logging.getLogger(__name__)
 
 
 class _LegacySplitView(SimpleNamespace):
-    """Legacy split view backed by the modular ``DataSplit`` contract."""
+    """Compatibility shim backed by the modular ``DataSplit`` contract.
+
+    The resulting namespace may expose fields such as ``inputs``, ``x_vel``,
+    ``y_vel``, ``disp``, ``heading``, ``position``, ``x0``, ``y0``,
+    ``size_of_each``, ``head_s``, ``head_c``, and ``inputs_orig``. It is a
+    projection of modular metadata and targets, not an independently validated
+    data model.
+    """
 
 
 class NASModelClient:
@@ -90,7 +106,8 @@ class NASModelClient:
     ----------
     config_path : Path | str, optional
         Path to the NAS configuration YAML. Defaults to
-        ``src/nas_config.yaml`` via ``DEFAULT_CONFIG_PATH``. The configuration
+        ``src/config/nas_config.yaml`` via ``DEFAULT_CONFIG_PATH``. The
+        configuration
         controls data paths, device settings, NAS options (single vs
         multi-objective), training schedules, output directories, and network
         timeouts.
@@ -148,9 +165,19 @@ class NASModelClient:
         Returns
         -------
         None
+
+        Notes
+        -----
+        Initialization intentionally performs a two-pass config load. The first
+        pass loads enough dataset/task state to derive the task metric
+        contract, then the config is reloaded with those metric names so NAS
+        score/prune validation reflects the active task.
         """
         self.config_path = Path(config_path)
         ensure_builtin_components_registered()
+        # First load enough task state to discover the active metric contract;
+        # the second config load validates NAS score/prune rules against that
+        # task-specific metric set.
         preliminary_config = load_config(self.config_path)
         preliminary_selection = self._resolve_component_selection(preliminary_config)
         preliminary_dataset, preliminary_bundle = self._coerce_loaded_dataset_bundle(
@@ -248,6 +275,12 @@ class NASModelClient:
         -------
         dict[str, Any]
             Component names plus local configuration payloads.
+
+        Notes
+        -----
+        The resolved selection is compared across the preliminary and final
+        config loads so the client can decide whether the dataset bundle can be
+        reused or must be reloaded under a different dataset config.
         """
         return resolve_component_selection(config)
 
@@ -388,6 +421,12 @@ class NASModelClient:
         -------
         _LegacySplitView | None
             Namespace exposing the legacy TinyODOM split fields.
+
+        Notes
+        -----
+        The view simply re-keys targets/metadata into the historical shape. It
+        does not infer missing odometry fields or validate that every legacy
+        consumer requirement is present.
         """
         if split is None:
             return None
@@ -472,6 +511,12 @@ class NASModelClient:
         Returns
         -------
         None
+
+        Notes
+        -----
+        The caller may pass a previously loaded dataset bundle from the
+        preliminary config pass. When the final component selection matches,
+        that bundle is reused instead of reloading the dataset.
         """
         dataset_cls = dataset_registry.get(selection["dataset_name"])
         model_family_cls = model_family_registry.get(selection["model_family_name"])
@@ -572,7 +617,27 @@ class NASModelClient:
             raise RuntimeError(str(exc)) from exc
 
     def _probe_hil_endpoint(self, timeout_s: float = 5.0) -> None:
-        """Fail fast if the HIL REP socket is unreachable."""
+        """Fail fast if the HIL REP socket is unreachable.
+
+        Parameters
+        ----------
+        timeout_s : float, optional
+            Socket-connection timeout used for the preflight probe.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ConnectionError
+            If the HIL server cannot be reached within ``timeout_s``.
+
+        Notes
+        -----
+        This is only a lightweight reachability probe. The main request/response
+        contract still flows through :meth:`_hil_request`.
+        """
         host = self.config.network.host
         port = self.config.network.port
         try:
@@ -972,11 +1037,19 @@ class NASModelClient:
 
         Notes
         -----
-        - FLOPs are estimated from the built Keras model to inform constraints.
-        - HIL metrics include RAM, flash, arena usage, and latency; these are
-            compared against device specs to gate training.
-        - Training uses the imported OXIOD dataset splits (train/valid/test)
-            and reports RMSE for velocity components.
+        The trial phases are:
+        1. sample/build the model family hyperparameters
+        2. request HIL metrics for the candidate
+        3. apply hardware limit and arena checks
+        4. evaluate pre-training prune rules
+        5. either train/evaluate the task or synthesize task-metric sentinels
+        6. validate objective values and log the trial
+
+        Single-objective runs prune by raising ``optuna.TrialPruned``.
+        Multi-objective runs instead return penalty tuples so the study can
+        keep its full objective shape. Sentinel conventions such as ``-1`` and
+        ``10000.0`` are used to preserve legacy logging/scoring expectations
+        when hardware or training metrics are unavailable.
         """
         artifacts_dir = self._artifacts_dir()
         log_path = artifacts_dir / self.config.outputs.log_file_name
@@ -1008,7 +1081,9 @@ class NASModelClient:
             batch_size,
         )
 
-        # if the board supports runtime CPU clock selection, choose it here
+        # Treat CPU clock as a trial variable, but keep it separate from model
+        # hyperparameters because it changes board runtime conditions rather
+        # than the network topology itself.
         cpu_clock_mhz_options = self._cfg_get(self.config.device, "cpu_clock_mhz_options", None)
         device_options_overrides = None
         if cpu_clock_mhz_options is not None:
@@ -1074,6 +1149,9 @@ class NASModelClient:
             prune_rule: str = "",
         ):
             """Helper to prune with a penalty score and log the failure."""
+            # Normalize missing metrics, build a loggable TrialOutcome, and
+            # then diverge between scalar Optuna pruning and multi-objective
+            # penalty returns.
             metrics.setdefault("latency_ms", 10000.0)
             metrics.setdefault("energy_mj_per_inference", 10000.0)
             metrics.setdefault("avg_power_mw", -1.0)
@@ -1161,7 +1239,8 @@ class NASModelClient:
             )
         )
 
-        # Shouldn't get to here, still included for completeness
+        # Distinguish between missing flash metrics, numeric resource overflow,
+        # and backends that intentionally skip arena validation.
         if flash_failure or not resources_ok or not arena_ok:
             # Treat missing/invalid resource numbers as fatal so Optuna can move on.
             if not flash_failure and not resources_ok:
@@ -1182,6 +1261,8 @@ class NASModelClient:
 
         try:
             if not self.config.training.train:
+                # The no-training path still needs task-owned metric names in
+                # the metrics dict so score evaluation can run uniformly.
                 task_metrics = {
                     metric_name: -1.0
                     for metric_name in sorted(self.metric_contract.available_metric_names)
@@ -1414,6 +1495,10 @@ class NASModelClient:
         retry pruned/failed attempts until that target is met or
         `config.training.max_total_trials` is reached.
 
+        Failed and pruned trials still consume the total-attempt budget. A
+        baseline trial is only enqueued when the study is empty so resumed
+        studies do not accumulate duplicate seed candidates.
+
         Returns
         -------
         optuna.Study
@@ -1619,13 +1704,38 @@ class NASModelClient:
         ) 
 
     def _artifacts_dir(self) -> Path:
-        """Per-study artifacts directory under models/."""
+        """Return the per-study artifacts directory under ``models_dir``.
+
+        Returns
+        -------
+        Path
+            Directory for artifacts associated with ``self.study_name``.
+
+        Notes
+        -----
+        This helper creates the directory as a side effect and therefore
+        depends on ``self.study_name`` already being finalized for the run.
+        """
         d = Path(self.config.outputs.models_dir) / self.study_name
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     def _copy_run_config(self, artifacts_dir: Path | None = None) -> Path | None:
-        """Copy the active NAS config into the study artifacts directory."""
+        """Copy the active NAS config into the study artifacts directory.
+
+        Parameters
+        ----------
+        artifacts_dir : Path | None, optional
+            Explicit destination directory. Defaults to
+            :meth:`_artifacts_dir`.
+
+        Returns
+        -------
+        Path | None
+            Copied config path, the existing destination when source and
+            destination already match, or ``None`` when the source config file
+            is missing.
+        """
         cfg_path = Path(self.config_path)
         if not cfg_path.exists():
             logger.warning("Skipping config copy because the config file is missing: %s", cfg_path)
@@ -1713,6 +1823,9 @@ class NASModelClient:
         fit_task.compile_model(model, self.task_config, self.target_spec)
 
         if combine_train_val:
+            # With validation folded into training there is no held-out metric
+            # to monitor, so rebuild callbacks around training loss instead of
+            # reusing the default fit plan.
             merged_train_split = self._merge_train_and_val_splits()
             checkpoint_cb = ModelCheckpoint(
                 filepath=str(ckpt_path),
@@ -1779,7 +1892,8 @@ class NASModelClient:
         Returns
         -------
         dict
-            Mapping of plot labels to file paths that were written.
+            Mapping containing ``loss_plot`` and, when per-output histories are
+            available, ``loss_components_plot``.
         """
         if history is None:
             if history_path is None:
@@ -1997,7 +2111,9 @@ class NASModelClient:
         )
         preds = model.predict(trajectory_split.inputs)
 
-        # Helper to integrate velocities into XY tracks.
+        # Use the notebook-style integration heuristic: one windowed velocity
+        # prediction covers roughly `samples_per_window` raw samples, and the
+        # same cadence estimate drives the approximate RTE segment sizing.
         samples_per_window = max((window_size - stride) / stride, 1)
 
         def integrate_track(vx, vy, start_x, start_y):

@@ -1,3 +1,11 @@
+"""Lazy registry helpers for TinyODOM microcontroller backends.
+
+This package surface keeps board wrapper imports lightweight for callers that
+only need registry metadata, default specs, or config-to-backend option
+normalization. Dedicated backend modules still own the compile, upload, and
+runtime logic for each board family.
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -148,6 +156,13 @@ def resolve_device_options(
     dict[str, Any] | None
         Normalized backend options, or ``None`` when the backend does not use
         explicit option fields.
+
+    Notes
+    -----
+    Shared runtime knobs such as ``runtime_mode`` and ``latency_budget_ms``
+    are merged here so higher-level orchestration code can stay board-agnostic.
+    Backend-owned fields still come from per-board config subtrees because the
+    Portenta and STM32 wrappers expose different option schemas.
     """
 
     def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
@@ -179,6 +194,9 @@ def resolve_device_options(
         from .arduino_portenta_h7 import resolve_portenta_h7_options
 
         portenta_cfg = _cfg_get(device_config, "portenta", None)
+        # Portenta exposes a compact board-option tuple, but shared runtime
+        # fields are layered on afterward because they are not Arduino CLI
+        # board options.
         resolved = resolve_portenta_h7_options(
             {
                 "target_core": _cfg_get(portenta_cfg, "target_core", None) if portenta_cfg is not None else None,
@@ -205,6 +223,9 @@ def resolve_device_options(
         from .stm32_nucleo_n657x0 import resolve_stm32_nucleo_n657x0_q_options
 
         stm32_cfg = _cfg_get(device_config, "stm32", None)
+        # STM32 keeps most of its backend contract under `device.stm32`, but a
+        # few runtime knobs are shared with other boards and therefore sourced
+        # from the top-level device block.
         raw_options = {
             "template_root": _cfg_get(stm32_cfg, "template_root", None) if stm32_cfg is not None else None,
             "project_root": _cfg_get(stm32_cfg, "project_root", None) if stm32_cfg is not None else None,

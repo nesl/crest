@@ -477,7 +477,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default=str(REPO_ROOT / "src" / "nas_config.yaml"),
+        default=str(REPO_ROOT / "src" / "config" / "nas_config.yaml"),
         help="Path to TinyODOM config YAML.",
     )
     parser.add_argument(

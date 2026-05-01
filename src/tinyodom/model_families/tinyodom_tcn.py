@@ -1,4 +1,9 @@
-"""Current TinyODOM TCN model family exposed through ``ModelFamilyABC``."""
+"""TinyODOM TCN family adapter built on the legacy model implementation.
+
+This module bridges :class:`ModelFamilyABC` onto the current TinyODOM TCN
+builder and the family-specific export-materialization flow that still lives on
+top of the legacy model stack.
+"""
 
 from __future__ import annotations
 
@@ -22,7 +27,13 @@ logger = logging.getLogger(__name__)
 
 
 class TinyOdomTCNFamily(ModelFamilyABC):
-    """TCN model family matching the current TinyODOM architecture surface."""
+    """TCN model family matching the current TinyODOM architecture surface.
+
+    The adapter exposes the stable ``"tinyodom_tcn"`` family name, preserves
+    the legacy NAS hyperparameter surface, bridges the generic model-family
+    interface onto the legacy builder, and owns the current export-model
+    materialization path for TinyODOM TCN variants.
+    """
 
     @property
     def name(self) -> str:
@@ -57,6 +68,8 @@ class TinyOdomTCNFamily(ModelFamilyABC):
         -------
         dict[str, Any]
             Sampled family hyperparameters without runner-owned fields.
+            ``dilations`` is selected indirectly through
+            ``dilations_index`` into :data:`DILATION_CANDIDATES`.
         """
 
         del ctx, config
@@ -193,7 +206,11 @@ class TinyOdomTCNFamily(ModelFamilyABC):
         Returns
         -------
         Any
-            Keras model ready for export preparation.
+            Keras model ready for export preparation. The current
+            ``"approx_trained"``, ``"representative"``, and
+            ``"bn_full_plus_non_bn_bias_perturbed"`` variants all reuse the
+            deterministic perturbation path on a freshly built model; other
+            variants defer to :class:`ModelFamilyABC`.
         """
 
         normalized_variant = str(model_variant).strip().lower()

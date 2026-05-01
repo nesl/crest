@@ -1,39 +1,70 @@
-# OxIOD Dataset Download and Splitting Guide:
+# OxIOD Dataset Preparation
 
-- Download the dataset from here: http://deepio.cs.ox.ac.uk/
-- Rename the zip file to OxIOD.zip
-- Run Dataset setup below
+Download the OxIOD "Complete Dataset" zip from `http://deepio.cs.ox.ac.uk/`,
+rename it to `OxIOD.zip`, then run the preparation step from the repo root:
 
-## Dataset setup
+```bash
+make prepare-dataset
+# or:
+python data/dataset_download_and_splits/prepare_oxiod.py --zip-path /path/to/OxIOD.zip
+```
 
-To create the splits, use the prepare_oxiod.py script. 
-Ex: `python data/dataset_download_and_splits/prepare_oxiod.py --zip-path OxIOD.zip`.
+The preparation script does four things:
 
-The script unpacks the archive into `data/oxiod`, normalizes folder names (e.g., `slow walking` → `slow_walking`), and restores the curated `Train.txt`, `Valid.txt`, `Test.txt`, and `Train_Valid.txt` files that are already tracked in the repo for each activity.
+1. Captures the curated tracked split files already present in the repo.
+2. Replaces `data/oxiod` with a fresh extraction from the OxIOD archive.
+3. Normalizes folder names such as `slow walking -> slow_walking`.
+4. Writes the curated `Train.txt`, `Valid.txt`, `Test.txt`, and
+   `Train_Valid.txt` files back into each activity folder.
 
-## Dataset details:
-- Within each folder in the dataset (in our case: ```handbag```, ```handheld```, ```pocket```, ```running```, ```slow_walking``` and ```trolley```), put files similar to the ```.txt``` files provided in this folder. They refer to which IMU files (and ground truth files to import). The ```.txt``` files we gave are just examples. You have to create splits through them for each folder.
-- Check the ```data_utils.py``` file to see how TinyOdom imports data.
-- Note: While the test/train/valid text files are included in this repo, the data files are not to limit the repo size
+The split files in this repo are not placeholders. They are the curated
+tracked splits used by the built-in OxIOD path.
+
+## Current Loader Path
+
+The built-in OxIOD dataset adapter lives in:
+
+- [`src/tinyodom/datasets/oxiod.py`](../../src/tinyodom/datasets/oxiod.py)
+- [`src/tinyodom/data.py`](../../src/tinyodom/data.py)
+
+`import_oxiod_dataset(...)` in `src/tinyodom/data.py` reads the split files
+from each activity folder and uses:
+
+- `type_flag=1` for `Train_Valid.txt`
+- `type_flag=2` for `Train.txt`
+- `type_flag=3` for `Valid.txt`
+- `type_flag=4` for `Test.txt`
 
 ## Raw vs Syn Data
 
-Each data folder contains `raw/` and `syn/` subfolders:
-- **`raw/`**: Raw, unsynchronized data with high-precision timestamps. IMU and VI measurements may not be time-aligned.
-- **`syn/`**: Synchronized data where IMU and VI are aligned, but with slightly less precise timestamps.
+Each activity folder contains `raw/` and `syn/` subfolders:
 
-For odometry tasks, **use `syn/`** (as done in the provided splits) since synchronization is crucial for accurate IMU-ground-truth pairing. If you need ultra-precise timing, switch to `raw/` and handle sync manually.
+- `raw/`
+  Raw, unsynchronized data with high-precision timestamps.
+- `syn/`
+  Synchronized data where IMU and VI are aligned, with slightly less precise
+  timestamps.
 
-## Subfolder Split Details
+The shipped splits use `syn/`, which is the correct default for the built-in
+odometry path in this repo.
 
-The splits use `syn/` data and mix files across data folders for representativeness. `Train_Valid` combines Train and Valid for full training (used when `type_flag=1` in `data_utils.py`). Note the train/validate/test files were shuffled prior to being put into these categories.
+## Split Summary
+
+The current curated splits cover these activities:
+
+- `handbag`
+- `handheld`
+- `pocket`
+- `running`
+- `slow_walking`
+- `trolley`
 
 | Subfolder    | Total Files | Train          | Valid         | Test          | Train_Valid    |
 |--------------|-------------|----------------|---------------|---------------|----------------|
-| handbag      | 8           | 5 (62.5%)     | 2 (25%)       | 1 (12.5%)     | 7 (87.5%)      |
-| handheld     | 24          | 18 (75%)      | 4 (16.7%)     | 2 (8.3%)      | 22 (91.7%)     |
-| pocket       | 11          | 7 (63.6%)     | 3 (27.3%)     | 1 (9.1%)      | 10 (90.9%)     |
-| running      | 7           | 5 (71.4%)     | 1 (14.3%)     | 1 (14.3%)     | 6 (85.7%)      |
-| slow walking | 8           | 5 (62.5%)     | 2 (25%)       | 1 (12.5%)     | 7 (87.5%)      |
-| trolley      | 13          | 10 (76.9%)    | 2 (15.4%)     | 1 (7.7%)      | 12 (92.3%)     |
-| **Total**    | **71**      | **50 (70.4%)**| **14 (19.7%)**| **7 (9.9%)**  | **64 (90.1%)** |
+| handbag      | 8           | 5 (62.5%)      | 2 (25%)       | 1 (12.5%)     | 7 (87.5%)      |
+| handheld     | 24          | 18 (75%)       | 4 (16.7%)     | 2 (8.3%)      | 22 (91.7%)     |
+| pocket       | 11          | 7 (63.6%)      | 3 (27.3%)     | 1 (9.1%)      | 10 (90.9%)     |
+| running      | 7           | 5 (71.4%)      | 1 (14.3%)     | 1 (14.3%)     | 6 (85.7%)      |
+| slow walking | 8           | 5 (62.5%)      | 2 (25%)       | 1 (12.5%)     | 7 (87.5%)      |
+| trolley      | 13          | 10 (76.9%)     | 2 (15.4%)     | 1 (7.7%)      | 12 (92.3%)     |
+| **Total**    | **71**      | **50 (70.4%)** | **14 (19.7%)**| **7 (9.9%)**  | **64 (90.1%)** |

@@ -67,7 +67,7 @@ The generated header lives alongside them:
 
 ## Config selection
 
-Set the following in `src/nas_config.yaml` to choose a variant when `energy_aware: true`:
+Set the following in `src/config/nas_config.yaml` to choose a variant when `energy_aware: true`:
 
 - `input_mode: "uniform"` uses `sketches/tinyodom_tcn_energy.ino`
 - `input_mode: "representative"` uses `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino`
@@ -87,7 +87,7 @@ python analysis_scripts/hil_noise_analysis/oxiod_input_profile.py --split train 
 
 # 2) On the GPU host, train and package the fixed 50-epoch artifact
 python analysis_scripts/hil_noise_analysis/train_noise_scan_model.py \
-  --config src/nas_config.yaml \
+  --config src/config/nas_config.yaml \
   --epochs 50 \
   --out-dir analysis_scripts/hil_noise_analysis/artifacts \
   --artifact-prefix noise_scan_50ep
@@ -116,7 +116,7 @@ just a trained-vs-untrained comparison:
 ```bash
 # 1) Train and export checkpoint stages on the GPU host
 python analysis_scripts/hil_noise_analysis/epoch_sweep/train_epoch_sweep.py \
-  --config src/nas_config.yaml \
+  --config src/config/nas_config.yaml \
   --out-dir analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts \
   --artifact-prefix noise_scan_epoch_sweep
 
@@ -125,7 +125,7 @@ python analysis_scripts/hil_noise_analysis/epoch_sweep/audit_fresh_untrained_tfl
 
 # 3) Run HIL metrics across staged checkpoints
 python analysis_scripts/hil_noise_analysis/epoch_sweep/hil_epoch_sweep_scan.py \
-  --config src/nas_config.yaml \
+  --config src/config/nas_config.yaml \
   --training-csv analysis_scripts/hil_noise_analysis/epoch_sweep/artifacts/epoch_sweep_training_stats.csv \
   --runs 1 \
   --input-modes uniform

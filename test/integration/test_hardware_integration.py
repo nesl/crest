@@ -1,3 +1,5 @@
+"""Integration tests for hardware conversion and compile-only flows."""
+
 import shutil
 import subprocess
 import tempfile

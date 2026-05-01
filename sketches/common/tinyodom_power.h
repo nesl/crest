@@ -1,3 +1,7 @@
+// Shared power-telemetry helpers for TinyODOM sketches.
+//
+// The same interface supports both INA228-enabled harness builds and lighter
+// DUT builds that still need to emit placeholder telemetry keys.
 #pragma once
 
 #include <Arduino.h>
@@ -23,6 +27,8 @@ static Adafruit_INA228 power_monitor;
 static bool power_monitor_ready = false;
 static float idle_baseline_power_mw = kInvalidTelemetryValue;
 
+// These settings trade a little responsiveness for smoother averages during
+// short inference windows.
 constexpr float kShuntResistanceOhms = 0.015f;
 constexpr float kMaxExpectedCurrentAmps = 0.30f;
 constexpr INA228_ConversionTime kCurrentConversionTime = INA228_TIME_280_us;
@@ -41,6 +47,8 @@ constexpr auto kTriggerStopMode =
     static_cast<decltype(INA228_MODE_CONTINUOUS)>(0x7);
 #endif
 
+// Replace NaN/Inf values with the shared sentinel so host-side parsing stays
+// numeric even when the sensor reports an invalid reading.
 inline float SanitizeFloat(float value) {
   if (isnan(value) || isinf(value)) {
     return kInvalidTelemetryValue;
@@ -62,7 +70,8 @@ inline float GetIdleBaselinePower() {
   return idle_baseline_power_mw;
 }
 
-// Initialize the INA228 and capture an idle baseline.
+// Initialize the INA228 once and capture an idle baseline before the measured
+// inference window begins.
 inline bool InitializePowerMonitor() {
   if (power_monitor_ready) {
     return true;
@@ -87,7 +96,8 @@ inline bool InitializePowerMonitor() {
   return true;
 }
 
-// Stop triggered accumulation, read energy, then re-arm continuous mode.
+// Freeze accumulation long enough to read a stable energy total, then restore
+// continuous sampling for the next run.
 inline float FlushEnergyWindow() {
   if (!power_monitor_ready) {
     return kInvalidTelemetryValue;
@@ -100,9 +110,12 @@ inline float FlushEnergyWindow() {
   return energy_total_j;
 }
 
-// Print a standardized set of energy and power lines for the host parser.
+// Emit a standardized block of power telemetry so every harness-aware sketch
+// exposes the same host-facing keys.
 inline void EmitPowerTelemetry(uint32_t sequence_id, float latency_s, int runs_completed,
                                float baseline_power_mw, float energy_total_j) {
+  // The host expects per-inference values, so normalize the total energy from
+  // the whole measurement window before deriving power/current estimates.
   const bool energy_valid = (energy_total_j >= 0.0f);
   const float energy_per_inference_j =
       (runs_completed > 0 && energy_valid)
@@ -153,7 +166,8 @@ inline float GetIdleBaselinePower() {
   return kInvalidTelemetryValue;
 }
 
-// Emit the same keys with invalid values when INA228 is disabled.
+// Emit the same keys with invalid values when INA228 is disabled so the host
+// parser does not need a separate schema for no-energy builds.
 inline void EmitPowerTelemetry(uint32_t sequence_id, float /*latency_s*/, int /*runs_completed*/,
                                float /*baseline_power_mw*/, float /*energy_total_j*/) {
   Serial.print("inference seq: ");

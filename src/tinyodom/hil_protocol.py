@@ -1,3 +1,10 @@
+"""Serial-line protocol helpers for DUT and harness HIL coordination.
+
+This module centralizes the small protocol tokens, parsing helpers, and
+session-level handshake routines used to synchronize the TinyODOM DUT and
+measurement harness over serial links.
+"""
+
 from __future__ import annotations
 
 import logging

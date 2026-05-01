@@ -1,3 +1,5 @@
+"""Regression tests for the STM32 phase-0 probe wrapper script."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -10,6 +12,21 @@ from unittest.mock import patch
 
 
 def _load_module(module_name: str, relative_path: str):
+    """Load an analysis script by repository-relative path for wrapper tests.
+
+    Parameters
+    ----------
+    module_name : str
+        Synthetic module name to register in ``sys.modules``.
+    relative_path : str
+        Repository-relative path to the Python entrypoint under test.
+
+    Returns
+    -------
+    module
+        Imported module object loaded directly from the target file.
+    """
+
     repo_root = Path(__file__).resolve().parents[1]
     module_path = repo_root / relative_path
     spec = importlib.util.spec_from_file_location(module_name, module_path)
@@ -29,6 +46,7 @@ stedgeai_phase0_probe = _load_module(
 
 class StEdgeAiPhase0ProbeTests(unittest.TestCase):
     def test_run_logged_writes_utf8_logs(self):
+        # Logged subprocess output should round-trip through UTF-8 files without losing non-ASCII characters.
         proc = subprocess.CompletedProcess(["stedgeai"], 0, "caf\xe9", "")
 
         with tempfile.TemporaryDirectory() as tmpdir:

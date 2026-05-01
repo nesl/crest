@@ -702,7 +702,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "using harness timing/energy telemetry."
         )
     )
-    parser.add_argument("--config", default=str(SRC_DIR / "nas_config.yaml"), help="TinyODOM config path (optional defaults source).")
+    parser.add_argument("--config", default=str(SRC_DIR / "config" / "nas_config.yaml"), help="TinyODOM config path (optional defaults source).")
     parser.add_argument("--dut-port", default=None, help="DUT serial port (default from config or /dev/ttyACM0).")
     parser.add_argument("--harness-port", default=None, help="Harness serial port (default from config or /dev/ttyACM1).")
     parser.add_argument("--harness-fqbn", default=None, help="Harness board FQBN (default from config or arduino:mbed_nano:nano33ble).")
