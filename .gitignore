@@ -39,6 +39,7 @@ venv.bak/
 
 # Editors
 .vscode/
+AGENTS.md
 
 # Linters
 .ruff_cache/

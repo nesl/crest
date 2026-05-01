@@ -157,12 +157,6 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     # without paying the cost of real I/O-heavy initialization.
     client.config = SimpleNamespace(
         network=SimpleNamespace(host="localhost", port=5555, recv_timeout_sec=5, send_timeout_sec=5),
-        data=SimpleNamespace(
-            directory="data",
-            sampling_rate_hz=100,
-            window_size=window_size,
-            stride=1,
-        ),
         training=SimpleNamespace(
             drop_rate_choices=[0.1, 0.2],
             train=True,
@@ -195,6 +189,17 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
             models_dir=base_dir / "models",
             checkpoint_path=base_dir / "model.keras",
         ),
+        dataset=SimpleNamespace(
+            name="oxiod",
+            params=Dict(
+                directory="data",
+                sampling_rate_hz=100,
+                window_size=window_size,
+                stride=1,
+            ),
+        ),
+        task=SimpleNamespace(name="odometry_regression", params=Dict()),
+        model=SimpleNamespace(family="tinyodom_tcn", params=Dict(), search=Dict()),
     )
     client.config.outputs.models_dir.mkdir(parents=True, exist_ok=True)
     client.config_path = base_dir / "config.yaml"
@@ -218,9 +223,9 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
         dataset_metadata=dict(bundle.metadata),
         task_metadata=dict(target_spec.metadata),
     )
-    client.dataset_config = client.config.data
+    client.dataset_config = client.config.dataset.params
     client.task_config = Dict()
-    client.model_config = SimpleNamespace(params=Dict(), search=Dict())
+    client.model_config = Dict(family="tinyodom_tcn", params=Dict(), search=Dict())
     # Mirror the production default study name so log_trial calls succeed.
     client.study_name = "default_study"
     # Stub the ZMQ context/socket to avoid opening real network resources.
@@ -292,19 +297,24 @@ class HILRequestTests(unittest.TestCase):
 class InitializationTests(unittest.TestCase):
     """Validate the Phase 4 bootstrap and component-selection helpers."""
 
-    def test_resolve_component_selection_uses_compatibility_defaults(self) -> None:
-        # Legacy configs without explicit component blocks should still resolve to the default OxIOD / odometry / TinyOdom stack.
+    def test_resolve_component_selection_requires_explicit_component_blocks(self) -> None:
+        # The breaking contract rejects configs that omit dataset/task/model blocks instead of inventing defaults.
         client = _build_test_client()
+        delattr(client.config, "dataset")
 
-        selection = client._resolve_component_selection(client.config)
+        with self.assertRaisesRegex(KeyError, "dataset"):
+            client._resolve_component_selection(client.config)
 
-        self.assertEqual(selection["dataset_name"], "oxiod")
-        self.assertIs(selection["dataset_config"], client.config.data)
-        self.assertEqual(selection["task_name"], "odometry_regression")
-        self.assertEqual(selection["model_family_name"], "tinyodom_tcn")
+    def test_resolve_component_selection_requires_dataset_params(self) -> None:
+        # The breaking contract requires dataset params instead of falling back to the legacy top-level data block.
+        client = _build_test_client()
+        client.config.dataset = SimpleNamespace(name="custom_dataset")
+
+        with self.assertRaisesRegex(KeyError, "dataset.params"):
+            client._resolve_component_selection(client.config)
 
     def test_resolve_component_selection_honors_explicit_component_blocks(self) -> None:
-        # Explicit component blocks should override compatibility defaults so migrated configs stay in control of their stack selection.
+        # Explicit component blocks should be the only supported path and should come back as native mappings.
         client = _build_test_client()
         client.config.dataset = SimpleNamespace(name="custom_dataset", params=Dict(root="custom"))
         client.config.task = SimpleNamespace(name="custom_task", params=Dict(alpha=3))
@@ -321,28 +331,9 @@ class InitializationTests(unittest.TestCase):
         self.assertEqual(selection["task_name"], "custom_task")
         self.assertEqual(selection["task_config"].alpha, 3)
         self.assertEqual(selection["model_family_name"], "custom_family")
-        self.assertEqual(selection["model_config"].params.width, 8)
-        self.assertEqual(selection["model_config"].search.depth, [2, 3])
-
-    def test_resolve_component_selection_falls_back_to_legacy_data_when_dataset_params_missing(self) -> None:
-        # Older configs should still recover dataset selection from the legacy data block when the new dataset section is absent.
-        client = _build_test_client()
-        client.config.dataset = SimpleNamespace(name="custom_dataset")
-
-        selection = client._resolve_component_selection(client.config)
-
-        self.assertEqual(selection["dataset_name"], "custom_dataset")
-        self.assertIs(selection["dataset_config"], client.config.data)
-
-    def test_resolve_component_selection_falls_back_to_legacy_data_when_dataset_params_is_none(self) -> None:
-        # A null dataset block should still preserve the legacy data fallback so partially migrated configs do not break initialization.
-        client = _build_test_client()
-        client.config.dataset = SimpleNamespace(name="custom_dataset", params=None)
-
-        selection = client._resolve_component_selection(client.config)
-
-        self.assertEqual(selection["dataset_name"], "custom_dataset")
-        self.assertIs(selection["dataset_config"], client.config.data)
+        self.assertEqual(selection["model_config"]["family"], "custom_family")
+        self.assertEqual(selection["model_config"]["params"].width, 8)
+        self.assertEqual(selection["model_config"]["search"].depth, [2, 3])
 
     def test_init_reuses_preliminary_bundle_when_dataset_selection_matches(self) -> None:
         # Initialization should reuse a matching preliminary bundle so repeated setup does not reload the same dataset.
@@ -351,12 +342,17 @@ class InitializationTests(unittest.TestCase):
             network=SimpleNamespace(host="localhost", port=5555, recv_timeout_sec=5, send_timeout_sec=5),
             device=SimpleNamespace(hil=True, name="TEST_DEVICE"),
             nas=SimpleNamespace(score=Dict(type="scoring-function", metrics=Dict(), params=Dict(terms=[]))),
-            data=SimpleNamespace(directory="data", sampling_rate_hz=100, window_size=16, stride=1),
             outputs=SimpleNamespace(
                 models_dir=base / "models",
                 checkpoint_path=base / "model.keras",
                 log_file_name="log.csv",
             ),
+            dataset=SimpleNamespace(
+                name="oxiod",
+                params=Dict(directory="data", sampling_rate_hz=100, window_size=16, stride=1),
+            ),
+            task=SimpleNamespace(name="odometry_regression", params=Dict()),
+            model=SimpleNamespace(family="tinyodom_tcn", params=Dict(), search=Dict()),
         )
         fake_bundle = DatasetBundle(
             train=DataSplit(inputs=np.zeros((1, 16, 3)), targets={"velx": np.zeros((1, 1)), "vely": np.zeros((1, 1))}),
@@ -1413,7 +1409,6 @@ class TrajectoryMetricsTests(unittest.TestCase):
                 targets={"velx": vx, "vely": vy},
                 metadata={"size_of_each": [length], "x0": [0.0], "y0": [0.0]},
             )
-            delattr(client.config, "data")
 
             class FakeModel:
                 def predict(self, _inputs):
@@ -1452,7 +1447,6 @@ class TrajectoryMetricsTests(unittest.TestCase):
                 targets={"velx": vx, "vely": vy},
                 metadata={},
             )
-            delattr(client.config, "data")
 
             with self.assertRaisesRegex(ValueError, "odometry-specific"):
                 client.trajectory_metrics_and_plots(

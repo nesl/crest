@@ -179,14 +179,6 @@ class HILServerTestCase(unittest.TestCase):
         # Create a lightweight mock config object to avoid loading YAML files.
         self.config = SimpleNamespace(
             network=SimpleNamespace(host="127.0.0.1", port=6000, recv_timeout_sec=1, send_timeout_sec=1),
-            data=SimpleNamespace(
-                directory="data",
-                sampling_rate_hz=100,
-                window_size=32,
-                stride=4,
-                sub_folders=["handheld/"],
-                calibration_windows=2048,
-            ),
             training=SimpleNamespace(
                 quantization="float",
                 latency_proxy_max_flops=5_000_000,
@@ -198,6 +190,19 @@ class HILServerTestCase(unittest.TestCase):
                 tcn_dir=Path("tinyodom_tcn"),
                 checkpoint_path=Path("checkpoint.keras"),
             ),
+            dataset=SimpleNamespace(
+                name="oxiod",
+                params=Dict(
+                    directory="data",
+                    sampling_rate_hz=100,
+                    window_size=32,
+                    stride=4,
+                    sub_folders=["handheld/"],
+                    calibration_windows=2048,
+                ),
+            ),
+            task=SimpleNamespace(name="odometry_regression", params=Dict()),
+            model=SimpleNamespace(family="tinyodom_tcn", params=Dict(), search=Dict()),
         )
 
         self.train_split = DataSplit(
@@ -347,7 +352,7 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertEqual(request.dirpath, self.config.outputs.tcn_dir.resolve())
         self.assertAlmostEqual(
             request.latency_budget_ms,
-            (self.config.data.stride / self.config.data.sampling_rate_hz) * 1000,
+            (self.config.dataset.params.stride / self.config.dataset.params.sampling_rate_hz) * 1000,
         )
 
     def test_collect_metrics_uses_device_latency_budget_override(self) -> None:
@@ -645,16 +650,19 @@ class StartLoopTests(HILServerTestCase):
 class InitializationTests(HILServerTestCase):
     """Ensure constructor wiring uses modular bootstrap and lazy calibration."""
 
-    def test_constructor_uses_default_component_names_and_model_config_shape(self) -> None:
-        # Constructor defaults should defer component bootstrap while still shaping the default model-config blocks.
+    def test_constructor_preserves_explicit_component_selection_without_bootstrap(self) -> None:
+        # Constructor setup should defer bootstrap while keeping the explicit component contract intact.
         server = self.build_server()
 
         self.dataset_registry_mock.assert_not_called()
         self.task_registry_mock.assert_not_called()
         self.model_family_registry_mock.assert_not_called()
         self.assertEqual(FakeDataset.load_calls, [])
-        self.assertEqual(server.model_config.params, Dict())
-        self.assertEqual(server.model_config.search, Dict())
+        self.assertEqual(server.dataset_name, "oxiod")
+        self.assertEqual(server.task_name, "odometry_regression")
+        self.assertEqual(server.model_family_name, "tinyodom_tcn")
+        self.assertEqual(server.model_config["params"], Dict())
+        self.assertEqual(server.model_config["search"], Dict())
 
     def test_constructor_preserves_model_params_and_search_blocks(self) -> None:
         # Preloaded model params and search blocks should survive construction unchanged.
@@ -667,8 +675,15 @@ class InitializationTests(HILServerTestCase):
         server = HILServer(config=self.config)
 
         self.model_family_registry_mock.assert_not_called()
-        self.assertEqual(server.model_config.params.width, 8)
-        self.assertEqual(server.model_config.search.depth, [2, 3])
+        self.assertEqual(server.model_config["params"].width, 8)
+        self.assertEqual(server.model_config["search"].depth, [2, 3])
+
+    def test_constructor_requires_explicit_dataset_task_and_model_blocks(self) -> None:
+        # The breaking contract rejects configs that omit component blocks.
+        delattr(self.config, "dataset")
+
+        with self.assertRaisesRegex(KeyError, "dataset"):
+            HILServer(config=self.config)
 
     def test_calibration_resolution_is_lazy_until_backend_requires_it(self) -> None:
         """Ensure the constructor does not eagerly resolve calibration data.
@@ -724,12 +739,11 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(len(FakeTask.build_target_spec_calls), 0)
 
     def test_latency_budget_fallback_uses_dataset_config_without_legacy_data_block(self) -> None:
-        # Latency-budget fallback should prefer dataset params even when the legacy data block is absent.
+        # Latency-budget fallback should prefer dataset params directly from the explicit dataset block.
         self.config.dataset = SimpleNamespace(
             name="oxiod",
             params=Dict(directory="data", sampling_rate_hz=100, window_size=32, stride=4),
         )
-        delattr(self.config, "data")
         server = HILServer(config=self.config)
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True

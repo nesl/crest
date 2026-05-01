@@ -129,20 +129,22 @@ The current modular selection surface is resolved in
 The main config knobs are:
 
 - `dataset.name`
-  Selects the dataset adapter. Defaults to `oxiod`.
+  Selects the dataset adapter.
 - `dataset.params`
-  Optional dataset-local config block. When omitted, the current code falls
-  back to the legacy top-level `data` block.
+  Required dataset-local config block.
 - `task.name`
-  Selects the task adapter. Defaults to `odometry_regression`.
+  Selects the task adapter.
 - `task.params`
   Optional task-local config block.
 - `model.family`
-  Selects the model family. Defaults to `tinyodom_tcn`.
+  Selects the model family.
 - `model.params`
   Model-family-local configuration.
 - `model.search`
   Model-family-local search-space configuration.
+
+`dataset`, `task`, and `model` are required blocks. The older top-level
+`data` fallback is not part of the supported config contract anymore.
 
 See [`config/README.md`](config/README.md) for the current shipped config shape.
 
@@ -244,7 +246,7 @@ Key files:
 - [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py)
   Built-in registration.
 - [`tinyodom/component_selection.py`](tinyodom/component_selection.py)
-  Config selection and default names.
+  Explicit config selection for dataset, task, and model-family components.
 - [`hil_server.py`](hil_server.py) and
   [`nas_model_client.py`](nas_model_client.py)
   Entry-point orchestration that consumes the selected family.
@@ -283,8 +285,7 @@ Typical steps:
 2. Implement `DatasetABC`.
 3. Register it under a stable string key.
 4. Select it with `dataset.name`.
-5. Put dataset-local knobs under `dataset.params`, or keep using the bridged
-   `data` block where appropriate.
+5. Put dataset-local knobs under `dataset.params`.
 
 ### Add A New Task
 

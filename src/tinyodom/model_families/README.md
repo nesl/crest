@@ -140,7 +140,7 @@ The current built-in pattern is:
 - `model.params`
 - `model.search`
 
-and returns a `model_config` object with `.params` and `.search`.
+and returns that `model` subtree as a mapping under `model_config`.
 
 ## Where Export/Materialization Fits
 

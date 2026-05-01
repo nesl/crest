@@ -24,13 +24,25 @@ device:
     weight_storage_mode: "external_flash"          # Set to external_flash to stage weights into NOR flash.
     weights_memory_pool: "analysis_scripts/stm32_example_project/nucleo_mypool.json"
 
-# Dataset sampling and preprocessing parameters
-data:
-  sampling_rate_hz: 100           # Hz, derived from dataset
-  window_size: 200             # matches TinyODOM paper
-  stride: 20                   # matches TinyODOM paper
-  directory: "data/oxiod/"
-  calibration_windows: 10000    # windows to load for calibration-only jobs; set None for full split. Balances speed vs representative sampling
+# Explicit modular component selection
+dataset:
+  name: oxiod
+  params:
+    sampling_rate_hz: 100           # Hz, derived from dataset
+    window_size: 200                # matches TinyODOM paper
+    stride: 20                      # matches TinyODOM paper
+    directory: "data/oxiod/"
+    calibration_windows: 10000      # windows to load for calibration-only jobs; set None for full split
+
+task:
+  name: odometry_regression
+  params:
+    early_stopping_patience: 40
+
+model:
+  family: tinyodom_tcn
+  params: {}
+  search: {}
 
 # Training-time switches and limits
 training:
