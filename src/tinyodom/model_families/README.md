@@ -77,7 +77,8 @@ Use [`tinyodom_tcn.py`](tinyodom_tcn.py) as the concrete example.
 4. Keep the family-specific logic inside the family:
    - search-space sampling
    - input-shape interpretation from `ModelBuildContext`
-   - legacy adapter glue, if your family still wraps older builders
+   - family-local helper composition for builders, decoders, or export
+     materialization
    - family-specific export-model materialization
 5. Register the class in [`../builtin_components.py`](../builtin_components.py)
    with `model_family_registry.register(...)`.
@@ -100,8 +101,13 @@ that matter most in the current code are:
   Optional config validation before use.
 - `validate_hparams(...)`
   Optional validation for one sampled hyperparameter set.
+- `decode_trial_hparams(...)` and `default_seed_trial(...)`
+  Optional family-owned hooks for reconstructing persisted trial params and
+  publishing a default seed trial when the family needs one.
 - `load_model(...)` and `custom_objects()`
   Used by the default trained-model materialization path.
+- `count_flops(...)` and `supports_tflite()`
+  Family-owned capability hooks used by NAS scoring and export gating.
 - `materialize_export_model(...)`
   The export/HIL hook that decides which model variant should be prepared for a
   backend.

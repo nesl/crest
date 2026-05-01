@@ -1,9 +1,8 @@
-"""Legacy TinyODOM model, scoring, and runtime-request helpers.
+"""Shared TinyODOM scoring, config-validation, and model helpers.
 
-This module still carries the shared NAS scoring DSL, YAML config validation,
-runtime metric collection request shaping, CSV trial logging, and the legacy
-TinyODOM model/training helpers that bridge the older pipeline to the newer
-componentized architecture.
+This module carries the shared NAS scoring DSL, YAML config validation,
+runtime metric normalization, CSV trial logging, and the built-in TinyODOM
+model helpers that are still reused across the componentized runtime.
 """
 
 import csv
@@ -23,12 +22,9 @@ import numpy as np
 import tensorflow as tf
 import yaml
 from addict import Dict
-from sklearn.metrics import mean_squared_error
 
 # import optuna
 from tcn import TCN
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
-from tensorflow.keras.models import load_model
 from tensorflow.keras import Input, Model
 from tensorflow.keras.layers import Dense, Flatten, MaxPooling1D, Reshape
 from tensorflow.python.framework.convert_to_constants import (
@@ -44,8 +40,6 @@ from .microcontrollers import (
     get_device as get_microcontroller_device,
     resolve_device_options,
 )
-from .data import OxIODSplitData
-
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "nas_config.yaml"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # Keep the legacy constant name for compatibility with older callers, but point
@@ -123,8 +117,8 @@ INFRASTRUCTURE_SCORE_METRICS = {
 }
 DEFAULT_TASK_SCORE_METRICS = {"rmse_vel_x", "rmse_vel_y", "rmse_total"}
 DEFAULT_TRAINING_ONLY_TASK_METRICS = {"rmse_vel_x", "rmse_vel_y", "rmse_total"}
-# Keep these legacy names for compatibility, but Phase 3 validation should rely
-# on resolved metric sets instead of these static aliases.
+# These constants describe the built-in odometry task only. Task-aware NAS
+# validation must not treat them as the implicit contract for arbitrary tasks.
 TRAINING_ONLY_METRICS = DEFAULT_TRAINING_ONLY_TASK_METRICS
 BUILTIN_SCORE_METRICS = INFRASTRUCTURE_SCORE_METRICS | DEFAULT_TASK_SCORE_METRICS
 
@@ -1080,7 +1074,13 @@ def evaluate_score_config(
     )
 
 
-def _validate_typed_reference(reference: Any, allowed_metrics: set[str], context_name: str) -> Dict:
+def _validate_typed_reference(
+    reference: Any,
+    allowed_metrics: set[str],
+    context_name: str,
+    *,
+    allow_unknown_metric_names: bool = False,
+) -> Dict:
     """Validate and normalize a typed reference entry.
 
     Parameters
@@ -1111,7 +1111,7 @@ def _validate_typed_reference(reference: Any, allowed_metrics: set[str], context
     normalized_reference.type = ref_type
     if ref_type == "metric":
         metric_name = str(normalized_reference.get("metric", "")).strip()
-        if metric_name not in allowed_metrics:
+        if metric_name not in allowed_metrics and not allow_unknown_metric_names:
             raise ValueError(f"{context_name} references unknown metric '{metric_name}'.")
         normalized_reference.metric = metric_name
     else:
@@ -1132,10 +1132,11 @@ def _resolve_validation_metric_sets(
     ----------
     task_metric_names : set[str] | None, optional
         Task-owned metric names that may appear in score or prune configs.
-        When omitted, the current odometry RMSE set is used.
+        When omitted, task-aware validation is disabled and only
+        infrastructure metrics are considered known.
     training_only_task_metric_names : set[str] | None, optional
         Task-owned metric names that are only available after training. When
-        omitted, the current odometry RMSE set is used.
+        omitted, no task metrics are treated as training-only.
 
     Returns
     -------
@@ -1146,17 +1147,19 @@ def _resolve_validation_metric_sets(
     Raises
     ------
     ValueError
-        If task metrics overlap infrastructure metrics or if the training-only
-        set is not a subset of the task metric set.
+        If task metrics overlap infrastructure metrics, if the training-only
+        set is supplied without task metrics, or if the training-only set is
+        not a subset of the task metric set.
     """
-
-    if task_metric_names is None and training_only_task_metric_names is None:
-        effective_task_metric_names = set(DEFAULT_TASK_SCORE_METRICS)
-        effective_training_only_metric_names = set(DEFAULT_TRAINING_ONLY_TASK_METRICS)
+    if task_metric_names is None:
+        if training_only_task_metric_names is not None:
+            raise ValueError(
+                "training_only_task_metric_names requires task_metric_names for task-aware validation."
+            )
+        effective_task_metric_names = set()
+        effective_training_only_metric_names = set()
     else:
-        effective_task_metric_names = set(
-            DEFAULT_TASK_SCORE_METRICS if task_metric_names is None else task_metric_names
-        )
+        effective_task_metric_names = set(task_metric_names)
         effective_training_only_metric_names = set(
             set() if training_only_task_metric_names is None else training_only_task_metric_names
         )
@@ -1315,6 +1318,8 @@ def _validate_score_config(
     score_input: Any,
     allowed_base_metric_names: set[str],
     has_legacy_multiobjective: bool = False,
+    *,
+    allow_unknown_metric_names: bool = False,
 ) -> Dict:
     """Validate and normalize the NAS score configuration.
 
@@ -1387,7 +1392,7 @@ def _validate_score_config(
             normalized_metric_list = []
             for child_metric in metric_list:
                 child_name = str(child_metric).strip()
-                if child_name not in allowed_metric_names:
+                if child_name not in allowed_metric_names and not allow_unknown_metric_names:
                     raise ValueError(
                         f"score.metrics.{metric_name} references unknown metric '{child_name}'."
                     )
@@ -1409,11 +1414,13 @@ def _validate_score_config(
                 metric_cfg.get("power_mw", metric_cfg.get("power")),
                 allowed_metric_names,
                 f"score.metrics.{metric_name}.power_mw",
+                allow_unknown_metric_names=allow_unknown_metric_names,
             )
             metric_cfg.duration_ms = _validate_typed_reference(
                 metric_cfg.get("duration_ms", metric_cfg.get("duration")),
                 allowed_metric_names,
                 f"score.metrics.{metric_name}.duration_ms",
+                allow_unknown_metric_names=allow_unknown_metric_names,
             )
             if (
                 metric_cfg.duration_ms.type == "literal"
@@ -1442,16 +1449,17 @@ def _validate_score_config(
                     f"score.params.terms[{idx}].type must be one of: {sorted(VALID_TERM_TYPES)}."
                 )
             metric_name = str(term.get("metric", "")).strip()
-            if metric_name not in allowed_metric_names:
-                raise ValueError(f"score.params.terms[{idx}] references unknown metric '{metric_name}'.")
             term.type = term_type
             term.metric = metric_name
             term.weight = float(term.get("weight", 1.0))
+            if metric_name not in allowed_metric_names and not allow_unknown_metric_names:
+                raise ValueError(f"score.params.terms[{idx}] references unknown metric '{metric_name}'.")
             if term_type in {"normalized-weighted", "boundary", "target"}:
                 term.reference = _validate_typed_reference(
                     term.get("reference"),
                     allowed_metric_names,
                     f"score.params.terms[{idx}]",
+                    allow_unknown_metric_names=allow_unknown_metric_names,
                 )
                 if (
                     term_type == "normalized-weighted"
@@ -1472,7 +1480,7 @@ def _validate_score_config(
             objective = Dict(raw_objective)
             metric_name = str(objective.get("metric", "")).strip()
             direction = str(objective.get("direction", "")).strip().lower()
-            if metric_name not in allowed_metric_names:
+            if metric_name not in allowed_metric_names and not allow_unknown_metric_names:
                 raise ValueError(f"score.params.objectives[{idx}] references unknown metric '{metric_name}'.")
             if direction not in VALID_OBJECTIVE_DIRECTIONS:
                 raise ValueError(
@@ -1490,6 +1498,8 @@ def _validate_prune_config(
     score_config: Dict,
     allowed_base_metric_names: set[str],
     training_only_metric_names: set[str],
+    *,
+    allow_unknown_metric_names: bool = False,
 ) -> Dict:
     """Validate and normalize NAS prune policy.
 
@@ -1530,7 +1540,7 @@ def _validate_prune_config(
         rule_cfg = Dict(raw_rule)
         metric_name = str(rule_cfg.get("metric", "")).strip()
         condition = str(rule_cfg.get("condition", "")).strip().lower()
-        if metric_name not in allowed_metric_names:
+        if metric_name not in allowed_metric_names and not allow_unknown_metric_names:
             raise ValueError(f"nas.prune.rules[{idx}] references unknown metric '{metric_name}'.")
         if condition not in VALID_PRUNE_CONDITIONS:
             raise ValueError(
@@ -1548,6 +1558,7 @@ def _validate_prune_config(
             rule_cfg.get("reference"),
             allowed_metric_names,
             f"nas.prune.rules[{idx}]",
+            allow_unknown_metric_names=allow_unknown_metric_names,
         )
         if reference.type == "metric" and _metric_depends_on_training(
             str(reference.metric),
@@ -1572,6 +1583,8 @@ def _validate_nas_config(
     config: Dict,
     task_metric_names: set[str] | None = None,
     training_only_task_metric_names: set[str] | None = None,
+    *,
+    allow_unknown_metric_names: bool = False,
 ) -> Dict:
     """Validate and normalize the top-level NAS policy configuration.
 
@@ -1608,12 +1621,14 @@ def _validate_nas_config(
         nas_config.get("score"),
         allowed_base_metric_names=allowed_base_metric_names,
         has_legacy_multiobjective="nas_multiobjective" in config.training,
+        allow_unknown_metric_names=allow_unknown_metric_names,
     )
     prune_config = _validate_prune_config(
         nas_config.get("prune", {}),
         score_config,
         allowed_base_metric_names,
         effective_training_only_metric_names,
+        allow_unknown_metric_names=allow_unknown_metric_names,
     )
     nas_config.score = score_config
     nas_config.prune = prune_config
@@ -1725,16 +1740,16 @@ def load_config(
         ``src/config/nas_config.yaml``.
     task_metric_names : set[str] | None, optional
         Task-owned metric names that may appear in score or prune configs. When
-        omitted, the current odometry RMSE metrics are used.
+        omitted, only generic NAS-policy validation runs during config load.
     training_only_task_metric_names : set[str] | None, optional
         Task-owned metric names that are only available after training. When
-        omitted, the current odometry RMSE metrics are used.
+        omitted, task-aware validation treats no task metrics as training-only.
 
     Returns
     -------
     addict.Dict
         Configuration tree with derived paths (models_dir, checkpoint paths,
-        etc.) and a task-aware validated NAS policy.
+        etc.) and a generically validated NAS policy.
 
     Raises
     ------
@@ -1750,10 +1765,10 @@ def load_config(
     -----
     Besides parsing YAML, this helper normalizes derived artifact paths,
     validates board/runtime policy, and injects harness defaults. It always
-    performs the generic NAS score/prune validation pass, and when
-    ``task_metric_names`` are supplied it additionally resolves the NAS policy
-    against that concrete task contract instead of the default validation
-    metric set.
+    performs the generic NAS score/prune validation pass. When
+    ``task_metric_names`` are supplied, it additionally validates the NAS
+    policy against that concrete task contract instead of deferring task-owned
+    metric checks to the later bootstrap step.
     """
     cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
@@ -1944,14 +1959,16 @@ def load_config(
     if "nas" not in config:
         raise KeyError("Missing required top-level 'nas' section in the configuration.")
     config.nas = Dict(config.nas)
-    if task_metric_names is None and training_only_task_metric_names is None:
-        config.nas = _validate_nas_config(config)
-    else:
-        config.nas = _validate_nas_config(
-            config,
-            task_metric_names=task_metric_names,
-            training_only_task_metric_names=training_only_task_metric_names,
-        )
+    has_task_context = (
+        task_metric_names is not None
+        or training_only_task_metric_names is not None
+    )
+    config.nas = _validate_nas_config(
+        config,
+        task_metric_names=task_metric_names,
+        training_only_task_metric_names=training_only_task_metric_names,
+        allow_unknown_metric_names=not has_task_context,
+    )
 
     return config
 
@@ -2367,179 +2384,6 @@ def log_trial(
         trial.set_user_attr(f"hparam__{hyperparam_name}", value)
     for field_name in CADENCED_ALL_FIELDS:
         trial.set_user_attr(field_name, metrics.get(field_name))
-
-
-
-def train_and_score(
-    model,
-    batch_size: int,
-    hyperparams: Dict,
-    metrics: dict,
-    max_ram: float,
-    max_flash: float,
-    training_data: Any,
-    validation_data: Any,
-    config: Dict,
-    *,
-    task_metric_names: set[str] | None = None,
-    task_nonnegative_metric_names: set[str] | None = None,
-):
-    """Legacy TinyODOM training helper retained for compatibility.
-
-    Parameters
-    ----------
-    model : tf.keras.Model
-        Model instance to train.
-    batch_size : int
-        Mini-batch size for SGD.
-    hyperparams : addict.Dict
-        Trial hyperparameters. Required to have flops key.
-    metrics : dict
-        Shared resource metrics dict updated in-place.
-    max_ram : float
-        Maximum usable RAM on the device. Exposed to scoring as
-        ``max_ram_bytes``.
-    max_flash : float
-        Maximum usable flash on the device. Exposed to scoring as
-        ``max_flash_bytes``.
-    training_data : Any
-        Training dataset payload. The legacy training path expects TinyODOM
-        split attributes such as ``inputs``, ``x_vel``, and ``y_vel``.
-    validation_data : Any
-        Validation dataset payload. The legacy training path expects TinyODOM
-        split attributes such as ``inputs``, ``x_vel``, and ``y_vel``.
-    config : addict.Dict
-        NAS configuration tree.
-    task_metric_names : set[str] | None, optional
-        Task metric names available to the no-training sentinel path. When
-        omitted, the TinyODOM RMSE metric set is used.
-    task_nonnegative_metric_names : set[str] | None, optional
-        Task metric names that should treat negative values as unavailable
-        sentinels during score evaluation. When omitted, the TinyODOM RMSE
-        metric set is used.
-
-    Returns
-    -------
-    TrialOutcome
-        Generic trial outcome containing score/objective values, task metrics,
-        and the resolved hyperparameter payload.
-
-    Raises
-    ------
-    ValueError
-        If the active scoring configuration references unavailable metrics, or
-        when the legacy training path is asked to train a non-TinyODOM task.
-
-    Notes
-    -----
-    The production modular NAS path does not call this helper. The no-training
-    path accepts generic task metric names, but the training path remains
-    TinyODOM-specific because it still computes velocity RMSE from the legacy
-    split structure.
-    """
-    effective_task_metric_names = set(
-        DEFAULT_TASK_SCORE_METRICS
-        if task_metric_names is None
-        else task_metric_names
-    )
-    effective_task_nonnegative_metric_names = set(
-        DEFAULT_TASK_SCORE_METRICS
-        if task_nonnegative_metric_names is None
-        else task_nonnegative_metric_names
-    )
-
-    # Surface device resource caps inside the scoring context so scalar terms
-    # can normalize usage directly against the target hardware limits.
-    metrics["max_ram_bytes"] = float(max_ram)
-    metrics["max_flash_bytes"] = float(max_flash)
-
-    if not config.training.train:
-        # Keep the no-training path scoreable by emitting task-metric
-        # sentinels through the same evaluation pipeline as real runs.
-        task_metrics = {
-            metric_name: -1.0
-            for metric_name in sorted(effective_task_metric_names)
-        }
-        metrics.update(task_metrics)
-        if (not metrics["hil_enabled"]) and metrics.get("error_code", 0) == 0:
-            metrics["latency_ms"] = -1  # keep CSV compatibility for non-HIL trials
-            set_error_code(metrics, 1)
-        return build_trial_outcome(
-            score_result=_evaluate_score_config(
-                metrics=metrics,
-                hyperparams=hyperparams,
-                score_config=config.nas.score,
-                task_nonnegative_metric_names=effective_task_nonnegative_metric_names,
-            ),
-            task_metrics=task_metrics,
-            hyperparams=dict(hyperparams),
-        )
-
-    if effective_task_metric_names != set(DEFAULT_TASK_SCORE_METRICS):
-        raise ValueError(
-            "train_and_score(train=True) is a legacy TinyODOM helper and only "
-            "supports task metrics {'rmse_vel_x', 'rmse_vel_y', 'rmse_total'}."
-        )
-    
-    # Train the model with early stopping and checkpointing
-    checkpoint = ModelCheckpoint(
-        str(config.outputs.checkpoint_path),
-        monitor="val_loss",
-        mode="min",
-        verbose=1,
-        save_best_only=True,
-    )
-    # Early stopping to prevent overfitting
-    early_stop = EarlyStopping(
-        monitor="val_loss",
-        patience=40,
-        mode="min",
-        verbose=1,
-        restore_best_weights=True,
-    )
-
-    # Fit the model with validation loss
-    model.fit(
-        x=training_data.inputs,
-        y=[training_data.x_vel, training_data.y_vel],
-        epochs=config.training.nas_epochs,
-        shuffle=True,
-        callbacks=[checkpoint, early_stop],
-        batch_size=batch_size,
-        validation_data=(validation_data.inputs, [validation_data.x_vel, validation_data.y_vel]),
-    )
-
-    # Load the best model from checkpoint
-    model = load_model(str(config.outputs.checkpoint_path), custom_objects={"TCN": TCN})
-    
-    # Compute validation RMSE
-    y_pred = model.predict(validation_data.inputs)
-    rmse_vel_x = mean_squared_error(validation_data.x_vel, y_pred[0], squared=False)
-    rmse_vel_y = mean_squared_error(validation_data.y_vel, y_pred[1], squared=False)
-    task_metrics = {
-        "rmse_vel_x": float(rmse_vel_x),
-        "rmse_vel_y": float(rmse_vel_y),
-        "rmse_total": float(rmse_vel_x + rmse_vel_y),
-    }
-    metrics.update(task_metrics)
-    # Populate the built-in aggregate RMSE metric once so all downstream score
-    # terms and objectives reference the same value.
-    
-    # Set error code for non-HIL trials that passed resource checks
-    if (not metrics["hil_enabled"]) and metrics.get("error_code", 0) == 0:
-        metrics["latency_ms"] = -1  # keep CSV compatibility for non-HIL trials
-        set_error_code(metrics, 1)
-    return build_trial_outcome(
-        score_result=_evaluate_score_config(
-            metrics=metrics,
-            hyperparams=hyperparams,
-            score_config=config.nas.score,
-            task_nonnegative_metric_names=effective_task_nonnegative_metric_names,
-        ),
-        task_metrics=task_metrics,
-        hyperparams=dict(hyperparams),
-    )
-
 
 def build_tinyodom_model(hyperparams: Dict) -> Model:
     """Build a TinyODOM Keras model based on given hyperparameters.

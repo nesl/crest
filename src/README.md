@@ -13,8 +13,6 @@ Related docs:
   [`config/README.md`](config/README.md).
 - Microcontroller and hardware-backend bring-up live in
   [`tinyodom/microcontrollers/README.md`](tinyodom/microcontrollers/README.md).
-- Known rough edges from the component/model-family refactor are tracked in
-  [`../things_forgotten_in_the_model_refactor.md`](../things_forgotten_in_the_model_refactor.md).
 
 ## Top-Level Entry Points
 
@@ -173,9 +171,6 @@ The registry model is explicit:
 
 If you add a new dataset, task, or model family, it is not available until
 something registers it under the name you intend to use in config.
-
-Known extension limits and refactor leftovers are tracked in
-[`../things_forgotten_in_the_model_refactor.md`](../things_forgotten_in_the_model_refactor.md).
 
 ## Shared Scoring And Trial Outputs
 

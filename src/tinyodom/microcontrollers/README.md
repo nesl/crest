@@ -200,7 +200,7 @@ If the board has custom options:
 2. Parse it in
    [`resolve_device_options(...)`](__init__.py).
 3. Ensure those options flow through
-   [`build_collect_metrics_request(...)`](../model.py)
+   [`build_collect_metrics_request(...)`](../hil_runtime.py)
    and the HIL server path in
    [`../../hil_server.py`](../../hil_server.py).
 
