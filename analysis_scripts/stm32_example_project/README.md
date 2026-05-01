@@ -47,6 +47,12 @@ The useful long-lived contents of this directory are:
   - `stm32_lrun_common.py`
 - plotting and summary scripts that consume saved sweep results
 
+`stm32_phase2_candidate.py` now bootstraps the active dataset/task/model-family
+pipeline before building the fixed `approx_trained` candidate. Downstream STM32
+wrappers should consume its explicit `calibration_inputs`, `window_size`, and
+`input_dim` fields instead of reaching through legacy `config.data.*` or raw
+training-split aliases.
+
 Things that should stay out of the committed source surface:
 
 - `out/` run products

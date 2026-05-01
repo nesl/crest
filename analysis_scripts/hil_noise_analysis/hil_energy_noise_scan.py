@@ -30,6 +30,7 @@ from tqdm import tqdm
 sys.path.insert(0, os.path.abspath("src"))
 
 from hil_server import HILServer, logger
+from tinyodom.analysis_support import split_hil_request_hyperparams
 from tinyodom.model import DEFAULT_CONFIG_PATH
 
 from noise_scan_model_spec import build_noise_scan_hyperparams
@@ -139,10 +140,12 @@ def main() -> int:
             or trained_metadata_path.stem
         )
 
+    window_size, input_dim = server.get_runtime_dimensions()
     hyperparams = build_noise_scan_hyperparams(
-        window_size=server.config.data.window_size,
-        input_dim=server.training_data.inputs.shape[2],
+        window_size=window_size,
+        input_dim=input_dim,
     )
+    family_hparams, runtime_metadata = split_hil_request_hyperparams(hyperparams)
     if trained_metadata:
         meta_window_size = trained_metadata.get("window_size")
         meta_input_dim = trained_metadata.get("input_dim")
@@ -191,7 +194,8 @@ def main() -> int:
                         args.runs,
                     )
                     metrics = server.determine_metrics(
-                        hyperparams,
+                        family_hparams,
+                        runtime_metadata,
                         checkpoint_path=checkpoint_path,
                         model_variant=model_variant,
                     )

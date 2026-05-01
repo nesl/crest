@@ -1,10 +1,7 @@
 """Top-level NAS orchestration client for TinyODOM experiments.
 
 This module bridges the modular dataset/task/model-family registry system to
-the legacy Optuna, HIL RPC, final-training, and artifact-reporting workflow.
-It also maintains compatibility shims that adapt ``DatasetBundle`` /
-``DataSplit`` objects into the older split views still consumed by some
-training and reporting paths.
+the current Optuna, HIL RPC, final-training, and artifact-reporting workflow.
 """
 
 import argparse
@@ -17,7 +14,6 @@ import socket
 import time
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import zmq
@@ -73,18 +69,6 @@ tf.autograph.set_verbosity(0)
 
 logger = logging.getLogger(__name__)
 
-
-class _LegacySplitView(SimpleNamespace):
-    """Compatibility shim backed by the modular ``DataSplit`` contract.
-
-    The resulting namespace may expose fields such as ``inputs``, ``x_vel``,
-    ``y_vel``, ``disp``, ``heading``, ``position``, ``x0``, ``y0``,
-    ``size_of_each``, ``head_s``, ``head_c``, and ``inputs_orig``. It is a
-    projection of modular metadata and targets, not an independently validated
-    data model.
-    """
-
-
 class NASModelClient:
     """Client that orchestrates HIL-assisted NAS, training, and evaluation.
 
@@ -121,10 +105,6 @@ class NASModelClient:
     socket : zmq.Socket
         REQ socket used to send hyperparameters and receive HIL metrics. Send
         and receive timeouts are configured from the YAML.
-    training_data, validation_data, test_data : object
-        OXIOD dataset splits as loaded by ``import_oxiod_dataset``; each split
-        exposes tensors like ``inputs``, ``x_vel``, ``y_vel`` and sequence
-        bookkeeping metadata.
     study_name : str
         Name used for Optuna study registration and artifact prefixes.
 
@@ -221,7 +201,6 @@ class NASModelClient:
         self.dataset_config = pipeline.selection["dataset_config"]
         self.task_config = pipeline.selection["task_config"]
         self.model_config = pipeline.selection["model_config"]
-        self._refresh_legacy_split_aliases(pipeline.bundle)
 
     @staticmethod
     def _normalize_config_value(value: Any) -> Any:
@@ -388,61 +367,6 @@ class NASModelClient:
             return loaded
         return None, loaded
 
-    @staticmethod
-    def _make_legacy_split_view(split: DataSplit | None) -> _LegacySplitView | None:
-        """Convert a modular split into the legacy view expected downstream.
-
-        Parameters
-        ----------
-        split : DataSplit | None
-            Modular split to adapt.
-
-        Returns
-        -------
-        _LegacySplitView | None
-            Namespace exposing the legacy TinyODOM split fields.
-
-        Notes
-        -----
-        The view simply re-keys targets/metadata into the historical shape. It
-        does not infer missing odometry fields or validate that every legacy
-        consumer requirement is present.
-        """
-        if split is None:
-            return None
-        metadata = dict(split.metadata)
-        targets = split.targets if isinstance(split.targets, Mapping) else {}
-        return _LegacySplitView(
-            inputs=split.inputs,
-            x_vel=targets.get("velx"),
-            y_vel=targets.get("vely"),
-            disp=metadata.get("disp"),
-            heading=metadata.get("heading"),
-            position=metadata.get("position"),
-            x0=metadata.get("x0"),
-            y0=metadata.get("y0"),
-            size_of_each=metadata.get("size_of_each"),
-            head_s=metadata.get("head_s"),
-            head_c=metadata.get("head_c"),
-            inputs_orig=metadata.get("inputs_orig"),
-        )
-
-    def _refresh_legacy_split_aliases(self, bundle: DatasetBundle) -> None:
-        """Refresh legacy split aliases from one modular dataset bundle.
-
-        Parameters
-        ----------
-        bundle : DatasetBundle
-            Modular dataset bundle backing this client.
-
-        Returns
-        -------
-        None
-        """
-        self.training_data = self._make_legacy_split_view(bundle.train)
-        self.validation_data = self._make_legacy_split_view(bundle.val)
-        self.test_data = self._make_legacy_split_view(bundle.test)
-
     def _build_model_context(
         self,
         bundle: DatasetBundle,
@@ -525,7 +449,6 @@ class NASModelClient:
         self.dataset_config = selection["dataset_config"]
         self.task_config = selection["task_config"]
         self.model_config = selection["model_config"]
-        self._refresh_legacy_split_aliases(bundle)
 
     @staticmethod
     def _cfg_get(container, key: str, default=None):
@@ -786,13 +709,14 @@ class NASModelClient:
             )
         return value
 
-    def _trajectory_split_view(self) -> _LegacySplitView:
-        """Return an odometry-oriented view of the test split for reporting.
+    def _require_trajectory_split(self) -> DataSplit:
+        """Return the active odometry test split for trajectory reporting.
 
         Returns
         -------
-        _LegacySplitView
-            Legacy-compatible test-split view for trajectory analysis.
+        DataSplit
+            Test split with the odometry-specific targets and metadata needed
+            by the trajectory reporting helpers.
 
         Raises
         ------
@@ -814,21 +738,18 @@ class NASModelClient:
                 "Trajectory reporting remains odometry-specific and requires "
                 "velocity targets named 'velx' and 'vely'."
             )
-        legacy_view = self._make_legacy_split_view(split)
-        if legacy_view is None:
-            raise ValueError("Trajectory reporting requires a held-out test split.")
         required_fields = ("size_of_each", "x0", "y0")
         missing = [
             field_name
             for field_name in required_fields
-            if getattr(legacy_view, field_name, None) in (None, "")
+            if split.metadata.get(field_name) in (None, "")
         ]
         if missing:
             raise ValueError(
                 "Trajectory reporting remains odometry-specific and requires test-split metadata "
                 f"for: {', '.join(missing)}."
             )
-        return legacy_view
+        return split
 
     def objective(self, trial: optuna.Trial) -> float | tuple:
         """Optimize TinyODOM architecture and training hyperparameters.
@@ -1916,7 +1837,7 @@ class NASModelClient:
         plot_dir = Path(plot_dir) if plot_dir else Path(self.config.outputs.models_dir) / "trajectories"
         plot_dir.mkdir(parents=True, exist_ok=True)
         test_split = self.dataset_bundle.test
-        trajectory_split = self._trajectory_split_view()
+        trajectory_split = self._require_trajectory_split()
         stride = (
             float(stride)
             if stride is not None
@@ -1979,15 +1900,21 @@ class NASModelClient:
         plot_paths = []
 
         idx_start = 0
-        for i, length in enumerate(trajectory_split.size_of_each):
+        size_of_each = trajectory_split.metadata["size_of_each"]
+        start_x_values = trajectory_split.metadata["x0"]
+        start_y_values = trajectory_split.metadata["y0"]
+        vel_x_targets = trajectory_split.targets["velx"]
+        vel_y_targets = trajectory_split.targets["vely"]
+
+        for i, length in enumerate(size_of_each):
             idx_end = idx_start + length
             # Flatten in case datasets store (n, 1) vectors.
-            gt_vx = trajectory_split.x_vel[idx_start:idx_end].ravel()
-            gt_vy = trajectory_split.y_vel[idx_start:idx_end].ravel()
+            gt_vx = vel_x_targets[idx_start:idx_end].ravel()
+            gt_vy = vel_y_targets[idx_start:idx_end].ravel()
             pred_vx = preds[0][idx_start:idx_end].ravel()
             pred_vy = preds[1][idx_start:idx_end].ravel()
-            start_x = trajectory_split.x0[i]
-            start_y = trajectory_split.y0[i]
+            start_x = start_x_values[i]
+            start_y = start_y_values[i]
 
             gt_x, gt_y = integrate_track(gt_vx, gt_vy, start_x, start_y)
             pd_x, pd_y = integrate_track(pred_vx, pred_vy, start_x, start_y)

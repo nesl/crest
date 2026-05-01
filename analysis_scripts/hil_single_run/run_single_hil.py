@@ -26,7 +26,11 @@ from addict import Dict
 sys.path.insert(0, os.path.abspath("src"))
 
 from hil_server import HILServer
-from tinyodom.model import DEFAULT_CONFIG_PATH, build_tinyodom_model, count_flops
+from tinyodom.analysis_support import (
+    build_fixed_tinyodom_hyperparams,
+    split_hil_request_hyperparams,
+)
+from tinyodom.model import DEFAULT_CONFIG_PATH
 
 
 def _build_hyperparams(server: HILServer) -> Dict:
@@ -43,20 +47,11 @@ def _build_hyperparams(server: HILServer) -> Dict:
     addict.Dict
         Hyperparameter dictionary with an added ``flops`` attribute.
     """
-    hyperparams = Dict(
-        nb_filters=10,
-        kernel_size=12,
-        dilations=[1, 4, 8, 64],
-        dropout_rate=0.0,
-        use_skip_connections=False,
-        norm_flag=True,
-        batch_size=256,
-        timesteps=server.config.data.window_size,
-        input_dim=server.training_data.inputs.shape[2],
+    window_size, input_dim = server.get_runtime_dimensions()
+    return build_fixed_tinyodom_hyperparams(
+        window_size=window_size,
+        input_dim=input_dim,
     )
-    model = build_tinyodom_model(hyperparams)
-    hyperparams.flops = count_flops(model, (hyperparams.timesteps, hyperparams.input_dim))
-    return hyperparams
 
 
 def main() -> int:
@@ -123,7 +118,8 @@ def main() -> int:
     print(f"  harness_stable_low_ms: {server.config.device.harness_stable_low_ms}")
 
     hyperparams = _build_hyperparams(server)
-    metrics = server.determine_metrics(hyperparams)
+    family_hparams, runtime_metadata = split_hil_request_hyperparams(hyperparams)
+    metrics = server.determine_metrics(family_hparams, runtime_metadata)
 
     print("Single HIL metrics:")
     for key, value in metrics.items():

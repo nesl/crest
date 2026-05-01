@@ -429,50 +429,24 @@ def _prepare_model_artifacts(
     hyperparams: Any,
     model_variant: str,
     trained_checkpoint: Optional[Path],
-    build_tinyodom_model_fn: Any,
     convert_to_tflite_model_fn: Any,
     convert_to_cpp_model_fn: Any,
-    apply_combined_perturbation_fn: Any,
-    validate_loaded_model_input_shape_fn: Any,
-    load_model_fn: Any,
-    tcn_class: Any,
-    adam_cls: Any,
-    approx_variant_name: str,
-    representative_legacy_name: str,
-    perturbed_legacy_name: str,
+    require_calibration_inputs_fn: Any,
 ) -> None:
     """Build/select one model variant and export model artifacts once."""
-    variant = str(model_variant).strip().lower()
-    is_approx_trained = variant in {
-        approx_variant_name,
-        representative_legacy_name,
-        perturbed_legacy_name,
-    }
-
-    if variant == "untrained":
-        model = build_tinyodom_model_fn(hyperparams)
-    elif is_approx_trained:
-        model = build_tinyodom_model_fn(hyperparams)
-        apply_combined_perturbation_fn(model=model, seed=1337)
-    elif variant.startswith("trained"):
-        if trained_checkpoint is None:
-            raise ValueError(
-                f"model_variant '{model_variant}' requires --trained-checkpoint."
-            )
-        model = load_model_fn(str(trained_checkpoint), custom_objects={"TCN": tcn_class})
-        validate_loaded_model_input_shape_fn(model, hyperparams)
-    else:
-        raise ValueError(
-            f"Unsupported --model-variant '{model_variant}'. "
-            f"Use '{approx_variant_name}', 'untrained', or variants starting with 'trained'."
-        )
-
-    optimizer = adam_cls()
-    model.compile(loss={"velx": "mse", "vely": "mse"}, optimizer=optimizer)
+    model = server.model_family.materialize_export_model(
+        dict(hyperparams),
+        server.model_build_context,
+        server.model_config,
+        model_variant=model_variant,
+        checkpoint_path=trained_checkpoint,
+    )
+    server.task.compile_model(model, server.task_config, server.target_spec)
+    calibration_inputs = require_calibration_inputs_fn(server.get_calibration_inputs())
 
     convert_to_tflite_model_fn(
         model=model,
-        training_data=server.training_data.inputs,
+        training_data=calibration_inputs,
         quantization=bool(server.config.training.quantization),
         output_name=str(server.config.outputs.tflite_model_path),
     )
@@ -532,23 +506,13 @@ def main() -> int:
     if str(SRC_DIR) not in sys.path:
         sys.path.insert(0, str(SRC_DIR))
 
-    from hil_server import (
-        HILServer,
-        APPROX_TRAINED_VARIANT_NAME,
-        REPRESENTATIVE_VARIANT_LEGACY_NAME,
-        PERTURBED_VARIANT_LEGACY_NAME,
+    from hil_server import HILServer
+    from tinyodom.analysis_support import (
+        build_fixed_tinyodom_hyperparams,
+        require_calibration_inputs,
     )
-    from tcn import TCN
-    from tensorflow.keras.models import load_model
-    from tensorflow.keras.optimizers import Adam
     from tinyodom.hardware import HIL_spec, describe_error_code, normalize_power_metrics
     from tinyodom.microcontrollers import get_device as get_microcontroller_device
-    from tinyodom.model import (
-        apply_combined_perturbation,
-        build_tinyodom_model,
-        count_flops,
-        validate_loaded_model_input_shape,
-    )
     from tinyodom.hardware import convert_to_tflite_model, convert_to_cpp_model
 
     server = HILServer(config_path=Path(args.config))
@@ -606,21 +570,12 @@ def main() -> int:
     )
     settings = _resolve_settings(args, server, runtime_device)
 
-    # Build fixed hyperparameters and FLOPs once.
-    from addict import Dict as AddictDict
-    hyperparams = AddictDict(
-        nb_filters=10,
-        kernel_size=12,
-        dilations=[1, 4, 8, 64],
-        dropout_rate=0.0,
-        use_skip_connections=False,
-        norm_flag=True,
-        batch_size=256,
-        timesteps=int(server.config.data.window_size),
-        input_dim=int(server.training_data.inputs.shape[2]),
+    # Build fixed hyperparameters and FLOPs once from the bootstrapped runtime.
+    window_size, input_dim = server.get_runtime_dimensions()
+    hyperparams = build_fixed_tinyodom_hyperparams(
+        window_size=window_size,
+        input_dim=input_dim,
     )
-    model_for_flops = build_tinyodom_model(hyperparams)
-    hyperparams.flops = count_flops(model_for_flops, (hyperparams.timesteps, hyperparams.input_dim))
 
     logging.info(
         "Preparing model export for variant '%s' (device=%s core=%s input_mode=%s).",
@@ -634,17 +589,9 @@ def main() -> int:
         hyperparams=hyperparams,
         model_variant=settings.model_variant,
         trained_checkpoint=settings.trained_checkpoint,
-        build_tinyodom_model_fn=build_tinyodom_model,
         convert_to_tflite_model_fn=convert_to_tflite_model,
         convert_to_cpp_model_fn=convert_to_cpp_model,
-        apply_combined_perturbation_fn=apply_combined_perturbation,
-        validate_loaded_model_input_shape_fn=validate_loaded_model_input_shape,
-        load_model_fn=load_model,
-        tcn_class=TCN,
-        adam_cls=Adam,
-        approx_variant_name=APPROX_TRAINED_VARIANT_NAME,
-        representative_legacy_name=REPRESENTATIVE_VARIANT_LEGACY_NAME,
-        perturbed_legacy_name=PERTURBED_VARIANT_LEGACY_NAME,
+        require_calibration_inputs_fn=require_calibration_inputs,
     )
 
     attempts: list[Dict[str, Any]] = []
@@ -676,7 +623,7 @@ def main() -> int:
                     device_options=settings.device_options,
                     arenaSizes=settings.arena_kb_list,
                     idx=arena_idx,
-                    window_size=int(server.config.data.window_size),
+                    window_size=int(window_size),
                     number_of_channels=int(hyperparams.input_dim),
                     serial_port=use_serial_port,
                     dut_ready_timeout_s=float(server.config.device.dut_ready_timeout_s),

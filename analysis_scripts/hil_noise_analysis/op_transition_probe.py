@@ -16,13 +16,11 @@ import random
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.models import load_model
 from tensorflow.lite.python import schema_py_generated as schema_fb
-from tcn import TCN
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
@@ -30,14 +28,14 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from analysis_scripts.hil_noise_analysis.noise_scan_model_spec import build_noise_scan_hyperparams
 from analysis_scripts.hil_noise_analysis.train_noise_scan_model import _load_split
-from tinyodom.hardware import convert_to_tflite_model
-from tinyodom.model import (
-    DEFAULT_CONFIG_PATH,
-    build_tinyodom_model,
-    collect_bn_layers,
-    collect_non_bn_bias_layers,
-    load_config,
+from tinyodom.analysis_support import (
+    build_model_context,
+    resolve_model_family_contract,
+    resolve_task_contract,
 )
+from tinyodom.hardware import convert_to_tflite_model
+from tinyodom.model import DEFAULT_CONFIG_PATH, load_config
+from tinyodom.pipeline_types import DataSplit, DatasetBundle
 
 
 ALLOWED_VARIANTS = (
@@ -91,6 +89,47 @@ def _extract_tflite_graph_stats(tflite_path: Path) -> tuple[int, int, dict[str, 
     op_count = int(subgraph.OperatorsLength())
     add_count = int(op_histogram.get("ADD", 0))
     return op_count, add_count, dict(sorted(op_histogram.items()))
+
+
+def _iter_layers(model: tf.keras.Model) -> list[tf.keras.layers.Layer]:
+    """Return all reachable Keras layers from a model graph."""
+
+    seen: set[int] = set()
+    queue = [model]
+    layers: list[tf.keras.layers.Layer] = []
+    while queue:
+        node = queue.pop(0)
+        node_id = id(node)
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        if isinstance(node, tf.keras.layers.Layer):
+            layers.append(node)
+        queue.extend(getattr(node, "layers", []) or [])
+    return layers
+
+
+def collect_bn_layers(model: tf.keras.Model) -> list[tf.keras.layers.BatchNormalization]:
+    """Collect reachable batch-normalization layers from ``model``."""
+
+    return [
+        layer
+        for layer in _iter_layers(model)
+        if isinstance(layer, tf.keras.layers.BatchNormalization)
+    ]
+
+
+def collect_non_bn_bias_layers(model: tf.keras.Model) -> list[tf.keras.layers.Layer]:
+    """Collect reachable non-BN layers that expose a mutable bias tensor."""
+
+    bias_layers: list[tf.keras.layers.Layer] = []
+    for layer in _iter_layers(model):
+        if isinstance(layer, tf.keras.layers.BatchNormalization):
+            continue
+        if getattr(layer, "bias", None) is None:
+            continue
+        bias_layers.append(layer)
+    return bias_layers
 
 
 def _perturb_bn_gamma_beta(model: tf.keras.Model, rng: np.random.Generator) -> int:
@@ -166,8 +205,14 @@ def _hist_delta(base_hist: dict[str, int], cur_hist: dict[str, int]) -> dict[str
     return delta
 
 
-def _build_fresh_model(hyperparams) -> tf.keras.Model:
-    return build_tinyodom_model(hyperparams)
+def _build_fresh_model(
+    hyperparams,
+    *,
+    model_family: Any,
+    model_context: Any,
+    model_config: Any,
+) -> tf.keras.Model:
+    return model_family.build_model(dict(hyperparams), model_context, model_config)
 
 
 def main() -> int:
@@ -264,9 +309,25 @@ def main() -> int:
         training_data.inputs = training_data.inputs[:limit]
 
     hyperparams = build_noise_scan_hyperparams(
-        window_size=config.data.window_size,
+        window_size=config.dataset.params.window_size,
         input_dim=training_data.inputs.shape[2],
     )
+    bundle = DatasetBundle(
+        train=DataSplit(
+            inputs=training_data.inputs,
+            targets={"velx": training_data.x_vel, "vely": training_data.y_vel},
+            metadata={},
+        ),
+        val=None,
+        test=None,
+        input_shape=(int(hyperparams.timesteps), int(hyperparams.input_dim)),
+        input_dtype="float32",
+        metadata=dict(config.dataset.params),
+    )
+    task, task_config, target_spec = resolve_task_contract(config, bundle)
+    del task, task_config
+    model_family, model_config = resolve_model_family_contract(config)
+    model_context = build_model_context(bundle, target_spec)
 
     mutators: dict[str, Callable[[tf.keras.Model], tuple[int, str]]] = {
         "fresh_untrained": lambda model: (0, "no mutation"),
@@ -310,11 +371,16 @@ def main() -> int:
             checkpoint_path = Path(str(args.trained_checkpoint)).resolve()
             if not checkpoint_path.exists():
                 raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-            model = load_model(str(checkpoint_path), custom_objects={"TCN": TCN})
+            model = model_family.load_model(checkpoint_path, model_context, model_config)
             notes = f"loaded checkpoint {checkpoint_path.name}"
             mutated_layers_touched = 0
         else:
-            model = _build_fresh_model(hyperparams)
+            model = _build_fresh_model(
+                hyperparams,
+                model_family=model_family,
+                model_context=model_context,
+                model_config=model_config,
+            )
             mutated_layers_touched, notes = mutators[variant](model)
 
         bn_layers_total = len(collect_bn_layers(model))

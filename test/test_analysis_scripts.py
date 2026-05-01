@@ -141,8 +141,10 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
                     },
                 )(),
                 "model": object(),
-                "training_data": type("TrainingData", (), {"inputs": object()})(),
+                "calibration_inputs": object(),
                 "metadata": {"model_variant": "approx_trained"},
+                "window_size": 4,
+                "input_dim": 6,
             },
         )()
 

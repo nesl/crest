@@ -225,10 +225,6 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     )
     client.config.outputs.models_dir.mkdir(parents=True, exist_ok=True)
     client.config_path = base_dir / "config.yaml"
-    # Reuse the placeholder dataset wherever the client expects training/val/test.
-    client.training_data = legacy_dataset
-    client.validation_data = legacy_dataset
-    client.test_data = legacy_dataset
     client.dataset = SimpleNamespace(validate_config=MagicMock())
     client.dataset_name = "oxiod"
     client.task = task
@@ -441,38 +437,6 @@ class InitializationTests(unittest.TestCase):
         mock_load_config.assert_called_once_with(base / "config.yaml")
         bootstrap_mock.assert_called_once_with(config)
         fake_socket.connect.assert_called_once()
-
-    def test_refresh_legacy_split_aliases_tolerates_non_odometry_targets(self) -> None:
-        # Legacy split aliases should refresh without assuming odometry-specific target names.
-        client = _build_test_client()
-        bundle = DatasetBundle(
-            train=DataSplit(
-                inputs=np.zeros((2, 16, 3), dtype=np.float32),
-                targets={"class_id": np.array([0, 1], dtype=np.int32)},
-                metadata={},
-            ),
-            val=DataSplit(
-                inputs=np.zeros((1, 16, 3), dtype=np.float32),
-                targets={"class_id": np.array([1], dtype=np.int32)},
-                metadata={},
-            ),
-            test=DataSplit(
-                inputs=np.zeros((1, 16, 3), dtype=np.float32),
-                targets={"class_id": np.array([0], dtype=np.int32)},
-                metadata={},
-            ),
-            input_shape=(16, 3),
-            input_dtype="float32",
-            metadata={},
-        )
-
-        client._refresh_legacy_split_aliases(bundle)
-
-        self.assertIsNone(client.training_data.x_vel)
-        self.assertIsNone(client.training_data.y_vel)
-        self.assertIsNone(client.validation_data.x_vel)
-        self.assertIsNone(client.test_data.y_vel)
-
 
 class ObjectiveTests(unittest.TestCase):
     """Exercise Optuna objective branches with lightweight stubs."""
@@ -1348,13 +1312,8 @@ class EvaluateCheckpointTests(unittest.TestCase):
             length = 4
             gt_vx = np.ones((length, 1), dtype=np.float32)
             gt_vy = np.ones((length, 1), dtype=np.float32)
-            client.test_data = SimpleNamespace(
-                inputs=np.zeros((length, 1, 1), dtype=np.float32),
-                x_vel=gt_vx,
-                y_vel=gt_vy,
-            )
             client.dataset_bundle.test = DataSplit(
-                inputs=client.test_data.inputs,
+                inputs=np.zeros((length, 1, 1), dtype=np.float32),
                 targets={"velx": gt_vx, "vely": gt_vy},
                 metadata={},
             )
@@ -1419,7 +1378,6 @@ class EvaluateCheckpointTests(unittest.TestCase):
                 targets={"velx": gt_vx, "vely": gt_vy},
                 metadata={},
             )
-            client.training_data = SimpleNamespace(inputs=np.full((1, 1, 1), 99.0, dtype=np.float32))
             client.task.evaluate.return_value = EvaluationResult(
                 metrics={"rmse_vel_x": 0.0, "rmse_vel_y": 0.0, "rmse_total": 0.0},
                 predictions=[gt_vx, gt_vy],
@@ -1521,7 +1479,7 @@ class TrajectoryMetricsTests(unittest.TestCase):
                     study_name="demo",
                 )
 
-    def test_trajectory_split_view_requires_velocity_targets(self) -> None:
+    def test_require_trajectory_split_requires_velocity_targets(self) -> None:
         # Trajectory split views should require velocity targets so the plotted channels remain meaningful.
         cases = (
             {"class_id": np.array([0, 1], dtype=np.int32)},
@@ -1538,7 +1496,7 @@ class TrajectoryMetricsTests(unittest.TestCase):
                     metadata={"size_of_each": [2], "x0": [0.0], "y0": [0.0]},
                 )
                 with self.assertRaisesRegex(ValueError, "velocity targets named 'velx' and 'vely'"):
-                    client._trajectory_split_view()
+                    client._require_trajectory_split()
 
 
 class SummaryBundleTests(unittest.TestCase):

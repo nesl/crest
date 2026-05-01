@@ -215,14 +215,14 @@ def main() -> int:
     parser.add_argument(
         "--use-calibration-cap",
         action="store_true",
-        help="Use config.data.calibration_windows as max_windows.",
+        help="Use config.dataset.params.calibration_windows as max_windows.",
     )
     args = parser.parse_args()
 
     config = load_config(args.config)
     max_windows = args.max_windows
     if args.use_calibration_cap:
-        cap = config.data.get("calibration_windows")
+        cap = config.dataset.params.get("calibration_windows")
         if cap is not None:
             max_windows = int(cap)
 
@@ -231,11 +231,11 @@ def main() -> int:
         useMagnetometer=True,
         useStepCounter=True,
         AugmentationCopies=0,
-        dataset_folder=config.data.directory,
+        dataset_folder=config.dataset.params.directory,
         sub_folders=SUB_FOLDERS,
-        sampling_rate=config.data.sampling_rate_hz,
-        window_size=config.data.window_size,
-        stride=config.data.stride,
+        sampling_rate=config.dataset.params.sampling_rate_hz,
+        window_size=config.dataset.params.window_size,
+        stride=config.dataset.params.stride,
         verbose=False,
         max_windows=max_windows,
     )
@@ -258,7 +258,7 @@ def main() -> int:
     print(f"  windows: {n_windows}")
     print(f"  window_size: {window_size}")
     print(f"  channels: {n_channels}")
-    print(f"  dataset dir: {config.data.directory}")
+    print(f"  dataset dir: {config.dataset.params.directory}")
     print(f"  max_windows: {max_windows}")
     print("")
     print("Uniform[0,5] reference")
