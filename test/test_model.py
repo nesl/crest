@@ -854,6 +854,35 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         self.assertEqual(request.window_size, 32)
         self.assertEqual(request.input_dim, 3)
 
+    def test_build_request_accepts_plain_dict_config_and_runtime_metadata(self) -> None:
+        # Request construction should accept plain dict payloads, not just addict.Dict wrappers.
+        config = {
+            "training": {"energy_aware": False, "latency_proxy_max_flops": 20_000_000},
+            "device": {"hil": True, "name": "ARDUINO_NANO_33_BLE_SENSE", "serial_port": "ttyACM0"},
+            "dataset": {"params": {"window_size": 128}},
+            "outputs": {"tcn_dir": Path("tinyodom_tcn")},
+        }
+        runtime_metadata = {"flops": 123.0, "input_dim": 6}
+
+        request = self._build_request(config, runtime_metadata, device_options={})
+
+        self.assertEqual(request.window_size, 128)
+        self.assertEqual(request.input_dim, 6)
+        self.assertEqual(request.flops, 123.0)
+
+    def test_build_request_raises_value_error_for_missing_runtime_input_dim(self) -> None:
+        # Missing runtime input_dim should surface as ValueError instead of leaking AttributeError.
+        config = Dict(
+            training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
+            device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
+            dataset=Dict(params=Dict(window_size=128)),
+            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+        )
+        runtime_metadata = Dict(flops=123.0)
+
+        with self.assertRaisesRegex(ValueError, "input_dim"):
+            self._build_request(config, runtime_metadata, device_options={})
+
     def test_build_request_defaults_stm_serial_timeout(self) -> None:
         # STM32 requests should fall back to the backend minimum serial timeout so short configs cannot under-budget board bring-up.
         config = Dict(

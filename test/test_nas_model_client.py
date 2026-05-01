@@ -353,6 +353,23 @@ class InitializationTests(unittest.TestCase):
         self.assertEqual(selection["model_config"]["params"].width, 8)
         self.assertEqual(selection["model_config"]["search"].depth, [2, 3])
 
+    def test_resolve_component_selection_accepts_null_optional_component_param_blocks(self) -> None:
+        # Optional component-local config blocks should treat explicit null the same as omission.
+        client = _build_test_client()
+        client.config.dataset = SimpleNamespace(name="custom_dataset", params=Dict(root="custom"))
+        client.config.task = SimpleNamespace(name="custom_task", params=None)
+        client.config.model = SimpleNamespace(
+            family="custom_family",
+            params=None,
+            search=None,
+        )
+
+        selection = client._resolve_component_selection(client.config)
+
+        self.assertEqual(selection["task_config"], Dict())
+        self.assertEqual(selection["model_config"]["params"], Dict())
+        self.assertEqual(selection["model_config"]["search"], Dict())
+
     def test_init_reuses_preliminary_bundle_when_dataset_selection_matches(self) -> None:
         # Initialization should reuse a matching preliminary bundle so repeated setup does not reload the same dataset.
         base = Path(tempfile.mkdtemp())

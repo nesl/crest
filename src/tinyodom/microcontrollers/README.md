@@ -628,7 +628,7 @@ Important current test files include:
 2. `test/test_model.py`
 3. `test/test_hil_server.py`
 4. `test/test_nas_model_client.py`
-5. `test/test_phase2_components.py`
+5. `test/test_odometry_tcn.py`
 6. `test/test_stm32_backend.py`
 7. `test/test_stm32_runtime.py`
 8. `test/integration/test_hardware_integration.py`

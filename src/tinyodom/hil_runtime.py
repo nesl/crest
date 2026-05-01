@@ -264,10 +264,12 @@ def build_collect_metrics_request(
             return getter(key, default)
         return getattr(container, key, default)
 
-    effective_energy_aware = bool(config.training.energy_aware) if energy_aware is None else bool(energy_aware)
+    training_config = _cfg_get(config, "training", Dict())
+    device_config = _cfg_get(config, "device", Dict())
+    effective_energy_aware = bool(_cfg_get(training_config, "energy_aware", False)) if energy_aware is None else bool(energy_aware)
     harness = None
-    normalized_device_name = str(config.device.name).strip().upper()
-    effective_hil_enabled = bool(config.device.hil) if hil_enabled is None else bool(hil_enabled)
+    normalized_device_name = str(_cfg_get(device_config, "name", "")).strip().upper()
+    effective_hil_enabled = bool(_cfg_get(device_config, "hil", False)) if hil_enabled is None else bool(hil_enabled)
     request_device_options = {} if device_options is None else dict(device_options)
     request_device_options["latency_budget_ms"] = float(latency_budget_ms)
 
@@ -278,7 +280,7 @@ def build_collect_metrics_request(
         try:
             runtime_device = get_microcontroller_device(
                 normalized_device_name,
-                serial_port=_cfg_get(config.device, "serial_port", None),
+                serial_port=_cfg_get(device_config, "serial_port", None),
                 device_options=request_device_options,
             )
         except ValueError:
@@ -291,33 +293,33 @@ def build_collect_metrics_request(
     # Some boards still require the harness even for non-energy runs because
     # their runtime telemetry is only reliable through the harness path.
     if effective_energy_aware or runtime_mode == "harness_only":
-        harness_serial_port = _cfg_get(config.device, "harness_serial_port", None)
+        harness_serial_port = _cfg_get(device_config, "harness_serial_port", None)
         if not harness_serial_port:
             raise RuntimeError(
                 "Set device.harness_serial_port when runtime measurement requires the harness."
             )
         harness = HarnessConfig(
             harness_serial_port=harness_serial_port,
-            harness_fqbn=_cfg_get(config.device, "harness_fqbn", None),
-            harness_auto_flash=_cfg_get(config.device, "harness_auto_flash", None),
-            harness_arm_pin=_cfg_get(config.device, "harness_arm_pin", None),
-            harness_trigger_pin=_cfg_get(config.device, "harness_trigger_pin", None),
-            dut_arm_hold_ms=_cfg_get(config.device, "dut_arm_hold_ms", None),
-            harness_stable_low_ms=_cfg_get(config.device, "harness_stable_low_ms", None),
-            harness_ready_timeout_s=_cfg_get(config.device, "harness_ready_timeout_s", None),
-            harness_arm_timeout_s=_cfg_get(config.device, "harness_arm_timeout_s", None),
-            harness_active_timeout_s=_cfg_get(config.device, "harness_active_timeout_s", None),
-            harness_done_timeout_s=_cfg_get(config.device, "harness_done_timeout_s", None),
+            harness_fqbn=_cfg_get(device_config, "harness_fqbn", None),
+            harness_auto_flash=_cfg_get(device_config, "harness_auto_flash", None),
+            harness_arm_pin=_cfg_get(device_config, "harness_arm_pin", None),
+            harness_trigger_pin=_cfg_get(device_config, "harness_trigger_pin", None),
+            dut_arm_hold_ms=_cfg_get(device_config, "dut_arm_hold_ms", None),
+            harness_stable_low_ms=_cfg_get(device_config, "harness_stable_low_ms", None),
+            harness_ready_timeout_s=_cfg_get(device_config, "harness_ready_timeout_s", None),
+            harness_arm_timeout_s=_cfg_get(device_config, "harness_arm_timeout_s", None),
+            harness_active_timeout_s=_cfg_get(device_config, "harness_active_timeout_s", None),
+            harness_done_timeout_s=_cfg_get(device_config, "harness_done_timeout_s", None),
         )
 
-    dut_ready_timeout = _cfg_get(config.device, "dut_ready_timeout_s", 5.0)
+    dut_ready_timeout = _cfg_get(device_config, "dut_ready_timeout_s", 5.0)
     if dut_ready_timeout is None:
         dut_ready_timeout = 5.0
-    measured_inference_runs = int(_cfg_get(config.device, "measured_inference_runs", 10))
-    serial_timeout = _cfg_get(config.device, "serial_timeout_s", 12.0)
+    measured_inference_runs = int(_cfg_get(device_config, "measured_inference_runs", 10))
+    serial_timeout = _cfg_get(device_config, "serial_timeout_s", 12.0)
     if serial_timeout is None:
         serial_timeout = 12.0
-    configured_runtime_mode = _cfg_get(config.device, "runtime_mode", "back_to_back")
+    configured_runtime_mode = _cfg_get(device_config, "runtime_mode", "back_to_back")
     if effective_hil_enabled and normalized_device_name == "STM32_NUCLEO_N657X0_Q":
         # STM32 bring-up has a nontrivial floor even when the config asks for a
         # shorter timeout, so clamp to the backend-owned minimum here.
@@ -332,22 +334,38 @@ def build_collect_metrics_request(
 
     resolved_window_size = window_size
     if resolved_window_size is None:
-        resolved_window_size = _cfg_get(_cfg_get(config, "dataset", Dict()).params, "window_size", None)
+        dataset_config = _cfg_get(config, "dataset", Dict())
+        dataset_params = _cfg_get(dataset_config, "params", Dict())
+        resolved_window_size = _cfg_get(dataset_params, "window_size", None)
     if resolved_window_size is None:
         raise ValueError("build_collect_metrics_request requires an explicit window_size or dataset.params.window_size.")
 
-    resolved_input_dim = int(runtime_metadata.input_dim) if input_dim is None else int(input_dim)
+    raw_input_dim = _cfg_get(runtime_metadata, "input_dim", None) if input_dim is None else input_dim
+    try:
+        resolved_input_dim = int(raw_input_dim)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "build_collect_metrics_request requires runtime_metadata.input_dim to be present and integer-like."
+        ) from exc
+
+    raw_flops = _cfg_get(runtime_metadata, "flops", None)
+    try:
+        resolved_flops = float(raw_flops)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "build_collect_metrics_request requires runtime_metadata.flops to be present and numeric."
+        ) from exc
 
     return CollectMetricsRequest(
         hil_enabled=effective_hil_enabled,
         energy_aware=effective_energy_aware,
-        flops=float(runtime_metadata.flops),
+        flops=resolved_flops,
         device_name=normalized_device_name,
         window_size=int(resolved_window_size),
         input_dim=resolved_input_dim,
         dirpath=Path(dirpath).resolve(),
-        latency_proxy_max_flops=config.training.latency_proxy_max_flops,
-        serial_port=_cfg_get(config.device, "serial_port", None),
+        latency_proxy_max_flops=_cfg_get(training_config, "latency_proxy_max_flops", None),
+        serial_port=_cfg_get(device_config, "serial_port", None),
         latency_budget_ms=latency_budget_ms,
         dut_ready_timeout_s=float(dut_ready_timeout),
         serial_timeout_s=float(serial_timeout),

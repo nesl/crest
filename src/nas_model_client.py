@@ -826,9 +826,6 @@ class NASModelClient:
         )
         self.task.validate_model_outputs(model, self.target_spec)
         self.task.compile_model(model, self.task_config, self.target_spec)
-        logical_input_shape = require_logical_input_shape(
-            None if self.model_build_context is None else self.model_build_context.input_shape
-        )
         flops = self.model_family.count_flops(
             model,
             self.model_build_context,

@@ -283,6 +283,45 @@ class OdometryRegressionTaskTests(unittest.TestCase):
             [("velx_loss", "val_velx_loss"), ("vely_loss", "val_vely_loss")],
         )
 
+    def test_generate_closeout_artifacts_restores_odometry_trajectory_outputs(self) -> None:
+        # The built-in odometry task should still emit trajectory metrics and plots during closeout.
+        length = 4
+        vx = np.full((length, 1), 0.5, dtype=np.float32)
+        vy = np.full((length, 1), 0.5, dtype=np.float32)
+        test_split = DataSplit(
+            inputs=np.zeros((length, 4, 10), dtype=np.float32),
+            targets={"velx": vx, "vely": vy},
+            metadata={
+                "size_of_each": [length],
+                "x0": [0.0],
+                "y0": [0.0],
+            },
+        )
+        bundle = DatasetBundle(
+            train=self.train_split,
+            val=self.val_split,
+            test=test_split,
+            input_shape=(4, 10),
+            metadata={"sampling_rate_hz": 100, "window_size": 2, "stride": 1},
+        )
+
+        class FakeModel:
+            def predict(self, _inputs):
+                return [vx, vy]
+
+        artifacts = self.task.generate_closeout_artifacts(
+            FakeModel(),
+            bundle,
+            {},
+            self.target_spec,
+            output_dir=Path(self.tempdir.name) / "closeout",
+        )
+
+        self.assertAlmostEqual(artifacts["ate_mean"], 0.0)
+        self.assertTrue(Path(artifacts["trajectory_metrics_path"]).is_file())
+        self.assertEqual(len(artifacts["plots"]), 1)
+        self.assertTrue(Path(artifacts["plots"][0]).is_file())
+
     def test_evaluate_uses_legacy_prediction_ordering(self) -> None:
         # Task evaluation should preserve the legacy prediction ordering used by downstream odometry metrics.
         model = MagicMock()

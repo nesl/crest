@@ -254,7 +254,7 @@ class TaskABC(ABC):
         target_spec: TargetSpec,
         *,
         output_dir: Path,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Generate optional task-owned closeout artifacts after final training.
 
         Parameters
@@ -272,8 +272,9 @@ class TaskABC(ABC):
 
         Returns
         -------
-        dict[str, str]
-            Mapping of artifact labels to written paths. The default
+        dict[str, Any]
+            Structured task-owned closeout payload. Tasks may return paths,
+            metrics, or small JSON-serializable summaries. The default
             implementation returns an empty mapping so tasks opt into extra
             closeout artifacts explicitly.
         """

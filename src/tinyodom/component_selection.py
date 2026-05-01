@@ -160,17 +160,23 @@ def resolve_component_selection(config: Any) -> dict[str, Any]:
     # `task.params`, `model.params`, and `model.search` stay optional, but once
     # the component blocks exist they are treated as native modular config
     # payloads instead of compatibility wrappers.
-    task_params = _normalize_mapping_like(
-        cfg_get(task_block, "params", Dict()),
-        field_name="task.params",
+    task_params_raw = cfg_get(task_block, "params", None)
+    model_params_raw = cfg_get(model_block, "params", None)
+    model_search_raw = cfg_get(model_block, "search", None)
+    task_params = (
+        Dict()
+        if task_params_raw is None
+        else _normalize_mapping_like(task_params_raw, field_name="task.params")
     )
-    model_params = _normalize_mapping_like(
-        cfg_get(model_block, "params", Dict()),
-        field_name="model.params",
+    model_params = (
+        Dict()
+        if model_params_raw is None
+        else _normalize_mapping_like(model_params_raw, field_name="model.params")
     )
-    model_search = _normalize_mapping_like(
-        cfg_get(model_block, "search", Dict()),
-        field_name="model.search",
+    model_search = (
+        Dict()
+        if model_search_raw is None
+        else _normalize_mapping_like(model_search_raw, field_name="model.search")
     )
     return {
         "dataset_name": _require_string(dataset_block, "name", block_name="dataset"),
