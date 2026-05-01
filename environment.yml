@@ -13,6 +13,7 @@ dependencies:
   - ipywidgets          # interactive widgets in notebooks (optional but lightweight)
   - pytest              # ensure test runner shares interpreter with installed deps
   - pyserial==3.5       # serial communication with microcontroller
+  - libsndfile=1.2.2    # exact native audio backend for pip-pinned soundfile
   - pip
   - pip:
       # TinyML / HPO stack
@@ -29,3 +30,6 @@ dependencies:
       - giotto-tda==0.6.2         # SlidingWindow in src/data_utils_ex.py
       - numpy-quaternion==2024.0.12
       - pydometer==2019.2.8
+      - soundata==1.0.1
+      - librosa==0.11.0
+      - soundfile==0.13.1

@@ -1,8 +1,9 @@
-.PHONY: help install test integration-test test-all start-gpu start-hil smoke env-create arduino-setup stm32-setup prepare-dataset clean
+.PHONY: help install test integration-test test-all start-gpu start-hil smoke env-create arduino-setup stm32-setup prepare-dataset prepare-audio-dataset clean
 
 PYTHON ?= python
 ENV ?= tinyodomex
 OXIOD_ZIP ?= OxIOD.zip
+URBANSOUND8K_ARGS ?=
 
 help:
 	@echo "Targets:"
@@ -17,6 +18,7 @@ help:
 	@echo "  arduino-setup  Run Arduino CLI bootstrapper"
 	@echo "  stm32-setup    Validate STM32CubeCLT paths and bootstrap STM32CubeN6 firmware"
 	@echo "  prepare-dataset  Prepare OxIOD dataset (override OXIOD_ZIP=/path/to/OxIOD.zip)"
+	@echo "  prepare-audio-dataset  Prepare UrbanSound8K log-mel cache (override URBANSOUND8K_ARGS)"
 	@echo "  clean          Remove Python cache/build artifacts"
 
 install:
@@ -51,6 +53,9 @@ stm32-setup:
 
 prepare-dataset:
 	$(PYTHON) data/dataset_download_and_splits/oxiod/prepare_oxiod.py --zip-path $(OXIOD_ZIP)
+
+prepare-audio-dataset:
+	$(PYTHON) data/dataset_download_and_splits/urbansound8k/prepare_urbansound8k.py $(URBANSOUND8K_ARGS)
 
 clean:
 	rm -rf build dist *.egg-info

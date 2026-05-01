@@ -54,6 +54,7 @@ models/
 model
 
 # Data artifacts
+data/urbansound8k/
 *.csv
 *.db
 *.gif

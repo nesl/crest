@@ -1,4 +1,42 @@
-# OxIOD Dataset Preparation
+# Dataset Preparation
+
+## UrbanSound8K Audio Cache
+
+UrbanSound8K is used for the first audio backend path. The dataset license is
+non-commercial/by-nc; automatic download requires an explicit license
+acknowledgement.
+
+Plan for about 5.6 GB of local data for the UrbanSound8K download and generated
+cache artifacts.
+
+Generated UrbanSound8K files are local-only and ignored by git:
+
+- Raw/downloaded audio: `data/urbansound8k/raw/`
+- Cached features: `data/urbansound8k/cache/v1_logmel_16k_2s_64mels_25ms_10ms/`
+
+To validate an existing local soundata copy and build the deterministic log-mel
+cache:
+
+```bash
+make prepare-audio-dataset
+```
+
+To download through soundata first:
+
+```bash
+make prepare-audio-dataset URBANSOUND8K_ARGS="--download --accept-license"
+```
+
+The audio preparation script writes `metadata.json`, `train.npz`, `val.npz`,
+`test.npz`, and `calibration.npz`. The cache schema, feature parameters, crop
+policy, normalization, class ordering, and calibration selection are defined in
+[`audio_backend_p0_5_contract.md`](../../audio_backend_p0_5_contract.md).
+
+The script lives at:
+
+- `data/dataset_download_and_splits/urbansound8k/prepare_urbansound8k.py`
+
+## OxIOD Dataset Preparation
 
 Download the OxIOD "Complete Dataset" zip from `http://deepio.cs.ox.ac.uk/`,
 rename it to `OxIOD.zip`, then run the preparation step from the repo root:
