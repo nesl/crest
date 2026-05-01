@@ -50,7 +50,7 @@ stm32-setup:
 	bash ./setup_stm32.sh
 
 prepare-dataset:
-	$(PYTHON) data/dataset_download_and_splits/prepare_oxiod.py --zip-path $(OXIOD_ZIP)
+	$(PYTHON) data/dataset_download_and_splits/oxiod/prepare_oxiod.py --zip-path $(OXIOD_ZIP)
 
 clean:
 	rm -rf build dist *.egg-info

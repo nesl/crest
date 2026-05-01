@@ -7,7 +7,7 @@ and model-family implementations that ship with TinyODOM.
 from __future__ import annotations
 
 from .datasets.oxiod import OxIODDataset
-from .model_families.tinyodom_tcn import TinyOdomTCNFamily
+from .model_families.odom_tcn import OdomTCNFamily
 from .registry import dataset_registry, model_family_registry, task_registry
 from .tasks.odometry_regression import OdometryRegressionTask
 
@@ -27,5 +27,5 @@ def ensure_builtin_components_registered() -> None:
         dataset_registry.register("oxiod", OxIODDataset)
     if "odometry_regression" not in task_registry:
         task_registry.register("odometry_regression", OdometryRegressionTask)
-    if "tinyodom_tcn" not in model_family_registry:
-        model_family_registry.register("tinyodom_tcn", TinyOdomTCNFamily)
+    if "odom_tcn" not in model_family_registry:
+        model_family_registry.register("odom_tcn", OdomTCNFamily)

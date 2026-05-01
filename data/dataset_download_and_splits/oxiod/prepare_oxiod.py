@@ -5,9 +5,10 @@ Unzip the OxIOD archive and restore the curated split text files.
 Workflow:
 1. Place the OxIOD download zipfile at --zip-path.
 2. Keep the hand-authored split files that are git tracked under data/oxiod/<activity>.
-3. Run `python data/dataset_download_and_splits/prepare_oxiod.py` after cloning; it wipes data/oxiod,
-   extracts the archive, fixes folder names ("slow walking" -> "slow_walking"),
-   and writes the tracked split text files back into each activity folder.
+3. Run `python data/dataset_download_and_splits/oxiod/prepare_oxiod.py`
+   after cloning; it wipes data/oxiod, extracts the archive, fixes folder
+   names ("slow walking" -> "slow_walking"), and writes the tracked split text
+   files back into each activity folder.
 """
 
 from __future__ import annotations

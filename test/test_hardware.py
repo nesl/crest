@@ -1,6 +1,7 @@
 """Unit tests for hardware conversion and HIL helper utilities."""
 
 import json
+import inspect
 import os
 import re
 import shutil
@@ -105,7 +106,7 @@ COMPILE_SAMPLE_OUTPUT = (
 FLASH_OVERFLOW_STDERR = (
     "/home/m202/TinyODOMEx/TinyODOM-EX/tools/arduino-data/packages/arduino/tools/arm-none-eabi-gcc/"
     "7-2017q4/bin/../lib/gcc/arm-none-eabi/7.2.1/../../../../arm-none-eabi/bin/ld: "
-    "/tmp/tmplhhgug0i/arduino-build/tinyodom_tcn.ino.elf section `.text' will not fit in region `FLASH'\n"
+    "/tmp/tmplhhgug0i/arduino-build/odom_tcn.ino.elf section `.text' will not fit in region `FLASH'\n"
     "/home/m202/TinyODOMEx/TinyODOM-EX/tools/arduino-data/packages/arduino/tools/arm-none-eabi-gcc/"
     "7-2017q4/bin/../lib/gcc/arm-none-eabi/7.2.1/../../../../arm-none-eabi/bin/ld: "
     "region `FLASH' overflowed by 3814108 bytes\n"
@@ -662,7 +663,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
     def test_resolve_build_dir_hash_includes_board_options(self):
         # Build-directory hashing should include board options so distinct Portenta layouts do not reuse one cache entry.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketch_dir = Path(tmpdir) / "tinyodom_tcn"
+            sketch_dir = Path(tmpdir) / "odom_tcn"
             sketch_dir.mkdir()
             cm7_build_dir = _resolve_build_dir(
                 sketch_dir,
@@ -681,7 +682,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
     def test_compile_sketch_includes_board_options(self):
         # Sketch compilation should forward board options so generated binaries match the selected board layout.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketch_dir = Path(tmpdir) / "tinyodom_tcn"
+            sketch_dir = Path(tmpdir) / "odom_tcn"
             sketch_dir.mkdir()
             compile_result = _FakeCompletedProcess(
                 returncode=0,
@@ -714,7 +715,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
     def test_upload_sketch_includes_board_options(self):
         # Sketch upload should forward board options so the right core and split receive the firmware.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketch_dir = Path(tmpdir) / "tinyodom_tcn"
+            sketch_dir = Path(tmpdir) / "odom_tcn"
             sketch_dir.mkdir()
             build_dir = sketch_dir / ".arduino-build" / "arduino_mbed_portenta_envie_m7"
             build_dir.mkdir(parents=True, exist_ok=True)
@@ -743,7 +744,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
     def test_compile_sketch_leaves_memory_unknown_without_summary_or_recipe(self):
         # When Arduino build output lacks a size summary, memory accounting should stay unknown instead of inventing values.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketch_dir = Path(tmpdir) / "tinyodom_tcn"
+            sketch_dir = Path(tmpdir) / "odom_tcn"
             sketch_dir.mkdir()
             compile_result = _FakeCompletedProcess(returncode=0, stdout="compile ok", stderr="")
             with patch(
@@ -866,7 +867,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
     def test_compile_sketch_uses_size_recipe_when_summary_missing(self):
         # Size-recipe parsing should backfill memory accounting when the standard summary block is absent.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketch_dir = Path(tmpdir) / "tinyodom_tcn"
+            sketch_dir = Path(tmpdir) / "odom_tcn"
             sketch_dir.mkdir()
             compile_result = _FakeCompletedProcess(returncode=0, stdout="compile ok", stderr="")
             with patch(
@@ -1877,6 +1878,18 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
 
 
 class HILSpecErrorTests(unittest.TestCase):
+    def test_hil_spec_default_dirpath_uses_odom_candidate_dir(self):
+        """HIL_spec should default to the renamed odom_tcn candidate directory."""
+        signature = inspect.signature(HIL_spec)
+
+        self.assertEqual(signature.parameters["dirpath"].default, "odom_tcn/")
+
+    def test_hil_controller_default_dirpath_uses_odom_candidate_dir(self):
+        """HIL_controller should default to the renamed odom_tcn candidate directory."""
+        signature = inspect.signature(HIL_controller)
+
+        self.assertEqual(signature.parameters["dirpath"].default, "odom_tcn/")
+
     def _write_sketch(self, sketch_dir: Path) -> None:
         sketch_dir.mkdir(parents=True, exist_ok=True)
         (sketch_dir / "TinyOdom.ino").write_text(
@@ -2342,7 +2355,7 @@ class IntegrationTests(TinyModelMixin, unittest.TestCase):
             self.assertTrue((cpp_dir / "model.cc").exists())
             self.assertTrue((cpp_dir / "model.h").exists())
 
-            sketch_dir = tmp_path / "tinyodom_tcn"
+            sketch_dir = tmp_path / "odom_tcn"
             sketch_dir.mkdir()
             (sketch_dir / "TinyOdom.ino").write_text(
                 "\n".join(

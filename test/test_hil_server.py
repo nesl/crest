@@ -208,7 +208,7 @@ class HILServerTestCase(unittest.TestCase):
             ),
             outputs=SimpleNamespace(
                 tflite_model_path=Path("model.tflite"),
-                tcn_dir=Path("tinyodom_tcn"),
+                candidate_dir=Path("odom_tcn"),
                 checkpoint_path=Path("checkpoint.keras"),
             ),
             dataset=SimpleNamespace(
@@ -223,7 +223,7 @@ class HILServerTestCase(unittest.TestCase):
                 ),
             ),
             task=SimpleNamespace(name="odometry_regression", params=Dict()),
-            model=SimpleNamespace(family="tinyodom_tcn", params=Dict(), search=Dict()),
+            model=SimpleNamespace(family="odom_tcn", params=Dict(), search=Dict()),
             nas=Dict(
                 score=Dict(
                     type="scoring-function",
@@ -306,7 +306,7 @@ class HILServerTestCase(unittest.TestCase):
             already been replaced with lightweight doubles.
         """
         server = HILServer()
-        server._sync_sketch_variant = MagicMock(return_value=Path("tinyodom_tcn/tinyodom_tcn.ino"))
+        server._sync_sketch_variant = MagicMock(return_value=Path("odom_tcn/odom_tcn.ino"))
         return server
 
     @staticmethod
@@ -368,7 +368,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
         fake_metrics = {"ram_bytes": 1024}
 
         with patch("hil_server.resolve_device_options", return_value=None), patch(
@@ -402,7 +402,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
@@ -417,7 +417,7 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertEqual(request.flops, 999)
         self.assertEqual(request.input_dim, 6)
         self.assertEqual(request.device_name, self.config.device.name)
-        self.assertEqual(request.dirpath, self.config.outputs.tcn_dir.resolve())
+        self.assertEqual(request.dirpath, self.config.outputs.candidate_dir.resolve())
         self.assertAlmostEqual(
             request.latency_budget_ms,
             (self.config.dataset.params.stride / self.config.dataset.params.sampling_rate_hz) * 1000,
@@ -431,7 +431,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
@@ -530,7 +530,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
         fake_device.supports_energy_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
         fake_device.evaluate.return_value = SimpleNamespace(
             error_code=HIL_ERROR_OK,
             power_metrics={"energy_mj_per_inference": 1.5},
@@ -576,7 +576,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
         fake_device.supports_energy_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
         fake_device.evaluate.return_value = SimpleNamespace(
             error_code=HIL_ERROR_OK,
             latency_s=0.2,
@@ -612,7 +612,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
         fake_metrics = {"ram_bytes": 1024, "clock_hz": 400000000.0}
 
         with patch("hil_server.resolve_device_options", return_value={"cpu_clock_mhz": 600}), patch(
@@ -638,7 +638,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         with patch("hil_server.resolve_device_options", return_value={"cpu_clock_mhz": 600}), patch(
             "hil_server.get_microcontroller_device",
@@ -765,7 +765,7 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(FakeDataset.load_calls, [])
         self.assertEqual(server.dataset_name, "oxiod")
         self.assertEqual(server.task_name, "odometry_regression")
-        self.assertEqual(server.model_family_name, "tinyodom_tcn")
+        self.assertEqual(server.model_family_name, "odom_tcn")
         self.assertEqual(server.model_config["params"], Dict())
         self.assertEqual(server.model_config["search"], Dict())
 
@@ -803,7 +803,7 @@ class InitializationTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         self.assertEqual(FakeDataset.calibration_calls, [])
 
@@ -825,7 +825,7 @@ class InitializationTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
@@ -863,7 +863,7 @@ class InitializationTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
@@ -941,7 +941,7 @@ class InitializationTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
@@ -1078,7 +1078,7 @@ class InitializationTests(HILServerTestCase):
             arduino_server.active_sketch_path = None
             arduino_prepared_dir = tmp_path / "arduino"
             arduino_prepared_dir.mkdir()
-            expected_sketch = arduino_prepared_dir / "tinyodom_tcn.ino"
+            expected_sketch = arduino_prepared_dir / "odom_tcn.ino"
             expected_sketch.write_text("// staged sketch\n", encoding="utf-8")
 
             fake_arduino_device = MagicMock()
@@ -1194,7 +1194,7 @@ class InitializationTests(HILServerTestCase):
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
         fake_device.supports_energy_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
@@ -1212,7 +1212,7 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(metrics["error_code"], hil_server_module.HIL_MASTER_FATAL)
         self.assertEqual(metrics["backend_error_kind"], "config")
         self.assertIn("device.harness_serial_port", metrics["backend_error_detail"])
-        fake_device.cleanup_prepared_candidate.assert_called_once_with(self.config.outputs.tcn_dir)
+        fake_device.cleanup_prepared_candidate.assert_called_once_with(self.config.outputs.candidate_dir)
 
     def test_set_input_mode_delegates_to_backend_for_stm_phase1(self) -> None:
         """Ensure STM servers delegate input-mode changes to the backend.
@@ -1243,7 +1243,7 @@ class SketchVariantTests(unittest.TestCase):
     def _build_server(
         self,
         sketches_dir: Path,
-        tcn_dir: Path,
+        candidate_dir: Path,
         energy_aware: bool,
         input_mode: str,
         *,
@@ -1256,7 +1256,7 @@ class SketchVariantTests(unittest.TestCase):
         ----------
         sketches_dir : Path
             Root sketches directory used by the selector under test.
-        tcn_dir : Path
+        candidate_dir : Path
             Active output sketch directory.
         energy_aware : bool
             Whether energy-aware sketch variants should be selected.
@@ -1278,7 +1278,7 @@ class SketchVariantTests(unittest.TestCase):
         )
         server.config = SimpleNamespace(
             training=SimpleNamespace(energy_aware=energy_aware, input_mode=input_mode),
-            outputs=SimpleNamespace(tcn_dir=tcn_dir),
+            outputs=SimpleNamespace(candidate_dir=candidate_dir),
             device=SimpleNamespace(name=device_name, portenta=portenta_cfg),
         )
         server.sketch_variants_dir = sketches_dir
@@ -1293,9 +1293,9 @@ class SketchVariantTests(unittest.TestCase):
         # Uniform energy runs should pick the energy-enabled sketch variant so the DUT exports the expected telemetry.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform_shared")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="uniform")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server._sync_sketch_variant()
 
@@ -1306,9 +1306,9 @@ class SketchVariantTests(unittest.TestCase):
         # Cadenced energy runs must switch to the cadenced uniform sketch so the harness and DUT share the same timing protocol.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(sketches / "tinyodom_tcn_energy_cadenced.ino", "cadenced_shared")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="uniform")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server.set_input_mode("uniform", runtime_phase="cadenced")
 
@@ -1319,11 +1319,11 @@ class SketchVariantTests(unittest.TestCase):
         # Uniform energy runs should pick the energy-enabled sketch variant so the DUT exports the expected telemetry.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform_shared_cm7")
             server = self._build_server(
                 sketches,
-                tcn_dir,
+                candidate_dir,
                 energy_aware=True,
                 input_mode="uniform",
                 device_name="PORTENTA_H7",
@@ -1339,11 +1339,11 @@ class SketchVariantTests(unittest.TestCase):
         # Portenta CM4 uniform runs without energy measurement should select the no-energy sketch variant.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(sketches / "tinyodom_tcn_no_energy.ino", "no_energy_shared_cm4")
             server = self._build_server(
                 sketches,
-                tcn_dir,
+                candidate_dir,
                 energy_aware=False,
                 input_mode="uniform",
                 device_name="PORTENTA_H7",
@@ -1359,50 +1359,50 @@ class SketchVariantTests(unittest.TestCase):
         # Representative input-mode runs should switch sketches and copy the generated header that drives the sample payload.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
                 sketches / "analysis_sketches/tinyodom_tcn_energy_representative.ino",
                 "representative",
             )
             header = sketches / "analysis_sketches/tinyodom_tcn_input_data.h"
             header.write_text("// header\n")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="representative")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="representative")
 
             out_path = server._sync_sketch_variant()
 
             self.assertTrue(out_path.exists())
             self.assertIn("representative", out_path.read_text())
-            self.assertTrue((tcn_dir / header.name).exists())
+            self.assertTrue((candidate_dir / header.name).exists())
 
     def test_selects_real_variant_and_copies_header(self) -> None:
         # Real-input runs should stage the real-data sketch and copy the matching generated header.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
                 sketches / "analysis_sketches/tinyodom_tcn_energy_real_data.ino",
                 "real",
             )
             header = sketches / "analysis_sketches/tinyodom_tcn_input_data.h"
             header.write_text("// header\n")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="real")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="real")
 
             out_path = server._sync_sketch_variant()
 
             self.assertTrue(out_path.exists())
             self.assertIn("real", out_path.read_text())
-            self.assertTrue((tcn_dir / header.name).exists())
+            self.assertTrue((candidate_dir / header.name).exists())
 
     def test_missing_header_raises_for_representative(self) -> None:
         # Representative-mode staging should fail fast if the generated header is missing.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
                 sketches / "analysis_sketches/tinyodom_tcn_energy_representative.ino",
                 "representative",
             )
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="representative")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="representative")
 
             with self.assertRaises(FileNotFoundError):
                 server._sync_sketch_variant()
@@ -1411,8 +1411,8 @@ class SketchVariantTests(unittest.TestCase):
         # Unknown input modes should fail before sketch selection can stage the wrong artifact.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="bad_mode")
+            candidate_dir = Path(tmpdir) / "odom_tcn"
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="bad_mode")
 
             with self.assertRaises(ValueError):
                 server._sync_sketch_variant()
@@ -1421,14 +1421,14 @@ class SketchVariantTests(unittest.TestCase):
         # Cadenced runtime mode should reject non-uniform input modes because the timing harness expects fixed windows.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
                 sketches / "analysis_sketches/tinyodom_tcn_energy_representative.ino",
                 "representative",
             )
             header = sketches / "analysis_sketches/tinyodom_tcn_input_data.h"
             header.write_text("// header\n")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="representative")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="representative")
 
             with self.assertRaises(ValueError):
                 server.set_input_mode("representative", runtime_phase="cadenced")
@@ -1437,10 +1437,10 @@ class SketchVariantTests(unittest.TestCase):
         # Uniform Portenta sketch selection needs an explicit target core so the server does not guess between CM4 and CM7.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             server = self._build_server(
                 sketches,
-                tcn_dir,
+                candidate_dir,
                 energy_aware=True,
                 input_mode="uniform",
                 device_name="PORTENTA_H7",
@@ -1454,9 +1454,9 @@ class SketchVariantTests(unittest.TestCase):
         # Turning off energy awareness should switch to the no-energy sketch variant to avoid unnecessary harness instrumentation.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(sketches / "tinyodom_tcn_no_energy.ino", "no_energy_shared")
-            server = self._build_server(sketches, tcn_dir, energy_aware=False, input_mode="uniform")
+            server = self._build_server(sketches, candidate_dir, energy_aware=False, input_mode="uniform")
 
             out_path = server._sync_sketch_variant()
 
@@ -1467,9 +1467,9 @@ class SketchVariantTests(unittest.TestCase):
         # Input-mode switching should update both the active config and the selected sketch path together.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform_shared")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="uniform")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server.set_input_mode("uniform")
 

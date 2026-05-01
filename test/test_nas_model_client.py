@@ -207,7 +207,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
         outputs=SimpleNamespace(
             log_file_name="test_log.csv",
             tflite_model_path=base_dir / "model.tflite",
-            tcn_dir=base_dir / "tinyodom_tcn",
+            candidate_dir=base_dir / "odom_tcn",
             models_dir=base_dir / "models",
             checkpoint_path=base_dir / "model.keras",
         ),
@@ -221,7 +221,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
             ),
         ),
         task=SimpleNamespace(name="odometry_regression", params=Dict()),
-        model=SimpleNamespace(family="tinyodom_tcn", params=Dict(), search=Dict()),
+        model=SimpleNamespace(family="odom_tcn", params=Dict(), search=Dict()),
     )
     client.config.outputs.models_dir.mkdir(parents=True, exist_ok=True)
     client.config_path = base_dir / "config.yaml"
@@ -230,7 +230,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     client.task = task
     client.task_name = "odometry_regression"
     client.model_family = model_family
-    client.model_family_name = "tinyodom_tcn"
+    client.model_family_name = "odom_tcn"
     client.dataset_bundle = bundle
     client.target_spec = target_spec
     client.metric_contract = metric_contract
@@ -243,7 +243,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     )
     client.dataset_config = client.config.dataset.params
     client.task_config = Dict()
-    client.model_config = Dict(family="tinyodom_tcn", params=Dict(), search=Dict())
+    client.model_config = Dict(family="odom_tcn", params=Dict(), search=Dict())
     # Mirror the production default study name so log_trial calls succeed.
     client.study_name = "default_study"
     # Stub the ZMQ context/socket to avoid opening real network resources.
@@ -387,7 +387,7 @@ class InitializationTests(unittest.TestCase):
                 params=Dict(directory="data", sampling_rate_hz=100, window_size=16, stride=1),
             ),
             task=SimpleNamespace(name="odometry_regression", params=Dict()),
-            model=SimpleNamespace(family="tinyodom_tcn", params=Dict(), search=Dict()),
+            model=SimpleNamespace(family="odom_tcn", params=Dict(), search=Dict()),
         )
         fake_bundle = DatasetBundle(
             train=DataSplit(inputs=np.zeros((1, 16, 3)), targets={"velx": np.zeros((1, 1)), "vely": np.zeros((1, 1))}),
@@ -420,10 +420,10 @@ class InitializationTests(unittest.TestCase):
             selection={
                 "dataset_name": "oxiod",
                 "task_name": "odometry_regression",
-                "model_family_name": "tinyodom_tcn",
+                "model_family_name": "odom_tcn",
                 "dataset_config": config.dataset.params,
                 "task_config": config.task.params,
-                "model_config": {"family": "tinyodom_tcn", "params": {}, "search": {}},
+                "model_config": {"family": "odom_tcn", "params": {}, "search": {}},
             },
             dataset=sentinel.dataset,
             task=fake_task,

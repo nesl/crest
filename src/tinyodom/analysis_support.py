@@ -11,7 +11,7 @@ from addict import Dict
 
 from .builtin_components import ensure_builtin_components_registered
 from .component_selection import resolve_component_selection
-from .model_families.tinyodom_tcn import TinyOdomTCNFamily
+from .model_families.odom_tcn import OdomTCNFamily
 from .pipeline_types import DatasetBundle, ModelBuildContext, TargetSpec
 from .registry import model_family_registry
 from .runtime_bootstrap import instantiate_task_component
@@ -82,7 +82,7 @@ def build_fixed_tinyodom_hyperparams(
 
     # Analysis scripts need a stable FLOP count without routing through the
     # old tinyodom.model helper module. Build and profile through the family.
-    family = TinyOdomTCNFamily()
+    family = OdomTCNFamily()
     ctx = ModelBuildContext(
         input_shape=(resolved_window_size, resolved_input_dim),
         input_dtype="float32",

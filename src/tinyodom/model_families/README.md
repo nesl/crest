@@ -19,7 +19,7 @@ The current key files for this layer are:
 - [`../pipeline_types.py`](../pipeline_types.py)
   `ModelBuildContext`, which is the normalized build-time input passed into a
   family.
-- [`tinyodom_tcn.py`](tinyodom_tcn.py)
+- [`odom_tcn.py`](odom_tcn.py)
   The only built-in concrete family today.
 - [`../registry.py`](../registry.py)
   `model_family_registry`, the runtime lookup table.
@@ -66,7 +66,7 @@ That boundary matters:
 
 ## Add A New Model Family
 
-Use [`tinyodom_tcn.py`](tinyodom_tcn.py) as the concrete example.
+Use [`odom_tcn.py`](odom_tcn.py) as the concrete example.
 
 1. Add a new module under [`.`](.).
 2. Implement a `ModelFamilyABC` subclass from
@@ -117,7 +117,7 @@ The default `ModelFamilyABC.materialize_export_model(...)` supports:
 - `untrained`
 - any variant whose name starts with `trained`
 
-[`tinyodom_tcn.py`](tinyodom_tcn.py) extends that to also handle:
+[`odom_tcn.py`](odom_tcn.py) extends that to also handle:
 
 - `approx_trained`
 - `representative`

@@ -230,7 +230,7 @@ Useful flags:
 ### 4. Outputs
 
 Artifacts are written under the configured `outputs.models_dir` and
-`outputs.tcn_dir`. Typical outputs include:
+`outputs.candidate_dir`. Typical outputs include:
 
 - `models/<study_name>/optuna.db`
 - `models/<study_name>/trials.csv`

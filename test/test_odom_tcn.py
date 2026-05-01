@@ -17,7 +17,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from tinyodom.datasets.oxiod import OxIODDataset  # noqa: E402
-from tinyodom.model_families.tinyodom_tcn import DILATION_CANDIDATES, TinyOdomTCNFamily  # noqa: E402
+from tinyodom.model_families.odom_tcn import DILATION_CANDIDATES, OdomTCNFamily  # noqa: E402
 from tinyodom.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext, TargetSpec  # noqa: E402
 from tinyodom.tasks.odometry_regression import OdometryRegressionTask  # noqa: E402
 
@@ -365,11 +365,11 @@ class _DummyTrial:
         raise AssertionError(f"Unexpected suggest_categorical call: {name}, {choices}")
 
 
-class TinyOdomTCNFamilyTests(unittest.TestCase):
-    """Validate the Phase 2 TinyODOM TCN model family adapter."""
+class OdomTCNFamilyTests(unittest.TestCase):
+    """Validate the Phase 2 Odom TCN model family adapter."""
 
     def setUp(self) -> None:
-        self.family = TinyOdomTCNFamily()
+        self.family = OdomTCNFamily()
         self.ctx = ModelBuildContext(
             input_shape=(20, 6),
             input_dtype="float32",
@@ -411,7 +411,7 @@ class TinyOdomTCNFamilyTests(unittest.TestCase):
         }
 
         with patch(
-            "tinyodom.model_families.tinyodom_tcn.build_tinyodom_model",
+            "tinyodom.model_families.odom_tcn.build_tinyodom_model",
             return_value=MagicMock(),
         ) as build_mock:
             self.family.build_model(hparams, self.ctx, {})

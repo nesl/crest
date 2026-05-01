@@ -1,9 +1,11 @@
 """Unit tests for the legacy OxIOD data-loading helpers."""
 
+import importlib.util
 import os
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -16,6 +18,12 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from tinyodom import data as data_utils_ex
+
+PREPARE_OXIOD_PATH = ROOT / "data" / "dataset_download_and_splits" / "oxiod" / "prepare_oxiod.py"
+PREPARE_OXIOD_SPEC = importlib.util.spec_from_file_location("prepare_oxiod", PREPARE_OXIOD_PATH)
+prepare_oxiod = importlib.util.module_from_spec(PREPARE_OXIOD_SPEC)
+assert PREPARE_OXIOD_SPEC.loader is not None
+PREPARE_OXIOD_SPEC.loader.exec_module(prepare_oxiod)
 
 
 class FakeSlidingWindow:
@@ -145,6 +153,85 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
         self.assertEqual(subset.size_of_each, [self.expected_windows, self.expected_windows])
         self.assertEqual(subset.disp.shape[0], total_expected)
         self.assertEqual(subset.x_vel.shape[0], total_expected)
+
+
+class PrepareOxIODTests(unittest.TestCase):
+    """Validate the OxIOD dataset preparation helpers."""
+
+    def test_capture_templates_reads_activity_split_files(self):
+        """capture_templates should read split files from activity folders."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            template_root = Path(tmpdir)
+            activity = template_root / "handheld"
+            activity.mkdir()
+            (activity / "Train.txt").write_text("train.csv\n", encoding="utf-8")
+            (activity / "Valid.txt").write_text("valid.csv\n", encoding="utf-8")
+
+            templates = prepare_oxiod.capture_templates(template_root)
+
+            self.assertEqual(templates[Path("handheld")]["Train.txt"], "train.csv\n")
+            self.assertEqual(templates[Path("handheld")]["Valid.txt"], "valid.csv\n")
+
+    def test_capture_templates_rejects_missing_templates(self):
+        """capture_templates should fail when no split files are present."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            template_root = Path(tmpdir)
+            (template_root / "handheld").mkdir()
+
+            with self.assertRaises(RuntimeError):
+                prepare_oxiod.capture_templates(template_root)
+
+    def test_normalize_folder_names_renames_slow_walking(self):
+        """normalize_folder_names should convert the OxIOD slow-walking folder name."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dest_root = Path(tmpdir)
+            original = dest_root / "slow walking"
+            original.mkdir()
+
+            prepare_oxiod.normalize_folder_names(dest_root)
+
+            self.assertFalse(original.exists())
+            self.assertTrue((dest_root / "slow_walking").is_dir())
+
+    def test_restore_templates_writes_splits_to_activity_folders(self):
+        """restore_templates should write captured splits into destination activities."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dest_root = Path(tmpdir)
+            templates = {Path("handheld"): {"Train.txt": "imu.csv\n"}}
+
+            prepare_oxiod.restore_templates(dest_root, templates)
+
+            self.assertEqual((dest_root / "handheld" / "Train.txt").read_text(), "imu.csv\n")
+
+    def test_main_uses_configured_paths_and_restores_templates(self):
+        """main should capture templates, extract, normalize, and restore splits."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            zip_path = root / "OxIOD.zip"
+            zip_path.write_bytes(b"placeholder")
+            template_root = root / "templates"
+            activity = template_root / "handheld"
+            activity.mkdir(parents=True)
+            (activity / "Train.txt").write_text("imu.csv\n", encoding="utf-8")
+            dest_root = root / "prepared"
+
+            args = SimpleNamespace(
+                zip_path=str(zip_path),
+                dest_root=str(dest_root),
+                template_root=str(template_root),
+            )
+
+            def fake_extract_archive(_zip_path: Path, requested_dest_root: Path) -> None:
+                """Create a minimal extracted tree for main-path testing."""
+                self.assertEqual(_zip_path, zip_path)
+                requested_dest_root.mkdir(parents=True)
+
+            with patch.object(prepare_oxiod, "parse_args", return_value=args), patch.object(
+                prepare_oxiod, "extract_archive", side_effect=fake_extract_archive
+            ):
+                prepare_oxiod.main()
+
+            self.assertEqual((dest_root / "handheld" / "Train.txt").read_text(), "imu.csv\n")
 
 
 if __name__ == '__main__':

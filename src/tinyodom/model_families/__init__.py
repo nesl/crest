@@ -1,5 +1,5 @@
 """Concrete model-family implementations for the modular TinyODOM pipeline."""
 
-from .tinyodom_tcn import TinyOdomTCNFamily
+from .odom_tcn import OdomTCNFamily
 
-__all__ = ["TinyOdomTCNFamily"]
+__all__ = ["OdomTCNFamily"]

@@ -719,7 +719,7 @@ class HILServer:
             config=self.config,
             model=model,
             model_variant=model_variant,
-            artifact_root=Path(self.config.outputs.tcn_dir),
+            artifact_root=Path(self.config.outputs.candidate_dir),
             tflite_model_path=Path(self.config.outputs.tflite_model_path),
             calibration_split=calibration_split,
             input_shape=self.model_build_context.input_shape,
@@ -802,7 +802,7 @@ class HILServer:
             sketches_dir=self.sketch_variants_dir,
             runtime_phase="cadenced",
         )
-        sketch_candidate = prepared_dir / "tinyodom_tcn.ino"
+        sketch_candidate = prepared_dir / "odom_tcn.ino"
         if sketch_candidate.is_file():
             self.active_sketch_path = sketch_candidate
             logger.info("Using sketch variant: %s", self.active_sketch_path)
@@ -1112,7 +1112,7 @@ class HILServer:
                 ),
             )
             prepared_dir = Path(prepared_dir)
-            sketch_candidate = prepared_dir / "tinyodom_tcn.ino"
+            sketch_candidate = prepared_dir / "odom_tcn.ino"
             if runtime_device.requires_candidate_model() and sketch_candidate.is_file():
                 self.active_sketch_path = sketch_candidate
                 logger.info("Using sketch variant: %s", self.active_sketch_path)
@@ -1196,7 +1196,7 @@ class HILServer:
         Returns
         -------
         Path
-            Path to the synchronized ``tinyodom_tcn.ino`` sketch.
+            Path to the synchronized ``odom_tcn.ino`` sketch.
 
         Raises
         ------
@@ -1207,7 +1207,7 @@ class HILServer:
         """
         return _sync_arduino_sketch_variant_for_config(
             self.config,
-            Path(self.config.outputs.tcn_dir),
+            Path(self.config.outputs.candidate_dir),
             sketches_dir=self.sketch_variants_dir,
         )
 
@@ -1236,7 +1236,7 @@ class HILServer:
         )
         self.active_sketch_path = runtime_device.set_input_mode(
             input_mode,
-            outputs_dir=Path(self.config.outputs.tcn_dir),
+            outputs_dir=Path(self.config.outputs.candidate_dir),
             config=self.config,
             sketches_dir=self.sketch_variants_dir,
             runtime_phase=runtime_phase,

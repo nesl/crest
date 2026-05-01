@@ -205,7 +205,7 @@ task:
     early_stopping_patience: 40
 
 model:
-  family: tinyodom_tcn
+  family: odom_tcn
   params: {}
   search: {}
 ```
@@ -258,7 +258,7 @@ The `outputs` block controls directory roots and naming inputs.
 Current shipped keys:
 
 - `outputs.models_dir`
-- `outputs.tcn_dir`
+- `outputs.candidate_dir`
 - `outputs.model_name`
 - `outputs.checkpoint_name`
 - `outputs.log_file_name`
@@ -268,7 +268,7 @@ Important runtime caveat:
 - `load_config(...)` derives `model_name` and `checkpoint_name` from
   `device.name`, then populates derived paths such as `tflite_model_path` and
   `checkpoint_path`
-- `models_dir` and `tcn_dir` are resolved into absolute paths in memory
+- `models_dir` and `candidate_dir` are resolved into absolute paths in memory
 
 So the final in-memory values may differ from the literal YAML text.
 

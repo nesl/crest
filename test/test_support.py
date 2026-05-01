@@ -11,7 +11,7 @@ import tensorflow as tf  # type: ignore[attr-defined]
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEST_DIR = ROOT_DIR / "test"
 SRC_DIR = ROOT_DIR / "src"
-SKETCH_SOURCE_DIR = TEST_DIR / "tinyodom_tcn"
+SKETCH_SOURCE_DIR = TEST_DIR / "odom_tcn"
 
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))

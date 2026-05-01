@@ -44,8 +44,8 @@ from tinyodom.model import (
 from tinyodom.hardware import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
 from tinyodom.hil_runtime import CollectMetricsRequest, HarnessConfig, build_collect_metrics_request, collect_metrics  # noqa: E402, E501
 from tinyodom.microcontrollers import resolve_device_options  # noqa: E402
-import tinyodom.model_families.tinyodom_tcn as tinyodom_tcn_module  # noqa: E402
-from tinyodom.model_families.tinyodom_tcn import TinyOdomTCNFamily  # noqa: E402
+import tinyodom.model_families.odom_tcn as odom_tcn_module  # noqa: E402
+from tinyodom.model_families.odom_tcn import OdomTCNFamily  # noqa: E402
 from tinyodom.pipeline_types import ModelBuildContext, TargetSpec  # noqa: E402
 
 
@@ -267,11 +267,11 @@ class ModelVariantHelperTests(unittest.TestCase):
             validate_model_input_shape(model, None)
 
 
-class TinyOdomTCNFamilyExportTests(unittest.TestCase):
+class OdomTCNFamilyExportTests(unittest.TestCase):
     """Validate TinyODOM-family export materialization behavior."""
 
     def setUp(self) -> None:
-        self.family = TinyOdomTCNFamily()
+        self.family = OdomTCNFamily()
         self.ctx = ModelBuildContext(
             input_shape=(32, 6),
             input_dtype="float32",
@@ -292,7 +292,7 @@ class TinyOdomTCNFamilyExportTests(unittest.TestCase):
         model_config = Dict()
 
         with patch.object(self.family, "build_model", return_value=fake_model) as build_mock, patch.object(
-            tinyodom_tcn_module,
+            odom_tcn_module,
             "apply_combined_perturbation",
             return_value=(2, 3),
         ) as perturb_mock:
@@ -348,7 +348,7 @@ class CollectMetricsTests(unittest.TestCase):
                 device_name="ARDUINO_NANO_33_BLE_SENSE",
                 window_size=128,
                 input_dim=6,
-                dirpath=Path("tinyodom_tcn"),
+                dirpath=Path("odom_tcn"),
                 latency_proxy_max_flops=20_000_000,
                 serial_port=None,
                 latency_budget_ms=50.0,
@@ -380,7 +380,7 @@ class CollectMetricsTests(unittest.TestCase):
                 device_name="ARDUINO_NANO_33_BLE_SENSE",
                 window_size=128,
                 input_dim=6,
-                dirpath=Path("tinyodom_tcn"),
+                dirpath=Path("odom_tcn"),
                 latency_proxy_max_flops=20_000_000,
                 serial_port="ttyACM0",
                 latency_budget_ms=50000.0,
@@ -409,7 +409,7 @@ class CollectMetricsTests(unittest.TestCase):
                 device_name="STM32_NUCLEO_N657X0_Q",
                 window_size=128,
                 input_dim=6,
-                dirpath=Path("tinyodom_tcn"),
+                dirpath=Path("odom_tcn"),
                 latency_proxy_max_flops=20_000_000,
                 serial_port="ttyACM0",
                 latency_budget_ms=200.0,
@@ -449,7 +449,7 @@ class CollectMetricsTests(unittest.TestCase):
                 device_name="STM32_NUCLEO_N657X0_Q",
                 window_size=128,
                 input_dim=6,
-                dirpath=Path("tinyodom_tcn"),
+                dirpath=Path("odom_tcn"),
                 latency_proxy_max_flops=20_000_000,
                 serial_port="ttyACM0",
                 latency_budget_ms=200.0,
@@ -497,7 +497,7 @@ class CollectMetricsTests(unittest.TestCase):
                 device_name="STM32_NUCLEO_N657X0_Q",
                 window_size=128,
                 input_dim=6,
-                dirpath=Path("tinyodom_tcn"),
+                dirpath=Path("odom_tcn"),
                 latency_proxy_max_flops=20_000_000,
                 serial_port="ttyACM0",
                 latency_budget_ms=200.0,
@@ -529,7 +529,7 @@ class CollectMetricsTests(unittest.TestCase):
                 device_name="STM32_NUCLEO_N657X0_Q",
                 window_size=128,
                 input_dim=6,
-                dirpath=Path("tinyodom_tcn"),
+                dirpath=Path("odom_tcn"),
                 latency_proxy_max_flops=20_000_000,
                 serial_port="ttyACM0",
                 latency_budget_ms=200.0,
@@ -568,7 +568,7 @@ class CollectMetricsTests(unittest.TestCase):
                         device_name="STM32_NUCLEO_N657X0_Q",
                         window_size=128,
                         input_dim=6,
-                        dirpath=Path("tinyodom_tcn"),
+                        dirpath=Path("odom_tcn"),
                         latency_proxy_max_flops=20_000_000,
                         serial_port="ttyACM0",
                         latency_budget_ms=200.0,
@@ -618,7 +618,7 @@ class CollectMetricsTests(unittest.TestCase):
                 device_name="ARDUINO_NANO_33_BLE_SENSE",
                 window_size=128,
                 input_dim=6,
-                dirpath=Path("tinyodom_tcn"),
+                dirpath=Path("odom_tcn"),
                 latency_proxy_max_flops=20_000_000,
                 serial_port="ttyACM0",
                 latency_budget_ms=200.0,
@@ -639,7 +639,7 @@ class CollectMetricsTests(unittest.TestCase):
             device_name="ARDUINO_NANO_33_BLE_SENSE",
             window_size=128,
             input_dim=6,
-            dirpath=Path("tinyodom_tcn"),
+            dirpath=Path("odom_tcn"),
             latency_proxy_max_flops=20_000_000,
             serial_port="ttyACM0",
             latency_budget_ms=50000.0,
@@ -665,7 +665,7 @@ class CollectMetricsTests(unittest.TestCase):
                 device_name="PORTENTA_H7",
                 window_size=128,
                 input_dim=6,
-                dirpath=Path("tinyodom_tcn"),
+                dirpath=Path("odom_tcn"),
                 latency_proxy_max_flops=20_000_000,
                 serial_port=None,
                 latency_budget_ms=50.0,
@@ -684,7 +684,7 @@ class CollectMetricsTests(unittest.TestCase):
             device_name="PORTENTA_H7",
             window_size=128,
             input_dim=6,
-            dirpath=Path("tinyodom_tcn"),
+            dirpath=Path("odom_tcn"),
             latency_proxy_max_flops=20_000_000,
             serial_port="ttyACM0",
             latency_budget_ms=200.0,
@@ -728,7 +728,7 @@ class CollectMetricsTests(unittest.TestCase):
                 device_name="PORTENTA_H7",
                 window_size=128,
                 input_dim=6,
-                dirpath=Path("tinyodom_tcn"),
+                dirpath=Path("odom_tcn"),
                 latency_proxy_max_flops=20_000_000,
                 serial_port="ttyACM0",
                 latency_budget_ms=200.0,
@@ -751,7 +751,7 @@ class CollectMetricsTests(unittest.TestCase):
 class BuildCollectMetricsRequestTests(unittest.TestCase):
     """Validate config/hyperparameter mapping into CollectMetricsRequest."""
 
-    _DEFAULT_DIRPATH = Path("tinyodom_tcn")
+    _DEFAULT_DIRPATH = Path("odom_tcn")
 
     def _build_request(
         self,
@@ -803,7 +803,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -826,7 +826,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 measured_inference_runs=7,
             ),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -840,7 +840,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -860,7 +860,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             "training": {"energy_aware": False, "latency_proxy_max_flops": 20_000_000},
             "device": {"hil": True, "name": "ARDUINO_NANO_33_BLE_SENSE", "serial_port": "ttyACM0"},
             "dataset": {"params": {"window_size": 128}},
-            "outputs": {"tcn_dir": Path("tinyodom_tcn")},
+            "outputs": {"candidate_dir": Path("odom_tcn")},
         }
         runtime_metadata = {"flops": 123.0, "input_dim": 6}
 
@@ -876,7 +876,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         runtime_metadata = Dict(flops=123.0)
 
@@ -894,7 +894,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
             ),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -920,7 +920,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
             ),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -946,7 +946,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
             ),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -960,7 +960,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
 
 
 class Stm32TimeoutHelperTests(unittest.TestCase):
-    _DEFAULT_DIRPATH = Path("tinyodom_tcn")
+    _DEFAULT_DIRPATH = Path("odom_tcn")
 
     def _build_request(
         self,
@@ -1032,7 +1032,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 harness_done_timeout_s=5.0,
             ),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -1049,7 +1049,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -1063,7 +1063,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
             training=Dict(energy_aware=True, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -1081,7 +1081,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 portenta=Dict(target_core="cm4", split="50_50", security="none"),
             ),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -1098,7 +1098,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="PORTENTA_H7", serial_port="ttyACM0", portenta=Dict()),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         with self.assertRaises(ValueError):
             resolve_device_options(str(config.device.name), config.device)
@@ -1114,7 +1114,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 portenta=Dict(target_core="cm4", split="50_50", security="none"),
             ),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -1146,7 +1146,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 portenta=Dict(target_core="cm4", split="50_50", security="none"),
             ),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -1169,7 +1169,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 portenta=Dict(target_core="cm7", split="75_25", security="none"),
             ),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -1184,7 +1184,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=False, name="ARDUINO_NANO_33_BLE_SENSE"),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -1214,7 +1214,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                 ),
             ),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
         hyperparams = Dict(flops=123, input_dim=6)
 
@@ -1245,7 +1245,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=False, name="STM32_NUCLEO_N657X0_Q"),
             dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+            outputs=Dict(candidate_dir=Path("odom_tcn")),
         )
 
         resolved = resolve_device_options(str(config.device.name), config.device)
@@ -1289,7 +1289,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                     ),
                 ),
                 dataset=Dict(params=Dict(window_size=128)),
-                outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+                outputs=Dict(candidate_dir=Path("odom_tcn")),
             )
 
             resolved = resolve_device_options(str(config.device.name), config.device)
@@ -1319,7 +1319,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                     stm32=Dict(project_root=unresolved_root),
                 ),
                 dataset=Dict(params=Dict(window_size=128)),
-                outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+                outputs=Dict(candidate_dir=Path("odom_tcn")),
             )
 
             resolved = resolve_device_options(str(config.device.name), config.device)
@@ -1358,7 +1358,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
                     ),
                 ),
                 dataset=Dict(params=Dict(window_size=128)),
-                outputs=Dict(tcn_dir=Path("tinyodom_tcn")),
+                outputs=Dict(candidate_dir=Path("odom_tcn")),
             )
 
             resolved = resolve_device_options(str(config.device.name), config.device)
@@ -1600,7 +1600,7 @@ class LoadSettingsTests(unittest.TestCase):
             tmp_path = Path(tmpdir)
             config_path = tmp_path / "config.yaml"
             models_dir = tmp_path / "models_dir"
-            tcn_dir = tmp_path / "tcn_dir"
+            candidate_dir = tmp_path / "candidate_dir"
             config_path.write_text(
                 "\n".join(
                     [
@@ -1611,7 +1611,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{models_dir}\"",
-                        f"  tcn_dir: \"{tcn_dir}\"",
+                        f"  candidate_dir: \"{candidate_dir}\"",
                     ]
                 )
             )
@@ -1625,7 +1625,7 @@ class LoadSettingsTests(unittest.TestCase):
                 settings.outputs.checkpoint_name, "TinyOdomEx_OxIOD_TEST_DEVICE.keras"
             )
             self.assertTrue(settings.outputs.models_dir.is_dir())
-            self.assertTrue(settings.outputs.tcn_dir.is_dir())
+            self.assertTrue(settings.outputs.candidate_dir.is_dir())
             self.assertEqual(
                 settings.outputs.tflite_model_path,
                 settings.outputs.models_dir / settings.outputs.model_name,
@@ -1635,6 +1635,52 @@ class LoadSettingsTests(unittest.TestCase):
                 settings.outputs.models_dir / settings.outputs.checkpoint_name,
             )
             self.assertEqual(settings.training.drop_rate_choices, DROP_RATE_CHOICES)  
+
+    def test_load_settings_rejects_missing_candidate_dir(self) -> None:
+        """Configuration loading should reject outputs without candidate_dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 5",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "outputs.candidate_dir"):
+                load_config(config_path=config_path)
+
+    def test_load_settings_rejects_removed_tcn_dir(self) -> None:
+        """Configuration loading should reject the removed tcn_dir output key."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 5",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  tcn_dir: \"{tmp_path / 'legacy'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "outputs.tcn_dir"):
+                load_config(config_path=config_path)
+
     def test_load_settings_requires_sections(self) -> None:
         """Missing required sections should raise informative errors."""
         # Missing top-level sections should fail during config load so malformed YAML never reaches the NAS loop.
@@ -1646,7 +1692,7 @@ class LoadSettingsTests(unittest.TestCase):
                     [
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                         *self._score_lines(),
                     ]
                 )
@@ -1682,7 +1728,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                         *self._score_lines(),
                     ]
                 )
@@ -1707,7 +1753,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -1730,7 +1776,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -1754,7 +1800,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -1781,7 +1827,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -1807,7 +1853,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -1832,7 +1878,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -1859,7 +1905,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -1893,7 +1939,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "            metric: max_ram_bytes",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -1929,7 +1975,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "            value: 0.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -1972,7 +2018,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "            metric: energy_budget_mj",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2017,7 +2063,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "            metric: energy_budget_mj",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2046,7 +2092,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "        weight: -1.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2085,7 +2131,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "        reason: Latency exceeds budget",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2119,7 +2165,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "    rules: []",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2158,7 +2204,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "          metric: latency_budget_ms",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2202,7 +2248,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "          value: 1.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2239,7 +2285,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "          weight: 1.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2277,7 +2323,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "          weight: 1.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2313,7 +2359,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "          weight: 1.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2345,7 +2391,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "          weight: 1.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2388,7 +2434,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "          weight: 1.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2430,7 +2476,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "          weight: 1.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2468,7 +2514,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "          weight: 1.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2496,7 +2542,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2524,7 +2570,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2567,7 +2613,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "          value: 0.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2611,7 +2657,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "          value: 0.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2660,7 +2706,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "          value: 0.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2694,7 +2740,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "          weight: -1.0",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2734,7 +2780,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "        reason: deadline misses exceed budget",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2767,7 +2813,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "    rules: []",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2807,7 +2853,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "        reason: cadenced phase failed",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2838,7 +2884,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2876,7 +2922,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2906,7 +2952,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2931,7 +2977,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )
@@ -2955,7 +3001,7 @@ class LoadSettingsTests(unittest.TestCase):
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  tcn_dir: \"{tmp_path / 'tcn'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
                     ]
                 )
             )

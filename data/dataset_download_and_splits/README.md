@@ -6,7 +6,7 @@ rename it to `OxIOD.zip`, then run the preparation step from the repo root:
 ```bash
 make prepare-dataset
 # or:
-python data/dataset_download_and_splits/prepare_oxiod.py --zip-path /path/to/OxIOD.zip
+python data/dataset_download_and_splits/oxiod/prepare_oxiod.py --zip-path /path/to/OxIOD.zip
 ```
 
 The preparation script does four things:
@@ -19,6 +19,15 @@ The preparation script does four things:
 
 The split files in this repo are not placeholders. They are the curated
 tracked splits used by the built-in OxIOD path.
+
+Dataset-specific preparation files now live under:
+
+- `data/dataset_download_and_splits/oxiod/prepare_oxiod.py`
+- `data/dataset_download_and_splits/oxiod/reference_splits/`
+
+The preparation script still uses the per-activity split files under
+`data/oxiod/<activity>/` as its default template source so the loader-facing
+dataset layout remains unchanged.
 
 ## Current Loader Path
 

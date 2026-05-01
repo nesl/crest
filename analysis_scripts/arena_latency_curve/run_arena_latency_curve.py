@@ -452,7 +452,7 @@ def _prepare_model_artifacts(
     )
     convert_to_cpp_model_fn(
         tflite_path=server.config.outputs.tflite_model_path,
-        output_dir=server.config.outputs.tcn_dir,
+        output_dir=server.config.outputs.candidate_dir,
     )
 
 
@@ -618,7 +618,7 @@ def main() -> int:
                     error_code,
                     power_metrics,
                 ) = HIL_spec(
-                    dirpath=server.config.outputs.tcn_dir,
+                    dirpath=server.config.outputs.candidate_dir,
                     chosen_device=settings.device_name,
                     device_options=settings.device_options,
                     arenaSizes=settings.arena_kb_list,
@@ -705,7 +705,7 @@ def main() -> int:
             "repeats": settings.repeats,
             "cooldown_s": settings.cooldown_s,
             "active_sketch_path": str(server.active_sketch_path),
-            "tcn_dir": str(server.config.outputs.tcn_dir),
+            "candidate_dir": str(server.config.outputs.candidate_dir),
         },
         "attempts": attempts,
         "aggregates_by_arena": aggregates,

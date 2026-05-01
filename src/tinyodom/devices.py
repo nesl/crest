@@ -679,7 +679,7 @@ def _sync_arduino_sketch_variant_for_config(
     Returns
     -------
     Path
-        Path to the staged ``tinyodom_tcn.ino`` file.
+        Path to the staged ``odom_tcn.ino`` file.
 
     Raises
     ------
@@ -749,7 +749,7 @@ def _sync_arduino_sketch_variant_for_config(
         raise FileNotFoundError(f"Sketch variant not found: {variant_source}")
 
     outputs_dir.mkdir(parents=True, exist_ok=True)
-    sketch_target = outputs_dir / "tinyodom_tcn.ino"
+    sketch_target = outputs_dir / "odom_tcn.ino"
     shutil.copyfile(variant_source, sketch_target)
 
     common_source = sketch_variants_dir / "common"

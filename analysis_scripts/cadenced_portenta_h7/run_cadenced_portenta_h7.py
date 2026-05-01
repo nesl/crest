@@ -223,7 +223,7 @@ def _stage_phase_sketch(server: Any, phase: str, latency_budget_ms: float) -> Pa
     Returns
     -------
     pathlib.Path
-        Path to staged ``tinyodom_tcn.ino``.
+        Path to staged ``odom_tcn.ino``.
     """
 
     if phase not in VALID_PHASES:
@@ -233,7 +233,7 @@ def _stage_phase_sketch(server: Any, phase: str, latency_budget_ms: float) -> Pa
     if not template_path.exists():
         raise FileNotFoundError(f"Missing sketch template: {template_path}")
 
-    sketch_dir = Path(server.config.outputs.tcn_dir)
+    sketch_dir = Path(server.config.outputs.candidate_dir)
     sketch_dir.mkdir(parents=True, exist_ok=True)
 
     # Keep shared HIL headers synchronized with the staged analysis sketch.
@@ -244,7 +244,7 @@ def _stage_phase_sketch(server: Any, phase: str, latency_budget_ms: float) -> Pa
     if phase == PHASE_CADENCED:
         sketch_text = _patch_cadence_define(sketch_text, latency_budget_ms)
 
-    staged_path = sketch_dir / "tinyodom_tcn.ino"
+    staged_path = sketch_dir / "odom_tcn.ino"
     staged_path.write_text(sketch_text)
     return staged_path
 

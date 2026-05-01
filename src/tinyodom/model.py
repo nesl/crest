@@ -1789,16 +1789,22 @@ def load_config(
     # Derive paths and names for models/checkpoints based on device name.
     outputs = config.outputs
     models_dir = Path(outputs.get("models_dir", "../models")).resolve()
-    tcn_dir = Path(outputs.get("tcn_dir", "../tinyodom_tcn")).resolve()
+    if "tcn_dir" in outputs:
+        raise ValueError(
+            "outputs.tcn_dir has been removed. Use outputs.candidate_dir instead."
+        )
+    if "candidate_dir" not in outputs:
+        raise ValueError("Expected 'outputs.candidate_dir' to be set in the configuration.")
+    candidate_dir = Path(outputs.candidate_dir).resolve()
     models_dir.mkdir(parents=True, exist_ok=True)
-    tcn_dir.mkdir(parents=True, exist_ok=True)
+    candidate_dir.mkdir(parents=True, exist_ok=True)
 
     # Stores derived model/checkpoint names and paths into the config
     model_stem = f"TinyOdomEx_OxIOD_{device_name}"
     outputs.model_name = f"{model_stem}.tflite"
     outputs.checkpoint_name = f"{model_stem}.keras"
     outputs.models_dir = models_dir
-    outputs.tcn_dir = tcn_dir
+    outputs.candidate_dir = candidate_dir
     outputs.tflite_model_path = models_dir / outputs.model_name
     outputs.checkpoint_path = models_dir / outputs.checkpoint_name
 

@@ -40,7 +40,7 @@ task:
     early_stopping_patience: 40
 
 model:
-  family: tinyodom_tcn
+  family: odom_tcn
   params: {}
   search: {}
 
@@ -325,7 +325,7 @@ nas:
 # Output directories and filenames
 outputs:
   models_dir: "models"
-  tcn_dir: "tinyodom_tcn"
+  candidate_dir: "odom_tcn"
   model_name: "TinyOdomEx_OxIOD_STM32_NUCLEO_N657X0_Q_MO.tflite"
   checkpoint_name: "TinyOdomEx_OxIOD_STM32_NUCLEO_N657X0_Q_MO.keras"
   log_file_name: "log_NAS_Oxiod_STM32_NUCLEO_N657X0_Q_MO.csv"

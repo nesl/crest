@@ -1,4 +1,4 @@
-"""TinyODOM TCN family implementation and family-owned helpers."""
+"""Odom TCN family implementation and family-owned helpers."""
 
 from __future__ import annotations
 
@@ -32,12 +32,12 @@ DROP_RATE_CHOICES = [0.0, 0.1, 0.2, 0.3, 0.4]
 
 
 def build_tinyodom_model(hyperparams: dict[str, Any]) -> Model:
-    """Build the TinyODOM TCN architecture from plain hyperparameters.
+    """Build the Odom TCN architecture from plain hyperparameters.
 
     Parameters
     ----------
     hyperparams : dict[str, Any]
-        Hyperparameter mapping containing the TinyODOM TCN build fields.
+        Hyperparameter mapping containing the Odom TCN build fields.
 
     Returns
     -------
@@ -144,7 +144,7 @@ def apply_combined_perturbation(
 
 
 def _count_flops(model: tf.keras.Model, input_shape: tuple[int, int]) -> int:
-    """Estimate TinyODOM TCN FLOPs from a frozen TensorFlow graph.
+    """Estimate Odom TCN FLOPs from a frozen TensorFlow graph.
 
     Parameters
     ----------
@@ -177,10 +177,10 @@ def _count_flops(model: tf.keras.Model, input_shape: tuple[int, int]) -> int:
     return int(flops.total_float_ops)
 
 
-class TinyOdomTCNFamily(ModelFamilyABC):
+class OdomTCNFamily(ModelFamilyABC):
     """TCN model family matching the current TinyODOM architecture surface.
 
-    The family exposes the stable ``"tinyodom_tcn"`` name, owns the TinyODOM
+    The family exposes the stable ``"odom_tcn"`` name, owns the TinyODOM
     search surface, model builder, FLOP estimation, persisted-trial decoding,
     and export-model materialization path.
     """
@@ -195,7 +195,7 @@ class TinyOdomTCNFamily(ModelFamilyABC):
             Stable model-family identifier.
         """
 
-        return "tinyodom_tcn"
+        return "odom_tcn"
 
     def sample_hparams(
         self,
@@ -297,7 +297,7 @@ class TinyOdomTCNFamily(ModelFamilyABC):
         ctx: ModelBuildContext,
         config: Any,
     ) -> Any:
-        """Build the current TinyODOM TCN model.
+        """Build the current Odom TCN model.
 
         Parameters
         ----------
@@ -323,7 +323,7 @@ class TinyOdomTCNFamily(ModelFamilyABC):
         del config
         self.validate_hparams(hparams, ctx, None)
         if ctx.input_shape is None or len(ctx.input_shape) < 2:
-            raise ValueError("TinyOdomTCNFamily requires a 2D input shape: (timesteps, input_dim).")
+            raise ValueError("OdomTCNFamily requires a 2D input shape: (timesteps, input_dim).")
 
         build_hparams = {
             **hparams,
@@ -371,7 +371,7 @@ class TinyOdomTCNFamily(ModelFamilyABC):
         missing = [key for key in required if key not in hparams]
         if missing:
             raise ValueError(
-                f"TinyOdomTCNFamily requires hyperparameters: {', '.join(missing)}."
+                f"OdomTCNFamily requires hyperparameters: {', '.join(missing)}."
             )
 
     def custom_objects(self) -> dict[str, Any]:
@@ -391,7 +391,7 @@ class TinyOdomTCNFamily(ModelFamilyABC):
         ctx: ModelBuildContext,
         config: Any,
     ) -> int:
-        """Estimate FLOPs for one TinyODOM TCN model.
+        """Estimate FLOPs for one Odom TCN model.
 
         Parameters
         ----------
@@ -415,7 +415,7 @@ class TinyOdomTCNFamily(ModelFamilyABC):
 
         del config
         if ctx.input_shape is None or len(ctx.input_shape) < 2:
-            raise ValueError("TinyOdomTCNFamily requires a 2D input shape: (timesteps, input_dim).")
+            raise ValueError("OdomTCNFamily requires a 2D input shape: (timesteps, input_dim).")
         return _count_flops(model, (int(ctx.input_shape[0]), int(ctx.input_shape[1])))
 
     def materialize_export_model(
