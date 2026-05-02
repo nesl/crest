@@ -123,6 +123,36 @@ def _normalize_mapping_like(value: Any, *, field_name: str) -> Dict:
     )
 
 
+def _require_export_variant(model_params: Dict) -> str:
+    """Validate the universal model export variant field.
+
+    Parameters
+    ----------
+    model_params : addict.Dict
+        Normalized ``model.params`` subtree.
+
+    Returns
+    -------
+    str
+        Stripped export variant name.
+
+    Raises
+    ------
+    KeyError
+        If the required field is missing.
+    ValueError
+        If the field is not a non-empty string.
+    """
+
+    if "export_variant" not in model_params:
+        raise KeyError("Missing required 'model.params.export_variant' field.")
+    raw_variant = model_params.export_variant
+    if not isinstance(raw_variant, str) or not raw_variant.strip():
+        raise ValueError("Expected 'model.params.export_variant' to be a non-empty string.")
+    model_params.export_variant = raw_variant.strip()
+    return model_params.export_variant
+
+
 def resolve_component_selection(config: Any) -> dict[str, Any]:
     """Resolve explicit dataset, task, and model-family selections.
 
@@ -157,9 +187,8 @@ def resolve_component_selection(config: Any) -> dict[str, Any]:
     if dataset_params is None:
         raise KeyError("Missing required 'dataset.params' field.")
 
-    # `task.params`, `model.params`, and `model.search` stay optional, but once
-    # the component blocks exist they are treated as native modular config
-    # payloads instead of compatibility wrappers.
+    # `task.params` and `model.search` stay optional, but model.params now owns
+    # the universal export variant used by HIL/export materialization.
     task_params_raw = cfg_get(task_block, "params", None)
     model_params_raw = cfg_get(model_block, "params", None)
     model_search_raw = cfg_get(model_block, "search", None)
@@ -168,11 +197,10 @@ def resolve_component_selection(config: Any) -> dict[str, Any]:
         if task_params_raw is None
         else _normalize_mapping_like(task_params_raw, field_name="task.params")
     )
-    model_params = (
-        Dict()
-        if model_params_raw is None
-        else _normalize_mapping_like(model_params_raw, field_name="model.params")
-    )
+    if model_params_raw is None:
+        raise KeyError("Missing required 'model.params' field.")
+    model_params = _normalize_mapping_like(model_params_raw, field_name="model.params")
+    _require_export_variant(model_params)
     model_search = (
         Dict()
         if model_search_raw is None

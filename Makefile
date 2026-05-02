@@ -1,9 +1,10 @@
-.PHONY: help install test integration-test test-all start-gpu start-hil smoke env-create arduino-setup stm32-setup prepare-dataset prepare-audio-dataset clean
+.PHONY: help install test integration-test test-all start-gpu start-hil smoke env-create arduino-setup stm32-setup prepare-dataset prepare-audio-dataset audio-desktop-smoke clean
 
 PYTHON ?= python
 ENV ?= tinyodomex
 OXIOD_ZIP ?= OxIOD.zip
 URBANSOUND8K_ARGS ?=
+AUDIO_SMOKE_ARGS ?=
 
 help:
 	@echo "Targets:"
@@ -19,6 +20,7 @@ help:
 	@echo "  stm32-setup    Validate STM32CubeCLT paths and bootstrap STM32CubeN6 firmware"
 	@echo "  prepare-dataset  Prepare OxIOD dataset (override OXIOD_ZIP=/path/to/OxIOD.zip)"
 	@echo "  prepare-audio-dataset  Prepare UrbanSound8K log-mel cache (override URBANSOUND8K_ARGS)"
+	@echo "  audio-desktop-smoke  Run a small hardware-free audio training smoke (override AUDIO_SMOKE_ARGS)"
 	@echo "  clean          Remove Python cache/build artifacts"
 
 install:
@@ -56,6 +58,9 @@ prepare-dataset:
 
 prepare-audio-dataset:
 	$(PYTHON) data/dataset_download_and_splits/urbansound8k/prepare_urbansound8k.py $(URBANSOUND8K_ARGS)
+
+audio-desktop-smoke:
+	$(PYTHON) analysis_scripts/audio_desktop_smoke/run_audio_desktop_smoke.py $(AUDIO_SMOKE_ARGS)
 
 clean:
 	rm -rf build dist *.egg-info

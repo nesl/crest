@@ -1,0 +1,125 @@
+# Audio DS-CNN desktop/bootstrap config targeting the STM32 N657 shape.
+#
+# Phase 5 uses this config for component validation and desktop smoke. The NAS
+# objective still sends HIL/ZMQ requests in the current architecture, so this is
+# not a true hardware-free NAS execution config yet.
+
+device:
+  name: STM32_NUCLEO_N657X0_Q
+  hil: false
+  runtime_mode: cadenced
+  serial_port: "/dev/ttyACM0"
+  measured_inference_runs: 10
+  dut_ready_timeout_s: 12.0
+  serial_timeout_s: 12.0
+  cpu_clock_mhz_options: [200, 300, 400, 600, 800]
+  harness_serial_port: "/dev/ttyACM1"
+  harness_fqbn: "arduino:mbed_nano:nano33ble"
+  harness_auto_flash: "once"
+  harness_ready_timeout_s: 5.0
+  harness_arm_timeout_s: 5.0
+  harness_active_timeout_s: 30.0
+  harness_done_timeout_s: 5.0
+  stm32:
+    project_root: "sketches/stm32/tinyodom_tcn_stm32_lrun"
+    appli_flash_address: "0x70100000"
+    wake_margin_us: 5000
+    min_sleep_us: 5000
+    weight_storage_mode: "external_flash"
+    weights_memory_pool: "analysis_scripts/stm32_example_project/nucleo_mypool.json"
+
+dataset:
+  name: urbansound8k_mel
+  params:
+    cache_dir: "data/urbansound8k/cache/v1_logmel_16k_2s_64mels_25ms_10ms"
+    batch_period_ms: 2000
+
+task:
+  name: sound_classification
+  params:
+    early_stopping_patience: 20
+
+model:
+  family: audio_dscnn
+  params:
+    export_variant: untrained
+  search:
+    base_channels: [8, 12, 16, 24, 32]
+    num_blocks: [2, 3, 4]
+    kernel_time: [3, 5]
+    kernel_freq: [3, 5]
+    depthwise_separable: [true, false]
+    dropout_rate: [0.0, 0.1, 0.2, 0.3]
+    norm_flag: [true, false]
+    dense_units: [0, 16, 32, 64]
+    global_pool_type: ["avg", "max"]
+    stride_schedule: ["light", "balanced", "aggressive"]
+
+training:
+  nas_epochs: 5
+  model_epochs: 30
+  nas_trials: 25
+  nas_multiobjective_population_size: 10
+  max_total_trials: 50
+  quantization: true
+  latency_proxy_max_flops: 30000000.0
+  train: true
+  energy_aware: false
+  input_mode: "uniform"
+
+nas:
+  score:
+    type: scoring-function
+    metrics:
+      total_flash_bytes:
+        type: add
+        metrics:
+          - flash_bytes
+          - external_flash_bytes
+    params:
+      terms:
+        - type: weighted
+          metric: accuracy
+          weight: 1.0
+        - type: normalized-weighted
+          metric: ram_bytes
+          weight: -0.10
+          reference:
+            type: metric
+            metric: max_ram_bytes
+        - type: normalized-weighted
+          metric: total_flash_bytes
+          weight: -0.10
+          reference:
+            type: metric
+            metric: max_flash_bytes
+        - type: boundary
+          metric: latency_ms
+          weight: 0.01
+          reference:
+            type: metric
+            metric: latency_budget_ms
+  prune:
+    rules:
+      - rule: latency_budget
+        metric: latency_ms
+        condition: gt
+        reference:
+          type: metric
+          metric: latency_budget_ms
+        reason: "Latency exceeds deployment budget"
+
+outputs:
+  models_dir: "models"
+  candidate_dir: "audio_dscnn"
+  artifact_stem: "TinyOdomEx_UrbanSound8K"
+  log_file_name: "log_NAS_UrbanSound8K_STM32_NUCLEO_N657X0_Q.csv"
+
+network:
+  host: "127.0.0.1"
+  port: 6001
+  recv_timeout_sec: 720
+  send_timeout_sec: 720
+
+logging:
+  level: "INFO"

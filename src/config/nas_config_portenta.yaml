@@ -38,7 +38,8 @@ task:
 
 model:
   family: odom_tcn
-  params: {}
+  params:
+    export_variant: approx_trained
   search: {}
 
 # Training-time switches and limits
@@ -72,8 +73,7 @@ nas:
 outputs:
   models_dir: "models"
   candidate_dir: "odom_tcn"
-  model_name: "TinyOdomEx_OxIOD_PORTENTA_H7_MO.tflite"
-  checkpoint_name: "TinyOdomEx_OxIOD_PORTENTA_H7_MO.keras"
+  artifact_stem: "TinyOdomEx_OxIOD"
   log_file_name: "log_NAS_Oxiod_PORTENTA_H7_MO.csv"
 
 network:

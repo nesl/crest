@@ -221,7 +221,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
             ),
         ),
         task=SimpleNamespace(name="odometry_regression", params=Dict()),
-        model=SimpleNamespace(family="odom_tcn", params=Dict(), search=Dict()),
+        model=SimpleNamespace(family="odom_tcn", params=Dict(export_variant="approx_trained"), search=Dict()),
     )
     client.config.outputs.models_dir.mkdir(parents=True, exist_ok=True)
     client.config_path = base_dir / "config.yaml"
@@ -243,7 +243,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     )
     client.dataset_config = client.config.dataset.params
     client.task_config = Dict()
-    client.model_config = Dict(family="odom_tcn", params=Dict(), search=Dict())
+    client.model_config = Dict(family="odom_tcn", params=Dict(export_variant="approx_trained"), search=Dict())
     # Mirror the production default study name so log_trial calls succeed.
     client.study_name = "default_study"
     # Stub the ZMQ context/socket to avoid opening real network resources.
@@ -338,7 +338,7 @@ class InitializationTests(unittest.TestCase):
         client.config.task = SimpleNamespace(name="custom_task", params=Dict(alpha=3))
         client.config.model = SimpleNamespace(
             family="custom_family",
-            params=Dict(width=8),
+            params=Dict(width=8, export_variant="untrained"),
             search=Dict(depth=[2, 3]),
         )
 
@@ -351,24 +351,45 @@ class InitializationTests(unittest.TestCase):
         self.assertEqual(selection["model_family_name"], "custom_family")
         self.assertEqual(selection["model_config"]["family"], "custom_family")
         self.assertEqual(selection["model_config"]["params"].width, 8)
+        self.assertEqual(selection["model_config"]["params"].export_variant, "untrained")
         self.assertEqual(selection["model_config"]["search"].depth, [2, 3])
 
-    def test_resolve_component_selection_accepts_null_optional_component_param_blocks(self) -> None:
-        # Optional component-local config blocks should treat explicit null the same as omission.
+    def test_resolve_component_selection_accepts_null_optional_task_and_search_blocks(self) -> None:
+        # Optional task params and model search blocks should treat explicit null the same as omission.
         client = _build_test_client()
         client.config.dataset = SimpleNamespace(name="custom_dataset", params=Dict(root="custom"))
         client.config.task = SimpleNamespace(name="custom_task", params=None)
         client.config.model = SimpleNamespace(
             family="custom_family",
-            params=None,
+            params=Dict(export_variant="untrained"),
             search=None,
         )
 
         selection = client._resolve_component_selection(client.config)
 
         self.assertEqual(selection["task_config"], Dict())
-        self.assertEqual(selection["model_config"]["params"], Dict())
+        self.assertEqual(selection["model_config"]["params"].export_variant, "untrained")
         self.assertEqual(selection["model_config"]["search"], Dict())
+
+    def test_resolve_component_selection_requires_export_variant(self) -> None:
+        """Model params must provide the universal export variant field."""
+        client = _build_test_client()
+        client.config.model = SimpleNamespace(family="custom_family", params=Dict(), search=Dict())
+
+        with self.assertRaisesRegex(KeyError, "model.params.export_variant"):
+            client._resolve_component_selection(client.config)
+
+    def test_resolve_component_selection_rejects_blank_export_variant(self) -> None:
+        """Blank export variants should fail before component bootstrap."""
+        client = _build_test_client()
+        client.config.model = SimpleNamespace(
+            family="custom_family",
+            params=Dict(export_variant=" "),
+            search=Dict(),
+        )
+
+        with self.assertRaisesRegex(ValueError, "model.params.export_variant"):
+            client._resolve_component_selection(client.config)
 
     def test_init_reuses_preliminary_bundle_when_dataset_selection_matches(self) -> None:
         # Initialization should reuse a matching preliminary bundle so repeated setup does not reload the same dataset.
@@ -387,7 +408,7 @@ class InitializationTests(unittest.TestCase):
                 params=Dict(directory="data", sampling_rate_hz=100, window_size=16, stride=1),
             ),
             task=SimpleNamespace(name="odometry_regression", params=Dict()),
-            model=SimpleNamespace(family="odom_tcn", params=Dict(), search=Dict()),
+            model=SimpleNamespace(family="odom_tcn", params=Dict(export_variant="approx_trained"), search=Dict()),
         )
         fake_bundle = DatasetBundle(
             train=DataSplit(inputs=np.zeros((1, 16, 3)), targets={"velx": np.zeros((1, 1)), "vely": np.zeros((1, 1))}),
@@ -757,6 +778,7 @@ class ObjectiveTests(unittest.TestCase):
         self.assertIn("family_hparams", sent_payload)
         self.assertIn("runtime_metadata", sent_payload)
         self.assertEqual(sent_payload["device_options_overrides"], {"cpu_clock_mhz": 200})
+        self.assertNotIn("model_variant", sent_payload)
         self.assertNotIn("cpu_clock_mhz", sent_payload["family_hparams"])
         self.assertEqual(sent_payload["runtime_metadata"]["flops"], 1234)
         self.assertEqual(trial.params["cpu_clock_mhz_index"], 0)

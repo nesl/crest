@@ -41,6 +41,7 @@ from tinyodom.model import (
     validate_model_input_shape,
     validate_loaded_model_input_shape,
 )  # noqa: E402
+from tinyodom.component_selection import resolve_component_selection  # noqa: E402
 from tinyodom.hardware import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
 from tinyodom.hil_runtime import CollectMetricsRequest, HarnessConfig, build_collect_metrics_request, collect_metrics  # noqa: E402, E501
 from tinyodom.microcontrollers import resolve_device_options  # noqa: E402
@@ -1612,6 +1613,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{models_dir}\"",
                         f"  candidate_dir: \"{candidate_dir}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -1619,10 +1621,10 @@ class LoadSettingsTests(unittest.TestCase):
             settings = load_config(config_path=config_path)
 
             self.assertEqual(
-                settings.outputs.model_name, "TinyOdomEx_OxIOD_TEST_DEVICE.tflite"
+                settings.outputs.model_name, "TinyOdomEx_Test_TEST_DEVICE.tflite"
             )
             self.assertEqual(
-                settings.outputs.checkpoint_name, "TinyOdomEx_OxIOD_TEST_DEVICE.keras"
+                settings.outputs.checkpoint_name, "TinyOdomEx_Test_TEST_DEVICE.keras"
             )
             self.assertTrue(settings.outputs.models_dir.is_dir())
             self.assertTrue(settings.outputs.candidate_dir.is_dir())
@@ -1657,6 +1659,206 @@ class LoadSettingsTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "outputs.candidate_dir"):
                 load_config(config_path=config_path)
+
+    def test_load_settings_rejects_missing_artifact_stem(self) -> None:
+        """Configuration loading should require an artifact stem."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 5",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "outputs.artifact_stem"):
+                load_config(config_path=config_path)
+
+    def test_load_settings_rejects_yaml_artifact_filenames(self) -> None:
+        """Configuration loading should reject authored artifact filenames."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 5",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  model_name: \"manual.tflite\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "outputs.model_name"):
+                load_config(config_path=config_path)
+
+    def test_load_settings_rejects_yaml_checkpoint_name(self) -> None:
+        """Configuration loading should reject authored checkpoint filenames."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 5",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  checkpoint_name: \"manual.keras\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "outputs.model_name"):
+                load_config(config_path=config_path)
+
+    def test_load_settings_rejects_invalid_artifact_stems(self) -> None:
+        """Artifact stems should reject blank and non-string YAML values."""
+        cases = {
+            "blank": "\"   \"",
+            "integer": "123",
+        }
+        for label, yaml_value in cases.items():
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    tmp_path = Path(tmpdir)
+                    config_path = tmp_path / "config.yaml"
+                    config_path.write_text(
+                        "\n".join(
+                            [
+                                "device:",
+                                "  name: TEST_DEVICE",
+                                "training:",
+                                "  nas_trials: 5",
+                                *self._score_lines(),
+                                "outputs:",
+                                f"  models_dir: \"{tmp_path / 'models'}\"",
+                                f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
+                                f"  artifact_stem: {yaml_value}",
+                            ]
+                        )
+                    )
+
+                    with self.assertRaisesRegex(ValueError, "outputs.artifact_stem"):
+                        load_config(config_path=config_path)
+
+    def test_load_settings_rejects_path_like_artifact_stem(self) -> None:
+        """Artifact stems should be filename stems, not paths."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 5",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
+                        "  artifact_stem: \"nested/TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "outputs.artifact_stem"):
+                load_config(config_path=config_path)
+
+    def test_shipped_configs_use_artifact_stem_and_export_variant(self) -> None:
+        """All shipped configs should load with the Phase 5 artifact schema."""
+        cases = [
+            ("nas_config.yaml", "odom_tcn", "approx_trained"),
+            ("nas_config_ble.yaml", "odom_tcn", "approx_trained"),
+            ("nas_config_portenta.yaml", "odom_tcn", "approx_trained"),
+            ("nas_config_audio_stm32.yaml", "audio_dscnn", "untrained"),
+        ]
+        for filename, family, export_variant in cases:
+            with self.subTest(filename=filename):
+                config_path = ROOT_DIR / "src/config" / filename
+                text = config_path.read_text(encoding="utf-8")
+                self.assertIn("artifact_stem:", text)
+                self.assertNotIn("model_name:", text)
+                self.assertNotIn("checkpoint_name:", text)
+                settings = load_config(config_path=config_path)
+                selection = resolve_component_selection(settings)
+
+                self.assertEqual(settings.model.family, family)
+                self.assertEqual(selection["model_config"]["params"].export_variant, export_variant)
+
+    def test_config_readme_lists_audio_config_and_artifact_stem(self) -> None:
+        """Config documentation should mention the audio config and new stem key."""
+        readme = (ROOT_DIR / "src/config/README.md").read_text(encoding="utf-8")
+
+        self.assertIn("nas_config_audio_stm32.yaml", readme)
+        self.assertIn("artifact_stem", readme)
+        self.assertIn("export_variant", readme)
+
+    def test_audio_stm32_config_derives_audio_artifact_names(self) -> None:
+        """The audio STM32 config should derive artifact names from its stem."""
+        settings = load_config(config_path=ROOT_DIR / "src/config/nas_config_audio_stm32.yaml")
+
+        self.assertEqual(settings.model.family, "audio_dscnn")
+        self.assertEqual(settings.model.params.export_variant, "untrained")
+        self.assertEqual(
+            settings.outputs.model_name,
+            "TinyOdomEx_UrbanSound8K_STM32_NUCLEO_N657X0_Q.tflite",
+        )
+        self.assertEqual(
+            settings.outputs.checkpoint_name,
+            "TinyOdomEx_UrbanSound8K_STM32_NUCLEO_N657X0_Q.keras",
+        )
+
+    def test_audio_stm32_config_resolves_audio_components(self) -> None:
+        """The audio STM32 config should resolve the audio component stack."""
+        settings = load_config(config_path=ROOT_DIR / "src/config/nas_config_audio_stm32.yaml")
+
+        selection = resolve_component_selection(settings)
+
+        self.assertEqual(selection["dataset_name"], "urbansound8k_mel")
+        self.assertEqual(selection["task_name"], "sound_classification")
+        self.assertEqual(selection["model_family_name"], "audio_dscnn")
+        self.assertEqual(selection["model_config"]["params"].export_variant, "untrained")
+
+    def test_audio_stm32_score_validates_against_classification_metrics(self) -> None:
+        """Audio NAS scoring should use classification metrics, not RMSE terms."""
+        settings = load_config(config_path=ROOT_DIR / "src/config/nas_config_audio_stm32.yaml")
+
+        validate_nas_policy_for_task(
+            settings,
+            task_metric_names={"loss", "accuracy", "macro_f1"},
+            training_only_task_metric_names=set(),
+        )
+
+        settings.nas.score.params.terms = [Dict(type="weighted", metric="rmse_total", weight=-1.0)]
+        with self.assertRaisesRegex(ValueError, "rmse_total"):
+            validate_nas_policy_for_task(
+                settings,
+                task_metric_names={"loss", "accuracy", "macro_f1"},
+                training_only_task_metric_names=set(),
+            )
 
     def test_load_settings_rejects_removed_tcn_dir(self) -> None:
         """Configuration loading should reject the removed tcn_dir output key."""
@@ -1693,6 +1895,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                         *self._score_lines(),
                     ]
                 )
@@ -1729,6 +1932,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                         *self._score_lines(),
                     ]
                 )
@@ -1754,6 +1958,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -1777,6 +1982,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -1801,6 +2007,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -1828,6 +2035,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -1854,6 +2062,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -1879,6 +2088,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -1906,6 +2116,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -1940,6 +2151,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -1976,6 +2188,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2019,6 +2232,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2064,6 +2278,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2093,6 +2308,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2132,6 +2348,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2166,6 +2383,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2205,6 +2423,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2249,6 +2468,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2286,6 +2506,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2324,6 +2545,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2360,6 +2582,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2392,6 +2615,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2441,6 +2665,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'audio'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2484,6 +2709,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2526,6 +2752,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2564,6 +2791,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2592,6 +2820,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2620,6 +2849,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2663,6 +2893,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2707,6 +2938,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2756,6 +2988,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2790,6 +3023,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2830,6 +3064,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2863,6 +3098,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2903,6 +3139,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2934,6 +3171,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -2972,6 +3210,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -3002,6 +3241,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -3027,6 +3267,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )
@@ -3051,6 +3292,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
                     ]
                 )
             )

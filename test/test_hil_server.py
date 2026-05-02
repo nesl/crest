@@ -223,7 +223,7 @@ class HILServerTestCase(unittest.TestCase):
                 ),
             ),
             task=SimpleNamespace(name="odometry_regression", params=Dict()),
-            model=SimpleNamespace(family="odom_tcn", params=Dict(), search=Dict()),
+            model=SimpleNamespace(family="odom_tcn", params=Dict(export_variant="approx_trained"), search=Dict()),
             nas=Dict(
                 score=Dict(
                     type="scoring-function",
@@ -389,10 +389,96 @@ class DetermineMetricsTests(HILServerTestCase):
         prepare_request = fake_device.prepare_candidate.call_args.kwargs["request"]
         self.assertIsInstance(prepare_request, CandidatePrepareRequest)
         self.assertIs(prepare_request.model, fake_model)
+        self.assertEqual(prepare_request.model_variant, "approx_trained")
+        self.assertIsNone(prepare_request.checkpoint_path)
         self.assertIs(prepare_request.calibration_split, self.calibration_split)
+        self.assertEqual(FakeModelFamily.materialize_calls[0]["model_variant"], "approx_trained")
+        self.assertIsNone(FakeModelFamily.materialize_calls[0]["checkpoint_path"])
         self.assertEqual(len(FakeTask.validate_model_outputs_calls), 1)
         collect_mock.assert_called_once()
         self.assertEqual(result, fake_metrics)
+
+    def test_determine_metrics_uses_config_export_variant(self) -> None:
+        """Default HIL export selection should come from model params."""
+        self.config.model.params.export_variant = "untrained"
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.collect_metrics", return_value={"ok": True}):
+            server.determine_metrics(
+                self.request_family_hparams(),
+                self.request_runtime_metadata(),
+            )
+
+        self.assertEqual(FakeModelFamily.materialize_calls[0]["model_variant"], "untrained")
+
+    def test_determine_metrics_explicit_model_variant_overrides_config(self) -> None:
+        """Explicit model variants should override config-owned defaults."""
+        self.config.model.params.export_variant = "untrained"
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.collect_metrics", return_value={"ok": True}):
+            server.determine_metrics(
+                self.request_family_hparams(),
+                self.request_runtime_metadata(),
+                model_variant="approx_trained",
+            )
+
+        self.assertEqual(FakeModelFamily.materialize_calls[0]["model_variant"], "approx_trained")
+
+    def test_determine_metrics_uses_config_checkpoint_for_trained_variant(self) -> None:
+        """Trained variants should default to the config-derived checkpoint path."""
+        self.config.model.params.export_variant = "trained"
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.collect_metrics", return_value={"ok": True}):
+            server.determine_metrics(
+                self.request_family_hparams(),
+                self.request_runtime_metadata(),
+            )
+
+        self.assertEqual(
+            FakeModelFamily.materialize_calls[0]["checkpoint_path"],
+            self.config.outputs.checkpoint_path,
+        )
+
+    def test_determine_metrics_rejects_missing_config_export_variant(self) -> None:
+        """Missing config export variants should return a structured config error."""
+        server = self.build_server()
+        server.model_config["params"] = Dict()
+        server._pipeline_bootstrapped = True
+
+        metrics = server.determine_metrics(
+            self.request_family_hparams(),
+            self.request_runtime_metadata(),
+        )
+
+        self.assertEqual(metrics["backend_error_kind"], "config")
+        self.assertIn("model.params.export_variant", metrics["backend_error_detail"])
+        self.assertEqual(FakeModelFamily.materialize_calls, [])
 
     def test_collect_metrics_receives_expected_fields(self) -> None:
         """Key hyperparameters should flow through untouched to the controller."""
@@ -825,6 +911,25 @@ class StartLoopTests(HILServerTestCase):
             device_options_overrides={"cpu_clock_mhz": 400},
         )
 
+    def test_start_ignores_payload_model_variant_field(self) -> None:
+        """Network payloads should not override config-owned export variants."""
+        server = self.build_server()
+        payload = self.request_payload(
+            runtime_metadata=self.request_runtime_metadata(flops=1, timesteps=32, input_dim=2),
+        )
+        payload["model_variant"] = "trained"
+        metrics = {"flash_bytes": 2048}
+        server.determine_metrics = MagicMock(return_value=metrics)
+        self.socket.recv_json.side_effect = [payload, KeyboardInterrupt()]
+
+        server.start()
+
+        server.determine_metrics.assert_called_once_with(
+            family_hparams=self.request_family_hparams(),
+            runtime_metadata=self.request_runtime_metadata(flops=1, timesteps=32, input_dim=2),
+            device_options_overrides=None,
+        )
+
     def test_start_returns_request_error_for_malformed_payload(self) -> None:
         # Malformed network payloads should come back as structured request errors instead of exploding the server loop.
         server = self.build_server()
@@ -871,14 +976,14 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(server.dataset_name, "oxiod")
         self.assertEqual(server.task_name, "odometry_regression")
         self.assertEqual(server.model_family_name, "odom_tcn")
-        self.assertEqual(server.model_config["params"], Dict())
+        self.assertEqual(server.model_config["params"].export_variant, "approx_trained")
         self.assertEqual(server.model_config["search"], Dict())
 
     def test_constructor_preserves_model_params_and_search_blocks(self) -> None:
         # Preloaded model params and search blocks should survive construction unchanged.
         self.config.model = SimpleNamespace(
             family="custom_family",
-            params=Dict(width=8),
+            params=Dict(width=8, export_variant="untrained"),
             search=Dict(depth=[2, 3]),
         )
 
@@ -886,6 +991,7 @@ class InitializationTests(HILServerTestCase):
 
         self.model_family_registry_mock.assert_not_called()
         self.assertEqual(server.model_config["params"].width, 8)
+        self.assertEqual(server.model_config["params"].export_variant, "untrained")
         self.assertEqual(server.model_config["search"].depth, [2, 3])
 
     def test_constructor_requires_explicit_dataset_task_and_model_blocks(self) -> None:

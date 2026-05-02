@@ -1793,14 +1793,27 @@ def load_config(
         raise ValueError(
             "outputs.tcn_dir has been removed. Use outputs.candidate_dir instead."
         )
+    if "model_name" in outputs or "checkpoint_name" in outputs:
+        raise ValueError(
+            "outputs.model_name and outputs.checkpoint_name are derived runtime fields. "
+            "Use outputs.artifact_stem instead."
+        )
     if "candidate_dir" not in outputs:
         raise ValueError("Expected 'outputs.candidate_dir' to be set in the configuration.")
+    raw_artifact_stem = outputs.get("artifact_stem", None)
+    if raw_artifact_stem is None or not isinstance(raw_artifact_stem, str):
+        raise ValueError("Expected 'outputs.artifact_stem' to be a non-empty string.")
+    artifact_stem = raw_artifact_stem.strip()
+    if not artifact_stem or "/" in artifact_stem or "\\" in artifact_stem:
+        raise ValueError(
+            "Expected 'outputs.artifact_stem' to be a non-empty filename stem without path separators."
+        )
     candidate_dir = Path(outputs.candidate_dir).resolve()
     models_dir.mkdir(parents=True, exist_ok=True)
     candidate_dir.mkdir(parents=True, exist_ok=True)
 
     # Stores derived model/checkpoint names and paths into the config
-    model_stem = f"TinyOdomEx_OxIOD_{device_name}"
+    model_stem = f"{artifact_stem}_{device_name}"
     outputs.model_name = f"{model_stem}.tflite"
     outputs.checkpoint_name = f"{model_stem}.keras"
     outputs.models_dir = models_dir

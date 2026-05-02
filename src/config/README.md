@@ -10,11 +10,15 @@ The current shipped config examples are:
 - [`nas_config.yaml`](nas_config.yaml)
 - [`nas_config_ble.yaml`](nas_config_ble.yaml)
 - [`nas_config_portenta.yaml`](nas_config_portenta.yaml)
+- [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml)
 
 Use [`nas_config.yaml`](nas_config.yaml) as the default starting point for the
 repo. It is the main STM32-oriented example config and the most complete
 reference for the current score/prune surface. Use the BLE and Portenta files
 when you want board-specific starting points for those Arduino-backed targets.
+Use [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml) for the
+desktop-first UrbanSound8K / DS-CNN audio path before moving into STM32 HIL
+smoke work.
 
 The runtime loader and validator live in
 [`../tinyodom/model.py`](../tinyodom/model.py), while the task-aware bootstrap
@@ -207,7 +211,8 @@ task:
 
 model:
   family: odom_tcn
-  params: {}
+  params:
+    export_variant: approx_trained
   search: {}
 ```
 
@@ -260,15 +265,17 @@ Current shipped keys:
 
 - `outputs.models_dir`
 - `outputs.candidate_dir`
-- `outputs.model_name`
-- `outputs.checkpoint_name`
+- `outputs.artifact_stem`
 - `outputs.log_file_name`
 
 Important runtime caveat:
 
-- `load_config(...)` derives `model_name` and `checkpoint_name` from
-  `device.name`, then populates derived paths such as `tflite_model_path` and
-  `checkpoint_path`
+- `load_config(...)` derives read-only runtime fields `model_name` and
+  `checkpoint_name` from `outputs.artifact_stem` and `device.name`, then
+  populates derived paths such as `tflite_model_path` and `checkpoint_path`
+- YAML-authored `outputs.model_name` and `outputs.checkpoint_name` are rejected
+  because artifact names now follow the shared `{artifact_stem}_{device.name}`
+  rule
 - `models_dir` and `candidate_dir` are resolved into absolute paths in memory
 
 So the final in-memory values may differ from the literal YAML text.

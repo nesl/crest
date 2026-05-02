@@ -727,6 +727,65 @@ class HILServer:
             checkpoint_path=checkpoint_path,
         )
 
+    def _resolve_export_model_variant(self, model_variant: str | None) -> str:
+        """Resolve the export model variant for one HIL request.
+
+        Parameters
+        ----------
+        model_variant : str | None
+            Explicit caller override, or ``None`` to use
+            ``model.params.export_variant`` from the active config.
+
+        Returns
+        -------
+        str
+            Non-empty model variant name.
+
+        Raises
+        ------
+        ValueError
+            If no usable variant is available.
+        """
+
+        if model_variant is not None:
+            if not isinstance(model_variant, str) or not model_variant.strip():
+                raise ValueError("model_variant must be a non-empty string when provided.")
+            return model_variant.strip()
+        params = getattr(self.model_config, "params", None)
+        raw_variant = None if params is None else cfg_get(params, "export_variant", None)
+        if not isinstance(raw_variant, str) or not raw_variant.strip():
+            raise ValueError("Expected model.params.export_variant to be a non-empty string.")
+        return raw_variant.strip()
+
+    def _resolve_export_checkpoint_path(
+        self,
+        *,
+        model_variant: str,
+        checkpoint_path: Path | str | None,
+    ) -> Path | str | None:
+        """Resolve checkpoint fallback for trained export variants.
+
+        Parameters
+        ----------
+        model_variant : str
+            Resolved model variant name.
+        checkpoint_path : pathlib.Path | str | None
+            Explicit checkpoint path supplied by the caller.
+
+        Returns
+        -------
+        pathlib.Path | str | None
+            Explicit checkpoint path, config-derived checkpoint path for
+            trained variants, or ``None`` for variants that do not require a
+            checkpoint.
+        """
+
+        if checkpoint_path is not None:
+            return checkpoint_path
+        if model_variant.strip().lower().startswith("trained"):
+            return Path(self.config.outputs.checkpoint_path)
+        return None
+
     def _normalized_device_name(self) -> str:
         """Return the normalized configured device name.
 
@@ -974,7 +1033,7 @@ class HILServer:
         runtime_metadata: Mapping[str, Any],
         device_options_overrides: dict | None = None,
         checkpoint_path: Path | str | None = None,
-        model_variant: str = APPROX_TRAINED_VARIANT_NAME,
+        model_variant: str | None = None,
     ) -> dict:
         """
         Build/select a model variant, compile/export it, and collect HIL metrics.
@@ -987,16 +1046,12 @@ class HILServer:
             Runtime-owned request metadata such as ``flops``, ``timesteps``,
             ``input_dim``, and ``batch_size``.
         checkpoint_path : Path | str | None, optional
-            Checkpoint path used when ``model_variant`` starts with ``"trained"``.
-        model_variant : str, optional
-            Model source/variant selector, by default ``"approx_trained"``. Other
-             values are for analysis and debug only. Supported values are
-            ``"approx_trained"``, ``"untrained"``, or any value that starts with
-            ``"trained"``. ``"approx_trained"`` applies deterministic full-BN +
-            non-BN-bias perturbation to approximate trained-model exported op
-            structure without running training. ``"untrained"`` uses raw
-            initializer defaults and typically exports fewer operations than
-            ``"trained"``/``"approx_trained"``.
+            Checkpoint path used when ``model_variant`` starts with
+            ``"trained"``. When omitted for a trained variant, the server uses
+            ``config.outputs.checkpoint_path``.
+        model_variant : str | None, optional
+            Explicit model source/variant selector. When ``None``, the server
+            uses ``model.params.export_variant`` from the active config.
 
         Returns
         -------
@@ -1021,6 +1076,11 @@ class HILServer:
         try:
             self._ensure_pipeline_bootstrapped()
             latency_budget_ms = self._effective_latency_budget_ms()
+            resolved_model_variant = self._resolve_export_model_variant(model_variant)
+            resolved_checkpoint_path = self._resolve_export_checkpoint_path(
+                model_variant=resolved_model_variant,
+                checkpoint_path=checkpoint_path,
+            )
         except ValueError as exc:
             return self._request_boundary_failure_metrics(
                 error_kind="config",
@@ -1082,8 +1142,8 @@ class HILServer:
         if runtime_device.requires_candidate_model():
             model = self._materialize_candidate_model(
                 family_hparams,
-                model_variant=model_variant,
-                checkpoint_path=checkpoint_path,
+                model_variant=resolved_model_variant,
+                checkpoint_path=resolved_checkpoint_path,
             )
             if runtime_device.requires_training_data():
                 try:
@@ -1117,8 +1177,8 @@ class HILServer:
             prepared_dir = runtime_device.prepare_candidate(
                 request=self._build_candidate_prepare_request(
                     model=model,
-                    model_variant=model_variant,
-                    checkpoint_path=checkpoint_path,
+                    model_variant=resolved_model_variant,
+                    checkpoint_path=resolved_checkpoint_path,
                     calibration_split=calibration_split,
                 ),
             )

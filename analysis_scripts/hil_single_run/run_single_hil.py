@@ -119,7 +119,11 @@ def main() -> int:
 
     hyperparams = _build_hyperparams(server)
     family_hparams, runtime_metadata = split_hil_request_hyperparams(hyperparams)
-    metrics = server.determine_metrics(family_hparams, runtime_metadata)
+    metrics = server.determine_metrics(
+        family_hparams,
+        runtime_metadata,
+        model_variant="approx_trained",
+    )
 
     print("Single HIL metrics:")
     for key, value in metrics.items():
