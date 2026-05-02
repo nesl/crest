@@ -2050,6 +2050,12 @@ class NASModelClient:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TinyODOM NAS workflow runner.")
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="Path to the NAS/HIL YAML configuration file.",
+    )
+    parser.add_argument(
         "--smoke-test",
         type=int,
         nargs="?",
@@ -2072,7 +2078,7 @@ if __name__ == "__main__":
     storage_uri = "sqlite:///optuna.db"
     client: NASModelClient | None = None
     try:
-        client = NASModelClient()
+        client = NASModelClient(args.config)
         if args.smoke_test > 0:
             print(f"[MAIN] Starting smoke test with {args.smoke_test} trials...")
             study_name = f"{args.study_name}_{client.config.device.name}"
