@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .datasets.oxiod import OxIODDataset
 from .datasets.urbansound8k_mel import UrbanSound8KMelDataset
+from .model_families.audio_dscnn import AudioDSCNNFamily
 from .model_families.odom_tcn import OdomTCNFamily
 from .registry import dataset_registry, model_family_registry, task_registry
 from .tasks.odometry_regression import OdometryRegressionTask
@@ -35,3 +36,5 @@ def ensure_builtin_components_registered() -> None:
         task_registry.register("sound_classification", SoundClassificationTask)
     if "odom_tcn" not in model_family_registry:
         model_family_registry.register("odom_tcn", OdomTCNFamily)
+    if "audio_dscnn" not in model_family_registry:
+        model_family_registry.register("audio_dscnn", AudioDSCNNFamily)

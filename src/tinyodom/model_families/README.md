@@ -20,7 +20,9 @@ The current key files for this layer are:
   `ModelBuildContext`, which is the normalized build-time input passed into a
   family.
 - [`odom_tcn.py`](odom_tcn.py)
-  The only built-in concrete family today.
+  The built-in odometry TCN family.
+- [`audio_dscnn.py`](audio_dscnn.py)
+  The built-in audio DS-CNN family for cached UrbanSound8K log-mel inputs.
 - [`../registry.py`](../registry.py)
   `model_family_registry`, the runtime lookup table.
 - [`../builtin_components.py`](../builtin_components.py)
@@ -117,7 +119,9 @@ The default `ModelFamilyABC.materialize_export_model(...)` supports:
 - `untrained`
 - any variant whose name starts with `trained`
 
-[`odom_tcn.py`](odom_tcn.py) extends that to also handle:
+Non-TCN families can rely on the base variants when they only need fresh-model
+or checkpoint-backed export materialization. [`odom_tcn.py`](odom_tcn.py)
+extends the base behavior to also handle:
 
 - `approx_trained`
 - `representative`
