@@ -3,8 +3,8 @@
 # vendor-copy files that must be materialized deterministically. The broader
 # LRUN vendor workspace is setup-managed and tracked in setup state, not in git.
 
-tinyodom_owned	Appli/Inc/tcn_dut_runner.h	
-tinyodom_owned	Appli/Src/tcn_dut_runner.c	
+tinyodom_owned	Appli/Inc/tinyodom_dut_runner.h
+tinyodom_owned	Appli/Src/tinyodom_dut_runner.c
 tinyodom_owned	lrun_ownership_manifest.tsv	
 
 vendor_derived	Appli/Inc/mx25um51245g_conf.h	
@@ -24,7 +24,7 @@ generated	Appli/Inc/network.h
 generated	Appli/Inc/network_config.h	
 generated	Appli/Inc/network_data.h	
 generated	Appli/Inc/network_data_params.h	
-generated	Appli/Inc/tcn_dut_phase_config.h	
+generated	Appli/Inc/tinyodom_dut_phase_config.h
 generated	Appli/Src/network.c	
 generated	Appli/Src/network_data.c	
 generated	Appli/Src/network_data_params.c	

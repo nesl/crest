@@ -29,7 +29,7 @@ For config semantics, see
   Portenta CM7 helper sketch used to bring up CM4 in the harness-only path.
 - [`stm32/`](stm32)
   STM32 workspaces. The current committed production workspace is
-  [`stm32/tinyodom_tcn_stm32_lrun/README.md`](stm32/tinyodom_tcn_stm32_lrun/README.md).
+  [`stm32/tinyodom_stm32_lrun/README.md`](stm32/tinyodom_stm32_lrun/README.md).
 
 ## Runtime Sketch Selection
 
@@ -65,7 +65,7 @@ STM32 content is not organized as one Arduino sketch per board.
 
 The current committed workspace is:
 
-- [`stm32/tinyodom_tcn_stm32_lrun/README.md`](stm32/tinyodom_tcn_stm32_lrun/README.md)
+- [`stm32/tinyodom_stm32_lrun/README.md`](stm32/tinyodom_stm32_lrun/README.md)
 
 See that README for the LRUN workspace internals, staged/generated file
 layout, and STM32-specific workflow details.

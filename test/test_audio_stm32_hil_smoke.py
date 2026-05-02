@@ -44,7 +44,7 @@ class AudioSTM32HILSmokeTests(unittest.TestCase):
                 serial_port="/dev/ttyACM0",
                 runtime_mode="back_to_back",
                 measured_inference_runs=10,
-                stm32=Dict(project_root="sketches/stm32/tinyodom_tcn_stm32_lrun"),
+                stm32=Dict(project_root="sketches/stm32/tinyodom_stm32_lrun"),
             ),
             training=Dict(energy_aware=False, quantization=True),
             model=Dict(params=Dict(export_variant="untrained")),
@@ -285,7 +285,7 @@ class AudioSTM32HILSmokeTests(unittest.TestCase):
 
             self.assertEqual(observed, 1234)
             self.assertFalse(ok)
-            self.assertIn("Phase 7", followups[0])
+            self.assertIn("does not match audio feature shape", followups[0])
 
     def test_prepare_input_validation_accepts_quantized_audio_bytes(self) -> None:
         """Prepared input validation should accept int8 quantized audio input bytes."""

@@ -41,7 +41,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include "stm32n6xx_nucleo_xspi.h"
-#include "tcn_dut_runner.h"
+#include "tinyodom_dut_runner.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -226,12 +226,12 @@ void SysTick_Handler(void)
 
 void RTC_S_IRQHandler(void)
 {
-  tcn_dut_rtc_irq_handler();
+  tinyodom_dut_rtc_irq_handler();
 }
 
 void RTC_IRQHandler(void)
 {
-  tcn_dut_rtc_irq_handler();
+  tinyodom_dut_rtc_irq_handler();
 }
 
 void XSPI1_IRQHandler(void)

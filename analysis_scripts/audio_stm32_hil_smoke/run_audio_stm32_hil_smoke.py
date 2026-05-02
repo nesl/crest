@@ -633,11 +633,11 @@ def validate_prepared_input_contract(
         return observed, True, []
     if observed is None:
         return observed, False, [
-            "Phase 7: expose or parse generated STM32 network input bytes for audio compatibility checks."
+            "STM32 generated network input byte count could not be parsed for audio compatibility checks."
         ]
     return observed, False, [
         (
-            "Phase 7: STM32 generated network input byte count does not match "
+            "STM32 generated network input byte count does not match "
             f"audio feature shape and dtype; expected {expected}, observed {observed}."
         )
     ]

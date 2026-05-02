@@ -39,8 +39,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "tcn_dut_phase_config.h"
-#include "tcn_dut_runner.h"
+#include "tinyodom_dut_phase_config.h"
+#include "tinyodom_dut_runner.h"
 
 /* USER CODE END Includes */
 
@@ -179,8 +179,8 @@ int main(void)
   /* USER CODE END 2 */
   DebugCom_Init();
   DWT_Init();
-  tcn_dut_harness_gpio_init();
-  tcn_dut_run_once();
+  tinyodom_dut_harness_gpio_init();
+  tinyodom_dut_run_once();
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -235,7 +235,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-#if TCN_DUT_CPU_CLOCK_MHZ != 800
+#if TINYODOM_DUT_CPU_CLOCK_MHZ != 800
   uint32_t ic1_divider = 2U;
 #endif
 
@@ -248,7 +248,7 @@ void SystemClock_Config(void)
 
   /** Configure the main internal regulator output voltage
   */
-#if TCN_DUT_CPU_CLOCK_MHZ == 800
+#if TINYODOM_DUT_CPU_CLOCK_MHZ == 800
   BSP_SMPS_Init(SMPS_VOLTAGE_OVERDRIVE);
   if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE0) != HAL_OK)
   {
@@ -303,7 +303,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL1.PLLFractional = 0;
   RCC_OscInitStruct.PLL1.PLLP1 = 1;
   RCC_OscInitStruct.PLL1.PLLP2 = 1;
-#if TCN_DUT_CPU_CLOCK_MHZ == 800
+#if TINYODOM_DUT_CPU_CLOCK_MHZ == 800
   RCC_OscInitStruct.PLL2.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL2.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL2.PLLM = 2;
@@ -334,20 +334,20 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV1;
   RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV1;
   RCC_ClkInitStruct.APB5CLKDivider = RCC_APB5_DIV1;
-#if TCN_DUT_CPU_CLOCK_MHZ == 800
+#if TINYODOM_DUT_CPU_CLOCK_MHZ == 800
   RCC_ClkInitStruct.IC1Selection.ClockSelection = RCC_ICCLKSOURCE_PLL2;
   RCC_ClkInitStruct.IC1Selection.ClockDivider = 1;
 #else
-#if TCN_DUT_CPU_CLOCK_MHZ == 600
+#if TINYODOM_DUT_CPU_CLOCK_MHZ == 600
   ic1_divider = 2U;
-#elif TCN_DUT_CPU_CLOCK_MHZ == 400
+#elif TINYODOM_DUT_CPU_CLOCK_MHZ == 400
   ic1_divider = 3U;
-#elif TCN_DUT_CPU_CLOCK_MHZ == 300
+#elif TINYODOM_DUT_CPU_CLOCK_MHZ == 300
   ic1_divider = 4U;
-#elif TCN_DUT_CPU_CLOCK_MHZ == 200
+#elif TINYODOM_DUT_CPU_CLOCK_MHZ == 200
   ic1_divider = 6U;
 #else
-#error "Unsupported TCN_DUT_CPU_CLOCK_MHZ preset"
+#error "Unsupported TINYODOM_DUT_CPU_CLOCK_MHZ preset"
 #endif
   RCC_ClkInitStruct.IC1Selection.ClockSelection = RCC_ICCLKSOURCE_PLL1;
   RCC_ClkInitStruct.IC1Selection.ClockDivider = ic1_divider;

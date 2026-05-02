@@ -1,4 +1,4 @@
-#include "tcn_dut_runner.h"
+#include "tinyodom_dut_runner.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -11,7 +11,7 @@
 #include "stm32n6xx_hal_rtc.h"
 #include "stm32n6xx_hal_rtc_ex.h"
 #include "stm32n6xx_nucleo_xspi.h"
-#include "tcn_dut_phase_config.h"
+#include "tinyodom_dut_phase_config.h"
 
 /*
  * This module owns the DUT-side HIL protocol for the TinyODOM-Ex LRUN app.
@@ -39,12 +39,12 @@ enum
 static const uintptr_t kExternalWeightsStart = 0x70000000UL;
 static const uintptr_t kExternalWeightsEnd = 0x80000000UL;
 
-#define TCN_DUT_TRIGGER_GPIO_PORT   GPIOD
-#define TCN_DUT_TRIGGER_GPIO_PIN    GPIO_PIN_0
-#define TCN_DUT_ARM_GPIO_PORT       GPIOE
-#define TCN_DUT_ARM_GPIO_PIN        GPIO_PIN_9
+#define TINYODOM_DUT_TRIGGER_GPIO_PORT   GPIOD
+#define TINYODOM_DUT_TRIGGER_GPIO_PIN    GPIO_PIN_0
+#define TINYODOM_DUT_ARM_GPIO_PORT       GPIOE
+#define TINYODOM_DUT_ARM_GPIO_PIN        GPIO_PIN_9
 
-#define TCN_DUT_STOP_MODE_VARIANT "system_stop_mainreg_wfi"
+#define TINYODOM_DUT_STOP_MODE_VARIANT "system_stop_mainreg_wfi"
 
 typedef struct
 {
@@ -59,7 +59,7 @@ typedef struct
   uint32_t runs_completed;
   bool have_timing;
   bool have_cycles;
-} TcnDutMeasurement;
+} TinyOdomDutMeasurement;
 
 static RTC_HandleTypeDef s_rtc_handle;
 static volatile bool s_rtc_wakeup_fired = false;
@@ -264,21 +264,21 @@ static bool restore_external_weight_clocking_after_stop(void)
 
 static void set_harness_idle(void)
 {
-  HAL_GPIO_WritePin(TCN_DUT_TRIGGER_GPIO_PORT, TCN_DUT_TRIGGER_GPIO_PIN, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(TCN_DUT_ARM_GPIO_PORT, TCN_DUT_ARM_GPIO_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(TINYODOM_DUT_TRIGGER_GPIO_PORT, TINYODOM_DUT_TRIGGER_GPIO_PIN, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(TINYODOM_DUT_ARM_GPIO_PORT, TINYODOM_DUT_ARM_GPIO_PIN, GPIO_PIN_SET);
 }
 
 static void arm_harness_window(void)
 {
-  HAL_GPIO_WritePin(TCN_DUT_ARM_GPIO_PORT, TCN_DUT_ARM_GPIO_PIN, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(TINYODOM_DUT_ARM_GPIO_PORT, TINYODOM_DUT_ARM_GPIO_PIN, GPIO_PIN_RESET);
   HAL_Delay(kArmHoldMs);
-  HAL_GPIO_WritePin(TCN_DUT_TRIGGER_GPIO_PORT, TCN_DUT_TRIGGER_GPIO_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(TINYODOM_DUT_TRIGGER_GPIO_PORT, TINYODOM_DUT_TRIGGER_GPIO_PIN, GPIO_PIN_SET);
 }
 
 static void disarm_harness_window(void)
 {
-  HAL_GPIO_WritePin(TCN_DUT_TRIGGER_GPIO_PORT, TCN_DUT_TRIGGER_GPIO_PIN, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(TCN_DUT_ARM_GPIO_PORT, TCN_DUT_ARM_GPIO_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(TINYODOM_DUT_TRIGGER_GPIO_PORT, TINYODOM_DUT_TRIGGER_GPIO_PIN, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(TINYODOM_DUT_ARM_GPIO_PORT, TINYODOM_DUT_ARM_GPIO_PIN, GPIO_PIN_SET);
 }
 
 static uint32_t read_cpu_clock_hz(void)
@@ -616,7 +616,7 @@ static bool stop_sleep_for_us(uint32_t sleep_us, int64_t *wake_recovery_us)
   uint64_t after_wake_us = 0ULL;
   uint64_t after_restore_us = 0ULL;
 
-  if (sleep_us < TCN_DUT_MIN_SLEEP_US)
+  if (sleep_us < TINYODOM_DUT_MIN_SLEEP_US)
   {
     return false;
   }
@@ -719,21 +719,21 @@ static bool rtc_wakeup_irq_self_test(void)
 static void emit_phase_header(void)
 {
   const char *phase_label =
-      (TCN_DUT_SELECTED_PHASE == TCN_DUT_PHASE_CADENCED) ? "cadenced" : "back_to_back";
+      (TINYODOM_DUT_SELECTED_PHASE == TINYODOM_DUT_PHASE_CADENCED) ? "cadenced" : "back_to_back";
 
   printf("phase output: %s\r\n", phase_label);
   printf("rtc clock source output: %s\r\n", s_rtc_clock_source);
   printf("rtc clock hz nominal output: %lu\r\n", (unsigned long)s_rtc_clock_hz_nominal);
   printf("cadence timing quality output: %s\r\n", s_cadence_timing_quality);
-  printf("stop mode variant output: %s\r\n", TCN_DUT_STOP_MODE_VARIANT);
-  printf("cadence budget (ms): %d\r\n", TCN_DUT_LATENCY_BUDGET_MS);
+  printf("stop mode variant output: %s\r\n", TINYODOM_DUT_STOP_MODE_VARIANT);
+  printf("cadence budget (ms): %d\r\n", TINYODOM_DUT_LATENCY_BUDGET_MS);
   flush_stdout();
 }
 
-static void emit_measurement_telemetry(const TcnDutMeasurement *measurement)
+static void emit_measurement_telemetry(const TinyOdomDutMeasurement *measurement)
 {
   bool have_means = (measurement->runs_completed > 0U) && measurement->have_timing;
-  bool cadenced_phase = (TCN_DUT_SELECTED_PHASE == TCN_DUT_PHASE_CADENCED);
+  bool cadenced_phase = (TINYODOM_DUT_SELECTED_PHASE == TINYODOM_DUT_PHASE_CADENCED);
   int64_t wake_recovery_mean_us = -1;
   int64_t wake_overshoot_mean_us = -1;
 
@@ -754,7 +754,7 @@ static void emit_measurement_telemetry(const TcnDutMeasurement *measurement)
   emit_float_scaled_line("timer per window output",
                          measurement->timer_per_window_scaled_1e6,
                          measurement->have_timing);
-  if (TCN_DUT_SELECTED_PHASE == TCN_DUT_PHASE_BACK_TO_BACK)
+  if (TINYODOM_DUT_SELECTED_PHASE == TINYODOM_DUT_PHASE_BACK_TO_BACK)
   {
     emit_float_scaled_line("timer output",
                            measurement->timer_per_inference_scaled_1e6,
@@ -801,7 +801,7 @@ static void emit_measurement_telemetry(const TcnDutMeasurement *measurement)
 static bool run_back_to_back_window(ai_handle network,
                                     ai_buffer *input,
                                     ai_buffer *output,
-                                    TcnDutMeasurement *measurement)
+                                    TinyOdomDutMeasurement *measurement)
 {
   uint32_t start_cycles = 0U;
   uint32_t elapsed_cycles = 0U;
@@ -811,7 +811,7 @@ static bool run_back_to_back_window(ai_handle network,
   arm_harness_window();
   start_cycles = DWT->CYCCNT;
 
-  for (int run_idx = 0; run_idx < TCN_DUT_MEASURED_RUNS; ++run_idx)
+  for (int run_idx = 0; run_idx < TINYODOM_DUT_MEASURED_RUNS; ++run_idx)
   {
     batch = ai_network_run(network, input, output);
     if (batch != 1)
@@ -847,20 +847,20 @@ static bool run_back_to_back_window(ai_handle network,
 static bool run_cadenced_window(ai_handle network,
                                 ai_buffer *input,
                                 ai_buffer *output,
-                                TcnDutMeasurement *measurement)
+                                TinyOdomDutMeasurement *measurement)
 {
   uint64_t phase_start_us = 0ULL;
   uint64_t next_release_us = 0ULL;
   uint64_t phase_end_us = 0ULL;
   uint64_t active_cycles_total = 0ULL;
-  const uint64_t cadence_us = (uint64_t)TCN_DUT_LATENCY_BUDGET_MS * 1000ULL;
+  const uint64_t cadence_us = (uint64_t)TINYODOM_DUT_LATENCY_BUDGET_MS * 1000ULL;
 
   fill_input_buffer(input);
   arm_harness_window();
   phase_start_us = rtc_now_us();
   next_release_us = phase_start_us;
 
-  for (int run_idx = 0; run_idx < TCN_DUT_MEASURED_RUNS; ++run_idx)
+  for (int run_idx = 0; run_idx < TINYODOM_DUT_MEASURED_RUNS; ++run_idx)
   {
     uint64_t now_us = rtc_now_us();
     int64_t wake_recovery_us = 0;
@@ -873,9 +873,9 @@ static bool run_cadenced_window(ai_handle network,
     if (now_us < next_release_us)
     {
       uint64_t slack_us = next_release_us - now_us;
-      if (slack_us > (uint64_t)(TCN_DUT_WAKE_MARGIN_US + TCN_DUT_MIN_SLEEP_US))
+      if (slack_us > (uint64_t)(TINYODOM_DUT_WAKE_MARGIN_US + TINYODOM_DUT_MIN_SLEEP_US))
       {
-        uint32_t requested_sleep_us = (uint32_t)(slack_us - (uint64_t)TCN_DUT_WAKE_MARGIN_US);
+        uint32_t requested_sleep_us = (uint32_t)(slack_us - (uint64_t)TINYODOM_DUT_WAKE_MARGIN_US);
         printf("STM32_CADENCE_SLOT=%d stage=sleep_request requested_us=%lu\r\n",
                run_idx + 1,
                (unsigned long)requested_sleep_us);
@@ -942,7 +942,7 @@ static bool run_cadenced_window(ai_handle network,
   return true;
 }
 
-void tcn_dut_harness_gpio_init(void)
+void tinyodom_dut_harness_gpio_init(void)
 {
   GPIO_InitTypeDef gpio_init = {0};
 
@@ -954,16 +954,16 @@ void tcn_dut_harness_gpio_init(void)
   gpio_init.Pull = GPIO_NOPULL;
   gpio_init.Speed = GPIO_SPEED_FREQ_LOW;
 
-  gpio_init.Pin = TCN_DUT_ARM_GPIO_PIN;
-  HAL_GPIO_Init(TCN_DUT_ARM_GPIO_PORT, &gpio_init);
+  gpio_init.Pin = TINYODOM_DUT_ARM_GPIO_PIN;
+  HAL_GPIO_Init(TINYODOM_DUT_ARM_GPIO_PORT, &gpio_init);
 
-  gpio_init.Pin = TCN_DUT_TRIGGER_GPIO_PIN;
-  HAL_GPIO_Init(TCN_DUT_TRIGGER_GPIO_PORT, &gpio_init);
+  gpio_init.Pin = TINYODOM_DUT_TRIGGER_GPIO_PIN;
+  HAL_GPIO_Init(TINYODOM_DUT_TRIGGER_GPIO_PORT, &gpio_init);
 
   set_harness_idle();
 }
 
-void tcn_dut_rtc_irq_handler(void)
+void tinyodom_dut_rtc_irq_handler(void)
 {
   HAL_RTCEx_WakeUpTimerIRQHandler(&s_rtc_handle);
 }
@@ -976,10 +976,10 @@ void HAL_RTCEx_WakeUpTimerEventCallback(RTC_HandleTypeDef *hrtc)
   }
 }
 
-int tcn_dut_run_once(void)
+int tinyodom_dut_run_once(void)
 {
   ai_handle network = AI_HANDLE_NULL;
-  TcnDutMeasurement measurement = {0};
+  TinyOdomDutMeasurement measurement = {0};
 
   emit_line("STM32_BOOT=START");
   emit_line("STM32_RTC_INIT=START");
@@ -992,7 +992,7 @@ int tcn_dut_run_once(void)
   emit_line("STM32_RTC_INIT=OK");
   if (!rtc_wakeup_irq_self_test())
   {
-    if (TCN_DUT_SELECTED_PHASE == TCN_DUT_PHASE_CADENCED)
+    if (TINYODOM_DUT_SELECTED_PHASE == TINYODOM_DUT_PHASE_CADENCED)
     {
       emit_line("STM32_AI_INIT=FAIL reason=rtc_wakeup_selftest");
       return -7;
@@ -1038,7 +1038,7 @@ int tcn_dut_run_once(void)
     return -3;
   }
 
-  if (TCN_DUT_SELECTED_PHASE == TCN_DUT_PHASE_CADENCED)
+  if (TINYODOM_DUT_SELECTED_PHASE == TINYODOM_DUT_PHASE_CADENCED)
   {
     if (!run_cadenced_window(network, input, output, &measurement))
     {

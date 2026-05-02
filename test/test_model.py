@@ -892,7 +892,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 hil=True,
                 name="STM32_NUCLEO_N657X0_Q",
                 serial_port="ttyACM0",
-                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun")),
             ),
             dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(candidate_dir=Path("odom_tcn")),
@@ -902,7 +902,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         request = self._build_request(
             config,
             hyperparams,
-            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"},
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun"},
         )
 
         self.assertEqual(request.serial_timeout_s, 30.0)
@@ -918,7 +918,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 serial_port="ttyACM0",
                 measured_inference_runs=100,
                 latency_budget_ms=2000.0,
-                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun")),
             ),
             dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(candidate_dir=Path("odom_tcn")),
@@ -929,7 +929,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             config,
             hyperparams,
             latency_budget_ms=2000.0,
-            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"},
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun"},
         )
 
         self.assertEqual(request.serial_timeout_s, 210.0)
@@ -944,7 +944,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 runtime_mode="back_to_back",
                 serial_port="ttyACM0",
                 serial_timeout_s=120.0,
-                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun")),
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun")),
             ),
             dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(candidate_dir=Path("odom_tcn")),
@@ -954,7 +954,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         request = self._build_request(
             config,
             hyperparams,
-            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"},
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun"},
         )
 
         self.assertEqual(request.serial_timeout_s, 120.0)
@@ -1332,7 +1332,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         # Custom LRUN roots should normalize cleanly even before the standard folder layout exists on disk.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            project_root = tmp_path / "tinyodom_tcn_stm32_lrun"
+            project_root = tmp_path / "tinyodom_stm32_lrun"
             for required_dir in (
                 project_root / "FSBL",
                 project_root / "Appli",

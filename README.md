@@ -41,7 +41,7 @@ For the source-level architecture and extension points, see
    Start from [src/config/nas_config.yaml](src/config/nas_config.yaml), then
    read [src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md)
    and the committed STM32 workspace notes under
-   [sketches/stm32/tinyodom_tcn_stm32_lrun/README.md](sketches/stm32/tinyodom_tcn_stm32_lrun/README.md).
+   [sketches/stm32/tinyodom_stm32_lrun/README.md](sketches/stm32/tinyodom_stm32_lrun/README.md).
 
 4. **Analysis scripts / one-off experiments**
    Use this for focused measurement or validation runs outside the main NAS

@@ -25,5 +25,5 @@
 "./Src/syscalls.o"
 "./Src/sysmem.o"
 "./Src/system_stm32n6xx_s.o"
-"./Src/tcn_dut_runner.o"
+"./Src/tinyodom_dut_runner.o"
 "./Startup/startup_stm32n657xx.o"

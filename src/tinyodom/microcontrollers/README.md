@@ -434,7 +434,7 @@ device:
   runtime_mode: cadenced
   cpu_clock_mhz_options: [200, 300, 400, 600, 800]
   stm32:
-    project_root: sketches/stm32/tinyodom_tcn_stm32_lrun
+    project_root: sketches/stm32/tinyodom_stm32_lrun
     appli_flash_address: 0x70100000
     weight_storage_mode: external_flash
     weights_memory_pool: analysis_scripts/stm32_example_project/nucleo_mypool.json
@@ -445,7 +445,7 @@ device:
 Current default behavior:
 
 1. If `device.stm32.project_root` is omitted, the backend defaults to
-   `sketches/stm32/tinyodom_tcn_stm32_lrun`.
+   `sketches/stm32/tinyodom_stm32_lrun`.
 2. LRUN `dev_boot` is the only supported production layout for this board and
    is implied automatically.
 

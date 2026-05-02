@@ -53,7 +53,6 @@ candidate-local TFLite artifact and applies the configured quantization path.
 With the default audio STM32 config, that staged candidate uses int8 input, so
 `AI_NETWORK_IN_1_SIZE_BYTES` is expected to be `201 * 64 = 12864`.
 
-The current STM32 LRUN template still uses historical names such as
-`tinyodom_tcn_stm32_lrun` and `tcn_dut_*`. Phase 6 may use those names if the
-audio model works through the template; Phase 7 owns any STM32 naming cleanup or
-backend generalization.
+The STM32 LRUN template is shared across TinyODOM model families. Phase 6 still
+uses precomputed log-mel features; microphone capture and the on-device audio
+frontend remain out of scope for this smoke script.

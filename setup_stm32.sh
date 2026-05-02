@@ -6,7 +6,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS_DIR="$PROJECT_ROOT/tools"
 STM32_TOOLS_DIR="$TOOLS_DIR/stm32"
 FIRMWARE_DIR="$STM32_TOOLS_DIR/STM32CubeN6"
-CANONICAL_LRUN_TEMPLATE_ROOT="$PROJECT_ROOT/sketches/stm32/tinyodom_tcn_stm32_lrun"
+CANONICAL_LRUN_TEMPLATE_ROOT="$PROJECT_ROOT/sketches/stm32/tinyodom_stm32_lrun"
 LRUN_OWNERSHIP_MANIFEST="$CANONICAL_LRUN_TEMPLATE_ROOT/lrun_ownership_manifest.tsv"
 LRUN_UPSTREAM_TEMPLATE_ROOT_REL="Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_LRUN"
 FIRMWARE_REPO_URL="https://github.com/STMicroelectronics/STM32CubeN6.git"
@@ -24,8 +24,8 @@ declare -a LRUN_OVERLAY_PATHS=(
   "Appli/Inc/mx25um51245g_conf.h"
   "Appli/Inc/stm32n6xx_hal_conf.h"
   "Appli/Inc/stm32n6xx_nucleo_conf.h"
-  "Appli/Inc/tcn_dut_runner.h"
-  "Appli/Src/tcn_dut_runner.c"
+  "Appli/Inc/tinyodom_dut_runner.h"
+  "Appli/Src/tinyodom_dut_runner.c"
   "Appli/Src/main.c"
   "Appli/Src/stm32n6xx_hal_msp.c"
   "Appli/Src/stm32n6xx_it.c"
@@ -359,7 +359,8 @@ validate_lrun_workspace_structure() {
   require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/FSBL/Inc/stm32_extmem_conf.h"
   require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/mx25um51245g_conf.h"
   require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/stm32n6xx_hal_conf.h"
-  require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/tcn_dut_runner.h"
+  require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/tinyodom_dut_runner.h"
+  require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Src/tinyodom_dut_runner.c"
   require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Src/system_stm32n6xx_s.c"
   require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Secure_nsclib/secure_nsc.h"
   require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/STM32CubeIDE/Boot/Debug/makefile"
@@ -403,7 +404,7 @@ sync_lrun_template() {
     "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/network_config.h" \
     "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/network_data.h" \
     "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/network_data_params.h" \
-    "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/tcn_dut_phase_config.h" \
+    "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/tinyodom_dut_phase_config.h" \
     "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Src/network.c" \
     "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Src/network_data.c" \
     "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Src/network_data_params.c" \

@@ -21,7 +21,7 @@ device:
   harness_active_timeout_s: 30.0
   harness_done_timeout_s: 5.0
   stm32:
-    project_root: "sketches/stm32/tinyodom_tcn_stm32_lrun"
+    project_root: "sketches/stm32/tinyodom_stm32_lrun"
     appli_flash_address: "0x70100000"
     wake_margin_us: 5000
     min_sleep_us: 5000
