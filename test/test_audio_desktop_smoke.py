@@ -112,7 +112,7 @@ class AudioDesktopSmokeTests(unittest.TestCase):
                 output_dir=str(output_dir),
             )
 
-            with patch("run_audio_desktop_smoke.ensure_builtin_components_registered"), patch(
+            with patch("run_audio_desktop_smoke.ensure_audio_components_registered"), patch(
                 "run_audio_desktop_smoke.load_config",
                 return_value=config,
             ), patch(
@@ -146,7 +146,7 @@ class AudioDesktopSmokeTests(unittest.TestCase):
                 output_dir=str(Path(tmpdir) / "unused"),
             )
 
-            with patch("run_audio_desktop_smoke.ensure_builtin_components_registered"), patch(
+            with patch("run_audio_desktop_smoke.ensure_audio_components_registered"), patch(
                 "run_audio_desktop_smoke.load_config",
                 return_value=Dict(),
             ), patch(

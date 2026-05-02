@@ -60,7 +60,12 @@ prepare-audio-dataset:
 	$(PYTHON) data/dataset_download_and_splits/urbansound8k/prepare_urbansound8k.py $(URBANSOUND8K_ARGS)
 
 audio-desktop-smoke:
-	$(PYTHON) analysis_scripts/audio_desktop_smoke/run_audio_desktop_smoke.py $(AUDIO_SMOKE_ARGS)
+	CONDA_PREFIX="$${CONDA_PREFIX:-}" ; \
+	if [ -n "$$CONDA_PREFIX" ]; then \
+		LD_LIBRARY_PATH="$$CONDA_PREFIX/lib:$${LD_LIBRARY_PATH:-}" $(PYTHON) analysis_scripts/audio_desktop_smoke/run_audio_desktop_smoke.py $(AUDIO_SMOKE_ARGS); \
+	else \
+		$(PYTHON) analysis_scripts/audio_desktop_smoke/run_audio_desktop_smoke.py $(AUDIO_SMOKE_ARGS); \
+	fi
 
 clean:
 	rm -rf build dist *.egg-info

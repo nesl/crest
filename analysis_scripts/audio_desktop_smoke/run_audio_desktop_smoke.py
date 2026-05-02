@@ -18,7 +18,7 @@ if str(SRC_DIR) not in sys.path:
 from tinyodom.model import load_config  # noqa: E402
 from tinyodom.pipeline_types import DataSplit, DatasetBundle  # noqa: E402
 from tinyodom.runtime_bootstrap import bootstrap_pipeline  # noqa: E402
-from tinyodom.builtin_components import ensure_builtin_components_registered  # noqa: E402
+from tinyodom.builtin_components import ensure_audio_components_registered  # noqa: E402
 
 
 DEFAULT_CONFIG = SRC_DIR / "config" / "nas_config_audio_stm32.yaml"
@@ -188,7 +188,7 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
     _validate_positive_int(args.max_val_examples, field_name="--max-val-examples")
     _validate_positive_int(args.batch_size, field_name="--batch-size")
 
-    ensure_builtin_components_registered()
+    ensure_audio_components_registered()
     config = load_config(Path(args.config))
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
