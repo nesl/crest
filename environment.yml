@@ -17,6 +17,11 @@ dependencies:
   - pip
   - pip:
       # TinyML / HPO stack
+      # GPU servers: after creating the environment, run
+      #   pip install "tensorflow[and-cuda]==2.20.0"
+      # and verify with:
+      #   python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
+      # The base environment keeps CPU-only installs from downloading CUDA wheels.
       - tensorflow==2.20.0
       - tensorflow-io-gcs-filesystem==0.37.1
       - tensorflow-model-optimization==0.8.0

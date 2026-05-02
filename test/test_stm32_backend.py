@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -1280,6 +1281,54 @@ class STM32HelperTests(unittest.TestCase):
         ):
             with self.assertRaises(stm32_cube_clt.WorkflowError):
                 stm32_cube_clt._run_command(["make", "-C", "Debug", "all"])
+
+    def test_run_command_prefers_stm32_programmer_bundled_qt_libs(self) -> None:
+        """Ensure STM32CubeProgrammer does not inherit Conda Qt precedence.
+
+        Returns
+        -------
+        None
+        """
+        # The Python process may need CONDA_PREFIX/lib, but the Qt-based ST
+        # programmer must load its own bundled Qt libraries before Conda's.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cubeprog_root = Path(tmpdir) / "STM32CubeProgrammer"
+            cubeprog_bin = cubeprog_root / "bin"
+            cubeprog_lib = cubeprog_root / "lib"
+            cubeprog_bin.mkdir(parents=True)
+            cubeprog_lib.mkdir()
+            programmer = cubeprog_bin / "STM32_Programmer_CLI"
+            programmer.touch()
+            captured_env = {}
+
+            def _fake_run(argv, **kwargs):
+                """Capture the subprocess environment for assertions.
+
+                Parameters
+                ----------
+                argv : list[str]
+                    Command arguments provided to ``subprocess.run``.
+                **kwargs : dict
+                    Keyword arguments provided to ``subprocess.run``.
+
+                Returns
+                -------
+                subprocess.CompletedProcess
+                    Successful fake process result.
+                """
+
+                captured_env.update(kwargs.get("env") or {})
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            with patch.dict(os.environ, {"LD_LIBRARY_PATH": "/conda/lib:/usr/lib"}), patch(
+                "tinyodom.microcontrollers.stm32_cube_clt.subprocess.run",
+                side_effect=_fake_run,
+            ):
+                stm32_cube_clt._run_command([str(programmer), "-q"])
+
+            search_path = captured_env["LD_LIBRARY_PATH"].split(os.pathsep)
+            self.assertEqual(search_path[0], str(cubeprog_lib))
+            self.assertIn("/conda/lib", search_path)
 
     def test_prepare_candidate_only_requires_staging_tools(self) -> None:
         """Ensure Phase 2 candidate prep does not demand upload/debug tools.

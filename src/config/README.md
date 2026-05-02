@@ -20,6 +20,17 @@ Use [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml) for the
 desktop-first UrbanSound8K / DS-CNN audio path before moving into STM32 HIL
 smoke work.
 
+The current audio STM32 smoke command is:
+
+```bash
+make audio-stm32-hil-smoke AUDIO_STM32_HIL_ARGS="--preflight-only"
+```
+
+Use `--prepare-only` to run ST Edge AI analyze/generate/staging without board
+upload, and omit both mode flags for a full STM32 HIL timing run. This smoke
+path measures classifier inference over precomputed log-mel feature tensors; it
+does not include firmware-side microphone capture or audio feature extraction.
+
 The runtime loader and validator live in
 [`../tinyodom/model.py`](../tinyodom/model.py), while the task-aware bootstrap
 that resolves components and validates NAS policy against the active task lives

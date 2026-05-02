@@ -7,7 +7,10 @@ code so you can run diagnostics without touching the main workflow.
 Current script contract:
 
 - HIL analysis runners should derive runtime dimensions from
-  `HILServer.get_runtime_dimensions()`.
+  `HILServer.get_runtime_dimensions()` when they are intentionally exercising
+  the live HIL server path. Preflight/export-only scripts may derive dimensions
+  from `BootstrappedPipeline.model_build_context` so they can validate config,
+  model construction, and request payloads without constructing a server.
 - Export-oriented runners should read representative inputs from
   `HILServer.get_calibration_inputs()` or the bootstrapped dataset bundle,
   rather than from ad hoc `training_data` aliases.
@@ -73,6 +76,15 @@ target core exposes a DWT cycle counter, the DUT can now report:
     `latency_ms` + `ticks_per_inference`.
   - Produces attempt CSV, aggregates JSON, and latency-vs-ticks scatter PNG.
   - See `analysis_scripts/clock_tick_latency/README.md`.
+
+- `audio_stm32_hil_smoke/`
+  - Runs the Phase 6 STM32 smoke path for `audio_dscnn` over cached
+    UrbanSound8K log-mel feature tensors.
+  - Supports hardware-free preflight, STM32 prepare-only staging, and full HIL
+    timing through the existing STM32 backend.
+  - Reports classifier inference over precomputed features only; it does not
+    include firmware-side microphone capture or log-mel feature extraction.
+  - See `analysis_scripts/audio_stm32_hil_smoke/README.md`.
 
 - `stm32_example_project/`
   - STM32N6 HIL package for `NUCLEO-N657X0-Q`.

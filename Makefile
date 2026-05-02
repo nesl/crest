@@ -1,10 +1,11 @@
-.PHONY: help install test integration-test test-all start-gpu start-hil smoke env-create arduino-setup stm32-setup prepare-dataset prepare-audio-dataset audio-desktop-smoke clean
+.PHONY: help install test integration-test test-all start-gpu start-hil smoke env-create arduino-setup stm32-setup prepare-dataset prepare-audio-dataset audio-desktop-smoke audio-stm32-hil-smoke clean
 
 PYTHON ?= python
 ENV ?= tinyodomex
 OXIOD_ZIP ?= OxIOD.zip
 URBANSOUND8K_ARGS ?=
 AUDIO_SMOKE_ARGS ?=
+AUDIO_STM32_HIL_ARGS ?=
 
 help:
 	@echo "Targets:"
@@ -21,6 +22,7 @@ help:
 	@echo "  prepare-dataset  Prepare OxIOD dataset (override OXIOD_ZIP=/path/to/OxIOD.zip)"
 	@echo "  prepare-audio-dataset  Prepare UrbanSound8K log-mel cache (override URBANSOUND8K_ARGS)"
 	@echo "  audio-desktop-smoke  Run a small hardware-free audio training smoke (override AUDIO_SMOKE_ARGS)"
+	@echo "  audio-stm32-hil-smoke  Run STM32 audio HIL smoke (override AUDIO_STM32_HIL_ARGS)"
 	@echo "  clean          Remove Python cache/build artifacts"
 
 install:
@@ -65,6 +67,14 @@ audio-desktop-smoke:
 		LD_LIBRARY_PATH="$$CONDA_PREFIX/lib:$${LD_LIBRARY_PATH:-}" $(PYTHON) analysis_scripts/audio_desktop_smoke/run_audio_desktop_smoke.py $(AUDIO_SMOKE_ARGS); \
 	else \
 		$(PYTHON) analysis_scripts/audio_desktop_smoke/run_audio_desktop_smoke.py $(AUDIO_SMOKE_ARGS); \
+	fi
+
+audio-stm32-hil-smoke:
+	CONDA_PREFIX="$${CONDA_PREFIX:-}" ; \
+	if [ -n "$$CONDA_PREFIX" ]; then \
+		LD_LIBRARY_PATH="$$CONDA_PREFIX/lib:$${LD_LIBRARY_PATH:-}" $(PYTHON) analysis_scripts/audio_stm32_hil_smoke/run_audio_stm32_hil_smoke.py $(AUDIO_STM32_HIL_ARGS); \
+	else \
+		$(PYTHON) analysis_scripts/audio_stm32_hil_smoke/run_audio_stm32_hil_smoke.py $(AUDIO_STM32_HIL_ARGS); \
 	fi
 
 clean:

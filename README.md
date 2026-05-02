@@ -74,10 +74,18 @@ For the source-level architecture and extension points, see
    ```bash
    pip install --upgrade pip
    pip install tensorflow[and-cuda]==2.20.0
+   python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
    ```
 
-If you are CPU-only, the Conda environment already provides the non-CUDA
-dependencies needed by the repo.
+   Re-run this step after recreating or replacing the Conda environment. The
+   base `environment.yml` installs CPU-usable TensorFlow so CPU-only machines
+   do not download CUDA runtime wheels by default; GPU servers need the
+   `tensorflow[and-cuda]` extra installed after environment creation. If
+   `nvidia-smi` sees GPUs but TensorFlow prints `[]`, this CUDA wheel step is
+   usually missing.
+
+If you are CPU-only, the Conda environment already provides the dependencies
+needed by the repo.
 
 ## Dataset Preparation
 
