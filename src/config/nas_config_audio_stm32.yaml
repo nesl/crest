@@ -1,12 +1,11 @@
 # Audio DS-CNN desktop/bootstrap config targeting the STM32 N657 shape.
 #
-# Phase 5 uses this config for component validation and desktop smoke. The NAS
-# objective still sends HIL/ZMQ requests in the current architecture, so this is
-# not a true hardware-free NAS execution config yet.
+# This config targets the joint GPU plus STM32 HIL flow. Hardware-free audio
+# smoke tests should use analysis_scripts/audio_desktop_smoke instead.
 
 device:
   name: STM32_NUCLEO_N657X0_Q
-  hil: false
+  hil: true
   runtime_mode: cadenced
   serial_port: "/dev/ttyACM0"
   measured_inference_runs: 10
@@ -64,7 +63,7 @@ training:
   quantization: true
   latency_proxy_max_flops: 30000000.0
   train: true
-  energy_aware: false
+  energy_aware: true
   input_mode: "uniform"
 
 nas:
