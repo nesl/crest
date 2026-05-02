@@ -1568,7 +1568,11 @@ class NASModelClient:
         # Load the completed Optuna study to retrieve the top-scoring trial.
         study = optuna.load_study(study_name=study_name, storage=study_storage)
         best_trial = study.best_trial
-        best_params = best_trial.params
+        best_params = {
+            key: value
+            for key, value in best_trial.params.items()
+            if key != "cpu_clock_mhz_index"
+        }
 
         batch_size = 256  # Use the same fixed batch size as in NAS search.
         family_hparams = self.model_family.decode_trial_hparams(

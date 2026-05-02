@@ -1242,7 +1242,8 @@ class TrainBestTrialTests(unittest.TestCase):
     """Best-trial retraining should honor the task abstraction."""
 
     def test_train_best_trial_uses_task_fit_plan_with_override_task_settings(self) -> None:
-        # Best-trial retraining should build its fit plan from the override task settings instead of reusing stale defaults.
+        """Best-trial retraining should ignore runtime-only trial params."""
+
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -1270,6 +1271,7 @@ class TrainBestTrialTests(unittest.TestCase):
                     "use_skip_connections": True,
                     "norm_flag": True,
                     "dilations_index": 0,
+                    "cpu_clock_mhz_index": 2,
                 }
             )
 
@@ -1300,7 +1302,14 @@ class TrainBestTrialTests(unittest.TestCase):
                 combine_train_val=False,
             )
             client.model_family.decode_trial_hparams.assert_called_once_with(
-                dict(best_trial.params),
+                {
+                    "nb_filters": 2,
+                    "kernel_size": 2,
+                    "dropout_rate": 0.1,
+                    "use_skip_connections": True,
+                    "norm_flag": True,
+                    "dilations_index": 0,
+                },
                 client.model_build_context,
                 client.model_config,
             )

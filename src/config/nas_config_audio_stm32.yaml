@@ -43,16 +43,20 @@ model:
   params:
     export_variant: untrained
   search:
-    base_channels: [8, 12, 16, 24, 32]
-    num_blocks: [2, 3, 4]
+    base_channels: [4, 8, 12, 16, 20, 24, 32]
+    num_blocks: [2, 3, 4, 5, 6]
     kernel_time: [3, 5]
     kernel_freq: [3, 5]
-    depthwise_separable: [true, false]
+    stride_schedule: ["light", "balanced", "aggressive", "early_time", "early_freq", "late"]
+    channel_growth: [1.0, 1.5, 2.0]
+    max_channels: [64, 96, 128]
+    depth_multiplier: [1, 2]
+    pointwise_scale: [0.75, 1.0, 1.25, 1.5]
     dropout_rate: [0.0, 0.1, 0.2, 0.3]
     norm_flag: [true, false]
     dense_units: [0, 16, 32, 64]
     global_pool_type: ["avg", "max"]
-    stride_schedule: ["light", "balanced", "aggressive"]
+    activation: ["relu", "relu6"]
 
 training:
   nas_epochs: 5
