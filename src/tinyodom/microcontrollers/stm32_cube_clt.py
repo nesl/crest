@@ -63,6 +63,40 @@ class SigningWorkflowError(WorkflowError):
     """Raised when trusted STM32 binary signing fails."""
 
 
+def _stm32_programmer_env(argv: list[str]) -> dict[str, str] | None:
+    """Build an isolated environment for STM32CubeProgrammer.
+
+    Parameters
+    ----------
+    argv : list[str]
+        Command arguments being launched.
+
+    Returns
+    -------
+    dict[str, str] | None
+        Environment with the STM32CubeProgrammer bundled library directory
+        first in ``LD_LIBRARY_PATH`` when launching ``STM32_Programmer_CLI``;
+        otherwise ``None`` so non-Qt tools inherit the process environment.
+    """
+
+    if not argv:
+        return None
+    executable = Path(argv[0])
+    if executable.name != "STM32_Programmer_CLI":
+        return None
+    bundled_lib_dir = executable.parent.parent / "lib"
+    if not bundled_lib_dir.is_dir():
+        return None
+    env = os.environ.copy()
+    inherited = [
+        value
+        for value in env.get("LD_LIBRARY_PATH", "").split(os.pathsep)
+        if value and Path(value) != bundled_lib_dir
+    ]
+    env["LD_LIBRARY_PATH"] = os.pathsep.join([str(bundled_lib_dir), *inherited])
+    return env
+
+
 @dataclass(frozen=True)
 class BuildResult:
     """Build result for one STM32 subproject.
@@ -289,6 +323,7 @@ def _run_command(
             capture_output=True,
             text=True,
             check=False,
+            env=_stm32_programmer_env(argv),
         )
     except OSError as exc:
         raise WorkflowError(

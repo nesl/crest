@@ -20,7 +20,7 @@ and debug-load workflow stay stable.
 This directory is prototype/example tooling, not the production STM backend
 surface.
 
-- The production STM backend stages from `sketches/stm32/tinyodom_tcn_stm32_lrun`
+- The production STM backend stages from `sketches/stm32/tinyodom_stm32_lrun`
   and is documented in `src/tinyodom/microcontrollers/README.md`.
 - The flows here remain valid evidence and smoke-test helpers for bring-up,
   diagnostics, and exploratory measurement work.

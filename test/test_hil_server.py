@@ -19,7 +19,7 @@ if str(SRC_DIR) not in sys.path:
 
 import hil_server as hil_server_module  # noqa: E402
 from hil_server import HILServer  # noqa: E402
-from tinyodom.devices import CandidatePrepareRequest  # noqa: E402
+from tinyodom.devices import CandidatePrepareRequest, arduino_staged_sketch_path  # noqa: E402
 from tinyodom.errors import HIL_ERROR_OK  # noqa: E402
 from tinyodom.hil_runtime import CollectMetricsRequest  # noqa: E402
 from tinyodom.pipeline_types import DataSplit, DatasetBundle, TargetSpec, TaskMetricContract  # noqa: E402
@@ -208,7 +208,7 @@ class HILServerTestCase(unittest.TestCase):
             ),
             outputs=SimpleNamespace(
                 tflite_model_path=Path("model.tflite"),
-                tcn_dir=Path("tinyodom_tcn"),
+                candidate_dir=Path("odom_tcn"),
                 checkpoint_path=Path("checkpoint.keras"),
             ),
             dataset=SimpleNamespace(
@@ -223,7 +223,7 @@ class HILServerTestCase(unittest.TestCase):
                 ),
             ),
             task=SimpleNamespace(name="odometry_regression", params=Dict()),
-            model=SimpleNamespace(family="tinyodom_tcn", params=Dict(), search=Dict()),
+            model=SimpleNamespace(family="odom_tcn", params=Dict(export_variant="approx_trained"), search=Dict()),
             nas=Dict(
                 score=Dict(
                     type="scoring-function",
@@ -306,7 +306,7 @@ class HILServerTestCase(unittest.TestCase):
             already been replaced with lightweight doubles.
         """
         server = HILServer()
-        server._sync_sketch_variant = MagicMock(return_value=Path("tinyodom_tcn/tinyodom_tcn.ino"))
+        server._sync_sketch_variant = MagicMock(return_value=Path("odom_tcn/odom_tcn.ino"))
         return server
 
     @staticmethod
@@ -368,7 +368,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
         fake_metrics = {"ram_bytes": 1024}
 
         with patch("hil_server.resolve_device_options", return_value=None), patch(
@@ -389,10 +389,96 @@ class DetermineMetricsTests(HILServerTestCase):
         prepare_request = fake_device.prepare_candidate.call_args.kwargs["request"]
         self.assertIsInstance(prepare_request, CandidatePrepareRequest)
         self.assertIs(prepare_request.model, fake_model)
+        self.assertEqual(prepare_request.model_variant, "approx_trained")
+        self.assertIsNone(prepare_request.checkpoint_path)
         self.assertIs(prepare_request.calibration_split, self.calibration_split)
+        self.assertEqual(FakeModelFamily.materialize_calls[0]["model_variant"], "approx_trained")
+        self.assertIsNone(FakeModelFamily.materialize_calls[0]["checkpoint_path"])
         self.assertEqual(len(FakeTask.validate_model_outputs_calls), 1)
         collect_mock.assert_called_once()
         self.assertEqual(result, fake_metrics)
+
+    def test_determine_metrics_uses_config_export_variant(self) -> None:
+        """Default HIL export selection should come from model params."""
+        self.config.model.params.export_variant = "untrained"
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.collect_metrics", return_value={"ok": True}):
+            server.determine_metrics(
+                self.request_family_hparams(),
+                self.request_runtime_metadata(),
+            )
+
+        self.assertEqual(FakeModelFamily.materialize_calls[0]["model_variant"], "untrained")
+
+    def test_determine_metrics_explicit_model_variant_overrides_config(self) -> None:
+        """Explicit model variants should override config-owned defaults."""
+        self.config.model.params.export_variant = "untrained"
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.collect_metrics", return_value={"ok": True}):
+            server.determine_metrics(
+                self.request_family_hparams(),
+                self.request_runtime_metadata(),
+                model_variant="approx_trained",
+            )
+
+        self.assertEqual(FakeModelFamily.materialize_calls[0]["model_variant"], "approx_trained")
+
+    def test_determine_metrics_uses_config_checkpoint_for_trained_variant(self) -> None:
+        """Trained variants should default to the config-derived checkpoint path."""
+        self.config.model.params.export_variant = "trained"
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = True
+        fake_device.requires_training_data.return_value = True
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.collect_metrics", return_value={"ok": True}):
+            server.determine_metrics(
+                self.request_family_hparams(),
+                self.request_runtime_metadata(),
+            )
+
+        self.assertEqual(
+            FakeModelFamily.materialize_calls[0]["checkpoint_path"],
+            self.config.outputs.checkpoint_path,
+        )
+
+    def test_determine_metrics_rejects_missing_config_export_variant(self) -> None:
+        """Missing config export variants should return a structured config error."""
+        server = self.build_server()
+        server.model_config["params"] = Dict()
+        server._pipeline_bootstrapped = True
+
+        metrics = server.determine_metrics(
+            self.request_family_hparams(),
+            self.request_runtime_metadata(),
+        )
+
+        self.assertEqual(metrics["backend_error_kind"], "config")
+        self.assertIn("model.params.export_variant", metrics["backend_error_detail"])
+        self.assertEqual(FakeModelFamily.materialize_calls, [])
 
     def test_collect_metrics_receives_expected_fields(self) -> None:
         """Key hyperparameters should flow through untouched to the controller."""
@@ -402,7 +488,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
@@ -417,13 +503,22 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertEqual(request.flops, 999)
         self.assertEqual(request.input_dim, 6)
         self.assertEqual(request.device_name, self.config.device.name)
-        self.assertEqual(request.dirpath, self.config.outputs.tcn_dir.resolve())
+        self.assertEqual(request.dirpath, self.config.outputs.candidate_dir.resolve())
         self.assertAlmostEqual(
             request.latency_budget_ms,
             (self.config.dataset.params.stride / self.config.dataset.params.sampling_rate_hz) * 1000,
         )
 
     def test_collect_metrics_uses_device_latency_budget_override(self) -> None:
+        """Device-level latency-budget overrides should win over dataset cadence.
+
+        Returns
+        -------
+        None
+            Asserts the normalized metrics request carries the explicit device
+            latency budget.
+        """
+
         # Device-level latency-budget overrides should win when the request explicitly provides them.
         server = self.build_server()
         self.config.device.latency_budget_ms = 75.0
@@ -431,7 +526,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
@@ -444,6 +539,102 @@ class DetermineMetricsTests(HILServerTestCase):
 
         request = collect_mock.call_args.args[0]
         self.assertEqual(request.latency_budget_ms, 75.0)
+
+    def test_collect_metrics_uses_dataset_batch_period_metadata(self) -> None:
+        """Synthetic feature-batch metadata should drive HIL cadence.
+
+        Returns
+        -------
+        None
+            Asserts metadata-owned batch periods flow into the collected
+            metrics request without requiring legacy stride fields.
+        """
+
+        server = self.build_server()
+        self.config.dataset.params = Dict(directory="data", calibration_windows=100)
+        FakeDataset.bundle = DatasetBundle(
+            train=DataSplit(
+                inputs=np.zeros((1, 201, 64), dtype=np.float32),
+                targets=np.zeros((1,), dtype=np.int64),
+            ),
+            input_shape=(201, 64),
+            input_dtype="float32",
+            metadata={"batch_period_ms": 2000, "window_size": 201, "input_dim": 64},
+        )
+        fake_device = MagicMock()
+        fake_device.requires_candidate_model.return_value = False
+        fake_device.requires_training_data.return_value = False
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
+
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device",
+            return_value=fake_device,
+        ), patch("hil_server.collect_metrics", return_value={"ok": True}) as collect_mock:
+            server.determine_metrics(
+                self.request_family_hparams(),
+                self.request_runtime_metadata(flops=999, timesteps=201, input_dim=64),
+            )
+
+        request = collect_mock.call_args.args[0]
+        self.assertEqual(request.latency_budget_ms, 2000.0)
+        self.assertEqual(request.window_size, 201)
+        self.assertEqual(request.input_dim, 64)
+
+    def test_dataset_batch_period_failure_metrics_survive_request_errors(self) -> None:
+        """Bootstrapped request failures should report loaded batch cadence.
+
+        Returns
+        -------
+        None
+            Asserts already-loaded dataset metadata is reused when malformed
+            request metrics are generated.
+        """
+
+        server = self.build_server()
+        self.config.dataset.params = Dict(directory="data")
+        FakeDataset.bundle = DatasetBundle(
+            train=self.train_split,
+            input_shape=(32, 6),
+            input_dtype="float32",
+            metadata={"batch_period_ms": 1500, "window_size": 32, "input_dim": 6},
+        )
+        server._ensure_pipeline_bootstrapped()
+
+        with patch("hil_server.get_microcontroller_device") as device_mock:
+            metrics = server.determine_metrics(
+                self.request_family_hparams(),
+                Dict(flops=123, input_dim=6),
+            )
+
+        device_mock.assert_not_called()
+        self.assertEqual(metrics["backend_error_kind"], "request")
+        self.assertEqual(metrics["latency_budget_ms"], 1500.0)
+
+    def test_unbootstrapped_request_failures_do_not_load_dataset(self) -> None:
+        """Malformed request failures should not force dataset loading.
+
+        Returns
+        -------
+        None
+            Asserts config-owned batch cadence can populate failure metrics
+            without bootstrapping the dataset.
+        """
+
+        self.config.dataset.params = Dict(directory="data", batch_period_ms=2000)
+        server = self.build_server()
+        FakeDataset.load_calls = []
+
+        with patch("hil_server.get_microcontroller_device") as device_mock:
+            metrics = server.determine_metrics(
+                self.request_family_hparams(),
+                Dict(flops=123, input_dim=6),
+            )
+
+        device_mock.assert_not_called()
+        self.assertEqual(FakeDataset.load_calls, [])
+        self.assertEqual(metrics["backend_error_kind"], "request")
+        self.assertEqual(metrics["latency_budget_ms"], 2000.0)
 
     def test_determine_metrics_rejects_missing_timesteps(self) -> None:
         # Missing timesteps should be rejected before the server stages any backend work.
@@ -530,7 +721,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
         fake_device.supports_energy_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
         fake_device.evaluate.return_value = SimpleNamespace(
             error_code=HIL_ERROR_OK,
             power_metrics={"energy_mj_per_inference": 1.5},
@@ -576,7 +767,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
         fake_device.supports_energy_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
         fake_device.evaluate.return_value = SimpleNamespace(
             error_code=HIL_ERROR_OK,
             latency_s=0.2,
@@ -612,7 +803,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
         fake_metrics = {"ram_bytes": 1024, "clock_hz": 400000000.0}
 
         with patch("hil_server.resolve_device_options", return_value={"cpu_clock_mhz": 600}), patch(
@@ -638,7 +829,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         with patch("hil_server.resolve_device_options", return_value={"cpu_clock_mhz": 600}), patch(
             "hil_server.get_microcontroller_device",
@@ -720,6 +911,25 @@ class StartLoopTests(HILServerTestCase):
             device_options_overrides={"cpu_clock_mhz": 400},
         )
 
+    def test_start_ignores_payload_model_variant_field(self) -> None:
+        """Network payloads should not override config-owned export variants."""
+        server = self.build_server()
+        payload = self.request_payload(
+            runtime_metadata=self.request_runtime_metadata(flops=1, timesteps=32, input_dim=2),
+        )
+        payload["model_variant"] = "trained"
+        metrics = {"flash_bytes": 2048}
+        server.determine_metrics = MagicMock(return_value=metrics)
+        self.socket.recv_json.side_effect = [payload, KeyboardInterrupt()]
+
+        server.start()
+
+        server.determine_metrics.assert_called_once_with(
+            family_hparams=self.request_family_hparams(),
+            runtime_metadata=self.request_runtime_metadata(flops=1, timesteps=32, input_dim=2),
+            device_options_overrides=None,
+        )
+
     def test_start_returns_request_error_for_malformed_payload(self) -> None:
         # Malformed network payloads should come back as structured request errors instead of exploding the server loop.
         server = self.build_server()
@@ -765,15 +975,15 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(FakeDataset.load_calls, [])
         self.assertEqual(server.dataset_name, "oxiod")
         self.assertEqual(server.task_name, "odometry_regression")
-        self.assertEqual(server.model_family_name, "tinyodom_tcn")
-        self.assertEqual(server.model_config["params"], Dict())
+        self.assertEqual(server.model_family_name, "odom_tcn")
+        self.assertEqual(server.model_config["params"].export_variant, "approx_trained")
         self.assertEqual(server.model_config["search"], Dict())
 
     def test_constructor_preserves_model_params_and_search_blocks(self) -> None:
         # Preloaded model params and search blocks should survive construction unchanged.
         self.config.model = SimpleNamespace(
             family="custom_family",
-            params=Dict(width=8),
+            params=Dict(width=8, export_variant="untrained"),
             search=Dict(depth=[2, 3]),
         )
 
@@ -781,6 +991,7 @@ class InitializationTests(HILServerTestCase):
 
         self.model_family_registry_mock.assert_not_called()
         self.assertEqual(server.model_config["params"].width, 8)
+        self.assertEqual(server.model_config["params"].export_variant, "untrained")
         self.assertEqual(server.model_config["search"].depth, [2, 3])
 
     def test_constructor_requires_explicit_dataset_task_and_model_blocks(self) -> None:
@@ -803,7 +1014,7 @@ class InitializationTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         self.assertEqual(FakeDataset.calibration_calls, [])
 
@@ -825,7 +1036,7 @@ class InitializationTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
@@ -863,7 +1074,7 @@ class InitializationTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
@@ -941,7 +1152,7 @@ class InitializationTests(HILServerTestCase):
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
@@ -1078,7 +1289,7 @@ class InitializationTests(HILServerTestCase):
             arduino_server.active_sketch_path = None
             arduino_prepared_dir = tmp_path / "arduino"
             arduino_prepared_dir.mkdir()
-            expected_sketch = arduino_prepared_dir / "tinyodom_tcn.ino"
+            expected_sketch = arduino_staged_sketch_path(arduino_prepared_dir)
             expected_sketch.write_text("// staged sketch\n", encoding="utf-8")
 
             fake_arduino_device = MagicMock()
@@ -1194,7 +1405,7 @@ class InitializationTests(HILServerTestCase):
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
         fake_device.supports_energy_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = self.config.outputs.tcn_dir
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
 
         with patch("hil_server.resolve_device_options", return_value=None), patch(
             "hil_server.get_microcontroller_device",
@@ -1212,7 +1423,7 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(metrics["error_code"], hil_server_module.HIL_MASTER_FATAL)
         self.assertEqual(metrics["backend_error_kind"], "config")
         self.assertIn("device.harness_serial_port", metrics["backend_error_detail"])
-        fake_device.cleanup_prepared_candidate.assert_called_once_with(self.config.outputs.tcn_dir)
+        fake_device.cleanup_prepared_candidate.assert_called_once_with(self.config.outputs.candidate_dir)
 
     def test_set_input_mode_delegates_to_backend_for_stm_phase1(self) -> None:
         """Ensure STM servers delegate input-mode changes to the backend.
@@ -1243,7 +1454,7 @@ class SketchVariantTests(unittest.TestCase):
     def _build_server(
         self,
         sketches_dir: Path,
-        tcn_dir: Path,
+        candidate_dir: Path,
         energy_aware: bool,
         input_mode: str,
         *,
@@ -1256,12 +1467,12 @@ class SketchVariantTests(unittest.TestCase):
         ----------
         sketches_dir : Path
             Root sketches directory used by the selector under test.
-        tcn_dir : Path
+        candidate_dir : Path
             Active output sketch directory.
         energy_aware : bool
             Whether energy-aware sketch variants should be selected.
         input_mode : str
-            Requested input mode (uniform/representative/real).
+            Requested input mode.
         device_name : str, optional
             Device profile used to route uniform sketch variants.
         target_core : str | None, optional
@@ -1278,7 +1489,7 @@ class SketchVariantTests(unittest.TestCase):
         )
         server.config = SimpleNamespace(
             training=SimpleNamespace(energy_aware=energy_aware, input_mode=input_mode),
-            outputs=SimpleNamespace(tcn_dir=tcn_dir),
+            outputs=SimpleNamespace(candidate_dir=candidate_dir),
             device=SimpleNamespace(name=device_name, portenta=portenta_cfg),
         )
         server.sketch_variants_dir = sketches_dir
@@ -1290,25 +1501,42 @@ class SketchVariantTests(unittest.TestCase):
         path.write_text(f"// {label}\n")
 
     def test_selects_uniform_energy_sketch(self) -> None:
+        """Energy-aware uniform staging should use the generic energy sketch."""
         # Uniform energy runs should pick the energy-enabled sketch variant so the DUT exports the expected telemetry.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform_shared")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="uniform")
+            candidate_dir = Path(tmpdir) / "odom_tcn"
+            self._write_sketch(sketches / "tinyodom_inference_energy.ino", "uniform_shared")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server._sync_sketch_variant()
 
+            self.assertEqual(out_path, candidate_dir / "odom_tcn.ino")
             self.assertTrue(out_path.exists())
             self.assertIn("uniform_shared", out_path.read_text())
 
+    def test_stages_sketch_using_candidate_dir_basename(self) -> None:
+        """Arduino sketch staging should preserve the folder/sketch basename rule."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            candidate_dir = Path(tmpdir) / "audio_dscnn"
+            self._write_sketch(sketches / "tinyodom_inference_no_energy.ino", "audio_uniform")
+            server = self._build_server(sketches, candidate_dir, energy_aware=False, input_mode="uniform")
+
+            out_path = server._sync_sketch_variant()
+
+            self.assertEqual(out_path, candidate_dir / "audio_dscnn.ino")
+            self.assertTrue(out_path.exists())
+            self.assertIn("audio_uniform", out_path.read_text())
+
     def test_selects_cadenced_uniform_sketch(self) -> None:
+        """Cadenced staging should use the generic cadenced energy sketch."""
         # Cadenced energy runs must switch to the cadenced uniform sketch so the harness and DUT share the same timing protocol.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_energy_cadenced.ino", "cadenced_shared")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="uniform")
+            candidate_dir = Path(tmpdir) / "odom_tcn"
+            self._write_sketch(sketches / "tinyodom_inference_energy_cadenced.ino", "cadenced_shared")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server.set_input_mode("uniform", runtime_phase="cadenced")
 
@@ -1316,14 +1544,15 @@ class SketchVariantTests(unittest.TestCase):
             self.assertIn("cadenced_shared", out_path.read_text())
 
     def test_selects_uniform_energy_sketch_for_portenta_cm7(self) -> None:
+        """Portenta CM7 uniform staging should use the generic energy sketch."""
         # Uniform energy runs should pick the energy-enabled sketch variant so the DUT exports the expected telemetry.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform_shared_cm7")
+            candidate_dir = Path(tmpdir) / "odom_tcn"
+            self._write_sketch(sketches / "tinyodom_inference_energy.ino", "uniform_shared_cm7")
             server = self._build_server(
                 sketches,
-                tcn_dir,
+                candidate_dir,
                 energy_aware=True,
                 input_mode="uniform",
                 device_name="PORTENTA_H7",
@@ -1336,14 +1565,15 @@ class SketchVariantTests(unittest.TestCase):
             self.assertIn("uniform_shared_cm7", out_path.read_text())
 
     def test_selects_uniform_no_energy_sketch_for_portenta_cm4(self) -> None:
+        """Portenta CM4 no-energy staging should use the generic no-energy sketch."""
         # Portenta CM4 uniform runs without energy measurement should select the no-energy sketch variant.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_no_energy.ino", "no_energy_shared_cm4")
+            candidate_dir = Path(tmpdir) / "odom_tcn"
+            self._write_sketch(sketches / "tinyodom_inference_no_energy.ino", "no_energy_shared_cm4")
             server = self._build_server(
                 sketches,
-                tcn_dir,
+                candidate_dir,
                 energy_aware=False,
                 input_mode="uniform",
                 device_name="PORTENTA_H7",
@@ -1355,54 +1585,88 @@ class SketchVariantTests(unittest.TestCase):
             self.assertTrue(out_path.exists())
             self.assertIn("no_energy_shared_cm4", out_path.read_text())
 
-    def test_selects_representative_variant_and_copies_header(self) -> None:
+    def test_selects_oxiod_representative_variant_and_copies_header(self) -> None:
+        """OxIOD representative staging should copy the sketch and staged include header."""
         # Representative input-mode runs should switch sketches and copy the generated header that drives the sample payload.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_tcn_energy_representative.ino",
+                sketches / "analysis_sketches/tinyodom_inference_representative.ino",
                 "representative",
             )
-            header = sketches / "analysis_sketches/tinyodom_tcn_input_data.h"
+            header = sketches / "analysis_sketches/oxiod_input_data.h"
             header.write_text("// header\n")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="representative")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="oxiod_representative")
 
             out_path = server._sync_sketch_variant()
 
             self.assertTrue(out_path.exists())
             self.assertIn("representative", out_path.read_text())
-            self.assertTrue((tcn_dir / header.name).exists())
+            self.assertTrue((candidate_dir / "tinyodom_input_data.h").exists())
+            self.assertEqual((candidate_dir / "tinyodom_input_data.h").read_text(), "// header\n")
 
-    def test_selects_real_variant_and_copies_header(self) -> None:
+    def test_selects_oxiod_real_variant_and_copies_header(self) -> None:
+        """OxIOD real-data staging should copy the sketch and staged include header."""
         # Real-input runs should stage the real-data sketch and copy the matching generated header.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_tcn_energy_real_data.ino",
+                sketches / "analysis_sketches/tinyodom_inference_real_data.ino",
                 "real",
             )
-            header = sketches / "analysis_sketches/tinyodom_tcn_input_data.h"
+            header = sketches / "analysis_sketches/oxiod_input_data.h"
             header.write_text("// header\n")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="real")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="oxiod_real")
 
             out_path = server._sync_sketch_variant()
 
             self.assertTrue(out_path.exists())
             self.assertIn("real", out_path.read_text())
-            self.assertTrue((tcn_dir / header.name).exists())
+            self.assertTrue((candidate_dir / "tinyodom_input_data.h").exists())
+
+    def test_selects_urbansound8k_variants_and_copies_audio_header(self) -> None:
+        """UrbanSound8K modes should stage the shared sketches with the audio header."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            candidate_dir = Path(tmpdir) / "audio_dscnn"
+            self._write_sketch(
+                sketches / "analysis_sketches/tinyodom_inference_representative.ino",
+                "representative",
+            )
+            self._write_sketch(
+                sketches / "analysis_sketches/tinyodom_inference_real_data.ino",
+                "real",
+            )
+            header = sketches / "analysis_sketches/urbansound8k_input_data.h"
+            header.write_text("// audio header\n")
+            server = self._build_server(
+                sketches,
+                candidate_dir,
+                energy_aware=True,
+                input_mode="urbansound8k_representative",
+            )
+
+            representative_path = server._sync_sketch_variant()
+            self.assertIn("representative", representative_path.read_text())
+            self.assertEqual((candidate_dir / "tinyodom_input_data.h").read_text(), "// audio header\n")
+
+            real_path = server.set_input_mode("urbansound8k_real")
+            self.assertIn("real", real_path.read_text())
+            self.assertEqual((candidate_dir / "tinyodom_input_data.h").read_text(), "// audio header\n")
 
     def test_missing_header_raises_for_representative(self) -> None:
+        """Dataset representative staging should require its input header."""
         # Representative-mode staging should fail fast if the generated header is missing.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_tcn_energy_representative.ino",
+                sketches / "analysis_sketches/tinyodom_inference_representative.ino",
                 "representative",
             )
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="representative")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="oxiod_representative")
 
             with self.assertRaises(FileNotFoundError):
                 server._sync_sketch_variant()
@@ -1411,36 +1675,48 @@ class SketchVariantTests(unittest.TestCase):
         # Unknown input modes should fail before sketch selection can stage the wrong artifact.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="bad_mode")
+            candidate_dir = Path(tmpdir) / "odom_tcn"
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="bad_mode")
 
-            with self.assertRaises(ValueError):
+            with self.assertRaisesRegex(ValueError, "Unsupported input_mode"):
                 server._sync_sketch_variant()
 
+    def test_old_generic_input_modes_are_unsupported(self) -> None:
+        """Old generic representative/real modes should fail through normal validation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
+            for mode in ("representative", "real"):
+                with self.subTest(mode=mode):
+                    server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode=mode)
+                    with self.assertRaisesRegex(ValueError, "Unsupported input_mode"):
+                        server._sync_sketch_variant()
+
     def test_cadenced_runtime_requires_uniform_input_mode(self) -> None:
+        """Cadenced Arduino staging should still reject non-uniform inputs."""
         # Cadenced runtime mode should reject non-uniform input modes because the timing harness expects fixed windows.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_tcn_energy_representative.ino",
+                sketches / "analysis_sketches/tinyodom_inference_representative.ino",
                 "representative",
             )
-            header = sketches / "analysis_sketches/tinyodom_tcn_input_data.h"
+            header = sketches / "analysis_sketches/oxiod_input_data.h"
             header.write_text("// header\n")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="representative")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="oxiod_representative")
 
             with self.assertRaises(ValueError):
-                server.set_input_mode("representative", runtime_phase="cadenced")
+                server.set_input_mode("oxiod_representative", runtime_phase="cadenced")
 
     def test_portenta_uniform_requires_target_core(self) -> None:
         # Uniform Portenta sketch selection needs an explicit target core so the server does not guess between CM4 and CM7.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
             server = self._build_server(
                 sketches,
-                tcn_dir,
+                candidate_dir,
                 energy_aware=True,
                 input_mode="uniform",
                 device_name="PORTENTA_H7",
@@ -1451,12 +1727,13 @@ class SketchVariantTests(unittest.TestCase):
                 server._sync_sketch_variant()
 
     def test_energy_aware_false_uses_no_energy_sketch(self) -> None:
+        """No-energy uniform staging should use the generic no-energy sketch."""
         # Turning off energy awareness should switch to the no-energy sketch variant to avoid unnecessary harness instrumentation.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_no_energy.ino", "no_energy_shared")
-            server = self._build_server(sketches, tcn_dir, energy_aware=False, input_mode="uniform")
+            candidate_dir = Path(tmpdir) / "odom_tcn"
+            self._write_sketch(sketches / "tinyodom_inference_no_energy.ino", "no_energy_shared")
+            server = self._build_server(sketches, candidate_dir, energy_aware=False, input_mode="uniform")
 
             out_path = server._sync_sketch_variant()
 
@@ -1464,12 +1741,13 @@ class SketchVariantTests(unittest.TestCase):
             self.assertIn("no_energy_shared", out_path.read_text())
 
     def test_set_input_mode_updates_config_and_path(self) -> None:
+        """Input-mode updates should stage the renamed generic energy sketch."""
         # Input-mode switching should update both the active config and the selected sketch path together.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
-            tcn_dir = Path(tmpdir) / "tinyodom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform_shared")
-            server = self._build_server(sketches, tcn_dir, energy_aware=True, input_mode="uniform")
+            candidate_dir = Path(tmpdir) / "odom_tcn"
+            self._write_sketch(sketches / "tinyodom_inference_energy.ino", "uniform_shared")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server.set_input_mode("uniform")
 

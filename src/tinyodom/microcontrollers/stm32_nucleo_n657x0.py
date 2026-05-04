@@ -50,7 +50,7 @@ BOARD_NAME = "STM32_NUCLEO_N657X0_Q"
 # Repository root used to resolve checked-in STM32 templates and helper assets.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 # Canonical project root copied into a per-candidate staging directory.
-DEFAULT_TEMPLATE_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"
+DEFAULT_TEMPLATE_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_stm32_lrun"
 # Internal STM32 workspace layout for the production N657X0 backend.
 LRUN_PROJECT_LAYOUT = "lrun_dev_boot"
 # ST STM32N657X0 product docs describe the part as having 4.2-Mbyte contiguous
@@ -129,7 +129,7 @@ HEX_DEFINE_RE = re.compile(
     r"(?m)(?:#define\s+)?(?P<name>_Min_(?:Heap|Stack)_Size)"
     r"(?:\s+\(\(size_t\)\))?\s*(?:=)?\s*0x(?P<value>[0-9A-Fa-f]+)\s*;?"
 )
-MEASURED_RUNS_RE = re.compile(r"(?m)^#define\s+TCN_DUT_MEASURED_RUNS\s+(?P<value>\d+)\s*$")
+MEASURED_RUNS_RE = re.compile(r"(?m)^#define\s+TINYODOM_DUT_MEASURED_RUNS\s+(?P<value>\d+)\s*$")
 COPY_WINDOW_DEFINE_RE = re.compile(
     r"^(#define\s+EXTMEM_LRUN_SOURCE_SIZE\s+)0x[0-9A-Fa-f]+\s*$",
     re.MULTILINE,
@@ -714,25 +714,25 @@ def _write_phase_config_header(
     # share one normalized policy decision.
     normalized_phase = _resolve_runtime_mode(selected_phase)
     selected_phase_macro = (
-        "TCN_DUT_PHASE_CADENCED"
+        "TINYODOM_DUT_PHASE_CADENCED"
         if normalized_phase == "cadenced"
-        else "TCN_DUT_PHASE_BACK_TO_BACK"
+        else "TINYODOM_DUT_PHASE_BACK_TO_BACK"
     )
-    header_path = paths.inc_dir / "tcn_dut_phase_config.h"
+    header_path = paths.inc_dir / "tinyodom_dut_phase_config.h"
     # Render one self-contained header because downstream STM32 builds consume
     # these runtime settings strictly through generated preprocessor macros.
     header_text = (
-        "#ifndef TCN_DUT_PHASE_CONFIG_H\n"
-        "#define TCN_DUT_PHASE_CONFIG_H\n\n"
-        "#define TCN_DUT_PHASE_BACK_TO_BACK 0\n"
-        "#define TCN_DUT_PHASE_CADENCED 1\n\n"
-        f"#define TCN_DUT_SELECTED_PHASE {selected_phase_macro}\n"
-        f"#define TCN_DUT_LATENCY_BUDGET_MS {max(1, int(round(latency_budget_ms)))}\n"
-        f"#define TCN_DUT_MEASURED_RUNS {max(1, int(measured_runs))}\n"
-        f"#define TCN_DUT_CPU_CLOCK_MHZ {int(cpu_clock_mhz)}\n"
-        f"#define TCN_DUT_WAKE_MARGIN_US {max(0, int(wake_margin_us))}\n"
-        f"#define TCN_DUT_MIN_SLEEP_US {max(0, int(min_sleep_us))}\n\n"
-        "#endif /* TCN_DUT_PHASE_CONFIG_H */\n"
+        "#ifndef TINYODOM_DUT_PHASE_CONFIG_H\n"
+        "#define TINYODOM_DUT_PHASE_CONFIG_H\n\n"
+        "#define TINYODOM_DUT_PHASE_BACK_TO_BACK 0\n"
+        "#define TINYODOM_DUT_PHASE_CADENCED 1\n\n"
+        f"#define TINYODOM_DUT_SELECTED_PHASE {selected_phase_macro}\n"
+        f"#define TINYODOM_DUT_LATENCY_BUDGET_MS {max(1, int(round(latency_budget_ms)))}\n"
+        f"#define TINYODOM_DUT_MEASURED_RUNS {max(1, int(measured_runs))}\n"
+        f"#define TINYODOM_DUT_CPU_CLOCK_MHZ {int(cpu_clock_mhz)}\n"
+        f"#define TINYODOM_DUT_WAKE_MARGIN_US {max(0, int(wake_margin_us))}\n"
+        f"#define TINYODOM_DUT_MIN_SLEEP_US {max(0, int(min_sleep_us))}\n\n"
+        "#endif /* TINYODOM_DUT_PHASE_CONFIG_H */\n"
     )
     header_path.write_text(header_text, encoding="utf-8")
     return header_path
@@ -745,6 +745,8 @@ def _validate_phase_config_header(
     selected_phase: str,
     measured_runs: int,
     latency_budget_ms: float,
+    wake_margin_us: int,
+    min_sleep_us: int,
 ) -> None:
     """Confirm the generated phase-config header contains the expected values.
 
@@ -760,6 +762,10 @@ def _validate_phase_config_header(
         Requested measured-run count expected in the generated header.
     latency_budget_ms : float
         Requested cadence budget expected in the generated header.
+    wake_margin_us : int
+        Requested wake margin expected in the generated header.
+    min_sleep_us : int
+        Requested minimum sleep duration expected in the generated header.
 
     Returns
     -------
@@ -773,31 +779,43 @@ def _validate_phase_config_header(
     text = header_path.read_text(encoding="utf-8")
     normalized_phase = _resolve_runtime_mode(selected_phase)
     selected_phase_macro = (
-        "TCN_DUT_PHASE_CADENCED"
+        "TINYODOM_DUT_PHASE_CADENCED"
         if normalized_phase == "cadenced"
-        else "TCN_DUT_PHASE_BACK_TO_BACK"
+        else "TINYODOM_DUT_PHASE_BACK_TO_BACK"
     )
-    expected_phase = f"#define TCN_DUT_SELECTED_PHASE {selected_phase_macro}"
+    expected_phase = f"#define TINYODOM_DUT_SELECTED_PHASE {selected_phase_macro}"
     if expected_phase not in text:
         raise stm32_cube_clt.WorkflowError(
             "Generated phase config did not select the requested runtime phase "
             f"{normalized_phase}: {header_path}"
         )
-    expected_clock = f"#define TCN_DUT_CPU_CLOCK_MHZ {int(cpu_clock_mhz)}"
+    expected_clock = f"#define TINYODOM_DUT_CPU_CLOCK_MHZ {int(cpu_clock_mhz)}"
     if expected_clock not in text:
         raise stm32_cube_clt.WorkflowError(
             f"Generated phase config is missing requested clock preset {cpu_clock_mhz}: {header_path}"
         )
-    expected_runs = f"#define TCN_DUT_MEASURED_RUNS {max(1, int(measured_runs))}"
+    expected_runs = f"#define TINYODOM_DUT_MEASURED_RUNS {max(1, int(measured_runs))}"
     if expected_runs not in text:
         raise stm32_cube_clt.WorkflowError(
             f"Generated phase config is missing requested measured-runs {measured_runs}: {header_path}"
         )
-    expected_budget = f"#define TCN_DUT_LATENCY_BUDGET_MS {max(1, int(round(latency_budget_ms)))}"
+    expected_budget = f"#define TINYODOM_DUT_LATENCY_BUDGET_MS {max(1, int(round(latency_budget_ms)))}"
     if expected_budget not in text:
         raise stm32_cube_clt.WorkflowError(
             "Generated phase config is missing requested cadence budget "
             f"{latency_budget_ms}: {header_path}"
+        )
+    expected_wake_margin = f"#define TINYODOM_DUT_WAKE_MARGIN_US {max(0, int(wake_margin_us))}"
+    if expected_wake_margin not in text:
+        raise stm32_cube_clt.WorkflowError(
+            "Generated phase config is missing requested wake margin "
+            f"{wake_margin_us}: {header_path}"
+        )
+    expected_min_sleep = f"#define TINYODOM_DUT_MIN_SLEEP_US {max(0, int(min_sleep_us))}"
+    if expected_min_sleep not in text:
+        raise stm32_cube_clt.WorkflowError(
+            "Generated phase config is missing requested minimum sleep "
+            f"{min_sleep_us}: {header_path}"
         )
 
 
@@ -818,16 +836,16 @@ def _read_phase_config_measured_runs(paths: STM32WorkspacePaths) -> int:
     ------
     tinyodom.microcontrollers.stm32_cube_clt.WorkflowError
         If the generated phase-config header is missing or does not declare
-        ``TCN_DUT_MEASURED_RUNS``.
+        ``TINYODOM_DUT_MEASURED_RUNS``.
     """
-    header_path = paths.inc_dir / "tcn_dut_phase_config.h"
+    header_path = paths.inc_dir / "tinyodom_dut_phase_config.h"
     if not header_path.is_file():
         raise stm32_cube_clt.WorkflowError(f"Missing generated phase config header: {header_path}")
     header_text = header_path.read_text(encoding="utf-8")
     match = MEASURED_RUNS_RE.search(header_text)
     if not match:
         raise stm32_cube_clt.WorkflowError(
-            f"Generated phase config is missing TCN_DUT_MEASURED_RUNS: {header_path}"
+            f"Generated phase config is missing TINYODOM_DUT_MEASURED_RUNS: {header_path}"
         )
     return max(1, int(match.group("value")))
 
@@ -1221,7 +1239,7 @@ def _validate_project_structure(paths: STM32WorkspacePaths) -> STM32WorkspacePat
             raise stm32_cube_clt.WorkflowError(
                 f"STM32 project is missing required CubeIDE makefile: {makefile}"
             )
-    required_headers = ["stm32n6xx_hal_conf.h", "stm32n6xx_nucleo_conf.h", "tcn_dut_runner.h"]
+    required_headers = ["stm32n6xx_hal_conf.h", "stm32n6xx_nucleo_conf.h", "tinyodom_dut_runner.h"]
     required_headers.append("main.h")
     for required_header in required_headers:
         candidate = paths.inc_dir / required_header
@@ -2188,6 +2206,8 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 selected_phase=self._options.runtime_mode,
                 measured_runs=int(getattr(config_device, "measured_inference_runs", 10)),
                 latency_budget_ms=self._options.latency_budget_ms,
+                wake_margin_us=self._options.wake_margin_us,
+                min_sleep_us=self._options.min_sleep_us,
             )
             return staged_paths.root
         except Exception:
@@ -3175,6 +3195,8 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             selected_phase=selected_phase,
             measured_runs=max(1, int(measured_runs)),
             latency_budget_ms=self._options.latency_budget_ms,
+            wake_margin_us=self._options.wake_margin_us,
+            min_sleep_us=self._options.min_sleep_us,
         )
 
     def _cadenced_power_metrics_from_phase_result(

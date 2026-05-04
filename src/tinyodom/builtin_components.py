@@ -6,10 +6,36 @@ and model-family implementations that ship with TinyODOM.
 
 from __future__ import annotations
 
-from .datasets.oxiod import OxIODDataset
-from .model_families.tinyodom_tcn import TinyOdomTCNFamily
 from .registry import dataset_registry, model_family_registry, task_registry
-from .tasks.odometry_regression import OdometryRegressionTask
+
+
+def ensure_audio_components_registered() -> None:
+    """Register only the built-in audio components.
+
+    Returns
+    -------
+    None
+        Registers the UrbanSound8K mel dataset, sound-classification task, and
+        audio DS-CNN family if they are not already present.
+
+    Notes
+    -----
+    This intentionally avoids importing OxIOD so audio-only preparation and
+    smoke paths do not pull in unrelated pandas/giotto dependencies.
+    """
+
+    if "urbansound8k_mel" not in dataset_registry:
+        from .datasets.urbansound8k_mel import UrbanSound8KMelDataset
+
+        dataset_registry.register("urbansound8k_mel", UrbanSound8KMelDataset)
+    if "sound_classification" not in task_registry:
+        from .tasks.sound_classification import SoundClassificationTask
+
+        task_registry.register("sound_classification", SoundClassificationTask)
+    if "audio_dscnn" not in model_family_registry:
+        from .model_families.audio_dscnn import AudioDSCNNFamily
+
+        model_family_registry.register("audio_dscnn", AudioDSCNNFamily)
 
 
 def ensure_builtin_components_registered() -> None:
@@ -24,8 +50,15 @@ def ensure_builtin_components_registered() -> None:
     """
 
     if "oxiod" not in dataset_registry:
+        from .datasets.oxiod import OxIODDataset
+
         dataset_registry.register("oxiod", OxIODDataset)
     if "odometry_regression" not in task_registry:
+        from .tasks.odometry_regression import OdometryRegressionTask
+
         task_registry.register("odometry_regression", OdometryRegressionTask)
-    if "tinyodom_tcn" not in model_family_registry:
-        model_family_registry.register("tinyodom_tcn", TinyOdomTCNFamily)
+    if "odom_tcn" not in model_family_registry:
+        from .model_families.odom_tcn import OdomTCNFamily
+
+        model_family_registry.register("odom_tcn", OdomTCNFamily)
+    ensure_audio_components_registered()

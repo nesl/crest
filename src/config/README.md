@@ -10,11 +10,37 @@ The current shipped config examples are:
 - [`nas_config.yaml`](nas_config.yaml)
 - [`nas_config_ble.yaml`](nas_config_ble.yaml)
 - [`nas_config_portenta.yaml`](nas_config_portenta.yaml)
+- [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml)
+- [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml)
 
 Use [`nas_config.yaml`](nas_config.yaml) as the default starting point for the
 repo. It is the main STM32-oriented example config and the most complete
 reference for the current score/prune surface. Use the BLE and Portenta files
 when you want board-specific starting points for those Arduino-backed targets.
+Use [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml) for the
+desktop-first UrbanSound8K / DS-CNN audio path before moving into STM32 HIL
+work. Use [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml)
+for the Phase 8 Arduino audio path on Portenta H7 CM7.
+
+Audio analysis runners live under [`../../analysis_scripts`](../../analysis_scripts).
+They measure classifier inference over precomputed log-mel feature tensors; they
+do not include firmware-side microphone capture or audio feature extraction.
+
+Phase 9 adds optional audio final fold-rotation reporting through:
+
+- `task.params.evaluation.protocol: fixed_split | fold_rotation`
+- `task.params.evaluation.fold_rotation.test_folds`, defaulting to all 10
+  UrbanSound8K folds.
+- `dataset.params.fold_rotation_cache_dir`, required only when fold rotation is
+  enabled.
+
+The fixed `dataset.params.cache_dir` remains the source for NAS, HIL smoke, and
+deployable export. Fold rotation runs after the fixed-split final checkpoint and
+does not export per-fold models.
+`task.params.evaluation.protocol: fold_rotation` is single-objective only;
+multi-objective NAS fails during config validation. The dataset owns where
+fold-specific caches live; the task owns whether final reporting rotates
+through those folds.
 
 The runtime loader and validator live in
 [`../tinyodom/model.py`](../tinyodom/model.py), while the task-aware bootstrap
@@ -32,7 +58,8 @@ The main top-level blocks in the current config surface are:
   Required dataset selection block. The built-in OxIOD dataset uses
   `dataset.name: oxiod` plus the keys under `dataset.params`.
 - `task`
-  Required task selection block.
+  Required task selection block. Task-owned final reporting policy, such as
+  audio fold rotation, lives under `task.params.evaluation`.
 - `model`
   Required model-family selection block.
 - `training`
@@ -66,9 +93,10 @@ Common keys:
   `back_to_back` or `cadenced`.
 - `device.latency_budget_ms`
   Optional shared cadence-budget override. When omitted, the runtime derives
-  it from the active dataset sampling cadence
-  (`dataset.params.stride / dataset.params.sampling_rate_hz * 1000` for the
-  built-in `oxiod` dataset).
+  it from the active dataset cadence: first `dataset.params.batch_period_ms`
+  when present, then legacy
+  `dataset.params.stride / dataset.params.sampling_rate_hz * 1000` for the
+  built-in `oxiod` dataset.
 - `device.serial_port`
   DUT serial port.
 - `device.measured_inference_runs`
@@ -158,6 +186,9 @@ Current runtime behavior:
 
 - `training.energy_aware` defaults to `false` when omitted
 - `training.input_mode` defaults to `uniform` when omitted
+- `training.input_mode` supports dataset-agnostic `uniform` plus
+  dataset-specific analysis modes: `oxiod_representative`, `oxiod_real`,
+  `urbansound8k_representative`, and `urbansound8k_real`
 - `training.max_total_trials` defaults to `training.nas_trials * 2` when
   omitted
 
@@ -175,6 +206,10 @@ Current keys:
 - `model.family`
 - `model.params`
 - `model.search`
+
+For `audio_dscnn`, `model.search: {}` means "use the model-family default
+search surface" from `AudioDSCNNFamily.AUDIO_DSCNN_SEARCH_CHOICES`. Add keys
+under `model.search` only when you want to narrow that default surface.
 
 Current caveats:
 
@@ -205,8 +240,9 @@ task:
     early_stopping_patience: 40
 
 model:
-  family: tinyodom_tcn
-  params: {}
+  family: odom_tcn
+  params:
+    export_variant: approx_trained
   search: {}
 ```
 
@@ -258,17 +294,19 @@ The `outputs` block controls directory roots and naming inputs.
 Current shipped keys:
 
 - `outputs.models_dir`
-- `outputs.tcn_dir`
-- `outputs.model_name`
-- `outputs.checkpoint_name`
+- `outputs.candidate_dir`
+- `outputs.artifact_stem`
 - `outputs.log_file_name`
 
 Important runtime caveat:
 
-- `load_config(...)` derives `model_name` and `checkpoint_name` from
-  `device.name`, then populates derived paths such as `tflite_model_path` and
-  `checkpoint_path`
-- `models_dir` and `tcn_dir` are resolved into absolute paths in memory
+- `load_config(...)` derives read-only runtime fields `model_name` and
+  `checkpoint_name` from `outputs.artifact_stem` and `device.name`, then
+  populates derived paths such as `tflite_model_path` and `checkpoint_path`
+- YAML-authored `outputs.model_name` and `outputs.checkpoint_name` are rejected
+  because artifact names now follow the shared `{artifact_stem}_{device.name}`
+  rule
+- `models_dir` and `candidate_dir` are resolved into absolute paths in memory
 
 So the final in-memory values may differ from the literal YAML text.
 

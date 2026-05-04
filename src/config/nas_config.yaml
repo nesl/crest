@@ -3,7 +3,7 @@ device:
   name: STM32_NUCLEO_N657X0_Q
   hil: true
   runtime_mode: cadenced                     # Shared runtime control: `back_to_back` or `cadenced`.
-  # latency_budget_ms: 200.0                # Optional shared cadence-budget override. Defaults to stride / sampling_rate_hz * 1000.
+  # latency_budget_ms: 200.0                # Optional shared cadence-budget override. Defaults to dataset batch_period_ms, then stride / sampling_rate_hz * 1000.
   serial_port: "/dev/ttyACM0"
   measured_inference_runs: 10                # Number of on-device inference invokes averaged into one measured HIL attempt.
   dut_ready_timeout_s: 12.0                    # Time to wait for STM32_AI_INIT / DUT READY before sending START.
@@ -17,7 +17,7 @@ device:
   harness_active_timeout_s: 30.0
   harness_done_timeout_s: 5.0
   stm32:
-    project_root: "sketches/stm32/tinyodom_tcn_stm32_lrun"
+    project_root: "sketches/stm32/tinyodom_stm32_lrun"
     appli_flash_address: "0x70100000"
     wake_margin_us: 5000                      # Cadenced wake-up guard band before each release time.
     min_sleep_us: 5000                        # Cadenced minimum Stop-mode sleep request.
@@ -40,22 +40,25 @@ task:
     early_stopping_patience: 40
 
 model:
-  family: tinyodom_tcn
-  params: {}
+  family: odom_tcn
+  params:
+    # Odometry HIL/export uses this deterministic perturbed export model to
+    # approximate trained numeric behavior without requiring a checkpoint.
+    export_variant: approx_trained
   search: {}
 
 # Training-time switches and limits
 training:
-  nas_epochs: 50
-  model_epochs: 900
-  nas_trials: 135
-  nas_multiobjective_population_size: 45 # population size for multi-objective NAS, note: nas trials should be at least 3x this value
-  max_total_trials: 270  # safety cap for total attempts to offset pruned/failed runs
+  nas_epochs: 55
+  model_epochs: 990
+  nas_trials: 150
+  nas_multiobjective_population_size: 50 # population size for multi-objective NAS, note: nas trials should be at least 3x this value
+  max_total_trials: 300  # safety cap for total attempts to offset pruned/failed runs
   quantization: true
   latency_proxy_max_flops: 30000000.0
   train: true
   energy_aware: true
-  # Input mode for HIL sketches: uniform, representative, or real
+  # Input mode for HIL sketches: uniform, oxiod_representative, or oxiod_real
   input_mode: "uniform"
 
 # Active NAS policy configuration.
@@ -325,9 +328,8 @@ nas:
 # Output directories and filenames
 outputs:
   models_dir: "models"
-  tcn_dir: "tinyodom_tcn"
-  model_name: "TinyOdomEx_OxIOD_STM32_NUCLEO_N657X0_Q_MO.tflite"
-  checkpoint_name: "TinyOdomEx_OxIOD_STM32_NUCLEO_N657X0_Q_MO.keras"
+  candidate_dir: "odom_tcn"
+  artifact_stem: "TinyOdomEx_OxIOD"
   log_file_name: "log_NAS_Oxiod_STM32_NUCLEO_N657X0_Q_MO.csv"
 
 network:

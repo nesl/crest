@@ -227,7 +227,9 @@ def build_collect_metrics_request(
         Runtime-owned metadata containing at least ``flops`` and, when
         ``input_dim`` is not passed explicitly, ``input_dim``.
     latency_budget_ms : float
-        Per-inference latency budget in milliseconds, derived from stride cadence.
+        Logical per-batch latency budget in milliseconds. The caller owns
+        resolving this from an explicit device override, dataset batch period,
+        or legacy stride cadence.
     dirpath : Path
         Candidate sketch or project directory passed through to the controller.
     device_options : dict[str, Any] | None

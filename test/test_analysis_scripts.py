@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 def _load_module(module_name: str, relative_path: str):
@@ -60,6 +60,154 @@ stm32_phase2_candidate = _load_module(
     "stm32_phase2_candidate",
     "analysis_scripts/stm32_example_project/stm32_phase2_candidate.py",
 )
+arena_latency_curve = _load_module(
+    "arena_latency_curve",
+    "analysis_scripts/arena_latency_curve/run_arena_latency_curve.py",
+)
+clock_tick_latency = _load_module(
+    "clock_tick_latency",
+    "analysis_scripts/clock_tick_latency/run_clock_tick_latency.py",
+)
+stm32_lrun_common = _load_module(
+    "stm32_lrun_common_for_tests",
+    "analysis_scripts/stm32_example_project/stm32_lrun_common.py",
+)
+single_hil = _load_module(
+    "single_hil_for_tests",
+    "analysis_scripts/hil_single_run/run_single_hil.py",
+)
+
+
+class AnalysisCadenceHelperTests(unittest.TestCase):
+    """Validate analysis helper cadence defaults for batch and legacy configs."""
+
+    def test_analysis_support_uses_batch_period_before_legacy_cadence(self):
+        """Analysis cadence helper should accept audio-style batch periods.
+
+        Returns
+        -------
+        None
+            Asserts explicit batch cadence takes precedence over legacy fields.
+        """
+
+        from tinyodom.analysis_support import derive_latency_budget_ms
+
+        budget_ms = derive_latency_budget_ms(
+            Namespace(batch_period_ms=2000, stride=20, sampling_rate_hz=100)
+        )
+
+        self.assertEqual(budget_ms, 2000.0)
+
+    def test_analysis_support_preserves_legacy_stride_cadence(self):
+        """Analysis cadence helper should preserve odometry stride cadence.
+
+        Returns
+        -------
+        None
+            Asserts legacy stride/sample-rate configs still derive the same
+            latency budget.
+        """
+
+        from tinyodom.analysis_support import derive_latency_budget_ms
+
+        budget_ms = derive_latency_budget_ms(Namespace(stride=20, sampling_rate_hz=100))
+
+        self.assertEqual(budget_ms, 200.0)
+
+    def test_analysis_support_missing_cadence_raises_value_error(self):
+        """Analysis cadence helper should fail clearly when cadence is absent.
+
+        Returns
+        -------
+        None
+            Asserts incomplete audio-style configs raise ``ValueError`` instead
+            of leaking ``AttributeError`` from legacy field access.
+        """
+
+        from tinyodom.analysis_support import derive_latency_budget_ms
+
+        with self.assertRaisesRegex(ValueError, "stride"):
+            derive_latency_budget_ms(Namespace())
+
+    def test_lrun_device_defaults_use_dataset_batch_period(self):
+        """LRUN device defaults should resolve batch periods through config.
+
+        Returns
+        -------
+        None
+            Asserts LRUN defaults use `dataset.params.batch_period_ms`.
+        """
+
+        defaults = stm32_lrun_common.device_defaults(
+            {
+                "device": {"runtime_mode": "cadenced"},
+                "dataset": {"params": {"batch_period_ms": 2000}},
+            }
+        )
+
+        self.assertEqual(defaults["latency_budget_ms"], 2000.0)
+
+    def test_lrun_device_defaults_preserve_legacy_stride_cadence(self):
+        """LRUN device defaults should keep odometry stride-derived cadence.
+
+        Returns
+        -------
+        None
+            Asserts LRUN defaults retain the legacy odometry cadence formula.
+        """
+
+        defaults = stm32_lrun_common.device_defaults(
+            {
+                "device": {"runtime_mode": "cadenced"},
+                "dataset": {"params": {"stride": 20, "sampling_rate_hz": 100}},
+            }
+        )
+
+        self.assertEqual(defaults["latency_budget_ms"], 200.0)
+
+    def test_lrun_translates_invalid_cadence_to_workflow_error(self):
+        """LRUN helper errors should stay WorkflowError-compatible.
+
+        Returns
+        -------
+        None
+            Asserts invalid cadence values are translated to the LRUN workflow
+            error type expected by callers.
+        """
+
+        with self.assertRaises(stm32_lrun_common.stm32_cube_clt.WorkflowError):
+            stm32_lrun_common.device_defaults(
+                {
+                    "device": {"runtime_mode": "cadenced"},
+                    "dataset": {"params": {"batch_period_ms": 0}},
+                }
+            )
+
+
+class SingleHILRunTests(unittest.TestCase):
+    """Validate single-run HIL wrapper behavior."""
+
+    def test_single_hil_uses_configured_export_variant(self) -> None:
+        """Single HIL runner should not force a hard-coded model variant."""
+
+        server = MagicMock()
+        server.config.device.harness_arm_pin = 3
+        server.config.device.harness_trigger_pin = 2
+        server.config.device.dut_arm_hold_ms = 600
+        server.config.device.harness_stable_low_ms = 500
+        server.determine_metrics.return_value = {"latency_ms": 1.0}
+
+        argv = ["run_single_hil.py", "--config", "src/config/nas_config.yaml"]
+        with patch.object(sys, "argv", argv), patch.object(
+            single_hil, "HILServer", return_value=server
+        ), patch.object(single_hil, "_build_hyperparams", return_value={"nb_filters": 2}), patch.object(
+            single_hil,
+            "split_hil_request_hyperparams",
+            return_value=({"nb_filters": 2}, {"flops": 100}),
+        ):
+            self.assertEqual(single_hil.main(), 0)
+
+        server.determine_metrics.assert_called_once_with({"nb_filters": 2}, {"flops": 100})
 
 
 class CadencedPortentaSummaryTests(unittest.TestCase):
@@ -123,6 +271,189 @@ class CadencedPortentaSummaryTests(unittest.TestCase):
         self.assertAlmostEqual(summary["latency_ms_mean"], 125.0)
         self.assertAlmostEqual(summary["energy_mj_per_inference_mean"], 8.0)
         self.assertAlmostEqual(summary["avg_power_mw_mean"], 32.0)
+
+    def test_stage_phase_sketch_uses_candidate_dir_basename(self):
+        """Portenta phase staging should use the candidate directory basename."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            candidate_dir = root / "candidate"
+            common_dir = root / "sketches" / "common"
+            common_dir.mkdir(parents=True)
+            (common_dir / "tinyodom_hil_config.h").write_text("// shared\n", encoding="utf-8")
+            template = root / "template.ino"
+            template.write_text("#define TINYODOM_LATENCY_BUDGET_MS 1\n", encoding="utf-8")
+            server = type(
+                "Server",
+                (),
+                {
+                    "config": type(
+                        "Config",
+                        (),
+                        {"outputs": type("Outputs", (), {"candidate_dir": candidate_dir})()},
+                    )()
+                },
+            )()
+
+            with patch.object(cadenced_portenta_h7, "SCRIPT_DIR", root), patch.object(
+                cadenced_portenta_h7, "REPO_ROOT", root
+            ), patch.dict(
+                cadenced_portenta_h7.PHASE_SKETCH_FILENAMES,
+                {cadenced_portenta_h7.PHASE_BACK_TO_BACK: template.name},
+            ):
+                staged = cadenced_portenta_h7._stage_phase_sketch(
+                    server,
+                    cadenced_portenta_h7.PHASE_BACK_TO_BACK,
+                    latency_budget_ms=10.0,
+                )
+
+            self.assertEqual(staged, candidate_dir / "candidate.ino")
+            self.assertTrue((candidate_dir / "common" / "tinyodom_hil_config.h").is_file())
+
+
+class AnalysisScriptCandidateDirTests(unittest.TestCase):
+    """Validate renamed candidate-dir metadata in analysis helpers."""
+
+    def test_arena_latency_payload_uses_candidate_dir_metadata_key(self):
+        """Arena latency JSON metadata should use candidate_dir instead of tcn_dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            settings = arena_latency_curve.SweepSettings(
+                config_path=Path("/tmp/config.yaml"),
+                device_name="ARDUINO_NANO_33_BLE_SENSE",
+                core_label="n/a",
+                device_options=None,
+                arena_kb_list=[32],
+                repeats=1,
+                cooldown_s=0.0,
+                input_mode="uniform",
+                model_variant="approx_trained",
+                trained_checkpoint=None,
+                output_csv=root / "attempts.csv",
+                output_json=root / "summary.json",
+                output_plot=root / "summary.png",
+            )
+            attempts = [
+                {
+                    "timestamp": "2026-05-01T00:00:00Z",
+                    "device": settings.device_name,
+                    "core": settings.core_label,
+                    "arena_kb": 32,
+                    "repeat": 1,
+                    "latency_ms": 1.0,
+                    "energy_mj_per_inference": 2.0,
+                    "ram_bytes": 1,
+                    "flash_bytes": 2,
+                    "arena_bytes": 32768,
+                    "harness_latency_ms": 1.0,
+                    "avg_power_mw": 1.0,
+                    "avg_current_ma": 1.0,
+                    "bus_voltage_v": 5.0,
+                    "idle_power_mw": 0.0,
+                    "error_code": 0,
+                    "error_label": "OK",
+                }
+            ]
+            server = type(
+                "Server",
+                (),
+                {
+                    "active_sketch_path": root / "candidate" / "odom_tcn.ino",
+                    "config": type(
+                        "Config",
+                        (),
+                        {"outputs": type("Outputs", (), {"candidate_dir": root / "candidate"})()},
+                    )(),
+                },
+            )()
+
+            payload = {
+                "metadata": {
+                    "timestamp_utc": "2026-05-01T00:00:00Z",
+                    "config_path": str(settings.config_path),
+                    "device": settings.device_name,
+                    "core": settings.core_label,
+                    "device_options": settings.device_options or {},
+                    "model_variant": settings.model_variant,
+                    "trained_checkpoint": "",
+                    "input_mode": settings.input_mode,
+                    "arena_kb_list": settings.arena_kb_list,
+                    "repeats": settings.repeats,
+                    "cooldown_s": settings.cooldown_s,
+                    "active_sketch_path": str(server.active_sketch_path),
+                    "candidate_dir": str(server.config.outputs.candidate_dir),
+                },
+                "attempts": attempts,
+                "aggregates_by_arena": arena_latency_curve._aggregate_by_arena(
+                    settings.arena_kb_list, attempts
+                ),
+            }
+            settings.output_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+            metadata = json.loads(settings.output_json.read_text(encoding="utf-8"))["metadata"]
+            self.assertEqual(metadata["candidate_dir"], str(root / "candidate"))
+            self.assertNotIn("tcn_dir", metadata)
+
+    def test_clock_tick_payload_uses_candidate_dir_metadata_key(self):
+        """Clock-tick JSON metadata should use candidate_dir instead of tcn_dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            settings = clock_tick_latency.RunSettings(
+                config_path=Path("/tmp/config.yaml"),
+                device_name="PORTENTA_H7",
+                core_label="cm7",
+                device_options={"target_core": "cm7"},
+                repeats=1,
+                cooldown_s=0.0,
+                input_mode="uniform",
+                model_variant="approx_trained",
+                trained_checkpoint=None,
+                fallback_clock_hz=400_000_000.0,
+                output_csv=root / "attempts.csv",
+                output_json=root / "summary.json",
+                output_plot=root / "summary.png",
+            )
+            server = type(
+                "Server",
+                (),
+                {
+                    "active_sketch_path": root / "candidate" / "odom_tcn.ino",
+                    "config": type(
+                        "Config",
+                        (),
+                        {"outputs": type("Outputs", (), {"candidate_dir": root / "candidate"})()},
+                    )(),
+                },
+            )()
+
+            payload = {
+                "metadata": {
+                    "timestamp_utc": "2026-05-01T00:00:00Z",
+                    "config_path": str(settings.config_path),
+                    "device": settings.device_name,
+                    "core": settings.core_label,
+                    "device_options": settings.device_options,
+                    "model_variant": settings.model_variant,
+                    "trained_checkpoint": "",
+                    "input_mode": settings.input_mode,
+                    "repeats": settings.repeats,
+                    "cooldown_s": settings.cooldown_s,
+                    "fallback_clock_hz": settings.fallback_clock_hz,
+                    "active_sketch_path": str(server.active_sketch_path),
+                    "candidate_dir": str(server.config.outputs.candidate_dir),
+                },
+                "attempts": [],
+                "aggregates": {
+                    "latency_ms": clock_tick_latency._aggregate_metric([], "latency_ms"),
+                    "ticks_per_inference": clock_tick_latency._aggregate_metric(
+                        [], "ticks_per_inference"
+                    ),
+                },
+            }
+            settings.output_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+            metadata = json.loads(settings.output_json.read_text(encoding="utf-8"))["metadata"]
+            self.assertEqual(metadata["candidate_dir"], str(root / "candidate"))
+            self.assertNotIn("tcn_dir", metadata)
 
 
 class Stm32MeasuredRunsTests(unittest.TestCase):

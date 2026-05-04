@@ -14,6 +14,13 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from tinyodom.interfaces import DatasetABC, ModelFamilyABC, TaskABC  # noqa: E402
+from tinyodom.builtin_components import (  # noqa: E402
+    ensure_audio_components_registered,
+    ensure_builtin_components_registered,
+)
+from tinyodom.datasets.urbansound8k_mel import UrbanSound8KMelDataset  # noqa: E402
+from tinyodom import model_families  # noqa: E402
+from tinyodom.model_families import AudioDSCNNFamily  # noqa: E402
 from tinyodom.pipeline_types import (  # noqa: E402
     DataSplit,
     DatasetBundle,
@@ -23,7 +30,8 @@ from tinyodom.pipeline_types import (  # noqa: E402
     TargetSpec,
     TaskMetricContract,
 )
-from tinyodom.registry import ComponentRegistry  # noqa: E402
+from tinyodom.registry import ComponentRegistry, dataset_registry, model_family_registry, task_registry  # noqa: E402
+from tinyodom.tasks.sound_classification import SoundClassificationTask  # noqa: E402
 
 
 class DummyDataset(DatasetABC):
@@ -170,6 +178,41 @@ class RegistryTests(unittest.TestCase):
 
         with self.assertRaises(KeyError):
             _ = registry["missing"]
+
+    def test_builtin_registration_includes_audio_components(self) -> None:
+        """Built-in registration should include audio dataset, task, and model.
+
+        Returns
+        -------
+        None
+            Asserts repeated registration calls are idempotent and global
+            registries expose the new audio components.
+        """
+
+        ensure_builtin_components_registered()
+        ensure_builtin_components_registered()
+
+        self.assertIs(dataset_registry["urbansound8k_mel"], UrbanSound8KMelDataset)
+        self.assertIs(task_registry["sound_classification"], SoundClassificationTask)
+        self.assertIs(model_family_registry["audio_dscnn"], AudioDSCNNFamily)
+        self.assertIs(model_family_registry.get("audio_dscnn"), AudioDSCNNFamily)
+        self.assertIs(model_families.AudioDSCNNFamily, AudioDSCNNFamily)
+        self.assertEqual(AudioDSCNNFamily().name, "audio_dscnn")
+
+    def test_audio_registration_avoids_odometry_components(self) -> None:
+        """Audio-only registration should not require OxIOD imports."""
+
+        dataset_registry._items.pop("oxiod", None)
+        dataset_registry._items.pop("urbansound8k_mel", None)
+        task_registry._items.pop("sound_classification", None)
+        model_family_registry._items.pop("audio_dscnn", None)
+
+        ensure_audio_components_registered()
+
+        self.assertNotIn("oxiod", dataset_registry)
+        self.assertIs(dataset_registry["urbansound8k_mel"], UrbanSound8KMelDataset)
+        self.assertIs(task_registry["sound_classification"], SoundClassificationTask)
+        self.assertIs(model_family_registry["audio_dscnn"], AudioDSCNNFamily)
 
 
 class InterfaceDefaultsTests(unittest.TestCase):

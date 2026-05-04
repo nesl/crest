@@ -41,8 +41,8 @@ MODEL_VARIANT_NAME = "approx_trained"
 MASTER_SUCCESS_CODE = 1
 
 PHASE_SKETCH_FILENAMES = {
-    PHASE_BACK_TO_BACK: "tinyodom_tcn_energy_back_to_back.ino",
-    PHASE_CADENCED: "tinyodom_tcn_energy_cadenced.ino",
+    PHASE_BACK_TO_BACK: "tinyodom_inference_back_to_back.ino",
+    PHASE_CADENCED: "tinyodom_inference_cadenced.ino",
 }
 
 CSV_COLUMNS = [
@@ -122,7 +122,7 @@ class AttrDict(dict):
 
 
 def _derive_default_latency_budget_ms(server: Any) -> float:
-    """Compute cadence budget from stride and sampling rate.
+    """Resolve the default logical cadence budget for the active dataset.
 
     Parameters
     ----------
@@ -132,7 +132,8 @@ def _derive_default_latency_budget_ms(server: Any) -> float:
     Returns
     -------
     float
-        ``(stride / sampling_rate_hz) * 1000`` in milliseconds.
+        Cadence budget in milliseconds. Explicit dataset batch periods take
+        precedence over legacy stride/sample-rate cadence.
     """
 
     from tinyodom.analysis_support import derive_latency_budget_ms
@@ -223,7 +224,7 @@ def _stage_phase_sketch(server: Any, phase: str, latency_budget_ms: float) -> Pa
     Returns
     -------
     pathlib.Path
-        Path to staged ``tinyodom_tcn.ino``.
+        Path to staged ``{candidate_dir.name}.ino``.
     """
 
     if phase not in VALID_PHASES:
@@ -233,7 +234,7 @@ def _stage_phase_sketch(server: Any, phase: str, latency_budget_ms: float) -> Pa
     if not template_path.exists():
         raise FileNotFoundError(f"Missing sketch template: {template_path}")
 
-    sketch_dir = Path(server.config.outputs.tcn_dir)
+    sketch_dir = Path(server.config.outputs.candidate_dir)
     sketch_dir.mkdir(parents=True, exist_ok=True)
 
     # Keep shared HIL headers synchronized with the staged analysis sketch.
@@ -244,7 +245,7 @@ def _stage_phase_sketch(server: Any, phase: str, latency_budget_ms: float) -> Pa
     if phase == PHASE_CADENCED:
         sketch_text = _patch_cadence_define(sketch_text, latency_budget_ms)
 
-    staged_path = sketch_dir / "tinyodom_tcn.ino"
+    staged_path = sketch_dir / f"{sketch_dir.name}.ino"
     staged_path.write_text(sketch_text)
     return staged_path
 
@@ -505,7 +506,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Cadence budget in milliseconds for the cadenced phase. "
-            "Defaults to stride cadence: (stride / sampling_rate_hz) * 1000."
+            "Defaults to dataset batch_period_ms, then legacy stride cadence."
         ),
     )
     parser.add_argument(

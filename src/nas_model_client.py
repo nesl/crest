@@ -5,6 +5,7 @@ the current Optuna, HIL RPC, final-training, and artifact-reporting workflow.
 """
 
 import argparse
+import copy
 from collections.abc import Mapping
 import csv
 import json
@@ -1457,7 +1458,18 @@ class NASModelClient:
             output_dir=artifacts_dir / "task_closeout",
         )
 
-        # 6) Collect a summary bundle for reporting.
+        # 6) Optional Phase 9 reporting runs only after the fixed-split
+        # deployable checkpoint/export path has completed.
+        fold_rotation_artifacts = None
+        if self._fold_rotation_enabled():
+            fold_rotation_artifacts = self.run_fold_rotation_final_evaluation(
+                study_storage=storage_uri,
+                study_name=study_name,
+                output_dir=artifacts_dir / "fold_rotation",
+                patience=40,
+            )
+
+        # 7) Collect a summary bundle for reporting.
         self.write_summary_bundle(
             study_storage=storage_uri,
             study_name=study_name,
@@ -1465,6 +1477,7 @@ class NASModelClient:
             loss_plots=loss_plots,
             test_metrics=test_metrics,
             closeout_artifacts=closeout_artifacts,
+            fold_rotation_artifacts=fold_rotation_artifacts,
             summary_path=artifacts_dir / "summary.json",
         ) 
 
@@ -1516,6 +1529,224 @@ class NASModelClient:
         print(f"[CONFIG] Copied run config to {dest_cfg}")
         return dest_cfg
 
+    def _best_trial_params(self, study_storage: str, study_name: str) -> dict[str, Any]:
+        """Load best-trial parameters without runtime-only hardware choices.
+
+        Parameters
+        ----------
+        study_storage : str
+            Optuna storage URI containing the study.
+        study_name : str
+            Optuna study name.
+
+        Returns
+        -------
+        dict[str, Any]
+            Best-trial parameters suitable for model-family decoding.
+        """
+
+        study = optuna.load_study(study_name=study_name, storage=study_storage)
+        return {
+            key: value
+            for key, value in study.best_trial.params.items()
+            if key != "cpu_clock_mhz_index"
+        }
+
+    def _train_with_decoded_hparams(
+        self,
+        family_hparams: Any,
+        *,
+        bundle: DatasetBundle,
+        target_spec: Any,
+        model_build_context: ModelBuildContext,
+        model_config: Any,
+        task_config: Any,
+        checkpoint_path: Path,
+        history_path: Path,
+        patience: int,
+        combine_train_val: bool,
+    ) -> dict:
+        """Train one final model using explicit data and artifact paths.
+
+        Parameters
+        ----------
+        family_hparams : Any
+            Model-family hyperparameters already decoded from an Optuna trial.
+        bundle : DatasetBundle
+            Dataset bundle to train against.
+        target_spec : Any
+            Task target specification for ``bundle``.
+        model_build_context : tinyodom.pipeline_types.ModelBuildContext
+            Model construction context for ``bundle``.
+        model_config : Any
+            Model-family configuration subtree.
+        task_config : Any
+            Task configuration subtree.
+        checkpoint_path : pathlib.Path
+            Destination checkpoint path.
+        history_path : pathlib.Path
+            Destination history JSON path.
+        patience : int
+            Final-training early stopping patience.
+        combine_train_val : bool
+            Whether the task should combine train and validation splits.
+
+        Returns
+        -------
+        dict
+            JSON-friendly training history.
+        """
+
+        history_path = Path(history_path)
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        ckpt_path = Path(checkpoint_path)
+        batch_size = 256
+        fit_task = self._instantiate_task(
+            self.task_name,
+            self.config,
+            task_config,
+            checkpoint_path=ckpt_path,
+            early_stopping_patience=patience,
+        )
+        model = self.model_family.build_model(
+            family_hparams,
+            model_build_context,
+            model_config,
+        )
+        fit_task.validate_model_outputs(model, target_spec)
+        fit_task.compile_model(model, task_config, target_spec)
+
+        fit_plan = fit_task.build_fit_plan(
+            bundle,
+            task_config,
+            target_spec,
+            mode="final",
+            combine_train_val=combine_train_val,
+        )
+        fit_kwargs = dict(fit_plan.fit_kwargs)
+        fit_kwargs["callbacks"] = list(fit_plan.callbacks)
+        fit_kwargs["epochs"] = self.config.training.model_epochs
+        fit_kwargs["batch_size"] = batch_size
+        history = model.fit(**fit_kwargs)
+
+        history_dict = {k: [float(v) for v in values] for k, values in history.history.items()}
+        with open(history_path, "w") as f:
+            json.dump(history_dict, f, indent=2)
+        print(f"[FINAL TRAIN] Saved history to {history_path}")
+        print(f"[FINAL TRAIN] Best checkpoint stored at {ckpt_path}")
+        return history_dict
+
+    def _evaluate_checkpoint_with_context(
+        self,
+        *,
+        checkpoint_path: Path,
+        metrics_path: Path,
+        bundle: DatasetBundle,
+        task: Any,
+        target_spec: Any,
+        model_build_context: ModelBuildContext,
+        model_config: Any,
+        task_config: Any,
+        study_storage: str | None,
+        study_name: str | None,
+        export_tflite: bool,
+        tflite_path: Path | None = None,
+    ) -> dict:
+        """Evaluate one checkpoint using explicit data and build context.
+
+        Parameters
+        ----------
+        checkpoint_path : pathlib.Path
+            Checkpoint to evaluate.
+        metrics_path : pathlib.Path
+            Destination JSON/CSV metrics path.
+        bundle : DatasetBundle
+            Dataset bundle supplying test and calibration splits.
+        task : Any
+            Task component used to evaluate the model.
+        target_spec : Any
+            Task target specification for ``bundle``.
+        model_build_context : tinyodom.pipeline_types.ModelBuildContext
+            Model loading context for ``bundle``.
+        model_config : Any
+            Model-family configuration subtree.
+        task_config : Any
+            Task configuration subtree.
+        study_storage : str | None
+            Optuna storage URI for best-hyperparameter reporting.
+        study_name : str | None
+            Optuna study name for best-hyperparameter reporting.
+        export_tflite : bool
+            Whether to export a TFLite artifact.
+        tflite_path : pathlib.Path | None, optional
+            Destination TFLite path when exporting.
+
+        Returns
+        -------
+        dict
+            JSON-friendly metrics dictionary.
+        """
+
+        ckpt_path = Path(checkpoint_path)
+        metrics_path = Path(metrics_path)
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        model = self.model_family.load_model(
+            ckpt_path,
+            model_build_context,
+            model_config,
+        )
+        evaluation_result = task.evaluate(
+            model,
+            bundle.test,
+            task_config,
+            target_spec,
+        )
+        task_metrics = {}
+        for metric_name, raw_value in evaluation_result.metrics.items():
+            if isinstance(raw_value, np.generic):
+                task_metrics[metric_name] = raw_value.item()
+            else:
+                task_metrics[metric_name] = raw_value
+
+        best_params = None
+        if study_storage and study_name:
+            study = optuna.load_study(study_name=study_name, storage=study_storage)
+            best_params = study.best_trial.params
+
+        tflite_written = None
+        if export_tflite:
+            if not self.model_family.supports_tflite():
+                raise ValueError(
+                    f"Model family '{self.model_family_name}' does not support TFLite export."
+                )
+            tflite_path = Path(tflite_path) if tflite_path else Path(self.config.outputs.tflite_model_path)
+            representative_split = bundle.calibration or bundle.train
+            convert_to_tflite_model(
+                model=model,
+                training_data=representative_split.inputs,
+                quantization=self.config.training.quantization,
+                output_name=tflite_path,
+            )
+            tflite_written = str(tflite_path)
+
+        metrics = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "checkpoint_path": str(ckpt_path),
+            "study_name": study_name,
+            "study_storage": study_storage,
+            "hyperparameters": best_params,
+            "tflite_path": tflite_written,
+            **task_metrics,
+        }
+        with open(metrics_path, "w") as f:
+            json.dump(metrics, f, indent=2)
+        csv_path = metrics_path.with_suffix(".csv")
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(list(metrics.keys()))
+            writer.writerow(list(metrics.values()))
+        print(f"[EVAL] Saved test metrics to {metrics_path} and {csv_path}")
+        return metrics
 
     def train_best_trial(
         self,
@@ -1565,53 +1796,24 @@ class NASModelClient:
             history_path = Path(history_path)
         history_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Load the completed Optuna study to retrieve the top-scoring trial.
-        study = optuna.load_study(study_name=study_name, storage=study_storage)
-        best_trial = study.best_trial
-        best_params = best_trial.params
-
-        batch_size = 256  # Use the same fixed batch size as in NAS search.
+        best_params = self._best_trial_params(study_storage, study_name)
         family_hparams = self.model_family.decode_trial_hparams(
             dict(best_params),
             self.model_build_context,
             self.model_config,
         )
-        fit_task = self._instantiate_task(
-            self.task_name,
-            self.config,
-            self.task_config,
-            checkpoint_path=ckpt_path,
-            early_stopping_patience=patience,
-        )
-        model = self.model_family.build_model(
+        return self._train_with_decoded_hparams(
             family_hparams,
-            self.model_build_context,
-            self.model_config,
-        )
-        fit_task.validate_model_outputs(model, self.target_spec)
-        fit_task.compile_model(model, self.task_config, self.target_spec)
-
-        fit_plan = fit_task.build_fit_plan(
-            self.dataset_bundle,
-            self.task_config,
-            self.target_spec,
-            mode="final",
+            bundle=self.dataset_bundle,
+            target_spec=self.target_spec,
+            model_build_context=self.model_build_context,
+            model_config=self.model_config,
+            task_config=self.task_config,
+            checkpoint_path=ckpt_path,
+            history_path=history_path,
+            patience=patience,
             combine_train_val=combine_train_val,
         )
-        fit_kwargs = dict(fit_plan.fit_kwargs)
-        fit_kwargs["callbacks"] = list(fit_plan.callbacks)
-        fit_kwargs["epochs"] = self.config.training.model_epochs
-        fit_kwargs["batch_size"] = batch_size
-        history = model.fit(**fit_kwargs)
-
-        # Persist the training history so future plotting/reporting does not require rerunning training.
-        history_dict = {k: [float(v) for v in values] for k, values in history.history.items()}
-        with open(history_path, "w") as f:
-            json.dump(history_dict, f, indent=2)
-        print(f"[FINAL TRAIN] Saved history to {history_path}")
-        print(f"[FINAL TRAIN] Best checkpoint stored at {ckpt_path}")
-
-        return history_dict
 
     def plot_training_history(
         self,
@@ -1730,68 +1932,318 @@ class NASModelClient:
             metrics_path = Path(metrics_path)
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
 
-        model = self.model_family.load_model(
-            ckpt_path,
-            self.model_build_context,
-            self.model_config,
+        return self._evaluate_checkpoint_with_context(
+            checkpoint_path=ckpt_path,
+            metrics_path=metrics_path,
+            bundle=self.dataset_bundle,
+            task=self.task,
+            target_spec=self.target_spec,
+            model_build_context=self.model_build_context,
+            model_config=self.model_config,
+            task_config=self.task_config,
+            study_storage=study_storage,
+            study_name=study_name,
+            export_tflite=export_tflite,
+            tflite_path=tflite_path,
         )
-        evaluation_result = self.task.evaluate(
-            model,
-            self.dataset_bundle.test,
-            self.task_config,
-            self.target_spec,
-        )
-        task_metrics = {}
-        for metric_name, raw_value in evaluation_result.metrics.items():
-            if isinstance(raw_value, np.generic):
-                task_metrics[metric_name] = raw_value.item()
-            else:
-                task_metrics[metric_name] = raw_value
 
-        # Gather hyperparameters for record-keeping if the study is available.
-        best_params = None
-        if study_storage and study_name:
-            study = optuna.load_study(study_name=study_name, storage=study_storage)
-            best_params = study.best_trial.params
+    def _fold_rotation_enabled(self) -> bool:
+        """Return whether task-owned final fold-rotation reporting is enabled.
 
-        # Optionally emit a TFLite artifact for downstream deployment.
-        tflite_written = None
-        if export_tflite:
-            if not self.model_family.supports_tflite():
-                raise ValueError(
-                    f"Model family '{self.model_family_name}' does not support TFLite export."
-                )
-            tflite_path = Path(tflite_path) if tflite_path else Path(self.config.outputs.tflite_model_path)
-            representative_split = self.dataset_bundle.calibration or self.dataset_bundle.train
-            convert_to_tflite_model(
-                model=model,
-                training_data=representative_split.inputs,
-                quantization=self.config.training.quantization,
-                output_name=tflite_path,
-            )
-            tflite_written = str(tflite_path)
+        Returns
+        -------
+        bool
+            True when ``task.params.evaluation.protocol`` is ``fold_rotation``.
+        """
 
-        metrics = {
+        evaluation = getattr(self.task_config, "evaluation", Dict())
+        return str(getattr(evaluation, "protocol", "fixed_split")) == "fold_rotation"
+
+    def _fold_rotation_test_folds(self) -> list[int]:
+        """Return normalized fold-rotation test folds from config.
+
+        Returns
+        -------
+        list[int]
+            Requested UrbanSound8K test folds.
+        """
+
+        evaluation = getattr(self.task_config, "evaluation", Dict())
+        fold_rotation = getattr(evaluation, "fold_rotation", Dict())
+        return [int(fold) for fold in fold_rotation.get("test_folds", list(range(1, 11)))]
+
+    def _fold_rotation_cache_dir(self) -> Path:
+        """Return the configured root for per-fold audio caches.
+
+        Returns
+        -------
+        pathlib.Path
+            Directory containing ``fold_XX`` cache directories.
+        """
+
+        return Path(self.config.dataset.params.fold_rotation_cache_dir).expanduser().resolve()
+
+    def _bootstrap_fold_pipeline(self, fold_cache_dir: Path) -> Any:
+        """Bootstrap the active pipeline against one rotated cache directory.
+
+        Parameters
+        ----------
+        fold_cache_dir : pathlib.Path
+            Cache directory containing one fold's split files.
+
+        Returns
+        -------
+        object
+            Bootstrapped pipeline for the fold-specific dataset bundle.
+        """
+
+        fold_config = copy.deepcopy(self.config)
+        fold_config.dataset.params.cache_dir = str(fold_cache_dir)
+        return bootstrap_pipeline(fold_config)
+
+    @staticmethod
+    def _require_finite_fold_metrics(metrics: dict[str, Any], fold: int) -> dict[str, float]:
+        """Extract required finite reporting metrics for one fold.
+
+        Parameters
+        ----------
+        metrics : dict[str, Any]
+            Evaluation metrics emitted for a fold.
+        fold : int
+            Fold number used for error messages.
+
+        Returns
+        -------
+        dict[str, float]
+            Required metric values as floats.
+        """
+
+        required = {}
+        for metric_name in ("accuracy", "macro_f1", "loss"):
+            if metric_name not in metrics:
+                raise ValueError(f"Fold {fold} metrics missing required '{metric_name}'.")
+            value = float(metrics[metric_name])
+            if not np.isfinite(value):
+                raise ValueError(f"Fold {fold} metric '{metric_name}' is not finite.")
+            required[metric_name] = value
+        return required
+
+    @staticmethod
+    def _aggregate_fold_metrics(per_fold: list[dict[str, Any]]) -> dict[str, dict[str, float | None]]:
+        """Aggregate per-fold metrics for Phase 9 reporting.
+
+        Parameters
+        ----------
+        per_fold : list[dict[str, Any]]
+            Per-fold summary rows containing finite metric values.
+
+        Returns
+        -------
+        dict[str, dict[str, float | None]]
+            Mean and sample standard deviation by metric.
+        """
+
+        aggregate: dict[str, dict[str, float | None]] = {}
+        for metric_name in ("accuracy", "macro_f1", "loss"):
+            values = np.asarray([float(row[metric_name]) for row in per_fold], dtype=np.float64)
+            aggregate[metric_name] = {
+                "mean": float(np.mean(values)),
+                "std": float(np.std(values, ddof=1)) if values.size >= 2 else None,
+            }
+        return aggregate
+
+    def _write_fold_rotation_summary(
+        self,
+        *,
+        output_dir: Path,
+        study_name: str,
+        requested_folds: list[int],
+        completed_folds: list[int],
+        per_fold: list[dict[str, Any]],
+        status: str,
+        error: str | None = None,
+    ) -> Path:
+        """Write a Phase 9 fold-rotation summary or partial failure manifest.
+
+        Parameters
+        ----------
+        output_dir : pathlib.Path
+            Fold-rotation artifact directory.
+        study_name : str
+            Optuna study name.
+        requested_folds : list[int]
+            Fold list requested by config.
+        completed_folds : list[int]
+            Folds completed before success or failure.
+        per_fold : list[dict[str, Any]]
+            Per-fold metric rows.
+        status : str
+            ``success`` or ``failed``.
+        error : str | None, optional
+            Failure reason for partial manifests.
+
+        Returns
+        -------
+        pathlib.Path
+            Written summary path.
+        """
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        full_run = requested_folds == list(range(1, 11)) and status == "success"
+        summary = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
-            "checkpoint_path": str(ckpt_path),
             "study_name": study_name,
-            "study_storage": study_storage,
-            "hyperparameters": best_params,
-            "tflite_path": tflite_written,
-            **task_metrics,
+            "status": status,
+            "partial": not full_run,
+            "requested_test_folds": requested_folds,
+            "completed_test_folds": completed_folds,
+            "folds": per_fold,
+            "aggregates": self._aggregate_fold_metrics(per_fold) if status == "success" else None,
+            "error": error,
         }
+        summary_path = output_dir / (
+            "fold_rotation_summary.json" if status == "success" else "fold_rotation_summary.partial.json"
+        )
+        with open(summary_path, "w") as f:
+            json.dump(summary, f, indent=2)
+        return summary_path
 
-        # Persist JSON for rich write-ups and a simple CSV for quick scanning.
-        with open(metrics_path, "w") as f:
-            json.dump(metrics, f, indent=2)
-        csv_path = metrics_path.with_suffix(".csv")
+    def run_fold_rotation_final_evaluation(
+        self,
+        *,
+        study_storage: str,
+        study_name: str,
+        output_dir: Path,
+        patience: int = 40,
+    ) -> dict[str, Any]:
+        """Run Phase 9 fold-rotation final train/evaluate reporting.
+
+        Parameters
+        ----------
+        study_storage : str
+            Optuna storage URI containing the already-completed NAS study.
+        study_name : str
+            Optuna study name.
+        output_dir : pathlib.Path
+            Directory where fold-rotation artifacts are written.
+        patience : int, optional
+            Final-training early stopping patience.
+
+        Returns
+        -------
+        dict[str, Any]
+            Summary containing the fold report path and per-fold rows.
+        """
+
+        if not self._fold_rotation_enabled():
+            return {}
+        requested_folds = self._fold_rotation_test_folds()
+        best_params = self._best_trial_params(study_storage, study_name)
+        output_dir = Path(output_dir)
+        per_fold: list[dict[str, Any]] = []
+        completed_folds: list[int] = []
+        try:
+            for fold in requested_folds:
+                fold_dir = output_dir / f"fold_{fold:02d}"
+                fold_dir.mkdir(parents=True, exist_ok=True)
+                pipeline = self._bootstrap_fold_pipeline(
+                    self._fold_rotation_cache_dir() / f"fold_{fold:02d}"
+                )
+                family_hparams = self.model_family.decode_trial_hparams(
+                    dict(best_params),
+                    pipeline.model_build_context,
+                    pipeline.selection["model_config"],
+                )
+                checkpoint_path = fold_dir / "checkpoint.keras"
+                history_path = fold_dir / "train_history.json"
+                history = self._train_with_decoded_hparams(
+                    family_hparams,
+                    bundle=pipeline.bundle,
+                    target_spec=pipeline.target_spec,
+                    model_build_context=pipeline.model_build_context,
+                    model_config=pipeline.selection["model_config"],
+                    task_config=pipeline.selection["task_config"],
+                    checkpoint_path=checkpoint_path,
+                    history_path=history_path,
+                    patience=patience,
+                    combine_train_val=False,
+                )
+                metrics_path = fold_dir / "test_metrics.json"
+                metrics = self._evaluate_checkpoint_with_context(
+                    checkpoint_path=checkpoint_path,
+                    metrics_path=metrics_path,
+                    bundle=pipeline.bundle,
+                    task=pipeline.task,
+                    target_spec=pipeline.target_spec,
+                    model_build_context=pipeline.model_build_context,
+                    model_config=pipeline.selection["model_config"],
+                    task_config=pipeline.selection["task_config"],
+                    study_storage=study_storage,
+                    study_name=study_name,
+                    export_tflite=False,
+                )
+                closeout_model = self.model_family.load_model(
+                    checkpoint_path,
+                    pipeline.model_build_context,
+                    pipeline.selection["model_config"],
+                )
+                closeout_artifacts = pipeline.task.generate_closeout_artifacts(
+                    closeout_model,
+                    pipeline.bundle,
+                    pipeline.selection["task_config"],
+                    pipeline.target_spec,
+                    output_dir=fold_dir / "task_closeout",
+                )
+                required_metrics = self._require_finite_fold_metrics(metrics, fold)
+                row = {
+                    "fold": fold,
+                    **required_metrics,
+                    "history_path": str(history_path),
+                    "metrics_path": str(metrics_path),
+                    "checkpoint_path": str(checkpoint_path),
+                    "task_closeout_artifacts": closeout_artifacts,
+                    "epochs": len(next(iter(history.values()), [])),
+                }
+                per_fold.append(row)
+                completed_folds.append(fold)
+        except Exception as exc:
+            partial_path = self._write_fold_rotation_summary(
+                output_dir=output_dir,
+                study_name=study_name,
+                requested_folds=requested_folds,
+                completed_folds=completed_folds,
+                per_fold=per_fold,
+                status="failed",
+                error=str(exc),
+            )
+            print(f"[FOLD ROTATION] Saved partial failure summary to {partial_path}")
+            raise
+
+        csv_path = output_dir / "fold_metrics.csv"
         with open(csv_path, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(list(metrics.keys()))
-            writer.writerow(list(metrics.values()))
-        print(f"[EVAL] Saved test metrics to {metrics_path} and {csv_path}")
-
-        return metrics
+            writer = csv.DictWriter(
+                f,
+                fieldnames=["fold", "accuracy", "macro_f1", "loss", "history_path", "metrics_path", "checkpoint_path"],
+            )
+            writer.writeheader()
+            for row in per_fold:
+                writer.writerow({key: row.get(key) for key in writer.fieldnames})
+        summary_path = self._write_fold_rotation_summary(
+            output_dir=output_dir,
+            study_name=study_name,
+            requested_folds=requested_folds,
+            completed_folds=completed_folds,
+            per_fold=per_fold,
+            status="success",
+        )
+        print(f"[FOLD ROTATION] Saved fold metrics to {csv_path}")
+        print(f"[FOLD ROTATION] Saved summary to {summary_path}")
+        return {
+            "summary_path": str(summary_path),
+            "fold_metrics_csv": str(csv_path),
+            "requested_test_folds": requested_folds,
+            "completed_test_folds": completed_folds,
+        }
 
     def trajectory_metrics_and_plots(
         self,
@@ -1983,6 +2435,7 @@ class NASModelClient:
         loss_plots: dict,
         test_metrics: dict,
         closeout_artifacts: dict | None = None,
+        fold_rotation_artifacts: dict | None = None,
         summary_path: Path | None = None,
     ) -> Path:
         """
@@ -2003,6 +2456,8 @@ class NASModelClient:
         closeout_artifacts : dict | None, optional
             Task-owned closeout artifact summary when the active task emits
             extra report outputs.
+        fold_rotation_artifacts : dict | None, optional
+            Phase 9 fold-rotation report artifact summary.
         summary_path : Path | None, optional
             Destination for the summary JSON. Defaults to `models_dir/{study_name}_summary.json`.
 
@@ -2028,6 +2483,7 @@ class NASModelClient:
             "loss_plots": loss_plots,
             "test_metrics": test_metrics,
             "task_closeout_artifacts": closeout_artifacts,
+            "fold_rotation_artifacts": fold_rotation_artifacts,
             "checkpoint_path": test_metrics.get("checkpoint_path"),
             "tflite_path": test_metrics.get("tflite_path"),
         }
@@ -2049,6 +2505,12 @@ class NASModelClient:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TinyODOM NAS workflow runner.")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="Path to the NAS/HIL YAML configuration file.",
+    )
     parser.add_argument(
         "--smoke-test",
         type=int,
@@ -2072,7 +2534,7 @@ if __name__ == "__main__":
     storage_uri = "sqlite:///optuna.db"
     client: NASModelClient | None = None
     try:
-        client = NASModelClient()
+        client = NASModelClient(args.config)
         if args.smoke_test > 0:
             print(f"[MAIN] Starting smoke test with {args.smoke_test} trials...")
             study_name = f"{args.study_name}_{client.config.device.name}"

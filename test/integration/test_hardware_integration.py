@@ -23,7 +23,7 @@ class HILCompileOnlyTests(TinyModelMixin, unittest.TestCase):
     def test_hil_spec_compile_only_runs_cli(self):
         # Runs the compile-only flow to ensure Arduino CLI integration keeps returning resource metrics.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketch_copy = Path(tmpdir) / "tinyodom_tcn"
+            sketch_copy = Path(tmpdir) / "odom_tcn"
             shutil.copytree(SKETCH_SOURCE_DIR, sketch_copy)
             ram, flash, latency, arena_bytes, err, _power = HIL_spec(
                 dirpath=sketch_copy,
@@ -49,7 +49,7 @@ class HILCompileOnlyTests(TinyModelMixin, unittest.TestCase):
             cpp_dir = tmp_path / "cpp"
             convert_to_cpp_model(tflite_path, cpp_dir)
 
-            sketch_copy = tmp_path / "tinyodom_tcn"
+            sketch_copy = tmp_path / "odom_tcn"
             shutil.copytree(SKETCH_SOURCE_DIR, sketch_copy)
             shutil.copy2(cpp_dir / "model.cc", sketch_copy / "model.cc")
             shutil.copy2(cpp_dir / "model.h", sketch_copy / "model.h")
@@ -78,7 +78,7 @@ class HILCompileOnlyTests(TinyModelMixin, unittest.TestCase):
     def test_compile_only_detects_ram_overflow(self):
         # Request a gigantic arena via HIL_spec so the CLI trips the RAM limit.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketch_copy = Path(tmpdir) / "tinyodom_tcn"
+            sketch_copy = Path(tmpdir) / "odom_tcn"
             shutil.copytree(SKETCH_SOURCE_DIR, sketch_copy)
 
             ram, flash, latency, arena_bytes, err, _power = HIL_spec(

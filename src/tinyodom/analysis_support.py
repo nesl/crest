@@ -10,8 +10,9 @@ import numpy as np
 from addict import Dict
 
 from .builtin_components import ensure_builtin_components_registered
+from .cadence import resolve_batch_period_ms
 from .component_selection import resolve_component_selection
-from .model_families.tinyodom_tcn import TinyOdomTCNFamily
+from .model_families.odom_tcn import OdomTCNFamily
 from .pipeline_types import DatasetBundle, ModelBuildContext, TargetSpec
 from .registry import model_family_registry
 from .runtime_bootstrap import instantiate_task_component
@@ -82,7 +83,7 @@ def build_fixed_tinyodom_hyperparams(
 
     # Analysis scripts need a stable FLOP count without routing through the
     # old tinyodom.model helper module. Build and profile through the family.
-    family = TinyOdomTCNFamily()
+    family = OdomTCNFamily()
     ctx = ModelBuildContext(
         input_shape=(resolved_window_size, resolved_input_dim),
         input_dtype="float32",
@@ -124,11 +125,21 @@ def split_hil_request_hyperparams(
 
 
 def derive_latency_budget_ms(dataset_config: Any) -> float:
-    """Compute cadence latency budget from dataset stride and sampling rate."""
+    """Resolve the logical latency budget from dataset cadence fields.
 
-    stride = float(dataset_config.stride)
-    sampling_rate_hz = float(dataset_config.sampling_rate_hz)
-    return (stride / sampling_rate_hz) * 1000.0
+    Parameters
+    ----------
+    dataset_config : Any
+        ``config.dataset.params`` subtree. Explicit ``batch_period_ms`` takes
+        precedence over the legacy ``stride / sampling_rate_hz`` derivation.
+
+    Returns
+    -------
+    float
+        Positive finite logical per-batch cadence in milliseconds.
+    """
+
+    return resolve_batch_period_ms(dataset_config)
 
 
 def require_calibration_inputs(calibration_inputs: np.ndarray | None) -> np.ndarray:

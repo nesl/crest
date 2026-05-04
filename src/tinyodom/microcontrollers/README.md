@@ -230,13 +230,14 @@ For sketch ownership and directory roles, see
 [`../../../sketches/README.md`](../../../sketches/README.md).
 
 1. Shared uniform variants:
-   - `sketches/tinyodom_tcn_energy.ino`
-   - `sketches/tinyodom_tcn_no_energy.ino`
-   - `sketches/tinyodom_tcn_energy_cadenced.ino`
+   - `sketches/tinyodom_inference_energy.ino`
+   - `sketches/tinyodom_inference_no_energy.ino`
+   - `sketches/tinyodom_inference_energy_cadenced.ino`
 2. Shared analysis variants:
-   - `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino`
-   - `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino`
-   - `sketches/analysis_sketches/tinyodom_tcn_input_data.h`
+   - `sketches/analysis_sketches/tinyodom_inference_representative.ino`
+   - `sketches/analysis_sketches/tinyodom_inference_real_data.ino`
+   - `sketches/analysis_sketches/oxiod_input_data.h`
+   - `sketches/analysis_sketches/urbansound8k_input_data.h`
 3. Shared headers copied from `sketches/common/`:
    - `tinyodom_hil_config.h`
    - `tinyodom_power.h`
@@ -434,7 +435,7 @@ device:
   runtime_mode: cadenced
   cpu_clock_mhz_options: [200, 300, 400, 600, 800]
   stm32:
-    project_root: sketches/stm32/tinyodom_tcn_stm32_lrun
+    project_root: sketches/stm32/tinyodom_stm32_lrun
     appli_flash_address: 0x70100000
     weight_storage_mode: external_flash
     weights_memory_pool: analysis_scripts/stm32_example_project/nucleo_mypool.json
@@ -445,7 +446,7 @@ device:
 Current default behavior:
 
 1. If `device.stm32.project_root` is omitted, the backend defaults to
-   `sketches/stm32/tinyodom_tcn_stm32_lrun`.
+   `sketches/stm32/tinyodom_stm32_lrun`.
 2. LRUN `dev_boot` is the only supported production layout for this board and
    is implied automatically.
 
@@ -628,7 +629,7 @@ Important current test files include:
 2. `test/test_model.py`
 3. `test/test_hil_server.py`
 4. `test/test_nas_model_client.py`
-5. `test/test_odometry_tcn.py`
+5. `test/test_odom_tcn.py`
 6. `test/test_stm32_backend.py`
 7. `test/test_stm32_runtime.py`
 8. `test/integration/test_hardware_integration.py`

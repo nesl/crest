@@ -19,8 +19,10 @@ The current key files for this layer are:
 - [`../pipeline_types.py`](../pipeline_types.py)
   `ModelBuildContext`, which is the normalized build-time input passed into a
   family.
-- [`tinyodom_tcn.py`](tinyodom_tcn.py)
-  The only built-in concrete family today.
+- [`odom_tcn.py`](odom_tcn.py)
+  The built-in odometry TCN family.
+- [`audio_dscnn.py`](audio_dscnn.py)
+  The built-in audio DS-CNN family for cached UrbanSound8K log-mel inputs.
 - [`../registry.py`](../registry.py)
   `model_family_registry`, the runtime lookup table.
 - [`../builtin_components.py`](../builtin_components.py)
@@ -66,7 +68,7 @@ That boundary matters:
 
 ## Add A New Model Family
 
-Use [`tinyodom_tcn.py`](tinyodom_tcn.py) as the concrete example.
+Use [`odom_tcn.py`](odom_tcn.py) as the concrete example.
 
 1. Add a new module under [`.`](.).
 2. Implement a `ModelFamilyABC` subclass from
@@ -117,7 +119,9 @@ The default `ModelFamilyABC.materialize_export_model(...)` supports:
 - `untrained`
 - any variant whose name starts with `trained`
 
-[`tinyodom_tcn.py`](tinyodom_tcn.py) extends that to also handle:
+Non-TCN families can rely on the base variants when they only need fresh-model
+or checkpoint-backed export materialization. [`odom_tcn.py`](odom_tcn.py)
+extends the base behavior to also handle:
 
 - `approx_trained`
 - `representative`

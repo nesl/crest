@@ -8,7 +8,7 @@ Usage examples:
   python analysis_scripts/hil_noise_analysis/oxiod_input_profile.py --split train
   python analysis_scripts/hil_noise_analysis/oxiod_input_profile.py --split train --max-windows 5000
   python analysis_scripts/hil_noise_analysis/oxiod_input_profile.py --split train --use-calibration-cap
-  python analysis_scripts/hil_noise_analysis/oxiod_input_profile.py --split train --export-header sketches/analysis_sketches/tinyodom_tcn_input_data.h
+  python analysis_scripts/hil_noise_analysis/oxiod_input_profile.py --split train --export-header sketches/analysis_sketches/oxiod_input_data.h
 """
 
 from __future__ import annotations

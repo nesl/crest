@@ -207,7 +207,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
         outputs=SimpleNamespace(
             log_file_name="test_log.csv",
             tflite_model_path=base_dir / "model.tflite",
-            tcn_dir=base_dir / "tinyodom_tcn",
+            candidate_dir=base_dir / "odom_tcn",
             models_dir=base_dir / "models",
             checkpoint_path=base_dir / "model.keras",
         ),
@@ -221,7 +221,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
             ),
         ),
         task=SimpleNamespace(name="odometry_regression", params=Dict()),
-        model=SimpleNamespace(family="tinyodom_tcn", params=Dict(), search=Dict()),
+        model=SimpleNamespace(family="odom_tcn", params=Dict(export_variant="approx_trained"), search=Dict()),
     )
     client.config.outputs.models_dir.mkdir(parents=True, exist_ok=True)
     client.config_path = base_dir / "config.yaml"
@@ -230,7 +230,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     client.task = task
     client.task_name = "odometry_regression"
     client.model_family = model_family
-    client.model_family_name = "tinyodom_tcn"
+    client.model_family_name = "odom_tcn"
     client.dataset_bundle = bundle
     client.target_spec = target_spec
     client.metric_contract = metric_contract
@@ -243,7 +243,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     )
     client.dataset_config = client.config.dataset.params
     client.task_config = Dict()
-    client.model_config = Dict(family="tinyodom_tcn", params=Dict(), search=Dict())
+    client.model_config = Dict(family="odom_tcn", params=Dict(export_variant="approx_trained"), search=Dict())
     # Mirror the production default study name so log_trial calls succeed.
     client.study_name = "default_study"
     # Stub the ZMQ context/socket to avoid opening real network resources.
@@ -338,7 +338,7 @@ class InitializationTests(unittest.TestCase):
         client.config.task = SimpleNamespace(name="custom_task", params=Dict(alpha=3))
         client.config.model = SimpleNamespace(
             family="custom_family",
-            params=Dict(width=8),
+            params=Dict(width=8, export_variant="untrained"),
             search=Dict(depth=[2, 3]),
         )
 
@@ -351,24 +351,45 @@ class InitializationTests(unittest.TestCase):
         self.assertEqual(selection["model_family_name"], "custom_family")
         self.assertEqual(selection["model_config"]["family"], "custom_family")
         self.assertEqual(selection["model_config"]["params"].width, 8)
+        self.assertEqual(selection["model_config"]["params"].export_variant, "untrained")
         self.assertEqual(selection["model_config"]["search"].depth, [2, 3])
 
-    def test_resolve_component_selection_accepts_null_optional_component_param_blocks(self) -> None:
-        # Optional component-local config blocks should treat explicit null the same as omission.
+    def test_resolve_component_selection_accepts_null_optional_task_and_search_blocks(self) -> None:
+        # Optional task params and model search blocks should treat explicit null the same as omission.
         client = _build_test_client()
         client.config.dataset = SimpleNamespace(name="custom_dataset", params=Dict(root="custom"))
         client.config.task = SimpleNamespace(name="custom_task", params=None)
         client.config.model = SimpleNamespace(
             family="custom_family",
-            params=None,
+            params=Dict(export_variant="untrained"),
             search=None,
         )
 
         selection = client._resolve_component_selection(client.config)
 
         self.assertEqual(selection["task_config"], Dict())
-        self.assertEqual(selection["model_config"]["params"], Dict())
+        self.assertEqual(selection["model_config"]["params"].export_variant, "untrained")
         self.assertEqual(selection["model_config"]["search"], Dict())
+
+    def test_resolve_component_selection_requires_export_variant(self) -> None:
+        """Model params must provide the universal export variant field."""
+        client = _build_test_client()
+        client.config.model = SimpleNamespace(family="custom_family", params=Dict(), search=Dict())
+
+        with self.assertRaisesRegex(KeyError, "model.params.export_variant"):
+            client._resolve_component_selection(client.config)
+
+    def test_resolve_component_selection_rejects_blank_export_variant(self) -> None:
+        """Blank export variants should fail before component bootstrap."""
+        client = _build_test_client()
+        client.config.model = SimpleNamespace(
+            family="custom_family",
+            params=Dict(export_variant=" "),
+            search=Dict(),
+        )
+
+        with self.assertRaisesRegex(ValueError, "model.params.export_variant"):
+            client._resolve_component_selection(client.config)
 
     def test_init_reuses_preliminary_bundle_when_dataset_selection_matches(self) -> None:
         # Initialization should reuse a matching preliminary bundle so repeated setup does not reload the same dataset.
@@ -387,7 +408,7 @@ class InitializationTests(unittest.TestCase):
                 params=Dict(directory="data", sampling_rate_hz=100, window_size=16, stride=1),
             ),
             task=SimpleNamespace(name="odometry_regression", params=Dict()),
-            model=SimpleNamespace(family="tinyodom_tcn", params=Dict(), search=Dict()),
+            model=SimpleNamespace(family="odom_tcn", params=Dict(export_variant="approx_trained"), search=Dict()),
         )
         fake_bundle = DatasetBundle(
             train=DataSplit(inputs=np.zeros((1, 16, 3)), targets={"velx": np.zeros((1, 1)), "vely": np.zeros((1, 1))}),
@@ -420,10 +441,10 @@ class InitializationTests(unittest.TestCase):
             selection={
                 "dataset_name": "oxiod",
                 "task_name": "odometry_regression",
-                "model_family_name": "tinyodom_tcn",
+                "model_family_name": "odom_tcn",
                 "dataset_config": config.dataset.params,
                 "task_config": config.task.params,
-                "model_config": {"family": "tinyodom_tcn", "params": {}, "search": {}},
+                "model_config": {"family": "odom_tcn", "params": {}, "search": {}},
             },
             dataset=sentinel.dataset,
             task=fake_task,
@@ -757,6 +778,7 @@ class ObjectiveTests(unittest.TestCase):
         self.assertIn("family_hparams", sent_payload)
         self.assertIn("runtime_metadata", sent_payload)
         self.assertEqual(sent_payload["device_options_overrides"], {"cpu_clock_mhz": 200})
+        self.assertNotIn("model_variant", sent_payload)
         self.assertNotIn("cpu_clock_mhz", sent_payload["family_hparams"])
         self.assertEqual(sent_payload["runtime_metadata"]["flops"], 1234)
         self.assertEqual(trial.params["cpu_clock_mhz_index"], 0)
@@ -1220,7 +1242,8 @@ class TrainBestTrialTests(unittest.TestCase):
     """Best-trial retraining should honor the task abstraction."""
 
     def test_train_best_trial_uses_task_fit_plan_with_override_task_settings(self) -> None:
-        # Best-trial retraining should build its fit plan from the override task settings instead of reusing stale defaults.
+        """Best-trial retraining should ignore runtime-only trial params."""
+
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -1248,6 +1271,7 @@ class TrainBestTrialTests(unittest.TestCase):
                     "use_skip_connections": True,
                     "norm_flag": True,
                     "dilations_index": 0,
+                    "cpu_clock_mhz_index": 2,
                 }
             )
 
@@ -1278,7 +1302,14 @@ class TrainBestTrialTests(unittest.TestCase):
                 combine_train_val=False,
             )
             client.model_family.decode_trial_hparams.assert_called_once_with(
-                dict(best_trial.params),
+                {
+                    "nb_filters": 2,
+                    "kernel_size": 2,
+                    "dropout_rate": 0.1,
+                    "use_skip_connections": True,
+                    "norm_flag": True,
+                    "dilations_index": 0,
+                },
                 client.model_build_context,
                 client.model_config,
             )
@@ -1429,6 +1460,177 @@ class EvaluateCheckpointTests(unittest.TestCase):
                     export_tflite=True,
                     tflite_path=base / "model.tflite",
                 )
+
+
+class FoldRotationReportingTests(unittest.TestCase):
+    """Fold-rotation reporting should reuse the selected NAS hparams safely."""
+
+    def test_run_scoring_nas_runs_fixed_final_before_fold_rotation(self) -> None:
+        """Scoring orchestration should preserve fixed export before reports."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            client.task_config.evaluation = Dict(protocol="fold_rotation", fold_rotation=Dict(test_folds=[1]))
+            order: list[str] = []
+            trials_df = MagicMock()
+            study = SimpleNamespace(
+                trials=[object()],
+                best_value=0.75,
+                trials_dataframe=MagicMock(return_value=trials_df),
+            )
+
+            with patch.object(client, "run_nas", return_value=study), patch.object(
+                client,
+                "train_best_trial",
+                side_effect=lambda **_kwargs: order.append("fixed_train") or {"loss": [1.0]},
+            ), patch.object(
+                client,
+                "plot_training_history",
+                side_effect=lambda **_kwargs: order.append("plots") or {"loss_plot": "loss.png"},
+            ), patch.object(
+                client,
+                "evaluate_checkpoint",
+                side_effect=lambda **_kwargs: order.append("fixed_eval_export")
+                or {"checkpoint_path": "fixed.keras", "tflite_path": "fixed.tflite", "accuracy": 0.8},
+            ), patch.object(
+                client,
+                "run_fold_rotation_final_evaluation",
+                side_effect=lambda **_kwargs: order.append("fold_rotation")
+                or {"summary_path": "fold_rotation/fold_rotation_summary.json"},
+            ), patch.object(
+                client, "write_summary_bundle"
+            ) as write_summary:
+                client.run_scoring_nas(study_name="demo")
+
+            self.assertEqual(order, ["fixed_train", "plots", "fixed_eval_export", "fold_rotation"])
+            write_summary.assert_called_once()
+            self.assertEqual(
+                write_summary.call_args.kwargs["fold_rotation_artifacts"]["summary_path"],
+                "fold_rotation/fold_rotation_summary.json",
+            )
+
+    def test_run_fold_rotation_uses_per_fold_context_without_export(self) -> None:
+        """Fold reporting should write success artifacts for requested folds."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            client.config.dataset.params.fold_rotation_cache_dir = str(base / "fold_cache")
+            client.task_config.evaluation = Dict(
+                protocol="fold_rotation",
+                fold_rotation=Dict(test_folds=[1, 2]),
+            )
+            fold_tasks = {}
+
+            def _pipeline_for_fold(fold_cache_dir: Path) -> SimpleNamespace:
+                """Build one fake fold pipeline from the requested cache path.
+
+                Parameters
+                ----------
+                fold_cache_dir : pathlib.Path
+                    Per-fold cache directory requested by the runner.
+
+                Returns
+                -------
+                types.SimpleNamespace
+                    Fake bootstrapped pipeline for the fold.
+                """
+
+                fold = int(fold_cache_dir.name.split("_")[1])
+                task = MagicMock()
+                task.generate_closeout_artifacts.return_value = {"fold": fold}
+                fold_tasks[fold] = task
+                return SimpleNamespace(
+                    bundle=client.dataset_bundle,
+                    target_spec=client.target_spec,
+                    model_build_context=client.model_build_context,
+                    selection={
+                        "model_config": client.model_config,
+                        "task_config": client.task_config,
+                    },
+                    task=task,
+                )
+
+            with patch.object(client, "_best_trial_params", return_value={"nb_filters": 2}), patch.object(
+                client, "_bootstrap_fold_pipeline", side_effect=_pipeline_for_fold
+            ), patch.object(
+                client, "_train_with_decoded_hparams", autospec=True, return_value={"loss": [1.0]}
+            ) as train_mock, patch.object(
+                client,
+                "_evaluate_checkpoint_with_context",
+                autospec=True,
+                side_effect=[
+                    {"accuracy": 0.8, "macro_f1": 0.7, "loss": 0.5},
+                    {"accuracy": 0.9, "macro_f1": 0.8, "loss": 0.4},
+                ],
+            ) as eval_mock:
+                result = client.run_fold_rotation_final_evaluation(
+                    study_storage="sqlite:///optuna.db",
+                    study_name="demo",
+                    output_dir=base / "fold_rotation",
+                )
+
+            self.assertEqual(result["requested_test_folds"], [1, 2])
+            self.assertEqual(result["completed_test_folds"], [1, 2])
+            self.assertEqual(train_mock.call_count, 2)
+            self.assertEqual(eval_mock.call_count, 2)
+            self.assertNotIn("task", train_mock.call_args_list[0].kwargs)
+            self.assertIs(eval_mock.call_args_list[0].kwargs["task"], fold_tasks[1])
+            self.assertIs(eval_mock.call_args_list[1].kwargs["task"], fold_tasks[2])
+            self.assertFalse(eval_mock.call_args_list[0].kwargs["export_tflite"])
+            summary = json.loads(Path(result["summary_path"]).read_text(encoding="utf-8"))
+            self.assertTrue(summary["partial"])
+            self.assertEqual(summary["status"], "success")
+            self.assertAlmostEqual(summary["aggregates"]["accuracy"]["mean"], 0.85)
+            self.assertIsNotNone(summary["aggregates"]["accuracy"]["std"])
+
+    def test_run_fold_rotation_writes_partial_manifest_on_failure(self) -> None:
+        """Fold reporting should fail fast and persist completed folds."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            client.config.dataset.params.fold_rotation_cache_dir = str(base / "fold_cache")
+            client.task_config.evaluation = Dict(
+                protocol="fold_rotation",
+                fold_rotation=Dict(test_folds=[1, 2]),
+            )
+            pipeline = SimpleNamespace(
+                bundle=client.dataset_bundle,
+                target_spec=client.target_spec,
+                model_build_context=client.model_build_context,
+                selection={"model_config": client.model_config, "task_config": client.task_config},
+                task=MagicMock(generate_closeout_artifacts=MagicMock(return_value={})),
+            )
+
+            with patch.object(client, "_best_trial_params", return_value={"nb_filters": 2}), patch.object(
+                client, "_bootstrap_fold_pipeline", return_value=pipeline
+            ), patch.object(
+                client, "_train_with_decoded_hparams", autospec=True, return_value={"loss": [1.0]}
+            ), patch.object(
+                client,
+                "_evaluate_checkpoint_with_context",
+                autospec=True,
+                side_effect=[
+                    {"accuracy": 0.8, "macro_f1": 0.7, "loss": 0.5},
+                    {"accuracy": float("nan"), "macro_f1": 0.8, "loss": 0.4},
+                ],
+            ):
+                with self.assertRaisesRegex(ValueError, "not finite"):
+                    client.run_fold_rotation_final_evaluation(
+                        study_storage="sqlite:///optuna.db",
+                        study_name="demo",
+                        output_dir=base / "fold_rotation",
+                    )
+
+            partial = json.loads(
+                (base / "fold_rotation" / "fold_rotation_summary.partial.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(partial["status"], "failed")
+            self.assertTrue(partial["partial"])
+            self.assertEqual(partial["completed_test_folds"], [1])
+            self.assertIsNone(partial["aggregates"])
 
 
 class TrajectoryMetricsTests(unittest.TestCase):

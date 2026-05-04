@@ -24,7 +24,8 @@ Optional overrides:
 
 ```bash
 python analysis_scripts/hil_single_run/run_single_hil.py --input-mode uniform
-python analysis_scripts/hil_single_run/run_single_hil.py --input-mode representative
+python analysis_scripts/hil_single_run/run_single_hil.py --input-mode oxiod_representative
+python analysis_scripts/hil_single_run/run_single_hil.py --input-mode urbansound8k_real
 python analysis_scripts/hil_single_run/run_single_hil.py --output analysis_scripts/hil_single_run/last_run.json
 python analysis_scripts/hil_single_run/run_single_hil.py --harness-arm-pin 3 --harness-trigger-pin 2
 python analysis_scripts/hil_single_run/run_single_hil.py --dut-arm-hold-ms 600 --harness-stable-low-ms 500

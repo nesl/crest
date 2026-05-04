@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -91,7 +92,7 @@ def _build_lrun_project_tree(root: Path) -> Path:
     _write_text(root / "Appli" / "Inc" / "stm32n6xx_hal_conf.h", "#pragma once\n")
     _write_text(root / "Appli" / "Inc" / "stm32n6xx_nucleo_conf.h", "#pragma once\n")
     _write_text(root / "Appli" / "Inc" / "partition_stm32n657xx.h", "#pragma once\n")
-    _write_text(root / "Appli" / "Inc" / "tcn_dut_runner.h", "#pragma once\n")
+    _write_text(root / "Appli" / "Inc" / "tinyodom_dut_runner.h", "#pragma once\n")
     _write_text(
         root / "Appli" / "Inc" / "network_data_params.h",
         "#define AI_NETWORK_DATA_ACTIVATIONS_SIZE (16384)\n",
@@ -414,7 +415,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         """Ensure default STM option resolution does not require setup-generated paths."""
         # LRUN option resolution should synthesize defaults even before the workspace exists on disk.
         with tempfile.TemporaryDirectory() as tmpdir:
-            missing_root = Path(tmpdir) / "tinyodom_tcn_stm32_lrun"
+            missing_root = Path(tmpdir) / "tinyodom_stm32_lrun"
             with patch.object(stm32_n657_backend, "DEFAULT_TEMPLATE_ROOT", missing_root):
                 resolved = resolve_device_options(
                     "STM32_NUCLEO_N657X0_Q",
@@ -922,7 +923,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         # LRUN candidate staging should copy the workspace and stage generated outputs into the candidate root.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            template_root = _build_lrun_project_tree(tmp_path / "tinyodom_tcn_stm32_lrun")
+            template_root = _build_lrun_project_tree(tmp_path / "tinyodom_stm32_lrun")
             _write_text(template_root / "STM32CubeIDE" / "AppS" / "Debug" / "Src" / "stale.d", "old dep\n")
             _write_text(template_root / "STM32CubeIDE" / "Boot" / "Debug" / "Src" / "stale.o", "old obj\n")
             outputs_dir = tmp_path / "outputs"
@@ -990,15 +991,15 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             self.assertEqual(staged_root.name, template_root.name)
             self.assertTrue((staged_root / "Appli" / "Src" / "network.c").is_file())
             self.assertTrue((staged_root / "Appli" / "Inc" / "network_data_params.h").is_file())
-            self.assertTrue((staged_root / "Appli" / "Inc" / "tcn_dut_phase_config.h").is_file())
+            self.assertTrue((staged_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h").is_file())
             self.assertFalse((staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Src" / "stale.d").exists())
             self.assertFalse((staged_root / "STM32CubeIDE" / "Boot" / "Debug" / "Src" / "stale.o").exists())
             manifest = json.loads((staged_root / STAGED_MANIFEST_NAME).read_text(encoding="utf-8"))
             self.assertEqual(manifest["staged_workspace_root"], str(staged_root.resolve()))
             header_text = (
-                staged_root / "Appli" / "Inc" / "tcn_dut_phase_config.h"
+                staged_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h"
             ).read_text(encoding="utf-8")
-            self.assertIn("TCN_DUT_MEASURED_RUNS 9", header_text)
+            self.assertIn("TINYODOM_DUT_MEASURED_RUNS 9", header_text)
 
     def test_prepare_candidate_runs_analyze_before_generate(self) -> None:
         """Ensure ST Edge AI analyze preflights compatibility before generate.
@@ -1126,7 +1127,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         # Candidate cleanup should remove the staged root so repeated runs do not accumulate stale workspaces.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            project_root = _build_lrun_project_tree(tmp_path / "candidate" / "tinyodom_tcn_stm32_lrun")
+            project_root = _build_lrun_project_tree(tmp_path / "candidate" / "tinyodom_stm32_lrun")
             _write_text(
                 project_root / STAGED_MANIFEST_NAME,
                 "{}\n",
@@ -1281,6 +1282,54 @@ class STM32HelperTests(unittest.TestCase):
             with self.assertRaises(stm32_cube_clt.WorkflowError):
                 stm32_cube_clt._run_command(["make", "-C", "Debug", "all"])
 
+    def test_run_command_prefers_stm32_programmer_bundled_qt_libs(self) -> None:
+        """Ensure STM32CubeProgrammer does not inherit Conda Qt precedence.
+
+        Returns
+        -------
+        None
+        """
+        # The Python process may need CONDA_PREFIX/lib, but the Qt-based ST
+        # programmer must load its own bundled Qt libraries before Conda's.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cubeprog_root = Path(tmpdir) / "STM32CubeProgrammer"
+            cubeprog_bin = cubeprog_root / "bin"
+            cubeprog_lib = cubeprog_root / "lib"
+            cubeprog_bin.mkdir(parents=True)
+            cubeprog_lib.mkdir()
+            programmer = cubeprog_bin / "STM32_Programmer_CLI"
+            programmer.touch()
+            captured_env = {}
+
+            def _fake_run(argv, **kwargs):
+                """Capture the subprocess environment for assertions.
+
+                Parameters
+                ----------
+                argv : list[str]
+                    Command arguments provided to ``subprocess.run``.
+                **kwargs : dict
+                    Keyword arguments provided to ``subprocess.run``.
+
+                Returns
+                -------
+                subprocess.CompletedProcess
+                    Successful fake process result.
+                """
+
+                captured_env.update(kwargs.get("env") or {})
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            with patch.dict(os.environ, {"LD_LIBRARY_PATH": "/conda/lib:/usr/lib"}), patch(
+                "tinyodom.microcontrollers.stm32_cube_clt.subprocess.run",
+                side_effect=_fake_run,
+            ):
+                stm32_cube_clt._run_command([str(programmer), "-q"])
+
+            search_path = captured_env["LD_LIBRARY_PATH"].split(os.pathsep)
+            self.assertEqual(search_path[0], str(cubeprog_lib))
+            self.assertIn("/conda/lib", search_path)
+
     def test_prepare_candidate_only_requires_staging_tools(self) -> None:
         """Ensure Phase 2 candidate prep does not demand upload/debug tools.
 
@@ -1391,12 +1440,12 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h",
+                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
                 "\n".join(
                     [
-                        "#ifndef TCN_DUT_PHASE_CONFIG_H",
-                        "#define TCN_DUT_PHASE_CONFIG_H",
-                        "#define TCN_DUT_MEASURED_RUNS 5",
+                        "#ifndef TINYODOM_DUT_PHASE_CONFIG_H",
+                        "#define TINYODOM_DUT_PHASE_CONFIG_H",
+                        "#define TINYODOM_DUT_MEASURED_RUNS 5",
                         "#endif",
                         "",
                     ]
@@ -1628,8 +1677,8 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h",
-                "#define TCN_DUT_MEASURED_RUNS 1\n",
+                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
+                "#define TINYODOM_DUT_MEASURED_RUNS 1\n",
             )
             device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0", device_options={"project_root": str(project_root)})
             compile_result = type(
@@ -1698,8 +1747,8 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h",
-                "#define TCN_DUT_MEASURED_RUNS 5\n",
+                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
+                "#define TINYODOM_DUT_MEASURED_RUNS 5\n",
             )
             device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0", device_options={"project_root": str(project_root)})
             compile_result = type(
@@ -1795,7 +1844,7 @@ class STM32HelperTests(unittest.TestCase):
         # External-flash overflows should still surface as flash failures for pruning and reporting.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            project_root = _build_lrun_project_tree(tmp_path / "tinyodom_tcn_stm32_lrun")
+            project_root = _build_lrun_project_tree(tmp_path / "tinyodom_stm32_lrun")
             manifest_path = project_root / STAGED_MANIFEST_NAME
             manifest_path.write_text(
                 "{\n"
@@ -2628,8 +2677,8 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h",
-                "#define TCN_DUT_MEASURED_RUNS 1\n",
+                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
+                "#define TINYODOM_DUT_MEASURED_RUNS 1\n",
             )
             device = STM32NucleoN657X0QDevice(
                 serial_port="/dev/ttyACM0",
@@ -2708,8 +2757,8 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h",
-                "#define TCN_DUT_MEASURED_RUNS 1\n",
+                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
+                "#define TINYODOM_DUT_MEASURED_RUNS 1\n",
             )
             device = STM32NucleoN657X0QDevice(
                 serial_port="/dev/ttyACM0",
@@ -2814,11 +2863,11 @@ class STM32HelperTests(unittest.TestCase):
                 )
 
             header_text = (
-                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h"
+                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h"
             ).read_text(encoding="utf-8")
 
         self.assertEqual(metrics.error_code, HIL_ERROR_OK)
-        self.assertIn("TCN_DUT_MEASURED_RUNS 7", header_text)
+        self.assertIn("TINYODOM_DUT_MEASURED_RUNS 7", header_text)
         self.assertEqual(
             harness_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"],
             7,
@@ -2830,15 +2879,15 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h",
+                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
                 "\n".join(
                     [
-                        "#ifndef TCN_DUT_PHASE_CONFIG_H",
-                        "#define TCN_DUT_PHASE_CONFIG_H",
-                        "#define TCN_DUT_PHASE_BACK_TO_BACK 0",
-                        "#define TCN_DUT_PHASE_CADENCED 1",
-                        "#define TCN_DUT_SELECTED_PHASE TCN_DUT_PHASE_BACK_TO_BACK",
-                        "#define TCN_DUT_MEASURED_RUNS 4",
+                        "#ifndef TINYODOM_DUT_PHASE_CONFIG_H",
+                        "#define TINYODOM_DUT_PHASE_CONFIG_H",
+                        "#define TINYODOM_DUT_PHASE_BACK_TO_BACK 0",
+                        "#define TINYODOM_DUT_PHASE_CADENCED 1",
+                        "#define TINYODOM_DUT_SELECTED_PHASE TINYODOM_DUT_PHASE_BACK_TO_BACK",
+                        "#define TINYODOM_DUT_MEASURED_RUNS 4",
                         "#endif",
                         "",
                     ]
@@ -2946,11 +2995,11 @@ class STM32HelperTests(unittest.TestCase):
                 )
 
             header_text = (
-                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h"
+                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h"
             ).read_text(encoding="utf-8")
 
         self.assertEqual(metrics.error_code, HIL_ERROR_OK)
-        self.assertIn("TCN_DUT_MEASURED_RUNS 4", header_text)
+        self.assertIn("TINYODOM_DUT_MEASURED_RUNS 4", header_text)
         self.assertEqual(
             harness_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"],
             4,
@@ -2962,23 +3011,23 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h",
+                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
                 "\n".join(
                     [
-                        "#ifndef TCN_DUT_PHASE_CONFIG_H",
-                        "#define TCN_DUT_PHASE_CONFIG_H",
+                        "#ifndef TINYODOM_DUT_PHASE_CONFIG_H",
+                        "#define TINYODOM_DUT_PHASE_CONFIG_H",
                         "",
-                        "#define TCN_DUT_PHASE_BACK_TO_BACK 0",
-                        "#define TCN_DUT_PHASE_CADENCED 1",
+                        "#define TINYODOM_DUT_PHASE_BACK_TO_BACK 0",
+                        "#define TINYODOM_DUT_PHASE_CADENCED 1",
                         "",
-                        "#define TCN_DUT_SELECTED_PHASE TCN_DUT_PHASE_BACK_TO_BACK",
-                        "#define TCN_DUT_LATENCY_BUDGET_MS 999",
-                        "#define TCN_DUT_MEASURED_RUNS 4",
-                        "#define TCN_DUT_CPU_CLOCK_MHZ 200",
-                        "#define TCN_DUT_WAKE_MARGIN_US 111",
-                        "#define TCN_DUT_MIN_SLEEP_US 222",
+                        "#define TINYODOM_DUT_SELECTED_PHASE TINYODOM_DUT_PHASE_BACK_TO_BACK",
+                        "#define TINYODOM_DUT_LATENCY_BUDGET_MS 999",
+                        "#define TINYODOM_DUT_MEASURED_RUNS 4",
+                        "#define TINYODOM_DUT_CPU_CLOCK_MHZ 200",
+                        "#define TINYODOM_DUT_WAKE_MARGIN_US 111",
+                        "#define TINYODOM_DUT_MIN_SLEEP_US 222",
                         "",
-                        "#endif /* TCN_DUT_PHASE_CONFIG_H */",
+                        "#endif /* TINYODOM_DUT_PHASE_CONFIG_H */",
                         "",
                     ]
                 ),
@@ -3091,15 +3140,15 @@ class STM32HelperTests(unittest.TestCase):
                 )
 
             header_text = (
-                project_root / "Appli" / "Inc" / "tcn_dut_phase_config.h"
+                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h"
             ).read_text(encoding="utf-8")
 
         self.assertEqual(metrics.error_code, HIL_ERROR_OK)
-        self.assertIn("#define TCN_DUT_MEASURED_RUNS 4", header_text)
-        self.assertIn("#define TCN_DUT_LATENCY_BUDGET_MS 321", header_text)
-        self.assertIn("#define TCN_DUT_CPU_CLOCK_MHZ 400", header_text)
-        self.assertIn("#define TCN_DUT_WAKE_MARGIN_US 4321", header_text)
-        self.assertIn("#define TCN_DUT_MIN_SLEEP_US 5432", header_text)
+        self.assertIn("#define TINYODOM_DUT_MEASURED_RUNS 4", header_text)
+        self.assertIn("#define TINYODOM_DUT_LATENCY_BUDGET_MS 321", header_text)
+        self.assertIn("#define TINYODOM_DUT_CPU_CLOCK_MHZ 400", header_text)
+        self.assertIn("#define TINYODOM_DUT_WAKE_MARGIN_US 4321", header_text)
+        self.assertIn("#define TINYODOM_DUT_MIN_SLEEP_US 5432", header_text)
         self.assertEqual(
             harness_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"],
             4,
@@ -3215,10 +3264,10 @@ class STM32HelperTests(unittest.TestCase):
         """Ensure the checked-in canonical LRUN linkers reserve safe heap/stack floors."""
         # Canonical LRUN linker templates should keep the checked-in minimum heap and stack floors.
         app_reservations = stm32_n657_backend._parse_linker_reservations(
-            ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun" / "STM32CubeIDE" / "AppS" / "STM32N657XX_LRUN.ld"
+            ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun" / "STM32CubeIDE" / "AppS" / "STM32N657XX_LRUN.ld"
         )
         boot_reservations = stm32_n657_backend._parse_linker_reservations(
-            ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun" / "STM32CubeIDE" / "Boot" / "STM32N657XX_AXISRAM2_fsbl.ld"
+            ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun" / "STM32CubeIDE" / "Boot" / "STM32N657XX_AXISRAM2_fsbl.ld"
         )
         self.assertEqual(app_reservations["heap_bytes"], 0x2000)
         self.assertEqual(app_reservations["stack_bytes"], 0x4000)
@@ -3228,7 +3277,7 @@ class STM32HelperTests(unittest.TestCase):
     def test_real_lrun_template_parsers_match_checked_in_files(self) -> None:
         """Ensure LRUN path resolution and parser expectations match the checked-in workspace."""
         # Template parsers should still match the checked-in LRUN files shipped with the repository.
-        canonical_root = ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"
+        canonical_root = ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun"
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = Path(tmpdir) / canonical_root.name
             shutil.copytree(canonical_root, staged_root)
@@ -3260,7 +3309,7 @@ class STM32HelperTests(unittest.TestCase):
             ROOT_DIR
             / "sketches"
             / "stm32"
-            / "tinyodom_tcn_stm32_lrun"
+            / "tinyodom_stm32_lrun"
             / "STM32CubeIDE"
             / "AppS"
             / "Debug"
@@ -3277,7 +3326,7 @@ class STM32HelperTests(unittest.TestCase):
             ROOT_DIR
             / "sketches"
             / "stm32"
-            / "tinyodom_tcn_stm32_lrun"
+            / "tinyodom_stm32_lrun"
             / "Appli"
             / "Src"
             / "stm32n6xx_it.c"
@@ -3292,10 +3341,10 @@ class STM32HelperTests(unittest.TestCase):
             ROOT_DIR
             / "sketches"
             / "stm32"
-            / "tinyodom_tcn_stm32_lrun"
+            / "tinyodom_stm32_lrun"
             / "Appli"
             / "Src"
-            / "tcn_dut_runner.c"
+            / "tinyodom_dut_runner.c"
         ).read_text(encoding="utf-8")
         self.assertIn('emit_line("STM32_AI_INIT=FAIL reason=rtc_wakeup_selftest");', runner_text)
 
@@ -3309,7 +3358,7 @@ class STM32HelperTests(unittest.TestCase):
         # Weight programming should autodiscover a loader when the manifest leaves that field unset.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            project_root = _build_lrun_project_tree(tmp_path / "tinyodom_tcn_stm32_lrun")
+            project_root = _build_lrun_project_tree(tmp_path / "tinyodom_stm32_lrun")
             weights_blob = tmp_path / "network_data.bin"
             cubeprog_bin = tmp_path / "cubeprog" / "bin"
             loader_path = cubeprog_bin / "ExternalLoader" / DEFAULT_WEIGHTS_EXTERNAL_LOADER_NAME

@@ -23,8 +23,13 @@ from addict import Dict
 import numpy as np
 
 from tinyodom.builtin_components import ensure_builtin_components_registered
+from tinyodom.cadence import resolve_batch_period_ms
 from tinyodom.component_selection import cfg_get, resolve_component_selection
-from tinyodom.devices import CandidatePrepareRequest, _sync_arduino_sketch_variant_for_config
+from tinyodom.devices import (
+    CandidatePrepareRequest,
+    arduino_staged_sketch_path,
+    _sync_arduino_sketch_variant_for_config,
+)
 from tinyodom.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
     describe_error_code,
@@ -719,12 +724,71 @@ class HILServer:
             config=self.config,
             model=model,
             model_variant=model_variant,
-            artifact_root=Path(self.config.outputs.tcn_dir),
+            artifact_root=Path(self.config.outputs.candidate_dir),
             tflite_model_path=Path(self.config.outputs.tflite_model_path),
             calibration_split=calibration_split,
             input_shape=self.model_build_context.input_shape,
             checkpoint_path=checkpoint_path,
         )
+
+    def _resolve_export_model_variant(self, model_variant: str | None) -> str:
+        """Resolve the export model variant for one HIL request.
+
+        Parameters
+        ----------
+        model_variant : str | None
+            Explicit caller override, or ``None`` to use
+            ``model.params.export_variant`` from the active config.
+
+        Returns
+        -------
+        str
+            Non-empty model variant name.
+
+        Raises
+        ------
+        ValueError
+            If no usable variant is available.
+        """
+
+        if model_variant is not None:
+            if not isinstance(model_variant, str) or not model_variant.strip():
+                raise ValueError("model_variant must be a non-empty string when provided.")
+            return model_variant.strip()
+        params = getattr(self.model_config, "params", None)
+        raw_variant = None if params is None else cfg_get(params, "export_variant", None)
+        if not isinstance(raw_variant, str) or not raw_variant.strip():
+            raise ValueError("Expected model.params.export_variant to be a non-empty string.")
+        return raw_variant.strip()
+
+    def _resolve_export_checkpoint_path(
+        self,
+        *,
+        model_variant: str,
+        checkpoint_path: Path | str | None,
+    ) -> Path | str | None:
+        """Resolve checkpoint fallback for trained export variants.
+
+        Parameters
+        ----------
+        model_variant : str
+            Resolved model variant name.
+        checkpoint_path : pathlib.Path | str | None
+            Explicit checkpoint path supplied by the caller.
+
+        Returns
+        -------
+        pathlib.Path | str | None
+            Explicit checkpoint path, config-derived checkpoint path for
+            trained variants, or ``None`` for variants that do not require a
+            checkpoint.
+        """
+
+        if checkpoint_path is not None:
+            return checkpoint_path
+        if model_variant.strip().lower().startswith("trained"):
+            return Path(self.config.outputs.checkpoint_path)
+        return None
 
     def _normalized_device_name(self) -> str:
         """Return the normalized configured device name.
@@ -737,13 +801,23 @@ class HILServer:
         return str(getattr(self.config.device, "name", "")).strip().upper()
 
     def _effective_latency_budget_ms(self) -> float:
-        """Return the resolved latency budget for the active configuration."""
-        configured_budget = getattr(self.config.device, "latency_budget_ms", None)
-        if configured_budget is not None:
-            return float(configured_budget)
-        stride = self._resolve_dataset_numeric_setting("stride")
-        sampling_rate_hz = self._resolve_dataset_numeric_setting("sampling_rate_hz")
-        return (stride / sampling_rate_hz) * 1000
+        """Return the resolved logical latency budget.
+
+        Returns
+        -------
+        float
+            Positive finite cadence budget in milliseconds. Already-loaded
+            dataset metadata is used when available, but malformed request
+            handling must not bootstrap the dataset just to build failure
+            metrics.
+        """
+
+        metadata = {} if self.dataset_bundle is None else dict(self.dataset_bundle.metadata)
+        return resolve_batch_period_ms(
+            self.dataset_config,
+            dataset_metadata=metadata,
+            device_config=self.config.device,
+        )
 
     def _configured_runtime_mode(self) -> str:
         """Return the normalized configured runtime mode."""
@@ -802,7 +876,7 @@ class HILServer:
             sketches_dir=self.sketch_variants_dir,
             runtime_phase="cadenced",
         )
-        sketch_candidate = prepared_dir / "tinyodom_tcn.ino"
+        sketch_candidate = arduino_staged_sketch_path(prepared_dir)
         if sketch_candidate.is_file():
             self.active_sketch_path = sketch_candidate
             logger.info("Using sketch variant: %s", self.active_sketch_path)
@@ -963,7 +1037,7 @@ class HILServer:
         runtime_metadata: Mapping[str, Any],
         device_options_overrides: dict | None = None,
         checkpoint_path: Path | str | None = None,
-        model_variant: str = APPROX_TRAINED_VARIANT_NAME,
+        model_variant: str | None = None,
     ) -> dict:
         """
         Build/select a model variant, compile/export it, and collect HIL metrics.
@@ -976,16 +1050,12 @@ class HILServer:
             Runtime-owned request metadata such as ``flops``, ``timesteps``,
             ``input_dim``, and ``batch_size``.
         checkpoint_path : Path | str | None, optional
-            Checkpoint path used when ``model_variant`` starts with ``"trained"``.
-        model_variant : str, optional
-            Model source/variant selector, by default ``"approx_trained"``. Other
-             values are for analysis and debug only. Supported values are
-            ``"approx_trained"``, ``"untrained"``, or any value that starts with
-            ``"trained"``. ``"approx_trained"`` applies deterministic full-BN +
-            non-BN-bias perturbation to approximate trained-model exported op
-            structure without running training. ``"untrained"`` uses raw
-            initializer defaults and typically exports fewer operations than
-            ``"trained"``/``"approx_trained"``.
+            Checkpoint path used when ``model_variant`` starts with
+            ``"trained"``. When omitted for a trained variant, the server uses
+            ``config.outputs.checkpoint_path``.
+        model_variant : str | None, optional
+            Explicit model source/variant selector. When ``None``, the server
+            uses ``model.params.export_variant`` from the active config.
 
         Returns
         -------
@@ -1010,6 +1080,11 @@ class HILServer:
         try:
             self._ensure_pipeline_bootstrapped()
             latency_budget_ms = self._effective_latency_budget_ms()
+            resolved_model_variant = self._resolve_export_model_variant(model_variant)
+            resolved_checkpoint_path = self._resolve_export_checkpoint_path(
+                model_variant=resolved_model_variant,
+                checkpoint_path=checkpoint_path,
+            )
         except ValueError as exc:
             return self._request_boundary_failure_metrics(
                 error_kind="config",
@@ -1071,8 +1146,8 @@ class HILServer:
         if runtime_device.requires_candidate_model():
             model = self._materialize_candidate_model(
                 family_hparams,
-                model_variant=model_variant,
-                checkpoint_path=checkpoint_path,
+                model_variant=resolved_model_variant,
+                checkpoint_path=resolved_checkpoint_path,
             )
             if runtime_device.requires_training_data():
                 try:
@@ -1106,13 +1181,13 @@ class HILServer:
             prepared_dir = runtime_device.prepare_candidate(
                 request=self._build_candidate_prepare_request(
                     model=model,
-                    model_variant=model_variant,
-                    checkpoint_path=checkpoint_path,
+                    model_variant=resolved_model_variant,
+                    checkpoint_path=resolved_checkpoint_path,
                     calibration_split=calibration_split,
                 ),
             )
             prepared_dir = Path(prepared_dir)
-            sketch_candidate = prepared_dir / "tinyodom_tcn.ino"
+            sketch_candidate = arduino_staged_sketch_path(prepared_dir)
             if runtime_device.requires_candidate_model() and sketch_candidate.is_file():
                 self.active_sketch_path = sketch_candidate
                 logger.info("Using sketch variant: %s", self.active_sketch_path)
@@ -1189,14 +1264,14 @@ class HILServer:
         Selection depends on ``device.name``, optional Portenta
         ``device.portenta.target_core``, ``training.energy_aware``, and
         ``training.input_mode`` in the loaded config. Uniform sketches use the
-        shared root ``sketches/tinyodom_tcn_*.ino`` assets, while
-        representative/real analysis variants continue to use
+        shared root ``sketches/tinyodom_inference_*.ino`` assets, while
+        dataset-specific representative/real analysis variants continue to use
         ``sketches/analysis_sketches``.
 
         Returns
         -------
         Path
-            Path to the synchronized ``tinyodom_tcn.ino`` sketch.
+            Path to the synchronized ``{candidate_dir.name}.ino`` sketch.
 
         Raises
         ------
@@ -1207,7 +1282,7 @@ class HILServer:
         """
         return _sync_arduino_sketch_variant_for_config(
             self.config,
-            Path(self.config.outputs.tcn_dir),
+            Path(self.config.outputs.candidate_dir),
             sketches_dir=self.sketch_variants_dir,
         )
 
@@ -1218,8 +1293,9 @@ class HILServer:
         Parameters
         ----------
         input_mode : str
-            Desired input mode (``"uniform"``, ``"representative"``, or
-            ``"real"``).
+            Desired input mode, such as ``"uniform"``,
+            ``"oxiod_representative"``, ``"oxiod_real"``,
+            ``"urbansound8k_representative"``, or ``"urbansound8k_real"``.
         runtime_phase : str, optional
             Runtime sketch phase (``"back_to_back"`` or ``"cadenced"``).
 
@@ -1236,7 +1312,7 @@ class HILServer:
         )
         self.active_sketch_path = runtime_device.set_input_mode(
             input_mode,
-            outputs_dir=Path(self.config.outputs.tcn_dir),
+            outputs_dir=Path(self.config.outputs.candidate_dir),
             config=self.config,
             sketches_dir=self.sketch_variants_dir,
             runtime_phase=runtime_phase,

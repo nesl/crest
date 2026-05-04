@@ -11,7 +11,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-CANONICAL_ROOT = ROOT_DIR / "sketches" / "stm32" / "tinyodom_tcn_stm32_lrun"
+CANONICAL_ROOT = ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun"
 MANIFEST_PATH = CANONICAL_ROOT / "lrun_ownership_manifest.tsv"
 ALLOWED_CATEGORIES = {
     "vendor_copy",
@@ -51,6 +51,91 @@ def _load_manifest_rows() -> list[tuple[str, str, str]]:
 
 
 class STM32TemplateOwnershipTests(unittest.TestCase):
+    def test_tracked_text_files_do_not_use_legacy_lrun_dut_names(self) -> None:
+        """Ensure tracked text files no longer use legacy LRUN DUT identifiers.
+
+        Returns
+        -------
+        None
+        """
+        legacy_tokens = (
+            "tinyodom_" + "tcn_stm32",
+            "tinyodom_" + "tcn_stm32_lrun",
+            "tcn_" + "dut",
+            "TCN_" + "DUT",
+            "Tcn" + "Dut",
+        )
+        scoped_prefixes = (
+            "analysis_scripts/audio_stm32_hil_smoke/",
+            "sketches/stm32/tinyodom_stm32_lrun/",
+            "src/config/",
+            "src/tinyodom/microcontrollers/stm32_nucleo_n657x0.py",
+            "test/test_audio_stm32_hil_smoke.py",
+            "test/test_model.py",
+            "test/test_stm32_",
+        )
+        scoped_files = {
+            "README.md",
+            "analysis_scripts/stm32_example_project/README.md",
+            "setup_stm32.sh",
+            "sketches/README.md",
+            "src/tinyodom/microcontrollers/README.md",
+            "src/tinyodom/model.py",
+        }
+        result = subprocess.run(
+            ["git", "ls-files"],
+            cwd=ROOT_DIR,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        offenders: list[str] = []
+        for relative_path in result.stdout.splitlines():
+            if not (
+                relative_path in scoped_files
+                or any(relative_path.startswith(prefix) for prefix in scoped_prefixes)
+            ):
+                continue
+            path = ROOT_DIR / relative_path
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for token in legacy_tokens:
+                if token in relative_path or token in text:
+                    offenders.append(f"{relative_path}: {token}")
+                    break
+
+        self.assertEqual(offenders, [])
+
+    def test_setup_script_tracks_general_lrun_overlay_paths(self) -> None:
+        """Ensure setup validation and cleanup use the generalized LRUN names.
+
+        Returns
+        -------
+        None
+        """
+        script_text = (ROOT_DIR / "setup_stm32.sh").read_text(encoding="utf-8")
+
+        self.assertIn("sketches/stm32/tinyodom_stm32_lrun", script_text)
+        self.assertIn('"Appli/Inc/tinyodom_dut_runner.h"', script_text)
+        self.assertIn('"Appli/Src/tinyodom_dut_runner.c"', script_text)
+        self.assertIn(
+            'require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/tinyodom_dut_runner.h"',
+            script_text,
+        )
+        self.assertIn(
+            'require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Src/tinyodom_dut_runner.c"',
+            script_text,
+        )
+        self.assertIn(
+            '"$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/tinyodom_dut_phase_config.h"',
+            script_text,
+        )
+        self.assertNotIn("tinyodom_" + "tcn_stm32_lrun", script_text)
+        self.assertNotIn("tcn_" + "dut_runner", script_text)
+        self.assertNotIn("tcn_" + "dut_phase_config", script_text)
+
     def test_manifest_categories_and_paths_are_unique(self) -> None:
         # The LRUN ownership manifest should keep categories and paths unique.
         rows = _load_manifest_rows()

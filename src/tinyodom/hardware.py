@@ -635,7 +635,7 @@ def _pop_retry_hint_bytes() -> Optional[int]:
     return value
 
 def HIL_spec(
-    dirpath: Union[str, Path] = 'tinyodom_tcn/',
+    dirpath: Union[str, Path] = 'odom_tcn/',
     chosen_device: str = 'ARDUINO_NANO_33_BLE_SENSE',
     device_options: Optional[Dict[str, str]] = None,
     arenaSizes: Optional[Sequence[int]] = None,
@@ -790,7 +790,7 @@ def HIL_spec(
 
 
 def HIL_controller(
-    dirpath: Union[str, Path] = 'tinyodom_tcn/',
+    dirpath: Union[str, Path] = 'odom_tcn/',
     chosen_device: str = 'ARDUINO_NANO_33_BLE_SENSE',
     device_options: Optional[Dict[str, str]] = None,
     window_size: int = 400,

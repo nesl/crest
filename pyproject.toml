@@ -20,7 +20,10 @@ dependencies = [
     "numpy-quaternion",
     "giotto-tda",
     "pydometer",
-    "tqdm"
+    "tqdm",
+    "soundata==1.0.1",
+    "librosa==0.11.0",
+    "soundfile==0.13.1"
 ]
 
 [tool.setuptools.packages.find]

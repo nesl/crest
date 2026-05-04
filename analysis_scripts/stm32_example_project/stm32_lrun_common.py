@@ -15,6 +15,7 @@ from typing import Any
 
 import yaml
 
+from tinyodom.cadence import resolve_batch_period_ms
 from tinyodom.microcontrollers import stm32_cube_clt
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -96,21 +97,43 @@ def load_config(config_path: Path | str) -> dict[str, Any]:
 
 
 def default_latency_budget_ms(config: dict[str, Any]) -> float:
-    device = dict(config.get("device") or {})
-    if device.get("latency_budget_ms") is not None:
-        return float(device["latency_budget_ms"])
+    """Resolve the LRUN default logical cadence budget.
 
+    Parameters
+    ----------
+    config : dict[str, Any]
+        Loaded NAS configuration mapping.
+
+    Returns
+    -------
+    float
+        Positive finite latency budget in milliseconds.
+
+    Raises
+    ------
+    stm32_cube_clt.WorkflowError
+        If the config does not expose a valid device or dataset cadence
+        contract.
+    """
+
+    device = dict(config.get("device") or {})
     # The LRUN helpers now require the modular dataset block instead of
     # silently falling back to the removed top-level `data` config shape.
     dataset = dict(config.get("dataset") or {})
     dataset_params = dict(dataset.get("params") or {})
-    if not dataset_params:
+    if not dataset_params and device.get("latency_budget_ms") is None:
         raise stm32_cube_clt.WorkflowError(
-            "LRUN defaults require config.dataset.params to define stride and sampling_rate_hz."
+            "LRUN defaults require config.dataset.params to define batch_period_ms "
+            "or stride and sampling_rate_hz."
         )
-    stride = float(dataset_params["stride"])
-    sampling_rate_hz = float(dataset_params["sampling_rate_hz"])
-    return (stride / sampling_rate_hz) * 1000.0
+    try:
+        return resolve_batch_period_ms(dataset_params, device_config=device)
+    except ValueError as exc:
+        raise stm32_cube_clt.WorkflowError(
+            "LRUN defaults require a positive device.latency_budget_ms, "
+            "dataset.params.batch_period_ms, or legacy dataset.params stride "
+            "and sampling_rate_hz cadence."
+        ) from exc
 
 
 def device_defaults(config: dict[str, Any]) -> dict[str, Any]:

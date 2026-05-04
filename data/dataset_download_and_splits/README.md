@@ -1,4 +1,51 @@
-# OxIOD Dataset Preparation
+# Dataset Preparation
+
+## UrbanSound8K Audio Cache
+
+UrbanSound8K is used for the first audio backend path. The dataset license is
+non-commercial/by-nc; automatic download requires an explicit license
+acknowledgement.
+
+Plan for about 5.6 GB of local data for the UrbanSound8K download and generated
+cache artifacts.
+
+Generated UrbanSound8K files are local-only and ignored by git:
+
+- Raw/downloaded audio: `data/urbansound8k/raw/`
+- Cached features: `data/urbansound8k/cache/v2_logmel_16k_2s_64mels_25ms_10ms_folds/`
+
+To validate an existing local soundata copy and build the deterministic log-mel
+cache:
+
+```bash
+make prepare-audio-dataset
+```
+
+Phase 9 uses schema-2 caches. If an older schema-1 cache is present, regenerate
+it with the same command. To also build the full train-8/validate-1/test-1
+fold-rotation caches for final reporting:
+
+```bash
+make prepare-audio-dataset URBANSOUND8K_ARGS="--fold-rotation"
+```
+
+To download through soundata first:
+
+```bash
+make prepare-audio-dataset URBANSOUND8K_ARGS="--download --accept-license"
+```
+
+The audio preparation script writes `metadata.json`, `train.npz`, `val.npz`,
+`test.npz`, and `calibration.npz`. The cache schema, feature parameters, crop
+policy, normalization, class ordering, and calibration selection are implemented
+in the preparation script and consumed by the `urbansound8k_mel` dataset
+adapter.
+
+The script lives at:
+
+- `data/dataset_download_and_splits/urbansound8k/prepare_urbansound8k.py`
+
+## OxIOD Dataset Preparation
 
 Download the OxIOD "Complete Dataset" zip from `http://deepio.cs.ox.ac.uk/`,
 rename it to `OxIOD.zip`, then run the preparation step from the repo root:
@@ -6,7 +53,7 @@ rename it to `OxIOD.zip`, then run the preparation step from the repo root:
 ```bash
 make prepare-dataset
 # or:
-python data/dataset_download_and_splits/prepare_oxiod.py --zip-path /path/to/OxIOD.zip
+python data/dataset_download_and_splits/oxiod/prepare_oxiod.py --zip-path /path/to/OxIOD.zip
 ```
 
 The preparation script does four things:
@@ -20,7 +67,25 @@ The preparation script does four things:
 The split files in this repo are not placeholders. They are the curated
 tracked splits used by the built-in OxIOD path.
 
-## Current Loader Path
+Dataset-specific preparation files now live under:
+
+- `data/dataset_download_and_splits/oxiod/prepare_oxiod.py`
+- `data/dataset_download_and_splits/oxiod/reference_splits/`
+
+The preparation script still uses the per-activity split files under
+`data/oxiod/<activity>/` as its default template source so the loader-facing
+dataset layout remains unchanged.
+
+## Current Loader Paths
+
+The built-in UrbanSound8K audio dataset adapter lives in:
+
+- [`src/tinyodom/datasets/urbansound8k_mel.py`](../../src/tinyodom/datasets/urbansound8k_mel.py)
+- [`src/tinyodom/datasets/urbansound8k_common.py`](../../src/tinyodom/datasets/urbansound8k_common.py)
+
+It loads the cached log-mel feature tensors produced by
+`prepare_urbansound8k.py` and is selected with `dataset.name:
+urbansound8k_mel`.
 
 The built-in OxIOD dataset adapter lives in:
 
