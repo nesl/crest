@@ -40,6 +40,7 @@ venv.bak/
 # Editors
 .vscode/
 AGENTS.md
+device_abstraction_plan.txt
 
 # Linters
 .coverage
