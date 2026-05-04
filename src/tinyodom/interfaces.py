@@ -283,6 +283,34 @@ class TaskABC(ABC):
         return {}
 
     @abstractmethod
+    def evaluate_predictions(
+        self,
+        predictions: Any,
+        split: DataSplit,
+        task_config: Any,
+        target_spec: TargetSpec,
+    ) -> EvaluationResult:
+        """Evaluate normalized predictions for one split.
+
+        Parameters
+        ----------
+        predictions : Any
+            Prediction payload already normalized into the task's expected
+            shape.
+        split : DataSplit
+            Dataset split to evaluate.
+        task_config : Any
+            Task-local configuration subtree.
+        target_spec : TargetSpec
+            Task-owned target specification.
+
+        Returns
+        -------
+        EvaluationResult
+            Structured evaluation output.
+        """
+
+    @abstractmethod
     def evaluate(
         self,
         model: tf.keras.Model,

@@ -28,7 +28,7 @@ from tinyodom.analysis_support import (
     resolve_task_contract,
 )
 from tinyodom.hardware import convert_to_tflite_model
-from tinyodom.model import DEFAULT_CONFIG_PATH, load_config
+from tinyodom.model import DEFAULT_CONFIG_PATH, configured_quantization_mode, load_config
 from tinyodom.pipeline_types import DataSplit, DatasetBundle
 
 from noise_scan_model_spec import build_noise_scan_hyperparams
@@ -328,7 +328,7 @@ def main() -> int:
         convert_to_tflite_model(
             model=best_model,
             training_data=training_data.inputs,
-            quantization=config.training.quantization,
+            quantization_mode=configured_quantization_mode(config),
             output_name=tflite_path,
         )
         tflite_written = str(tflite_path)
@@ -348,7 +348,7 @@ def main() -> int:
         "tflite_path": tflite_written,
         "data_loader_train": train_loader_name,
         "data_loader_valid": valid_loader_name,
-        "quantization": bool(config.training.quantization),
+        "quantization_mode": configured_quantization_mode(config),
         "window_size": int(config.dataset.params.window_size),
         "input_dim": int(training_data.inputs.shape[2]),
         "hyperparams": {

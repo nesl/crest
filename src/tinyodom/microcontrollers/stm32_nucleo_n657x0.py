@@ -2100,8 +2100,8 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         """
         if request.model is None:
             raise ValueError("STM32 candidate preparation requires a built Keras model.")
-        if request.calibration_split is None:
-            raise ValueError("STM32 candidate preparation requires calibration/training data.")
+        if request.quantization_mode == "int8_ptq" and request.calibration_split is None:
+            raise ValueError("STM32 candidate preparation requires calibration/training data for int8_ptq.")
 
         from tinyodom.hardware import convert_to_tflite_model
 
@@ -2145,8 +2145,8 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             tflite_path = model_dir / "tinyodom_candidate.tflite"
             convert_to_tflite_model(
                 model=request.model,
-                training_data=request.calibration_split.inputs,
-                quantization=bool(request.config.training.quantization),
+                training_data=None if request.calibration_split is None else request.calibration_split.inputs,
+                quantization_mode=request.quantization_mode,
                 output_name=tflite_path,
             )
             _run_stedgeai_analyze(

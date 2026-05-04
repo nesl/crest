@@ -90,6 +90,11 @@ class DummyTask(TaskABC):
         del model, split, task_config, target_spec
         return EvaluationResult(metrics={"loss": 0.0})
 
+    def evaluate_predictions(self, predictions, split, task_config, target_spec):
+        """Return a trivial prediction-level evaluation payload."""
+        del predictions, split, task_config, target_spec
+        return EvaluationResult(metrics={"loss": 0.0})
+
 
 class DummyModelFamily(ModelFamilyABC):
     """Minimal model-family implementation used for scaffolding tests."""

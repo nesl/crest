@@ -196,6 +196,7 @@ def _make_prepare_request(
         artifact_root=outputs_dir,
         tflite_model_path=outputs_dir / "ignored.tflite",
         calibration_split=calibration_split,
+        quantization_mode="int8_ptq",
         input_shape=(4, 6),
         checkpoint_path=checkpoint_path,
     )

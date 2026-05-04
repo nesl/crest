@@ -1581,18 +1581,31 @@ class LoadSettingsTests(unittest.TestCase):
     """Verify the NAS configuration loader derives paths and validates input."""
 
     @staticmethod
-    def _score_lines() -> list[str]:
+    def _score_lines(include_quantization: bool = True) -> list[str]:
         """Return the minimal scoring-function YAML block shared by loader tests."""
-        return [
-            "nas:",
-            "  score:",
-            "    type: scoring-function",
-            "    params:",
-            "      terms:",
-            "        - type: weighted",
-            "          metric: flops",
-            "          weight: -1.0",
-        ]
+        lines = []
+        if include_quantization:
+            lines.extend(
+                [
+                    "  quantization:",
+                    "    mode: int8_ptq",
+                    "    search: false",
+                    "    choices: [int8_ptq]",
+                ]
+            )
+        lines.extend(
+            [
+                "nas:",
+                "  score:",
+                "    type: scoring-function",
+                "    params:",
+                "      terms:",
+                "        - type: weighted",
+                "          metric: flops",
+                "          weight: -1.0",
+            ]
+        )
+        return lines
 
     def test_load_settings_derives_expected_paths(self) -> None:
         """YAML entries should produce resolved paths and derived file names."""
@@ -1637,6 +1650,121 @@ class LoadSettingsTests(unittest.TestCase):
                 settings.outputs.models_dir / settings.outputs.checkpoint_name,
             )
             self.assertEqual(settings.training.drop_rate_choices, DROP_RATE_CHOICES)  
+
+    def test_load_settings_accepts_fixed_int8_quantization(self) -> None:
+        """A fixed int8 PTQ quantization block should normalize cleanly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: STM32_NUCLEO_N657X0_Q",
+                        "training:",
+                        "  nas_trials: 5",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        *self._score_lines(include_quantization=False),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=config_path)
+
+            self.assertEqual(settings.training.quantization.mode, "int8_ptq")
+            self.assertFalse(settings.training.quantization.search)
+            self.assertEqual(settings.training.quantization.choices, ["int8_ptq"])
+
+    def test_load_settings_accepts_searchable_quantization_on_supported_board(self) -> None:
+        """Supported boards may opt into float/int8 PTQ quantization search."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: PORTENTA_H7",
+                        "  portenta:",
+                        "    target_core: cm7",
+                        "    split: 75_25",
+                        "    security: none",
+                        "training:",
+                        "  nas_trials: 5",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: true",
+                        "    choices: [float, int8_ptq]",
+                        *self._score_lines(include_quantization=False),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=config_path)
+
+            self.assertTrue(settings.training.quantization.search)
+            self.assertEqual(settings.training.quantization.choices, ["float", "int8_ptq"])
+
+    def test_load_settings_rejects_invalid_quantization_configs(self) -> None:
+        """Quantization must use the new mapping shape and supported choices."""
+        cases = {
+            "missing": [],
+            "legacy_boolean": ["  quantization: true"],
+            "empty_mapping": ["  quantization: {}"],
+            "empty_choices": [
+                "  quantization:",
+                "    mode: int8_ptq",
+                "    search: false",
+                "    choices: []",
+            ],
+            "mode_not_in_choices": [
+                "  quantization:",
+                "    mode: float",
+                "    search: false",
+                "    choices: [int8_ptq]",
+            ],
+            "unsupported_ble_float": [
+                "  quantization:",
+                "    mode: float",
+                "    search: false",
+                "    choices: [float]",
+            ],
+        }
+        for label, quantization_lines in cases.items():
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    tmp_path = Path(tmpdir)
+                    config_path = tmp_path / "config.yaml"
+                    config_path.write_text(
+                        "\n".join(
+                            [
+                                "device:",
+                                "  name: ARDUINO_NANO_33_BLE_SENSE",
+                                "training:",
+                                "  nas_trials: 5",
+                                *quantization_lines,
+                                *self._score_lines(include_quantization=False),
+                                "outputs:",
+                                f"  models_dir: \"{tmp_path / 'models'}\"",
+                                f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
+                                "  artifact_stem: \"TinyOdomEx_Test\"",
+                            ]
+                        )
+                    )
+
+                    with self.assertRaises((KeyError, ValueError)):
+                        load_config(config_path=config_path)
 
     def test_load_settings_rejects_missing_candidate_dir(self) -> None:
         """Configuration loading should reject outputs without candidate_dir."""
@@ -1855,6 +1983,9 @@ class LoadSettingsTests(unittest.TestCase):
             settings.outputs.checkpoint_name,
             "TinyOdomEx_UrbanSound8K_STM32_NUCLEO_N657X0_Q.keras",
         )
+        self.assertEqual(settings.training.quantization.mode, "int8_ptq")
+        self.assertTrue(settings.training.quantization.search)
+        self.assertEqual(settings.training.quantization.choices, ["float", "int8_ptq"])
 
     def test_audio_stm32_config_resolves_audio_components(self) -> None:
         """The audio STM32 config should resolve the audio component stack."""
@@ -1882,6 +2013,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 5",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "dataset:",
                         "  name: urbansound8k_mel",
                         "  params:",
@@ -1894,7 +2029,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "      protocol: fold_rotation",
                         "      fold_rotation:",
                         "        test_folds: [1, 2, 10]",
-                        *self._score_lines(),
+                        *self._score_lines(include_quantization=False),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
@@ -1928,6 +2063,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 5",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "dataset:",
                         "  name: urbansound8k_mel",
                         "  params:",
@@ -2071,6 +2210,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
@@ -2095,6 +2238,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
@@ -2120,6 +2267,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
@@ -2201,6 +2352,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "    runtime_mode: cadenced",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
@@ -2228,6 +2383,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "    target_core: cm7",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "  input_mode: representative",
                         *self._score_lines(),
                         "outputs:",
@@ -2254,6 +2413,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2291,6 +2454,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2326,6 +2493,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2372,6 +2543,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2415,6 +2590,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "score:",
                         "  type: scoring-function",
                         "  params:",
@@ -2445,6 +2624,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2487,6 +2670,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2521,6 +2708,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: multi-objective",
@@ -2561,6 +2752,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2612,6 +2807,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2651,6 +2850,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2688,6 +2891,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2721,6 +2928,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2766,6 +2977,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2809,6 +3024,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2852,6 +3071,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2897,6 +3120,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -2991,6 +3218,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -3036,6 +3267,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -3080,6 +3315,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -3129,6 +3368,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -3161,6 +3404,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -3202,6 +3449,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -3236,6 +3487,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  name: TEST_DEVICE",
                         "training:",
                         "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         "nas:",
                         "  score:",
                         "    type: scoring-function",
@@ -3284,6 +3539,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "training:",
                         "  nas_trials: 5",
                         "  energy_aware: true",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
@@ -3323,6 +3582,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "training:",
                         "  nas_trials: 5",
                         "  energy_aware: true",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
@@ -3354,6 +3617,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  cpu_clock_mhz_options: null",
                         "training:",
                         "  nas_trials: 5",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
@@ -3380,6 +3647,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  cpu_clock_mhz_options: [true, 400]",
                         "training:",
                         "  nas_trials: 5",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
@@ -3405,6 +3676,10 @@ class LoadSettingsTests(unittest.TestCase):
                         "  cpu_clock_mhz_options: [250, 400]",
                         "training:",
                         "  nas_trials: 5",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",

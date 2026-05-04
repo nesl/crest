@@ -47,7 +47,10 @@ from tinyodom.microcontrollers.stm32_nucleo_n657x0 import (
 from tinyodom.microcontrollers import stm32_cube_clt, stm32_runtime
 from tinyodom.model import (
     DEFAULT_CONFIG_PATH,
+    VALID_QUANTIZATION_MODES,
+    configured_quantization_mode,
     load_config,
+    quantization_requires_calibration,
     require_logical_input_shape,
     set_error_code,
     validate_model_input_shape,
@@ -699,6 +702,7 @@ class HILServer:
         model_variant: str,
         checkpoint_path: Path | str | None,
         calibration_split: DataSplit | None,
+        quantization_mode: str,
     ) -> CandidatePrepareRequest:
         """Assemble the typed backend request for candidate preparation.
 
@@ -713,6 +717,8 @@ class HILServer:
         calibration_split : DataSplit | None
             Calibration split supplied to backends that require representative
             export data.
+        quantization_mode : str
+            Deployment quantization mode selected by the NAS client.
 
         Returns
         -------
@@ -727,6 +733,7 @@ class HILServer:
             artifact_root=Path(self.config.outputs.candidate_dir),
             tflite_model_path=Path(self.config.outputs.tflite_model_path),
             calibration_split=calibration_split,
+            quantization_mode=quantization_mode,
             input_shape=self.model_build_context.input_shape,
             checkpoint_path=checkpoint_path,
         )
@@ -953,10 +960,11 @@ class HILServer:
                 payload = self.socket.recv_json()
                 print(f"[HIL REP] Received payload: {payload}")
                 try:
-                    family_hparams, runtime_metadata, device_options_overrides = self._normalize_request_payload(payload)
+                    family_hparams, runtime_metadata, quantization_mode, device_options_overrides = self._normalize_request_payload(payload)
                     metrics = self.determine_metrics(
                         family_hparams=family_hparams,
                         runtime_metadata=runtime_metadata,
+                        quantization_mode=quantization_mode,
                         device_options_overrides=device_options_overrides,
                     )
                 except ValueError as exc:
@@ -980,7 +988,7 @@ class HILServer:
             self.context.term()
 
     @staticmethod
-    def _normalize_request_payload(payload: object) -> tuple[Dict, Dict, dict | None]:
+    def _normalize_request_payload(payload: object) -> tuple[Dict, Dict, str, dict | None]:
         """Normalize one structured REQ payload into internal request parts.
 
         Parameters
@@ -990,9 +998,9 @@ class HILServer:
 
         Returns
         -------
-        tuple[Dict, Dict, dict | None]
-            Family hyperparameters, runtime metadata, and optional device
-            option overrides.
+        tuple[Dict, Dict, str, dict | None]
+            Family hyperparameters, runtime metadata, deployment quantization
+            mode, and optional device option overrides.
         """
         if not isinstance(payload, Mapping):
             raise ValueError("HIL request payload must be a JSON object.")
@@ -1002,13 +1010,19 @@ class HILServer:
             raise ValueError("HIL request field `family_hparams` must be a JSON object.")
         if not isinstance(raw_runtime_metadata, Mapping):
             raise ValueError("HIL request field `runtime_metadata` must be a JSON object.")
+        raw_quantization_mode = payload.get("quantization_mode", None)
+        if raw_quantization_mode in (None, "") or isinstance(raw_quantization_mode, bool):
+            raise ValueError("HIL request field `quantization_mode` must be one of: float, int8_ptq.")
+        quantization_mode = str(raw_quantization_mode).strip().lower()
+        if quantization_mode not in VALID_QUANTIZATION_MODES:
+            raise ValueError("HIL request field `quantization_mode` must be one of: float, int8_ptq.")
         raw_overrides = payload.get("device_options_overrides", None)
         if raw_overrides is not None and not isinstance(raw_overrides, Mapping):
             raise ValueError(
                 "HIL request field `device_options_overrides` must be a JSON object when provided."
             )
         overrides = dict(raw_overrides) if raw_overrides is not None else None
-        return Dict(dict(raw_family_hparams)), Dict(dict(raw_runtime_metadata)), overrides
+        return Dict(dict(raw_family_hparams)), Dict(dict(raw_runtime_metadata)), quantization_mode, overrides
 
     def _request_boundary_failure_metrics(
         self,
@@ -1035,6 +1049,7 @@ class HILServer:
         self,
         family_hparams: Mapping[str, Any],
         runtime_metadata: Mapping[str, Any],
+        quantization_mode: str | None = None,
         device_options_overrides: dict | None = None,
         checkpoint_path: Path | str | None = None,
         model_variant: str | None = None,
@@ -1049,6 +1064,9 @@ class HILServer:
         runtime_metadata : Mapping[str, Any]
             Runtime-owned request metadata such as ``flops``, ``timesteps``,
             ``input_dim``, and ``batch_size``.
+        quantization_mode : str | None, optional
+            Deployment quantization mode for candidate export. Defaults to the
+            fixed configured mode when called directly.
         checkpoint_path : Path | str | None, optional
             Checkpoint path used when ``model_variant`` starts with
             ``"trained"``. When omitted for a trained variant, the server uses
@@ -1072,6 +1090,24 @@ class HILServer:
         """
         try:
             runtime_metadata = self._normalize_runtime_metadata(runtime_metadata)
+        except ValueError as exc:
+            return self._request_boundary_failure_metrics(
+                error_kind="request",
+                error_detail=str(exc),
+            )
+        try:
+            resolved_quantization_mode = (
+                configured_quantization_mode(self.config)
+                if quantization_mode is None
+                else str(quantization_mode).strip().lower()
+            )
+            if resolved_quantization_mode not in VALID_QUANTIZATION_MODES:
+                raise ValueError("quantization_mode must be one of: float, int8_ptq.")
+            allowed_modes = set(getattr(self.config.training.quantization, "choices", []))
+            if resolved_quantization_mode not in allowed_modes:
+                raise ValueError(
+                    f"quantization_mode '{resolved_quantization_mode}' is not allowed by training.quantization.choices."
+                )
         except ValueError as exc:
             return self._request_boundary_failure_metrics(
                 error_kind="request",
@@ -1149,7 +1185,7 @@ class HILServer:
                 model_variant=resolved_model_variant,
                 checkpoint_path=resolved_checkpoint_path,
             )
-            if runtime_device.requires_training_data():
+            if runtime_device.requires_training_data() and quantization_requires_calibration(resolved_quantization_mode):
                 try:
                     calibration_split = self._require_calibration_split()
                 except ValueError as exc:
@@ -1184,6 +1220,7 @@ class HILServer:
                     model_variant=resolved_model_variant,
                     checkpoint_path=resolved_checkpoint_path,
                     calibration_split=calibration_split,
+                    quantization_mode=resolved_quantization_mode,
                 ),
             )
             prepared_dir = Path(prepared_dir)

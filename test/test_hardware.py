@@ -48,6 +48,8 @@ from tinyodom.hardware import (  # noqa: E402
     _store_retry_hint_bytes,
     _convert_to_cpp_model_python,
     _convert_to_cpp_model_xxd,
+    _dequantize_tflite_tensor,
+    _quantize_tflite_tensor,
     arena_size_candidates,
     convert_to_cpp_model,
     convert_to_tflite_model,
@@ -136,11 +138,49 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
             convert_to_tflite_model(
                 self.model,
                 self.train_x,
-                quantization=True,
+                quantization_mode="int8_ptq",
                 output_name=tflite_path,
             )
             self.assertTrue(tflite_path.exists())
             self.assertGreater(tflite_path.stat().st_size, 0)
+
+    def test_convert_to_tflite_model_float_does_not_require_calibration(self):
+        """Float TFLite export should not need representative data."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tflite_path = Path(tmpdir) / "model_float.tflite"
+            convert_to_tflite_model(
+                self.model,
+                training_data=None,
+                quantization_mode="float",
+                output_name=tflite_path,
+            )
+
+            self.assertTrue(tflite_path.exists())
+            self.assertGreater(tflite_path.stat().st_size, 0)
+
+    def test_convert_to_tflite_model_int8_requires_calibration(self):
+        """Int8 PTQ export should reject missing representative data."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tflite_path = Path(tmpdir) / "model_int8.tflite"
+
+            with self.assertRaisesRegex(ValueError, "calibration"):
+                convert_to_tflite_model(
+                    self.model,
+                    training_data=None,
+                    quantization_mode="int8_ptq",
+                    output_name=tflite_path,
+                )
+
+    def test_tflite_quant_helpers_use_interpreter_params(self):
+        """TFLite tensor helpers should use scale and zero-point from details."""
+        detail = {"dtype": np.int8, "quantization": (0.5, -3)}
+        values = np.asarray([[0.0, 1.0, -1.0]], dtype=np.float32)
+
+        quantized = _quantize_tflite_tensor(values, detail)
+        dequantized = _dequantize_tflite_tensor(quantized, detail)
+
+        np.testing.assert_array_equal(quantized, np.asarray([[-3, -1, -5]], dtype=np.int8))
+        np.testing.assert_allclose(dequantized, values, atol=0.5)
 
     def test_convert_to_cpp_model_old_emits_sources(self):
         # Legacy C-array export should emit the expected source files for older embedded workflows.

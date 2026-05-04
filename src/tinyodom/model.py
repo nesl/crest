@@ -16,7 +16,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 import numpy as np
 import tensorflow as tf
@@ -60,6 +60,12 @@ DROP_RATE_CHOICES = [0.0, 0.1, 0.2, 0.3, 0.4]
 logger = logging.getLogger(__name__)
 
 VALID_SCORE_TYPES = {"scoring-function", "multi-objective"}
+VALID_QUANTIZATION_MODES = {"float", "int8_ptq"}
+BOARD_QUANTIZATION_CAPABILITIES = {
+    "STM32_NUCLEO_N657X0_Q": {"float", "int8_ptq"},
+    "PORTENTA_H7": {"float", "int8_ptq"},
+    "ARDUINO_NANO_33_BLE_SENSE": {"int8_ptq"},
+}
 VALID_DERIVED_METRIC_TYPES = {"add", "energy-budget-from-power"}
 VALID_TERM_TYPES = {"weighted", "normalized-weighted", "boundary", "target"}
 VALID_OBJECTIVE_DIRECTIONS = {"maximize", "minimize"}
@@ -166,6 +172,7 @@ TRIAL_LOG_STABLE_COLUMNS = (
     "timestamp_unix",
     "timestamp_readable",
     "score",
+    "quantization_mode",
     "ram_bytes",
     "flash_bytes",
     "external_flash_bytes",
@@ -288,6 +295,8 @@ class TrialOutcome:
         Resolved trial hyperparameters used for HIL, scoring, and logging.
     artifact_summary : dict[str, Any] | None
         JSON-safe task-owned artifact summary associated with the trial.
+    quantization_mode : str
+        Deployment quantization mode used for this trial.
     """
 
     score: float | None
@@ -297,6 +306,7 @@ class TrialOutcome:
     task_metrics: dict[str, Any]
     hyperparams: dict[str, Any]
     artifact_summary: dict[str, Any] | None = None
+    quantization_mode: str = "int8_ptq"
 
 
 class ScoreConfigEvaluationError(ValueError):
@@ -732,6 +742,7 @@ def build_trial_outcome(
     task_metrics: dict[str, Any],
     hyperparams: dict[str, Any],
     artifact_summary: dict[str, Any] | None = None,
+    quantization_mode: str = "int8_ptq",
 ) -> TrialOutcome:
     """Assemble a generic trial outcome from score, metric, and artifact data.
 
@@ -745,6 +756,8 @@ def build_trial_outcome(
         Resolved trial hyperparameters.
     artifact_summary : dict[str, Any] | None, optional
         Optional task-owned artifact metadata.
+    quantization_mode : str, optional
+        Deployment quantization mode used for this trial.
 
     Returns
     -------
@@ -763,7 +776,136 @@ def build_trial_outcome(
         task_metrics=normalized_metrics,
         hyperparams=normalized_hyperparams,
         artifact_summary=normalized_artifacts,
+        quantization_mode=str(quantization_mode),
     )
+
+
+def quantization_requires_calibration(quantization_mode: str) -> bool:
+    """Return whether a deployment mode needs representative calibration data.
+
+    Parameters
+    ----------
+    quantization_mode : str
+        Normalized deployment quantization mode.
+
+    Returns
+    -------
+    bool
+        ``True`` for modes that use representative post-training
+        quantization.
+    """
+
+    return str(quantization_mode).strip().lower() == "int8_ptq"
+
+
+def _normalize_quantization_config(
+    training: Dict,
+    normalized_device_name: str,
+) -> Dict:
+    """Validate and normalize ``training.quantization``.
+
+    Parameters
+    ----------
+    training : addict.Dict
+        Training subtree from the parsed config.
+    normalized_device_name : str
+        Uppercase board name used for capability validation.
+
+    Returns
+    -------
+    addict.Dict
+        Normalized quantization subtree with ``mode``, ``search``, and
+        ``choices`` fields.
+
+    Raises
+    ------
+    KeyError
+        If the quantization section is missing.
+    ValueError
+        If the section is legacy boolean/string syntax, malformed, empty, or
+        unsupported by the selected board.
+    """
+
+    if "quantization" not in training:
+        raise KeyError("Expected 'training.quantization' to be set in the configuration.")
+    raw_quantization = training.quantization
+    if raw_quantization in (None, ""):
+        raise ValueError("training.quantization must be a mapping with mode, search, and choices.")
+    if isinstance(raw_quantization, bool) or not isinstance(raw_quantization, (dict, Dict)):
+        raise ValueError("training.quantization must be a mapping; legacy boolean/string values are not supported.")
+
+    quantization = Dict(raw_quantization)
+    raw_mode = quantization.get("mode", None)
+    if raw_mode in (None, "") or isinstance(raw_mode, bool):
+        raise ValueError("training.quantization.mode must be one of: float, int8_ptq.")
+    mode = str(raw_mode).strip().lower()
+    if mode not in VALID_QUANTIZATION_MODES:
+        raise ValueError("training.quantization.mode must be one of: float, int8_ptq.")
+
+    raw_search = quantization.get("search", False)
+    if isinstance(raw_search, bool):
+        search = bool(raw_search)
+    else:
+        raise ValueError("training.quantization.search must be a boolean.")
+
+    raw_choices = quantization.get("choices", None)
+    if not isinstance(raw_choices, list) or len(raw_choices) == 0:
+        raise ValueError("training.quantization.choices must be a non-empty list.")
+    choices: list[str] = []
+    for raw_choice in raw_choices:
+        if raw_choice in (None, "") or isinstance(raw_choice, bool):
+            raise ValueError("training.quantization.choices entries must be one of: float, int8_ptq.")
+        choice = str(raw_choice).strip().lower()
+        if choice not in VALID_QUANTIZATION_MODES:
+            raise ValueError("training.quantization.choices entries must be one of: float, int8_ptq.")
+        if choice not in choices:
+            choices.append(choice)
+    if mode not in choices:
+        raise ValueError("training.quantization.mode must be included in training.quantization.choices.")
+
+    supported_modes = BOARD_QUANTIZATION_CAPABILITIES.get(normalized_device_name)
+    if supported_modes is not None:
+        unsupported = [choice for choice in choices if choice not in supported_modes]
+        if unsupported:
+            raise ValueError(
+                f"Device {normalized_device_name} does not support quantization mode(s): "
+                + ", ".join(unsupported)
+            )
+
+    return Dict(mode=mode, search=search, choices=choices)
+
+
+def configured_quantization_mode(config_or_training: Any) -> str:
+    """Return the fixed configured quantization mode from a config object.
+
+    Parameters
+    ----------
+    config_or_training : Any
+        Full config object with ``training`` or the training subtree itself.
+
+    Returns
+    -------
+    str
+        Normalized configured quantization mode.
+
+    Raises
+    ------
+    ValueError
+        If the runtime object does not expose the normalized mapping shape.
+    """
+
+    training = getattr(config_or_training, "training", config_or_training)
+    quantization = getattr(training, "quantization", None)
+    if isinstance(quantization, Mapping):
+        mode = quantization.get("mode")
+    else:
+        mode = getattr(quantization, "mode", None)
+    if mode in (None, "") or isinstance(mode, bool):
+        raise ValueError("training.quantization.mode must be normalized before use.")
+    normalized = str(mode).strip().lower()
+    if normalized not in VALID_QUANTIZATION_MODES:
+        raise ValueError("training.quantization.mode must be one of: float, int8_ptq.")
+    return normalized
 
 
 def _resolve_metric_value(
@@ -1828,6 +1970,10 @@ def load_config(
         training.max_total_trials = int(training.nas_trials * 2)
     # If not explicitly set, disable training by default for faster debugging.
     training.energy_aware = bool(training.get("energy_aware", False))
+    training.quantization = _normalize_quantization_config(
+        training,
+        normalized_device_name,
+    )
     # Input mode selects which Arduino sketch variant is used during HIL runs.
     training.input_mode = str(training.get("input_mode", "uniform")).lower()
     config.training.drop_rate_choices = DROP_RATE_CHOICES
@@ -2210,6 +2356,7 @@ def _trial_log_row_mapping(
         "timestamp_unix": time.time(),
         "timestamp_readable": time.strftime("%m-%d-%Y %H:%M:%S"),
         "score": "" if trial_outcome.score is None else trial_outcome.score,
+        "quantization_mode": trial_outcome.quantization_mode,
         "ram_bytes": metrics["ram_bytes"],
         "flash_bytes": metrics["flash_bytes"],
         "external_flash_bytes": metrics.get("external_flash_bytes", -1),
@@ -2440,6 +2587,7 @@ def log_trial(
                 )
 
     trial.set_user_attr("ram_bytes", metrics["ram_bytes"])
+    trial.set_user_attr("quantization_mode", trial_outcome.quantization_mode)
     trial.set_user_attr("flash_bytes", metrics["flash_bytes"])
     trial.set_user_attr("external_flash_bytes", metrics.get("external_flash_bytes", -1))
     trial.set_user_attr("weight_storage_mode", metrics.get("weight_storage_mode", "embedded"))

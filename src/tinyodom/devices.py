@@ -221,6 +221,8 @@ class CandidatePrepareRequest:
         Explicit TFLite output path selected by orchestration.
     calibration_split : DataSplit | None
         Calibration split used for representative export data when required.
+    quantization_mode : str
+        Deployment quantization mode selected for this candidate.
     input_shape : tuple[int, ...] | None
         Logical model input shape excluding the batch dimension.
     checkpoint_path : pathlib.Path | str | None, optional
@@ -234,6 +236,7 @@ class CandidatePrepareRequest:
     artifact_root: Path
     tflite_model_path: Path
     calibration_split: DataSplit | None
+    quantization_mode: str
     input_shape: tuple[int, ...] | None
     checkpoint_path: Path | str | None = None
 
@@ -901,15 +904,15 @@ class ArduinoDevice(DeviceInterface):
         """
         if request.model is None:
             raise ValueError("Arduino candidate preparation requires a built Keras model.")
-        if request.calibration_split is None:
-            raise ValueError("Arduino candidate preparation requires calibration/training data.")
+        if request.quantization_mode == "int8_ptq" and request.calibration_split is None:
+            raise ValueError("Arduino candidate preparation requires calibration/training data for int8_ptq.")
 
         from .hardware import convert_to_cpp_model, convert_to_tflite_model
 
         convert_to_tflite_model(
             model=request.model,
-            training_data=request.calibration_split.inputs,
-            quantization=request.config.training.quantization,
+            training_data=None if request.calibration_split is None else request.calibration_split.inputs,
+            quantization_mode=request.quantization_mode,
             output_name=str(request.tflite_model_path),
         )
         convert_to_cpp_model(

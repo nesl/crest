@@ -206,7 +206,7 @@ class EpochSweepCallback(Callback):
         convert_to_tflite_model(
             model=self.model,
             training_data=self.training_inputs,
-            quantization=self.quantization_enabled,
+            quantization_mode="int8_ptq" if self.quantization_enabled else "float",
             output_name=tflite_path,
         )
         tflite_quant_op_count, tflite_quant_add_count, tflite_quant_op_hist = _extract_tflite_graph_stats(
@@ -423,7 +423,7 @@ def main() -> int:
         plots_dir=plots_dir,
         csv_path=csv_path,
         training_inputs=training_data.inputs,
-        quantization_enabled=bool(config.training.quantization),
+        quantization_enabled=str(config.training.quantization.mode) == "int8_ptq",
         static_metadata=static_metadata,
     )
 

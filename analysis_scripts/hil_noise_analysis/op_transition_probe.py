@@ -387,12 +387,12 @@ def main() -> int:
         non_bn_bias_layers_total = len(collect_non_bn_bias_layers(model))
 
         for quant_mode in quant_modes:
-            quantization = quant_mode == "int8"
+            quantization_mode = "int8_ptq" if quant_mode == "int8" else "float"
             tflite_path = out_dir / f"{variant}__{quant_mode}.tflite"
             convert_to_tflite_model(
                 model=model,
                 training_data=training_data.inputs,
-                quantization=quantization,
+                quantization_mode=quantization_mode,
                 output_name=tflite_path,
             )
             op_count, add_count, op_hist = _extract_tflite_graph_stats(tflite_path)

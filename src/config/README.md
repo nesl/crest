@@ -185,6 +185,20 @@ Common keys in the shipped config:
 Current runtime behavior:
 
 - `training.energy_aware` defaults to `false` when omitted
+- `training.quantization` is required and must use the mapping shape:
+  `mode`, `search`, and non-empty `choices`. Shipped configs fix
+  `mode: int8_ptq`, `search: false`, and `choices: [int8_ptq]`.
+- Supported v1 quantization modes are `float` and `int8_ptq`. Enabling
+  `training.quantization.search: true` samples `quantization_mode` from
+  `choices`; this expands the effective NAS search space and usually needs a
+  larger trial budget. Mixed `float`/`int8_ptq` studies also conflate
+  architecture quality with quantization effects, so compare them deliberately.
+- HIL metrics are deployment-mode preflight metrics collected before training.
+  Per-trial NAS scoring evaluates the trained checkpoint with host-side TFLite
+  on the validation split; final fixed-split reporting exports/evaluates the
+  trained TFLite on the test split after `train_best_trial`.
+- Closeout artifacts may still be Keras-derived in this phase unless a specific
+  path explicitly requests TFLite evaluation.
 - `training.input_mode` defaults to `uniform` when omitted
 - `training.input_mode` supports dataset-agnostic `uniform` plus
   dataset-specific analysis modes: `oxiod_representative`, `oxiod_real`,

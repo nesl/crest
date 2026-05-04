@@ -505,9 +505,38 @@ class SoundClassificationTask(TaskABC):
             JSON-safe metrics, artifacts, and predicted class IDs.
         """
 
+        predictions = model.predict(split.inputs)
+        return self.evaluate_predictions(predictions, split, task_config, target_spec)
+
+    def evaluate_predictions(
+        self,
+        predictions: Any,
+        split: DataSplit,
+        task_config: Any,
+        target_spec: TargetSpec,
+    ) -> EvaluationResult:
+        """Evaluate classification metrics from normalized logits.
+
+        Parameters
+        ----------
+        predictions : Any
+            Logit prediction payload.
+        split : DataSplit
+            Split containing integer class-index targets.
+        task_config : Any
+            Task-local configuration subtree.
+        target_spec : TargetSpec
+            Task-owned target specification.
+
+        Returns
+        -------
+        EvaluationResult
+            JSON-safe metrics, artifacts, and predicted class IDs.
+        """
+
         del task_config
         labels = np.asarray(split.targets, dtype=np.int64).reshape(-1)
-        logits = _as_logits_array(model.predict(split.inputs))
+        logits = _as_logits_array(predictions)
         if logits.shape[0] != labels.shape[0]:
             raise ValueError("SoundClassificationTask prediction count does not match labels.")
         num_classes = int(target_spec.metadata["num_classes"])
