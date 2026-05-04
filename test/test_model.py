@@ -1841,8 +1841,9 @@ class LoadSettingsTests(unittest.TestCase):
         self.assertEqual(selection["task_name"], "sound_classification")
         self.assertEqual(selection["model_family_name"], "audio_dscnn")
         self.assertEqual(selection["model_config"]["params"].export_variant, "untrained")
-        self.assertEqual(settings.evaluation.protocol, "fixed_split")
-        self.assertEqual(settings.evaluation.fold_rotation.test_folds, list(range(1, 11)))
+        self.assertNotIn("evaluation", settings)
+        self.assertEqual(settings.task.params.evaluation.protocol, "fixed_split")
+        self.assertEqual(settings.task.params.evaluation.fold_rotation.test_folds, list(range(1, 11)))
 
     def test_load_settings_validates_fold_rotation_config(self) -> None:
         """Fold-rotation reporting config should require explicit cache roots."""
@@ -1861,10 +1862,13 @@ class LoadSettingsTests(unittest.TestCase):
                         "  params:",
                         "    cache_dir: cache/fixed",
                         "    batch_period_ms: 2000",
-                        "evaluation:",
-                        "  protocol: fold_rotation",
-                        "  fold_rotation:",
-                        "    test_folds: [1, 2, 10]",
+                        "task:",
+                        "  name: sound_classification",
+                        "  params:",
+                        "    evaluation:",
+                        "      protocol: fold_rotation",
+                        "      fold_rotation:",
+                        "        test_folds: [1, 2, 10]",
                         *self._score_lines(),
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
@@ -1884,8 +1888,8 @@ class LoadSettingsTests(unittest.TestCase):
             config_path.write_text(text, encoding="utf-8")
             settings = load_config(config_path=config_path)
 
-        self.assertEqual(settings.evaluation.protocol, "fold_rotation")
-        self.assertEqual(settings.evaluation.fold_rotation.test_folds, [1, 2, 10])
+        self.assertEqual(settings.task.params.evaluation.protocol, "fold_rotation")
+        self.assertEqual(settings.task.params.evaluation.fold_rotation.test_folds, [1, 2, 10])
 
     def test_load_settings_rejects_fold_rotation_multiobjective(self) -> None:
         """Fold rotation should fail fast for multi-objective NAS."""
@@ -1905,8 +1909,11 @@ class LoadSettingsTests(unittest.TestCase):
                         "    cache_dir: cache/fixed",
                         "    fold_rotation_cache_dir: cache/fold_rotation",
                         "    batch_period_ms: 2000",
-                        "evaluation:",
-                        "  protocol: fold_rotation",
+                        "task:",
+                        "  name: sound_classification",
+                        "  params:",
+                        "    evaluation:",
+                        "      protocol: fold_rotation",
                         "nas:",
                         "  score:",
                         "    type: multi-objective",

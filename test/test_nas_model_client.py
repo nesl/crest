@@ -1471,7 +1471,7 @@ class FoldRotationReportingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
-            client.config.evaluation = Dict(protocol="fold_rotation", fold_rotation=Dict(test_folds=[1]))
+            client.task_config.evaluation = Dict(protocol="fold_rotation", fold_rotation=Dict(test_folds=[1]))
             order: list[str] = []
             trials_df = MagicMock()
             study = SimpleNamespace(
@@ -1517,7 +1517,7 @@ class FoldRotationReportingTests(unittest.TestCase):
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
             client.config.dataset.params.fold_rotation_cache_dir = str(base / "fold_cache")
-            client.config.evaluation = Dict(
+            client.task_config.evaluation = Dict(
                 protocol="fold_rotation",
                 fold_rotation=Dict(test_folds=[1, 2]),
             )
@@ -1586,7 +1586,7 @@ class FoldRotationReportingTests(unittest.TestCase):
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
             client.config.dataset.params.fold_rotation_cache_dir = str(base / "fold_cache")
-            client.config.evaluation = Dict(
+            client.task_config.evaluation = Dict(
                 protocol="fold_rotation",
                 fold_rotation=Dict(test_folds=[1, 2]),
             )

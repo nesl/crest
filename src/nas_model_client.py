@@ -1949,15 +1949,16 @@ class NASModelClient:
         )
 
     def _fold_rotation_enabled(self) -> bool:
-        """Return whether Phase 9 final fold-rotation reporting is enabled.
+        """Return whether task-owned final fold-rotation reporting is enabled.
 
         Returns
         -------
         bool
-            True when ``evaluation.protocol`` is ``fold_rotation``.
+            True when ``task.params.evaluation.protocol`` is ``fold_rotation``.
         """
 
-        return str(getattr(getattr(self.config, "evaluation", Dict()), "protocol", "fixed_split")) == "fold_rotation"
+        evaluation = getattr(self.task_config, "evaluation", Dict())
+        return str(getattr(evaluation, "protocol", "fixed_split")) == "fold_rotation"
 
     def _fold_rotation_test_folds(self) -> list[int]:
         """Return normalized fold-rotation test folds from config.
@@ -1968,7 +1969,7 @@ class NASModelClient:
             Requested UrbanSound8K test folds.
         """
 
-        evaluation = getattr(self.config, "evaluation", Dict())
+        evaluation = getattr(self.task_config, "evaluation", Dict())
         fold_rotation = getattr(evaluation, "fold_rotation", Dict())
         return [int(fold) for fold in fold_rotation.get("test_folds", list(range(1, 11)))]
 

@@ -34,15 +34,14 @@ dataset:
     fold_rotation_cache_dir: "data/urbansound8k/cache/v2_logmel_16k_2s_64mels_25ms_10ms_folds/fold_rotation"
     batch_period_ms: 2000
 
-evaluation:
-  protocol: fixed_split
-  fold_rotation:
-    test_folds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-
 task:
   name: sound_classification
   params:
     early_stopping_patience: 20
+    evaluation:
+      protocol: fixed_split
+      fold_rotation:
+        test_folds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 model:
   family: audio_dscnn

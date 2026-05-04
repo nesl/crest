@@ -37,10 +37,9 @@ make prepare-audio-dataset URBANSOUND8K_ARGS="--download --accept-license"
 
 The audio preparation script writes `metadata.json`, `train.npz`, `val.npz`,
 `test.npz`, and `calibration.npz`. The cache schema, feature parameters, crop
-policy, normalization, class ordering, and calibration selection are defined in
-[`audio_backend_p0_5_contract.md`](../../audio_backend_p0_5_contract.md) and
-the Phase 9 fold-rotation update in
-[`audio_backend_p9.md`](../../notes_and_papers/audio_backend_p9.md).
+policy, normalization, class ordering, and calibration selection are implemented
+in the preparation script and consumed by the `urbansound8k_mel` dataset
+adapter.
 
 The script lives at:
 
@@ -77,7 +76,16 @@ The preparation script still uses the per-activity split files under
 `data/oxiod/<activity>/` as its default template source so the loader-facing
 dataset layout remains unchanged.
 
-## Current Loader Path
+## Current Loader Paths
+
+The built-in UrbanSound8K audio dataset adapter lives in:
+
+- [`src/tinyodom/datasets/urbansound8k_mel.py`](../../src/tinyodom/datasets/urbansound8k_mel.py)
+- [`src/tinyodom/datasets/urbansound8k_common.py`](../../src/tinyodom/datasets/urbansound8k_common.py)
+
+It loads the cached log-mel feature tensors produced by
+`prepare_urbansound8k.py` and is selected with `dataset.name:
+urbansound8k_mel`.
 
 The built-in OxIOD dataset adapter lives in:
 

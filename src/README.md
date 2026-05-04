@@ -44,14 +44,16 @@ points above.
 - [`tinyodom/pipeline_types.py`](tinyodom/pipeline_types.py)
   Defines shared typed payloads passed between the modular pipeline layers.
 - [`tinyodom/datasets/`](tinyodom/datasets)
-  Dataset adapters. Today this repo ships the built-in
-  [`oxiod.py`](tinyodom/datasets/oxiod.py) adapter.
+  Dataset adapters. Built-ins include [`oxiod.py`](tinyodom/datasets/oxiod.py)
+  and [`urbansound8k_mel.py`](tinyodom/datasets/urbansound8k_mel.py).
 - [`tinyodom/tasks/`](tinyodom/tasks)
-  Task adapters. Today this repo ships the built-in
-  [`odometry_regression.py`](tinyodom/tasks/odometry_regression.py) task.
+  Task adapters. Built-ins include
+  [`odometry_regression.py`](tinyodom/tasks/odometry_regression.py) and
+  [`sound_classification.py`](tinyodom/tasks/sound_classification.py).
 - [`tinyodom/model_families/`](tinyodom/model_families)
-  Model-family implementations. Today this repo ships the built-in
-  [`odom_tcn.py`](tinyodom/model_families/odom_tcn.py) family.
+  Model-family implementations. Built-ins include
+  [`odom_tcn.py`](tinyodom/model_families/odom_tcn.py) and
+  [`audio_dscnn.py`](tinyodom/model_families/audio_dscnn.py).
 - [`tinyodom/microcontrollers/`](tinyodom/microcontrollers)
   Hardware backends and backend registry/factory logic. See
   [`tinyodom/microcontrollers/README.md`](tinyodom/microcontrollers/README.md)
@@ -262,7 +264,10 @@ Key files:
 - [`tinyodom/interfaces.py`](tinyodom/interfaces.py)
   `ModelFamilyABC` defines the contract.
 - [`tinyodom/model_families/odom_tcn.py`](tinyodom/model_families/odom_tcn.py)
-  Concrete example of the built-in family.
+  Concrete example of the built-in odometry TCN family.
+- [`tinyodom/model_families/audio_dscnn.py`](tinyodom/model_families/audio_dscnn.py)
+  Concrete example of a built-in classification family over cached log-mel
+  tensors.
 - [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py)
   Built-in registration.
 - [`tinyodom/component_selection.py`](tinyodom/component_selection.py)
@@ -294,8 +299,9 @@ Important boundary:
 Key files:
 
 - [`tinyodom/interfaces.py`](tinyodom/interfaces.py) for `DatasetABC`
-- [`tinyodom/datasets/oxiod.py`](tinyodom/datasets/oxiod.py) as the built-in
-  example
+- [`tinyodom/datasets/oxiod.py`](tinyodom/datasets/oxiod.py) and
+  [`tinyodom/datasets/urbansound8k_mel.py`](tinyodom/datasets/urbansound8k_mel.py)
+  as built-in examples
 - [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py) for the
   current registration pattern
 
@@ -313,7 +319,8 @@ Key files:
 
 - [`tinyodom/interfaces.py`](tinyodom/interfaces.py) for `TaskABC`
 - [`tinyodom/tasks/odometry_regression.py`](tinyodom/tasks/odometry_regression.py)
-  as the built-in example
+  and [`tinyodom/tasks/sound_classification.py`](tinyodom/tasks/sound_classification.py)
+  as built-in examples
 - [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py) for the
   current registration pattern
 

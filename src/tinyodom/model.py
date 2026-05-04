@@ -1992,7 +1992,7 @@ def load_config(
 
 
 def _validate_evaluation_config(config: Dict) -> None:
-    """Validate and normalize final evaluation/reporting settings.
+    """Validate and normalize task-owned final evaluation/reporting settings.
 
     Parameters
     ----------
@@ -2002,44 +2002,66 @@ def _validate_evaluation_config(config: Dict) -> None:
     Returns
     -------
     None
-        Mutates ``config.evaluation`` with normalized defaults or raises.
+        Mutates ``config.task.params.evaluation`` with normalized defaults or
+        raises.
     """
 
-    evaluation = Dict(config.get("evaluation", {}))
+    if "evaluation" in config:
+        raise KeyError(
+            "Top-level 'evaluation' is no longer supported; move it to "
+            "'task.params.evaluation'."
+        )
+
+    task = Dict(config.get("task", {}))
+    task_params = Dict(task.get("params", {}))
+    evaluation = Dict(task_params.get("evaluation", {}))
     protocol = str(evaluation.get("protocol", "fixed_split")).strip().lower()
     if protocol not in {"fixed_split", "fold_rotation"}:
-        raise ValueError("evaluation.protocol must be one of: fixed_split, fold_rotation.")
+        raise ValueError("task.params.evaluation.protocol must be one of: fixed_split, fold_rotation.")
     fold_rotation = Dict(evaluation.get("fold_rotation", {}))
     raw_test_folds = fold_rotation.get("test_folds", list(range(1, 11)))
     if not isinstance(raw_test_folds, list) or not raw_test_folds:
-        raise ValueError("evaluation.fold_rotation.test_folds must be a non-empty list.")
+        raise ValueError("task.params.evaluation.fold_rotation.test_folds must be a non-empty list.")
     test_folds: list[int] = []
     for raw_fold in raw_test_folds:
         if isinstance(raw_fold, bool):
-            raise ValueError("evaluation.fold_rotation.test_folds entries must be integers from 1 to 10.")
+            raise ValueError(
+                "task.params.evaluation.fold_rotation.test_folds entries must be integers from 1 to 10."
+            )
         try:
             fold = int(raw_fold)
         except (TypeError, ValueError) as exc:
-            raise ValueError("evaluation.fold_rotation.test_folds entries must be integers from 1 to 10.") from exc
+            raise ValueError(
+                "task.params.evaluation.fold_rotation.test_folds entries must be integers from 1 to 10."
+            ) from exc
         if fold < 1 or fold > 10:
-            raise ValueError("evaluation.fold_rotation.test_folds entries must be integers from 1 to 10.")
+            raise ValueError(
+                "task.params.evaluation.fold_rotation.test_folds entries must be integers from 1 to 10."
+            )
         if fold in test_folds:
-            raise ValueError("evaluation.fold_rotation.test_folds entries must be unique.")
+            raise ValueError("task.params.evaluation.fold_rotation.test_folds entries must be unique.")
         test_folds.append(fold)
     fold_rotation.test_folds = test_folds
     evaluation.protocol = protocol
     evaluation.fold_rotation = fold_rotation
-    config.evaluation = evaluation
+    task_params.evaluation = evaluation
+    task.params = task_params
+    config.task = task
 
     if protocol != "fold_rotation":
         return
     if is_multiobjective_score_config(config.nas.score):
-        raise ValueError("evaluation.protocol=fold_rotation is only supported for single-objective NAS.")
+        raise ValueError("task.params.evaluation.protocol=fold_rotation is only supported for single-objective NAS.")
     dataset_params = Dict(config.get("dataset", {}).get("params", {}))
     if dataset_params.get("cache_dir", None) in (None, ""):
-        raise ValueError("evaluation.protocol=fold_rotation requires dataset.params.cache_dir for fixed-split NAS.")
+        raise ValueError(
+            "task.params.evaluation.protocol=fold_rotation requires dataset.params.cache_dir "
+            "for fixed-split NAS."
+        )
     if dataset_params.get("fold_rotation_cache_dir", None) in (None, ""):
-        raise ValueError("evaluation.protocol=fold_rotation requires dataset.params.fold_rotation_cache_dir.")
+        raise ValueError(
+            "task.params.evaluation.protocol=fold_rotation requires dataset.params.fold_rotation_cache_dir."
+        )
 
 
 def count_flops(model, input_shape):

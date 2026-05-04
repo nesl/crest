@@ -43,18 +43,30 @@ Use `--prepare-only` to export, stage, and compile the Arduino candidate
 without upload or measurement. Add `--device-name ARDUINO_NANO_33_BLE_SENSE`
 to exercise the BLE compile/preflight path.
 
+The hardware-free audio training smoke command is:
+
+```bash
+make audio-desktop-smoke
+```
+
+Use `AUDIO_SMOKE_ARGS` to override epochs, row limits, config path, or output
+directory for this host-only check.
+
 Phase 9 adds optional audio final fold-rotation reporting through:
 
-- `evaluation.protocol: fixed_split | fold_rotation`
-- `evaluation.fold_rotation.test_folds`, defaulting to all 10 UrbanSound8K
-  folds.
+- `task.params.evaluation.protocol: fixed_split | fold_rotation`
+- `task.params.evaluation.fold_rotation.test_folds`, defaulting to all 10
+  UrbanSound8K folds.
 - `dataset.params.fold_rotation_cache_dir`, required only when fold rotation is
   enabled.
 
 The fixed `dataset.params.cache_dir` remains the source for NAS, HIL smoke, and
 deployable export. Fold rotation runs after the fixed-split final checkpoint and
-does not export per-fold models. `evaluation.protocol: fold_rotation` is
-single-objective only; multi-objective NAS fails during config validation.
+does not export per-fold models.
+`task.params.evaluation.protocol: fold_rotation` is single-objective only;
+multi-objective NAS fails during config validation. The dataset owns where
+fold-specific caches live; the task owns whether final reporting rotates
+through those folds.
 
 The runtime loader and validator live in
 [`../tinyodom/model.py`](../tinyodom/model.py), while the task-aware bootstrap
@@ -72,7 +84,8 @@ The main top-level blocks in the current config surface are:
   Required dataset selection block. The built-in OxIOD dataset uses
   `dataset.name: oxiod` plus the keys under `dataset.params`.
 - `task`
-  Required task selection block.
+  Required task selection block. Task-owned final reporting policy, such as
+  audio fold rotation, lives under `task.params.evaluation`.
 - `model`
   Required model-family selection block.
 - `training`
@@ -82,10 +95,6 @@ The main top-level blocks in the current config surface are:
   Scoring and pruning policy.
 - `outputs`
   Output directories and derived artifact naming inputs.
-- `evaluation`
-  Optional final reporting protocol. Defaults to `fixed_split`; `fold_rotation`
-  is currently audio-only final reporting and requires schema-2 UrbanSound8K
-  fold caches.
 - `network`
   HIL server/client socket settings.
 - `logging`

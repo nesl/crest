@@ -1,9 +1,9 @@
 # TinyODOM-EX
 
-TinyODOM-EX is a hardware-aware neural odometry repo. It combines dataset,
-task, and model-family selection with board-specific hardware-in-the-loop
-measurement so the same training/NAS flow can target Arduino-class boards,
-Portenta H7, and the current STM32 N6 backend.
+TinyODOM-EX is a hardware-aware tinyML NAS repo. It combines dataset, task, and
+model-family selection with board-specific hardware-in-the-loop measurement so
+the same training/NAS flow can target odometry and audio-classification models
+on Arduino-class boards, Portenta H7, and the current STM32 N6 backend.
 
 ## Architecture At A Glance
 
@@ -26,19 +26,26 @@ For the source-level architecture and extension points, see
    Use this when you want to run NAS/training without talking to hardware.
    Start from `src/config/nas_config.yaml`, set `device.hil: false`, and read
    [src/config/README.md](src/config/README.md) plus [src/README.md](src/README.md).
+   For the UrbanSound8K audio DS-CNN path, start from
+   [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
+   and use `make audio-desktop-smoke` for a quick hardware-free check.
 
 2. **Arduino HIL**
    Use this for Arduino CLI-backed DUTs and harness-backed measurement flows.
    Start from [src/config/nas_config_ble.yaml](src/config/nas_config_ble.yaml)
    for Nano 33 BLE or
    [src/config/nas_config_portenta.yaml](src/config/nas_config_portenta.yaml)
-   for Portenta H7. Then read
+   for Portenta H7. For the audio DS-CNN smoke path, use
+   [src/config/nas_config_audio_portenta.yaml](src/config/nas_config_audio_portenta.yaml)
+   with `make audio-portenta-hil-smoke`. Then read
    [src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md)
    and [sketches/README.md](sketches/README.md).
 
 3. **STM32 HIL**
    Use this for the current STM32 N6 backend.
    Start from [src/config/nas_config.yaml](src/config/nas_config.yaml), then
+   use [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
+   for the audio DS-CNN smoke path. Then
    read [src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md)
    and the committed STM32 workspace notes under
    [sketches/stm32/tinyodom_stm32_lrun/README.md](sketches/stm32/tinyodom_stm32_lrun/README.md).
@@ -88,6 +95,18 @@ If you are CPU-only, the Conda environment already provides the dependencies
 needed by the repo.
 
 ## Dataset Preparation
+
+For UrbanSound8K audio experiments, prepare the cached log-mel tensors before
+running audio training or HIL smoke commands:
+
+```bash
+make prepare-audio-dataset
+```
+
+Use `URBANSOUND8K_ARGS="--download --accept-license"` when you want the
+preparation script to download the dataset through soundata, or
+`URBANSOUND8K_ARGS="--fold-rotation"` when you also need the Phase 9
+fold-rotation reporting caches.
 
 1. Download the OxIOD "Complete Dataset" zip from `http://deepio.cs.ox.ac.uk/`.
 2. Rename it to `OxIOD.zip` or pass an explicit path.
@@ -171,15 +190,21 @@ The shipped starting points are:
   BLE-focused starting point for `ARDUINO_NANO_33_BLE_SENSE`.
 - [src/config/nas_config_portenta.yaml](src/config/nas_config_portenta.yaml)
   Portenta H7-focused starting point.
+- [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
+  UrbanSound8K audio DS-CNN starting point for desktop training and STM32 N657
+  smoke/HIL work.
+- [src/config/nas_config_audio_portenta.yaml](src/config/nas_config_audio_portenta.yaml)
+  UrbanSound8K audio DS-CNN starting point for Arduino-backed Portenta H7 and
+  BLE compile/preflight smoke work.
 
 The highest-signal fields for a first pass are:
 
 - `device.*`
   Target selection, HIL enable/disable, serial ports, runtime mode, and
   backend-specific nested options.
-- `data.*`
-  OxIOD sampling rate, window size, stride, dataset location, and calibration
-  subset sizing.
+- `dataset.*`
+  Dataset adapter selection and dataset-local paths/parameters, including
+  OxIOD windowing or UrbanSound8K cache locations.
 - `training.*`
   NAS epochs/trials, full-training epochs, quantization, and the runtime-side
   `energy_aware` / `input_mode` switches.
@@ -248,6 +273,12 @@ Artifacts are written under the configured `outputs.models_dir` and
 
 ## Smoke Tests
 
+- Audio desktop training smoke:
+  [analysis_scripts/audio_desktop_smoke/README.md](analysis_scripts/audio_desktop_smoke/README.md)
+- Audio STM32 HIL smoke:
+  [analysis_scripts/audio_stm32_hil_smoke/README.md](analysis_scripts/audio_stm32_hil_smoke/README.md)
+- Audio Portenta/BLE HIL smoke:
+  [analysis_scripts/audio_portenta_hil_smoke/README.md](analysis_scripts/audio_portenta_hil_smoke/README.md)
 - Quick HIL sanity check:
   [analysis_scripts/hil_single_run/README.md](analysis_scripts/hil_single_run/README.md)
 - STM32 toy AI smoke test:
@@ -270,7 +301,7 @@ Artifacts are written under the configured `outputs.models_dir` and
 - [analysis_scripts/README.md](analysis_scripts/README.md)
   One-off analysis and validation utilities.
 - [data/dataset_download_and_splits/README.md](data/dataset_download_and_splits/README.md)
-  OxIOD preparation and split details.
+  OxIOD preparation plus UrbanSound8K audio cache preparation.
 
 ## Troubleshooting
 
@@ -279,5 +310,7 @@ Artifacts are written under the configured `outputs.models_dir` and
   rules documented in the MCU README.
 - If STM32 bootstrap fails, confirm the full `STM32CubeCLT` toolchain is on
   `PATH` before rerunning `make stm32-setup`.
-- If dataset preparation fails, confirm the OxIOD zip exists and that the repo
-  still contains the tracked split templates under `data/oxiod/<activity>/`.
+- If OxIOD preparation fails, confirm the zip exists and that the repo still
+  contains the tracked split templates under `data/oxiod/<activity>/`.
+- If audio smoke commands fail while loading data, run `make prepare-audio-dataset`
+  and confirm the UrbanSound8K cache path in the selected config exists.

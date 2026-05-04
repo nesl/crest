@@ -77,6 +77,13 @@ target core exposes a DWT cycle counter, the DUT can now report:
   - Produces attempt CSV, aggregates JSON, and latency-vs-ticks scatter PNG.
   - See `analysis_scripts/clock_tick_latency/README.md`.
 
+- `audio_desktop_smoke/`
+  - Runs a hardware-free UrbanSound8K audio DS-CNN training smoke pass over
+    cached log-mel feature tensors.
+  - Produces a small checkpoint plus history/metrics JSON under
+    `models/audio_desktop_smoke/`.
+  - See `analysis_scripts/audio_desktop_smoke/README.md`.
+
 - `audio_stm32_hil_smoke/`
   - Runs the Phase 6 STM32 smoke path for `audio_dscnn` over cached
     UrbanSound8K log-mel feature tensors.
@@ -85,6 +92,12 @@ target core exposes a DWT cycle counter, the DUT can now report:
   - Reports classifier inference over precomputed features only; it does not
     include firmware-side microphone capture or log-mel feature extraction.
   - See `analysis_scripts/audio_stm32_hil_smoke/README.md`.
+
+- `audio_portenta_hil_smoke/`
+  - Runs the Phase 8 Arduino-backed audio DS-CNN smoke path for Portenta H7 and
+    BLE compile/preflight coverage over cached UrbanSound8K log-mel tensors.
+  - Supports preflight-only, prepare-only, and full HIL modes.
+  - See `analysis_scripts/audio_portenta_hil_smoke/README.md`.
 
 - `stm32_example_project/`
   - STM32N6 HIL package for `NUCLEO-N657X0-Q`.
