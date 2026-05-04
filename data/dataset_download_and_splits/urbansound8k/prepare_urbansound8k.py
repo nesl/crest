@@ -19,7 +19,9 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from tinyodom.datasets.urbansound8k_common import (  # noqa: E402
+    ALL_FOLDS,
     BATCH_PERIOD_MS,
+    CACHE_SCHEMA_VERSION,
     CACHE_VERSION,
     CALIBRATION_EXAMPLES,
     CENTER,
@@ -31,6 +33,7 @@ from tinyodom.datasets.urbansound8k_common import (  # noqa: E402
     EXPECTED_FRAMES,
     FEATURE_DTYPE,
     FEATURE_KIND,
+    FOLD_ROTATION_DIRNAME,
     FOLD_SPLIT,
     HOP_LENGTH_SAMPLES,
     HOP_MS,
@@ -50,6 +53,7 @@ from tinyodom.datasets.urbansound8k_common import (  # noqa: E402
 )
 
 FeatureFn = Callable[[np.ndarray, int], np.ndarray]
+FoldSplit = dict[str, tuple[int, ...]]
 
 
 @dataclass(frozen=True)
@@ -93,6 +97,18 @@ class PrepConfig:
         """
 
         return self.cache_root / self.cache_version
+
+    @property
+    def fold_rotation_cache_dir(self) -> Path:
+        """Return the root containing per-fold rotation cache directories.
+
+        Returns
+        -------
+        pathlib.Path
+            Directory where `fold_XX` cache directories are stored.
+        """
+
+        return self.cache_dir / FOLD_ROTATION_DIRNAME
 
 
 @dataclass(frozen=True)
@@ -162,10 +178,56 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--calibration-examples", type=int, default=CALIBRATION_EXAMPLES)
     parser.add_argument("--train-crop-variants", type=int, default=TRAIN_CROP_VARIANTS)
     parser.add_argument("--crop-seed", type=int, default=CROP_SEED)
+    parser.add_argument(
+        "--fold-rotation",
+        action="store_true",
+        help="Also build schema-2 train-8/val-1/test-1 fold-rotation caches.",
+    )
+    parser.add_argument(
+        "--fold-rotation-test-folds",
+        default=",".join(str(fold) for fold in ALL_FOLDS),
+        help="Comma-separated test folds for fold-rotation cache generation.",
+    )
     parser.add_argument("--download", action="store_true")
     parser.add_argument("--accept-license", action="store_true")
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
+
+
+def parse_test_folds(raw_value: str | Sequence[int]) -> tuple[int, ...]:
+    """Parse and validate a fold-rotation test-fold list.
+
+    Parameters
+    ----------
+    raw_value : str | Sequence[int]
+        Comma-separated string or sequence of fold numbers.
+
+    Returns
+    -------
+    tuple[int, ...]
+        Unique fold numbers in caller-provided order.
+    """
+
+    if isinstance(raw_value, str):
+        raw_items = [item.strip() for item in raw_value.split(",") if item.strip()]
+    else:
+        raw_items = list(raw_value)
+    if not raw_items:
+        raise ValueError("fold-rotation test folds must not be empty.")
+    folds: list[int] = []
+    for item in raw_items:
+        if isinstance(item, bool):
+            raise ValueError("fold-rotation test folds must be integers from 1 to 10.")
+        try:
+            fold = int(item)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("fold-rotation test folds must be integers from 1 to 10.") from exc
+        if fold not in ALL_FOLDS:
+            raise ValueError("fold-rotation test folds must be integers from 1 to 10.")
+        if fold in folds:
+            raise ValueError("fold-rotation test folds must be unique.")
+        folds.append(fold)
+    return tuple(folds)
 
 
 def config_from_args(args: argparse.Namespace) -> PrepConfig:
@@ -442,13 +504,39 @@ def compute_normalization_stats(train_inputs: np.ndarray) -> tuple[np.ndarray, n
     return mean, std
 
 
-def split_records(records: Sequence[ClipRecord]) -> dict[str, list[ClipRecord]]:
-    """Partition clip records by the fixed UrbanSound8K fold split.
+def fold_split_for_test_fold(test_fold: int) -> FoldSplit:
+    """Return the Phase 9 train-8/val-1/test-1 split for one test fold.
+
+    Parameters
+    ----------
+    test_fold : int
+        UrbanSound8K fold to use as the held-out test split.
+
+    Returns
+    -------
+    dict[str, tuple[int, ...]]
+        Split mapping with train, validation, and test fold tuples.
+    """
+
+    if int(test_fold) not in ALL_FOLDS:
+        raise ValueError("test_fold must be an UrbanSound8K fold from 1 to 10.")
+    val_fold = int(test_fold) % len(ALL_FOLDS) + 1
+    train_folds = tuple(fold for fold in ALL_FOLDS if fold not in {int(test_fold), val_fold})
+    return {"train": train_folds, "val": (val_fold,), "test": (int(test_fold),)}
+
+
+def split_records(
+    records: Sequence[ClipRecord],
+    fold_split: FoldSplit | None = None,
+) -> dict[str, list[ClipRecord]]:
+    """Partition clip records by a declared UrbanSound8K fold split.
 
     Parameters
     ----------
     records : Sequence[ClipRecord]
         Clip records to partition.
+    fold_split : dict[str, tuple[int, ...]] | None, optional
+        Fold split to apply. Defaults to the fixed development split.
 
     Returns
     -------
@@ -456,10 +544,11 @@ def split_records(records: Sequence[ClipRecord]) -> dict[str, list[ClipRecord]]:
         Mapping for train, validation, and test records.
     """
 
+    active_split = FOLD_SPLIT if fold_split is None else fold_split
     split_by_name = {name: [] for name in ("train", "val", "test")}
     fold_to_split = {
         fold: split_name
-        for split_name, folds in FOLD_SPLIT.items()
+        for split_name, folds in active_split.items()
         for fold in folds
     }
     for record in sorted(records, key=lambda item: item.clip_id):
@@ -589,7 +678,15 @@ def build_split_payload(
     }
 
 
-def expected_metadata(config: PrepConfig, mean: np.ndarray | None = None, std: np.ndarray | None = None) -> dict[str, Any]:
+def expected_metadata(
+    config: PrepConfig,
+    mean: np.ndarray | None = None,
+    std: np.ndarray | None = None,
+    *,
+    fold_split: FoldSplit | None = None,
+    evaluation_protocol: str = "fixed_split",
+    rotation_fold_index: int | None = None,
+) -> dict[str, Any]:
     """Build the metadata JSON payload for a generated cache.
 
     Parameters
@@ -600,6 +697,12 @@ def expected_metadata(config: PrepConfig, mean: np.ndarray | None = None, std: n
         Optional normalization mean.
     std : numpy.ndarray | None, optional
         Optional normalization standard deviation.
+    fold_split : dict[str, tuple[int, ...]] | None, optional
+        Split ownership metadata. Defaults to the fixed development split.
+    evaluation_protocol : str, optional
+        Cache protocol, either ``fixed_split`` or ``fold_rotation``.
+    rotation_fold_index : int | None, optional
+        Held-out test fold for fold-rotation caches.
 
     Returns
     -------
@@ -608,8 +711,9 @@ def expected_metadata(config: PrepConfig, mean: np.ndarray | None = None, std: n
     """
 
     zero_stats = [0.0 for _ in range(MEL_BINS)]
-    return {
-        "schema_version": 1,
+    active_split = FOLD_SPLIT if fold_split is None else fold_split
+    metadata = {
+        "schema_version": CACHE_SCHEMA_VERSION,
         "dataset_name": DATASET_NAME,
         "component_name": COMPONENT_NAME,
         "cache_version": config.cache_version,
@@ -639,7 +743,9 @@ def expected_metadata(config: PrepConfig, mean: np.ndarray | None = None, std: n
             np.asarray(std, dtype=np.float32).tolist() if std is not None else zero_stats
         ),
         "normalization_epsilon": NORMALIZATION_EPSILON,
-        "fold_split": {key: list(value) for key, value in FOLD_SPLIT.items()},
+        "evaluation_protocol": str(evaluation_protocol),
+        "fold_split": {key: list(value) for key, value in active_split.items()},
+        "normalization_scope": "train_split",
         "batch_period_ms": config.batch_period_ms,
         "train_crop_variants": config.train_crop_variants,
         "crop_seed": config.crop_seed,
@@ -647,6 +753,9 @@ def expected_metadata(config: PrepConfig, mean: np.ndarray | None = None, std: n
         "class_names": list(CLASS_NAMES),
         "label_encoding": LABEL_ENCODING,
     }
+    if evaluation_protocol == "fold_rotation":
+        metadata["rotation_fold_index"] = int(rotation_fold_index) if rotation_fold_index is not None else None
+    return metadata
 
 
 def write_cache(cache_dir: Path, metadata: dict[str, Any], payloads: dict[str, dict[str, np.ndarray]]) -> None:
@@ -668,8 +777,15 @@ def write_cache(cache_dir: Path, metadata: dict[str, Any], payloads: dict[str, d
     (cache_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def validate_cache(cache_dir: Path, config: PrepConfig) -> bool:
-    """Validate an existing cache against the Phase 1 contract.
+def validate_cache(
+    cache_dir: Path,
+    config: PrepConfig,
+    *,
+    fold_split: FoldSplit | None = None,
+    evaluation_protocol: str = "fixed_split",
+    rotation_fold_index: int | None = None,
+) -> bool:
+    """Validate an existing cache against the schema-2 cache contract.
 
     Parameters
     ----------
@@ -677,6 +793,12 @@ def validate_cache(cache_dir: Path, config: PrepConfig) -> bool:
         Existing cache directory.
     config : PrepConfig
         Requested cache configuration.
+    fold_split : dict[str, tuple[int, ...]] | None, optional
+        Expected fold split. Defaults to the fixed development split.
+    evaluation_protocol : str, optional
+        Expected cache protocol.
+    rotation_fold_index : int | None, optional
+        Expected held-out fold for fold-rotation caches.
 
     Returns
     -------
@@ -695,7 +817,18 @@ def validate_cache(cache_dir: Path, config: PrepConfig) -> bool:
     if not metadata_path.exists():
         return False
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    expected = expected_metadata(config)
+    # Schema upgrades are intentionally rebuildable from the raw dataset. Other
+    # schema-2 metadata mismatches still raise so accidental config drift is not
+    # silently overwritten.
+    if metadata.get("schema_version") != CACHE_SCHEMA_VERSION:
+        return False
+    active_split = FOLD_SPLIT if fold_split is None else fold_split
+    expected = expected_metadata(
+        config,
+        fold_split=active_split,
+        evaluation_protocol=evaluation_protocol,
+        rotation_fold_index=rotation_fold_index,
+    )
     for field in REQUIRED_METADATA_FIELDS:
         if field not in metadata:
             raise ValueError(f"Cache metadata missing required field '{field}'.")
@@ -703,6 +836,9 @@ def validate_cache(cache_dir: Path, config: PrepConfig) -> bool:
             continue
         if metadata[field] != expected[field]:
             raise ValueError(f"Cache metadata field '{field}' does not match requested config.")
+    if evaluation_protocol == "fold_rotation":
+        if metadata.get("rotation_fold_index") != rotation_fold_index:
+            raise ValueError("Cache metadata field 'rotation_fold_index' does not match requested config.")
     for stat_field in ("normalization_mean", "normalization_std"):
         values = metadata.get(stat_field)
         if not isinstance(values, list) or len(values) != MEL_BINS:
@@ -743,7 +879,7 @@ def validate_cache(cache_dir: Path, config: PrepConfig) -> bool:
             labels = split_data["labels"]
             if np.any(labels < 0) or np.any(labels >= len(CLASS_NAMES)):
                 raise ValueError(f"{split_path} contains labels outside the UrbanSound8K class range.")
-            expected_folds = set(FOLD_SPLIT["train"] if split_name == "calibration" else FOLD_SPLIT[split_name])
+            expected_folds = set(active_split["train"] if split_name == "calibration" else active_split[split_name])
             actual_folds = set(int(value) for value in split_data["folds"].tolist())
             if not actual_folds.issubset(expected_folds):
                 raise ValueError(f"{split_path} contains folds outside the expected {split_name} split.")
@@ -762,6 +898,10 @@ def build_cache_from_records(
     *,
     force: bool = False,
     feature_fn: FeatureFn = compute_log_mel_features,
+    fold_split: FoldSplit | None = None,
+    evaluation_protocol: str = "fixed_split",
+    rotation_fold_index: int | None = None,
+    cache_dir: Path | None = None,
 ) -> Path:
     """Generate or reuse a deterministic UrbanSound8K feature cache.
 
@@ -775,6 +915,14 @@ def build_cache_from_records(
         Whether to overwrite conflicting existing caches.
     feature_fn : callable, optional
         Feature extractor used for production or tests.
+    fold_split : dict[str, tuple[int, ...]] | None, optional
+        Split mapping. Defaults to the fixed development split.
+    evaluation_protocol : str, optional
+        Cache protocol to store in metadata.
+    rotation_fold_index : int | None, optional
+        Held-out fold for fold-rotation caches.
+    cache_dir : pathlib.Path | None, optional
+        Destination override. Defaults to ``config.cache_dir``.
 
     Returns
     -------
@@ -782,12 +930,19 @@ def build_cache_from_records(
         Generated or reused cache directory.
     """
 
-    cache_dir = config.cache_dir
+    active_split = FOLD_SPLIT if fold_split is None else fold_split
+    cache_dir = config.cache_dir if cache_dir is None else Path(cache_dir)
     if cache_dir.exists() and not force:
-        if validate_cache(cache_dir, config):
+        if validate_cache(
+            cache_dir,
+            config,
+            fold_split=active_split,
+            evaluation_protocol=evaluation_protocol,
+            rotation_fold_index=rotation_fold_index,
+        ):
             return cache_dir
 
-    splits = split_records(records)
+    splits = split_records(records, active_split)
     # Generate train features before all other splits so normalization is based
     # on the expanded training crop rows and never deferred to the loader.
     train_payload_raw = build_split_payload(splits["train"], "train", config, feature_fn=feature_fn)
@@ -808,8 +963,68 @@ def build_cache_from_records(
             normalization=normalization,
         ),
     }
-    write_cache(cache_dir, expected_metadata(config, mean, std), payloads)
+    write_cache(
+        cache_dir,
+        expected_metadata(
+            config,
+            mean,
+            std,
+            fold_split=active_split,
+            evaluation_protocol=evaluation_protocol,
+            rotation_fold_index=rotation_fold_index,
+        ),
+        payloads,
+    )
     return cache_dir
+
+
+def build_fold_rotation_caches(
+    records: Sequence[ClipRecord],
+    config: PrepConfig,
+    *,
+    test_folds: Sequence[int] = ALL_FOLDS,
+    force: bool = False,
+    feature_fn: FeatureFn = compute_log_mel_features,
+) -> list[Path]:
+    """Generate schema-2 fold-rotation caches for requested test folds.
+
+    Parameters
+    ----------
+    records : Sequence[ClipRecord]
+        UrbanSound8K clip records.
+    config : PrepConfig
+        Cache generation configuration.
+    test_folds : Sequence[int], optional
+        Test folds to materialize.
+    force : bool, optional
+        Whether to overwrite conflicting existing caches.
+    feature_fn : callable, optional
+        Feature extractor used for production or tests.
+
+    Returns
+    -------
+    list[pathlib.Path]
+        Generated or reused per-fold cache directories.
+    """
+
+    written: list[Path] = []
+    for test_fold in parse_test_folds(test_folds):
+        fold_split = fold_split_for_test_fold(test_fold)
+        # Each fold has its own train-derived normalization, so rotated caches
+        # are full cache directories rather than views over the fixed split.
+        written.append(
+            build_cache_from_records(
+                records,
+                config,
+                force=force,
+                feature_fn=feature_fn,
+                fold_split=fold_split,
+                evaluation_protocol="fold_rotation",
+                rotation_fold_index=test_fold,
+                cache_dir=config.fold_rotation_cache_dir / f"fold_{test_fold:02d}",
+            )
+        )
+    return written
 
 
 def require_soundata() -> Any:
@@ -938,12 +1153,18 @@ def main() -> None:
         download=bool(args.download),
         accept_license=bool(args.accept_license),
     )
-    cache_dir = build_cache_from_records(
-        records_from_soundata(dataset),
-        config,
-        force=bool(args.force),
-    )
+    records = records_from_soundata(dataset)
+    cache_dir = build_cache_from_records(records, config, force=bool(args.force))
     print(f"UrbanSound8K cache prepared in {cache_dir}")
+    if bool(getattr(args, "fold_rotation", False)):
+        fold_dirs = build_fold_rotation_caches(
+            records,
+            config,
+            test_folds=parse_test_folds(getattr(args, "fold_rotation_test_folds", ALL_FOLDS)),
+            force=bool(args.force),
+        )
+        print(f"UrbanSound8K fold-rotation caches prepared in {config.fold_rotation_cache_dir}")
+        print(f"Prepared {len(fold_dirs)} fold-rotation cache(s).")
 
 
 if __name__ == "__main__":

@@ -656,6 +656,26 @@ def _normalize_portenta_target_core(raw_value: object) -> str:
     return normalized
 
 
+def arduino_staged_sketch_path(outputs_dir: Path) -> Path:
+    """Return the Arduino CLI-compatible staged sketch path.
+
+    Parameters
+    ----------
+    outputs_dir : Path
+        Candidate directory that will contain the staged sketch.
+
+    Returns
+    -------
+    Path
+        Path whose filename matches the candidate directory basename.
+    """
+
+    candidate_dir = Path(outputs_dir)
+    if not candidate_dir.name:
+        raise ValueError(f"Candidate directory has no basename: {candidate_dir}")
+    return candidate_dir / f"{candidate_dir.name}.ino"
+
+
 def _sync_arduino_sketch_variant_for_config(
     config: Any,
     outputs_dir: Path,
@@ -679,7 +699,7 @@ def _sync_arduino_sketch_variant_for_config(
     Returns
     -------
     Path
-        Path to the staged ``odom_tcn.ino`` file.
+        Path to the staged ``{outputs_dir.name}.ino`` file.
 
     Raises
     ------
@@ -721,19 +741,19 @@ def _sync_arduino_sketch_variant_for_config(
                 "Arduino cadenced runtime only supports training.input_mode='uniform'."
             )
         variant_dir = _resolve_uniform_variant_dir()
-        variant_name = "tinyodom_tcn_energy_cadenced.ino"
+        variant_name = "tinyodom_inference_energy_cadenced.ino"
     elif not energy_aware:
         variant_dir = _resolve_uniform_variant_dir()
-        variant_name = "tinyodom_tcn_no_energy.ino"
+        variant_name = "tinyodom_inference_no_energy.ino"
     else:
         variants = {
-            "uniform": ("tinyodom_tcn_energy.ino", _resolve_uniform_variant_dir()),
+            "uniform": ("tinyodom_inference_energy.ino", _resolve_uniform_variant_dir()),
             "representative": (
-                "tinyodom_tcn_energy_representative.ino",
+                "tinyodom_inference_representative.ino",
                 sketch_variants_dir / "analysis_sketches",
             ),
             "real": (
-                "tinyodom_tcn_energy_real_data.ino",
+                "tinyodom_inference_real_data.ino",
                 sketch_variants_dir / "analysis_sketches",
             ),
         }
@@ -749,7 +769,9 @@ def _sync_arduino_sketch_variant_for_config(
         raise FileNotFoundError(f"Sketch variant not found: {variant_source}")
 
     outputs_dir.mkdir(parents=True, exist_ok=True)
-    sketch_target = outputs_dir / "odom_tcn.ino"
+    # Arduino CLI requires a sketch folder to contain an .ino with the same
+    # basename. Preserve that rule for every model family candidate directory.
+    sketch_target = arduino_staged_sketch_path(outputs_dir)
     shutil.copyfile(variant_source, sketch_target)
 
     common_source = sketch_variants_dir / "common"
@@ -761,10 +783,10 @@ def _sync_arduino_sketch_variant_for_config(
         shutil.copytree(variant_common_source, outputs_dir / "common", dirs_exist_ok=True)
 
     needs_header = variant_name in {
-        "tinyodom_tcn_energy_representative.ino",
-        "tinyodom_tcn_energy_real_data.ino",
+        "tinyodom_inference_representative.ino",
+        "tinyodom_inference_real_data.ino",
     }
-    header_source = sketch_variants_dir / "analysis_sketches" / "tinyodom_tcn_input_data.h"
+    header_source = sketch_variants_dir / "analysis_sketches" / "tinyodom_input_data.h"
     if needs_header:
         if not header_source.exists():
             raise FileNotFoundError(f"Input header not found: {header_source}")

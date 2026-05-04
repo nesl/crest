@@ -1462,6 +1462,170 @@ class EvaluateCheckpointTests(unittest.TestCase):
                 )
 
 
+class FoldRotationReportingTests(unittest.TestCase):
+    """Fold-rotation reporting should reuse the selected NAS hparams safely."""
+
+    def test_run_scoring_nas_runs_fixed_final_before_fold_rotation(self) -> None:
+        """Scoring orchestration should preserve fixed export before reports."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            client.config.evaluation = Dict(protocol="fold_rotation", fold_rotation=Dict(test_folds=[1]))
+            order: list[str] = []
+            trials_df = MagicMock()
+            study = SimpleNamespace(
+                trials=[object()],
+                best_value=0.75,
+                trials_dataframe=MagicMock(return_value=trials_df),
+            )
+
+            with patch.object(client, "run_nas", return_value=study), patch.object(
+                client,
+                "train_best_trial",
+                side_effect=lambda **_kwargs: order.append("fixed_train") or {"loss": [1.0]},
+            ), patch.object(
+                client,
+                "plot_training_history",
+                side_effect=lambda **_kwargs: order.append("plots") or {"loss_plot": "loss.png"},
+            ), patch.object(
+                client,
+                "evaluate_checkpoint",
+                side_effect=lambda **_kwargs: order.append("fixed_eval_export")
+                or {"checkpoint_path": "fixed.keras", "tflite_path": "fixed.tflite", "accuracy": 0.8},
+            ), patch.object(
+                client,
+                "run_fold_rotation_final_evaluation",
+                side_effect=lambda **_kwargs: order.append("fold_rotation")
+                or {"summary_path": "fold_rotation/fold_rotation_summary.json"},
+            ), patch.object(
+                client, "write_summary_bundle"
+            ) as write_summary:
+                client.run_scoring_nas(study_name="demo")
+
+            self.assertEqual(order, ["fixed_train", "plots", "fixed_eval_export", "fold_rotation"])
+            write_summary.assert_called_once()
+            self.assertEqual(
+                write_summary.call_args.kwargs["fold_rotation_artifacts"]["summary_path"],
+                "fold_rotation/fold_rotation_summary.json",
+            )
+
+    def test_run_fold_rotation_uses_per_fold_context_without_export(self) -> None:
+        """Fold reporting should write success artifacts for requested folds."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            client.config.dataset.params.fold_rotation_cache_dir = str(base / "fold_cache")
+            client.config.evaluation = Dict(
+                protocol="fold_rotation",
+                fold_rotation=Dict(test_folds=[1, 2]),
+            )
+
+            def _pipeline_for_fold(fold_cache_dir: Path) -> SimpleNamespace:
+                """Build one fake fold pipeline from the requested cache path.
+
+                Parameters
+                ----------
+                fold_cache_dir : pathlib.Path
+                    Per-fold cache directory requested by the runner.
+
+                Returns
+                -------
+                types.SimpleNamespace
+                    Fake bootstrapped pipeline for the fold.
+                """
+
+                fold = int(fold_cache_dir.name.split("_")[1])
+                task = MagicMock()
+                task.generate_closeout_artifacts.return_value = {"fold": fold}
+                return SimpleNamespace(
+                    bundle=client.dataset_bundle,
+                    target_spec=client.target_spec,
+                    model_build_context=client.model_build_context,
+                    selection={
+                        "model_config": client.model_config,
+                        "task_config": client.task_config,
+                    },
+                    task=task,
+                )
+
+            with patch.object(client, "_best_trial_params", return_value={"nb_filters": 2}), patch.object(
+                client, "_bootstrap_fold_pipeline", side_effect=_pipeline_for_fold
+            ), patch.object(
+                client, "_train_with_decoded_hparams", return_value={"loss": [1.0]}
+            ) as train_mock, patch.object(
+                client,
+                "_evaluate_checkpoint_with_context",
+                side_effect=[
+                    {"accuracy": 0.8, "macro_f1": 0.7, "loss": 0.5},
+                    {"accuracy": 0.9, "macro_f1": 0.8, "loss": 0.4},
+                ],
+            ) as eval_mock:
+                result = client.run_fold_rotation_final_evaluation(
+                    study_storage="sqlite:///optuna.db",
+                    study_name="demo",
+                    output_dir=base / "fold_rotation",
+                )
+
+            self.assertEqual(result["requested_test_folds"], [1, 2])
+            self.assertEqual(result["completed_test_folds"], [1, 2])
+            self.assertEqual(train_mock.call_count, 2)
+            self.assertEqual(eval_mock.call_count, 2)
+            self.assertFalse(eval_mock.call_args_list[0].kwargs["export_tflite"])
+            summary = json.loads(Path(result["summary_path"]).read_text(encoding="utf-8"))
+            self.assertTrue(summary["partial"])
+            self.assertEqual(summary["status"], "success")
+            self.assertAlmostEqual(summary["aggregates"]["accuracy"]["mean"], 0.85)
+            self.assertIsNotNone(summary["aggregates"]["accuracy"]["std"])
+
+    def test_run_fold_rotation_writes_partial_manifest_on_failure(self) -> None:
+        """Fold reporting should fail fast and persist completed folds."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            client.config.dataset.params.fold_rotation_cache_dir = str(base / "fold_cache")
+            client.config.evaluation = Dict(
+                protocol="fold_rotation",
+                fold_rotation=Dict(test_folds=[1, 2]),
+            )
+            pipeline = SimpleNamespace(
+                bundle=client.dataset_bundle,
+                target_spec=client.target_spec,
+                model_build_context=client.model_build_context,
+                selection={"model_config": client.model_config, "task_config": client.task_config},
+                task=MagicMock(generate_closeout_artifacts=MagicMock(return_value={})),
+            )
+
+            with patch.object(client, "_best_trial_params", return_value={"nb_filters": 2}), patch.object(
+                client, "_bootstrap_fold_pipeline", return_value=pipeline
+            ), patch.object(
+                client, "_train_with_decoded_hparams", return_value={"loss": [1.0]}
+            ), patch.object(
+                client,
+                "_evaluate_checkpoint_with_context",
+                side_effect=[
+                    {"accuracy": 0.8, "macro_f1": 0.7, "loss": 0.5},
+                    {"accuracy": float("nan"), "macro_f1": 0.8, "loss": 0.4},
+                ],
+            ):
+                with self.assertRaisesRegex(ValueError, "not finite"):
+                    client.run_fold_rotation_final_evaluation(
+                        study_storage="sqlite:///optuna.db",
+                        study_name="demo",
+                        output_dir=base / "fold_rotation",
+                    )
+
+            partial = json.loads(
+                (base / "fold_rotation" / "fold_rotation_summary.partial.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(partial["status"], "failed")
+            self.assertTrue(partial["partial"])
+            self.assertEqual(partial["completed_test_folds"], [1])
+            self.assertIsNone(partial["aggregates"])
+
+
 class TrajectoryMetricsTests(unittest.TestCase):
     """Trajectory metrics/plots should be generated with stubbed models."""
 

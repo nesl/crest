@@ -11,6 +11,7 @@ The current shipped config examples are:
 - [`nas_config_ble.yaml`](nas_config_ble.yaml)
 - [`nas_config_portenta.yaml`](nas_config_portenta.yaml)
 - [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml)
+- [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml)
 
 Use [`nas_config.yaml`](nas_config.yaml) as the default starting point for the
 repo. It is the main STM32-oriented example config and the most complete
@@ -18,7 +19,8 @@ reference for the current score/prune surface. Use the BLE and Portenta files
 when you want board-specific starting points for those Arduino-backed targets.
 Use [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml) for the
 desktop-first UrbanSound8K / DS-CNN audio path before moving into STM32 HIL
-smoke work.
+smoke work. Use [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml)
+for the Phase 8 Arduino audio path on Portenta H7 CM7.
 
 The current audio STM32 smoke command is:
 
@@ -30,6 +32,29 @@ Use `--prepare-only` to run ST Edge AI analyze/generate/staging without board
 upload, and omit both mode flags for a full STM32 HIL timing run. This smoke
 path measures classifier inference over precomputed log-mel feature tensors; it
 does not include firmware-side microphone capture or audio feature extraction.
+
+The current audio Portenta/BLE smoke command is:
+
+```bash
+make audio-portenta-hil-smoke AUDIO_PORTENTA_HIL_ARGS="--preflight-only"
+```
+
+Use `--prepare-only` to export, stage, and compile the Arduino candidate
+without upload or measurement. Add `--device-name ARDUINO_NANO_33_BLE_SENSE`
+to exercise the BLE compile/preflight path.
+
+Phase 9 adds optional audio final fold-rotation reporting through:
+
+- `evaluation.protocol: fixed_split | fold_rotation`
+- `evaluation.fold_rotation.test_folds`, defaulting to all 10 UrbanSound8K
+  folds.
+- `dataset.params.fold_rotation_cache_dir`, required only when fold rotation is
+  enabled.
+
+The fixed `dataset.params.cache_dir` remains the source for NAS, HIL smoke, and
+deployable export. Fold rotation runs after the fixed-split final checkpoint and
+does not export per-fold models. `evaluation.protocol: fold_rotation` is
+single-objective only; multi-objective NAS fails during config validation.
 
 The runtime loader and validator live in
 [`../tinyodom/model.py`](../tinyodom/model.py), while the task-aware bootstrap
@@ -57,6 +82,10 @@ The main top-level blocks in the current config surface are:
   Scoring and pruning policy.
 - `outputs`
   Output directories and derived artifact naming inputs.
+- `evaluation`
+  Optional final reporting protocol. Defaults to `fixed_split`; `fold_rotation`
+  is currently audio-only final reporting and requires schema-2 UrbanSound8K
+  fold caches.
 - `network`
   HIL server/client socket settings.
 - `logging`

@@ -11,7 +11,9 @@ import numpy as np
 from ..interfaces import DatasetABC
 from ..pipeline_types import DataSplit, DatasetBundle
 from .urbansound8k_common import (
+    ALL_FOLDS,
     BATCH_PERIOD_MS,
+    CACHE_SCHEMA_VERSION,
     CACHE_VERSION,
     CALIBRATION_EXAMPLES,
     CENTER,
@@ -40,6 +42,8 @@ from .urbansound8k_common import (
     WINDOW_LENGTH_SAMPLES,
     WINDOW_MS,
 )
+
+FoldSplit = dict[str, tuple[int, ...]]
 
 
 def _cfg_get(config: Any, key: str, default: Any = None) -> Any:
@@ -139,7 +143,7 @@ def _expected_metadata_values() -> dict[str, Any]:
     """
 
     return {
-        "schema_version": 1,
+        "schema_version": CACHE_SCHEMA_VERSION,
         "dataset_name": DATASET_NAME,
         "component_name": COMPONENT_NAME,
         "cache_version": CACHE_VERSION,
@@ -163,16 +167,81 @@ def _expected_metadata_values() -> dict[str, Any]:
         "normalization_mean_shape": [MEL_BINS],
         "normalization_std_shape": [MEL_BINS],
         "normalization_epsilon": NORMALIZATION_EPSILON,
-        "fold_split": {key: list(value) for key, value in FOLD_SPLIT.items()},
+        "normalization_scope": "train_split",
         "calibration_examples": CALIBRATION_EXAMPLES,
         "train_crop_variants": TRAIN_CROP_VARIANTS,
         "crop_seed": CROP_SEED,
         "class_names": list(CLASS_NAMES),
+        "label_encoding": LABEL_ENCODING,
     }
 
 
-def _validate_metadata(metadata: dict[str, Any], *, expected_batch_period_ms: float) -> None:
-    """Validate cache metadata against the v1 contract.
+def _fold_split_for_test_fold(test_fold: int) -> FoldSplit:
+    """Return the Phase 9 fold-rotation split for one test fold.
+
+    Parameters
+    ----------
+    test_fold : int
+        UrbanSound8K fold used as the held-out test split.
+
+    Returns
+    -------
+    dict[str, tuple[int, ...]]
+        Split ownership mapping for train, validation, and test.
+    """
+
+    if int(test_fold) not in ALL_FOLDS:
+        raise ValueError("rotation_fold_index must be an UrbanSound8K fold from 1 to 10.")
+    val_fold = int(test_fold) % len(ALL_FOLDS) + 1
+    train_folds = tuple(fold for fold in ALL_FOLDS if fold not in {int(test_fold), val_fold})
+    return {"train": train_folds, "val": (val_fold,), "test": (int(test_fold),)}
+
+
+def _metadata_fold_split(metadata: dict[str, Any]) -> FoldSplit:
+    """Parse and validate the canonical fold split from metadata.
+
+    Parameters
+    ----------
+    metadata : dict[str, Any]
+        Parsed cache metadata.
+
+    Returns
+    -------
+    dict[str, tuple[int, ...]]
+        Normalized split ownership mapping.
+    """
+
+    raw_split = metadata.get("fold_split")
+    if not isinstance(raw_split, dict):
+        raise ValueError("UrbanSound8K metadata field 'fold_split' must be an object.")
+    split: FoldSplit = {}
+    seen: set[int] = set()
+    for split_name in ("train", "val", "test"):
+        raw_folds = raw_split.get(split_name)
+        if not isinstance(raw_folds, list):
+            raise ValueError(f"UrbanSound8K metadata fold_split.{split_name} must be a list.")
+        folds: list[int] = []
+        for raw_fold in raw_folds:
+            if isinstance(raw_fold, bool):
+                raise ValueError("UrbanSound8K metadata fold_split entries must be fold integers.")
+            try:
+                fold = int(raw_fold)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("UrbanSound8K metadata fold_split entries must be fold integers.") from exc
+            if fold not in ALL_FOLDS or fold in seen:
+                raise ValueError("UrbanSound8K metadata fold_split must be disjoint within folds 1..10.")
+            folds.append(fold)
+            seen.add(fold)
+        split[split_name] = tuple(folds)
+    if len(split["train"]) != 8 or len(split["val"]) != 1 or len(split["test"]) != 1:
+        raise ValueError("UrbanSound8K metadata fold_split must be an 8/1/1 partition.")
+    if set(seen) != set(ALL_FOLDS):
+        raise ValueError("UrbanSound8K metadata fold_split must cover folds 1..10.")
+    return split
+
+
+def _validate_metadata(metadata: dict[str, Any], *, expected_batch_period_ms: float) -> FoldSplit:
+    """Validate cache metadata against the schema-2 contract.
 
     Parameters
     ----------
@@ -183,9 +252,15 @@ def _validate_metadata(metadata: dict[str, Any], *, expected_batch_period_ms: fl
 
     Returns
     -------
-    None
-        Raises on invalid metadata.
+    dict[str, tuple[int, ...]]
+        Normalized fold split declared by the cache metadata.
     """
+
+    if metadata.get("schema_version") != CACHE_SCHEMA_VERSION:
+        raise ValueError(
+            "UrbanSound8K cache schema_version is stale or unsupported; "
+            "rerun `make prepare-audio-dataset`."
+        )
 
     for field_name in REQUIRED_METADATA_FIELDS:
         if field_name not in metadata:
@@ -193,7 +268,21 @@ def _validate_metadata(metadata: dict[str, Any], *, expected_batch_period_ms: fl
 
     for field_name, expected_value in _expected_metadata_values().items():
         if metadata.get(field_name) != expected_value:
-            raise ValueError(f"UrbanSound8K metadata field '{field_name}' does not match v1 contract.")
+            raise ValueError(f"UrbanSound8K metadata field '{field_name}' does not match schema-2 contract.")
+
+    protocol = str(metadata.get("evaluation_protocol"))
+    if protocol not in {"fixed_split", "fold_rotation"}:
+        raise ValueError("UrbanSound8K metadata evaluation_protocol must be fixed_split or fold_rotation.")
+    fold_split = _metadata_fold_split(metadata)
+    if protocol == "fixed_split":
+        if fold_split != {key: tuple(value) for key, value in FOLD_SPLIT.items()}:
+            raise ValueError("UrbanSound8K fixed_split metadata must use the fixed development fold split.")
+    else:
+        if "rotation_fold_index" not in metadata:
+            raise ValueError("UrbanSound8K fold_rotation metadata missing rotation_fold_index.")
+        expected_split = _fold_split_for_test_fold(int(metadata["rotation_fold_index"]))
+        if fold_split != expected_split:
+            raise ValueError("UrbanSound8K fold_rotation metadata does not match rotation_fold_index.")
 
     if float(metadata["batch_period_ms"]) != float(expected_batch_period_ms):
         raise ValueError("UrbanSound8K metadata batch_period_ms does not match dataset.params.")
@@ -204,11 +293,13 @@ def _validate_metadata(metadata: dict[str, Any], *, expected_batch_period_ms: fl
             raise ValueError(f"UrbanSound8K metadata field '{stat_field}' must have {MEL_BINS} values.")
         if not np.all(np.isfinite(np.asarray(values, dtype=np.float32))):
             raise ValueError(f"UrbanSound8K metadata field '{stat_field}' must contain finite values.")
+    return fold_split
 
 
 def _validate_split_arrays(
     split_name: str,
     arrays: dict[str, np.ndarray],
+    fold_split: FoldSplit,
 ) -> None:
     """Validate one cached split payload.
 
@@ -218,6 +309,8 @@ def _validate_split_arrays(
         Split name being validated.
     arrays : dict[str, numpy.ndarray]
         Arrays loaded from one `.npz` file.
+    fold_split : dict[str, tuple[int, ...]]
+        Metadata-declared fold ownership.
 
     Returns
     -------
@@ -258,7 +351,7 @@ def _validate_split_arrays(
     if np.any(labels < 0) or np.any(labels >= len(CLASS_NAMES)):
         raise ValueError(f"UrbanSound8K {split_name}.npz contains labels outside class range.")
 
-    expected_folds = set(FOLD_SPLIT["train"] if split_name == "calibration" else FOLD_SPLIT[split_name])
+    expected_folds = set(fold_split["train"] if split_name == "calibration" else fold_split[split_name])
     actual_folds = set(int(value) for value in arrays["folds"].tolist())
     if not actual_folds.issubset(expected_folds):
         raise ValueError(f"UrbanSound8K {split_name}.npz contains unexpected folds.")
@@ -267,7 +360,7 @@ def _validate_split_arrays(
         raise ValueError(f"UrbanSound8K {split_name}.npz must use center crop variant 0.")
 
 
-def _load_split(cache_dir: Path, split_name: str) -> DataSplit:
+def _load_split(cache_dir: Path, split_name: str, fold_split: FoldSplit) -> DataSplit:
     """Load and validate one cached split.
 
     Parameters
@@ -276,6 +369,8 @@ def _load_split(cache_dir: Path, split_name: str) -> DataSplit:
         Exact cache-version directory.
     split_name : str
         Split name to load.
+    fold_split : dict[str, tuple[int, ...]]
+        Metadata-declared fold ownership.
 
     Returns
     -------
@@ -289,7 +384,7 @@ def _load_split(cache_dir: Path, split_name: str) -> DataSplit:
     with np.load(split_path, allow_pickle=False) as loaded:
         arrays = {array_name: loaded[array_name] for array_name in loaded.files}
 
-    _validate_split_arrays(split_name, arrays)
+    _validate_split_arrays(split_name, arrays, fold_split)
     return DataSplit(
         inputs=arrays["inputs"],
         targets=arrays["labels"],
@@ -306,7 +401,7 @@ def _load_split(cache_dir: Path, split_name: str) -> DataSplit:
 
 
 class UrbanSound8KMelDataset(DatasetABC):
-    """Dataset adapter for Phase 1 cached UrbanSound8K log-mel features."""
+    """Dataset adapter for schema-2 cached UrbanSound8K log-mel features."""
 
     @property
     def name(self) -> str:
@@ -338,7 +433,7 @@ class UrbanSound8KMelDataset(DatasetABC):
         if cache_dir in (None, ""):
             raise ValueError("UrbanSound8KMelDataset requires dataset.params.cache_dir.")
         if _cfg_get(dataset_config, "cache_version", None) is not None:
-            raise ValueError("UrbanSound8KMelDataset Phase 3 does not accept dataset.params.cache_version.")
+            raise ValueError("UrbanSound8KMelDataset does not accept dataset.params.cache_version.")
         _require_positive_number(
             _cfg_get(dataset_config, "batch_period_ms", None),
             field_name="dataset.params.batch_period_ms",
@@ -366,12 +461,12 @@ class UrbanSound8KMelDataset(DatasetABC):
             field_name="dataset.params.batch_period_ms",
         )
         metadata = _read_metadata(cache_dir)
-        _validate_metadata(metadata, expected_batch_period_ms=batch_period_ms)
+        fold_split = _validate_metadata(metadata, expected_batch_period_ms=batch_period_ms)
 
-        train = _load_split(cache_dir, "train")
-        val = _load_split(cache_dir, "val")
-        test = _load_split(cache_dir, "test")
-        calibration = _load_split(cache_dir, "calibration")
+        train = _load_split(cache_dir, "train", fold_split)
+        val = _load_split(cache_dir, "val", fold_split)
+        test = _load_split(cache_dir, "test", fold_split)
+        calibration = _load_split(cache_dir, "calibration", fold_split)
 
         return DatasetBundle(
             train=train,
@@ -386,7 +481,9 @@ class UrbanSound8KMelDataset(DatasetABC):
                 "cache_dir": str(cache_dir),
                 "class_names": list(CLASS_NAMES),
                 "num_classes": len(CLASS_NAMES),
-                "fold_split": {key: list(value) for key, value in FOLD_SPLIT.items()},
+                "fold_split": {key: list(value) for key, value in fold_split.items()},
+                "evaluation_protocol": metadata["evaluation_protocol"],
+                "rotation_fold_index": metadata.get("rotation_fold_index"),
                 "batch_period_ms": batch_period_ms,
                 "label_encoding": LABEL_ENCODING,
             },

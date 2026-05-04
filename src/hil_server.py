@@ -25,7 +25,11 @@ import numpy as np
 from tinyodom.builtin_components import ensure_builtin_components_registered
 from tinyodom.cadence import resolve_batch_period_ms
 from tinyodom.component_selection import cfg_get, resolve_component_selection
-from tinyodom.devices import CandidatePrepareRequest, _sync_arduino_sketch_variant_for_config
+from tinyodom.devices import (
+    CandidatePrepareRequest,
+    arduino_staged_sketch_path,
+    _sync_arduino_sketch_variant_for_config,
+)
 from tinyodom.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
     describe_error_code,
@@ -872,7 +876,7 @@ class HILServer:
             sketches_dir=self.sketch_variants_dir,
             runtime_phase="cadenced",
         )
-        sketch_candidate = prepared_dir / "odom_tcn.ino"
+        sketch_candidate = arduino_staged_sketch_path(prepared_dir)
         if sketch_candidate.is_file():
             self.active_sketch_path = sketch_candidate
             logger.info("Using sketch variant: %s", self.active_sketch_path)
@@ -1183,7 +1187,7 @@ class HILServer:
                 ),
             )
             prepared_dir = Path(prepared_dir)
-            sketch_candidate = prepared_dir / "odom_tcn.ino"
+            sketch_candidate = arduino_staged_sketch_path(prepared_dir)
             if runtime_device.requires_candidate_model() and sketch_candidate.is_file():
                 self.active_sketch_path = sketch_candidate
                 logger.info("Using sketch variant: %s", self.active_sketch_path)
@@ -1260,14 +1264,14 @@ class HILServer:
         Selection depends on ``device.name``, optional Portenta
         ``device.portenta.target_core``, ``training.energy_aware``, and
         ``training.input_mode`` in the loaded config. Uniform sketches use the
-        shared root ``sketches/tinyodom_tcn_*.ino`` assets, while
+        shared root ``sketches/tinyodom_inference_*.ino`` assets, while
         representative/real analysis variants continue to use
         ``sketches/analysis_sketches``.
 
         Returns
         -------
         Path
-            Path to the synchronized ``odom_tcn.ino`` sketch.
+            Path to the synchronized ``{candidate_dir.name}.ino`` sketch.
 
         Raises
         ------

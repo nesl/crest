@@ -436,6 +436,25 @@ class SketchHelperTests(unittest.TestCase):
             self.assertIn("TINYODOM_NUM_CHANNELS 3", text)
             self.assertIn("TINYODOM_TENSOR_ARENA_BYTES (42 * 1024)", text)
 
+    def test_patch_sketch_constants_accepts_audio_feature_shape(self):
+        """Audio feature tensors should map to Arduino window/channel macros."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketch_dir = Path(tmpdir)
+            ino_path = sketch_dir / "audio_dscnn.ino"
+            ino_path.write_text(
+                "\n".join(
+                    [
+                        "#define TINYODOM_WINDOW_SIZE 100",
+                        "#define TINYODOM_NUM_CHANNELS 1",
+                        "#define TINYODOM_TENSOR_ARENA_BYTES (10 * 1024)",
+                    ]
+                )
+            )
+            _patch_sketch_constants(sketch_dir, arena_kb=96, window_size=201, num_channels=64)
+            text = ino_path.read_text()
+            self.assertIn("TINYODOM_WINDOW_SIZE 201", text)
+            self.assertIn("TINYODOM_NUM_CHANNELS 64", text)
+
     def test_patch_sketch_constants_updates_latency_budget_when_present(self):
         # Sketch patching should update an existing latency-budget constant so generated test firmware matches the requested timing window.
         with tempfile.TemporaryDirectory() as tmpdir:

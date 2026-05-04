@@ -52,6 +52,8 @@ test/__pycache__/
 bin/
 models/
 model
+audio_dscnn/
+odom_tcn/
 
 # Data artifacts
 data/urbansound8k/
@@ -374,3 +376,5 @@ plan_call_site_docs_test_surface_gaps_breaking_update.md
 plan_config_and_component_selection_gaps_breaking_update.md
 plan_model_family_boundary_gaps_breaking_update.md
 plan_task_and_runtime_orchestration_gaps_breaking_update.md
+
+notes_and_papers/

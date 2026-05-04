@@ -19,7 +19,7 @@ if str(SRC_DIR) not in sys.path:
 
 import hil_server as hil_server_module  # noqa: E402
 from hil_server import HILServer  # noqa: E402
-from tinyodom.devices import CandidatePrepareRequest  # noqa: E402
+from tinyodom.devices import CandidatePrepareRequest, arduino_staged_sketch_path  # noqa: E402
 from tinyodom.errors import HIL_ERROR_OK  # noqa: E402
 from tinyodom.hil_runtime import CollectMetricsRequest  # noqa: E402
 from tinyodom.pipeline_types import DataSplit, DatasetBundle, TargetSpec, TaskMetricContract  # noqa: E402
@@ -1289,7 +1289,7 @@ class InitializationTests(HILServerTestCase):
             arduino_server.active_sketch_path = None
             arduino_prepared_dir = tmp_path / "arduino"
             arduino_prepared_dir.mkdir()
-            expected_sketch = arduino_prepared_dir / "odom_tcn.ino"
+            expected_sketch = arduino_staged_sketch_path(arduino_prepared_dir)
             expected_sketch.write_text("// staged sketch\n", encoding="utf-8")
 
             fake_arduino_device = MagicMock()
@@ -1501,24 +1501,41 @@ class SketchVariantTests(unittest.TestCase):
         path.write_text(f"// {label}\n")
 
     def test_selects_uniform_energy_sketch(self) -> None:
+        """Energy-aware uniform staging should use the generic energy sketch."""
         # Uniform energy runs should pick the energy-enabled sketch variant so the DUT exports the expected telemetry.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform_shared")
+            self._write_sketch(sketches / "tinyodom_inference_energy.ino", "uniform_shared")
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server._sync_sketch_variant()
 
+            self.assertEqual(out_path, candidate_dir / "odom_tcn.ino")
             self.assertTrue(out_path.exists())
             self.assertIn("uniform_shared", out_path.read_text())
 
+    def test_stages_sketch_using_candidate_dir_basename(self) -> None:
+        """Arduino sketch staging should preserve the folder/sketch basename rule."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            candidate_dir = Path(tmpdir) / "audio_dscnn"
+            self._write_sketch(sketches / "tinyodom_inference_no_energy.ino", "audio_uniform")
+            server = self._build_server(sketches, candidate_dir, energy_aware=False, input_mode="uniform")
+
+            out_path = server._sync_sketch_variant()
+
+            self.assertEqual(out_path, candidate_dir / "audio_dscnn.ino")
+            self.assertTrue(out_path.exists())
+            self.assertIn("audio_uniform", out_path.read_text())
+
     def test_selects_cadenced_uniform_sketch(self) -> None:
+        """Cadenced staging should use the generic cadenced energy sketch."""
         # Cadenced energy runs must switch to the cadenced uniform sketch so the harness and DUT share the same timing protocol.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_energy_cadenced.ino", "cadenced_shared")
+            self._write_sketch(sketches / "tinyodom_inference_energy_cadenced.ino", "cadenced_shared")
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server.set_input_mode("uniform", runtime_phase="cadenced")
@@ -1527,11 +1544,12 @@ class SketchVariantTests(unittest.TestCase):
             self.assertIn("cadenced_shared", out_path.read_text())
 
     def test_selects_uniform_energy_sketch_for_portenta_cm7(self) -> None:
+        """Portenta CM7 uniform staging should use the generic energy sketch."""
         # Uniform energy runs should pick the energy-enabled sketch variant so the DUT exports the expected telemetry.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform_shared_cm7")
+            self._write_sketch(sketches / "tinyodom_inference_energy.ino", "uniform_shared_cm7")
             server = self._build_server(
                 sketches,
                 candidate_dir,
@@ -1547,11 +1565,12 @@ class SketchVariantTests(unittest.TestCase):
             self.assertIn("uniform_shared_cm7", out_path.read_text())
 
     def test_selects_uniform_no_energy_sketch_for_portenta_cm4(self) -> None:
+        """Portenta CM4 no-energy staging should use the generic no-energy sketch."""
         # Portenta CM4 uniform runs without energy measurement should select the no-energy sketch variant.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_no_energy.ino", "no_energy_shared_cm4")
+            self._write_sketch(sketches / "tinyodom_inference_no_energy.ino", "no_energy_shared_cm4")
             server = self._build_server(
                 sketches,
                 candidate_dir,
@@ -1567,15 +1586,16 @@ class SketchVariantTests(unittest.TestCase):
             self.assertIn("no_energy_shared_cm4", out_path.read_text())
 
     def test_selects_representative_variant_and_copies_header(self) -> None:
+        """Representative staging should copy the renamed sketch and input header."""
         # Representative input-mode runs should switch sketches and copy the generated header that drives the sample payload.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_tcn_energy_representative.ino",
+                sketches / "analysis_sketches/tinyodom_inference_representative.ino",
                 "representative",
             )
-            header = sketches / "analysis_sketches/tinyodom_tcn_input_data.h"
+            header = sketches / "analysis_sketches/tinyodom_input_data.h"
             header.write_text("// header\n")
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="representative")
 
@@ -1586,15 +1606,16 @@ class SketchVariantTests(unittest.TestCase):
             self.assertTrue((candidate_dir / header.name).exists())
 
     def test_selects_real_variant_and_copies_header(self) -> None:
+        """Real-data staging should copy the renamed sketch and input header."""
         # Real-input runs should stage the real-data sketch and copy the matching generated header.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_tcn_energy_real_data.ino",
+                sketches / "analysis_sketches/tinyodom_inference_real_data.ino",
                 "real",
             )
-            header = sketches / "analysis_sketches/tinyodom_tcn_input_data.h"
+            header = sketches / "analysis_sketches/tinyodom_input_data.h"
             header.write_text("// header\n")
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="real")
 
@@ -1605,12 +1626,13 @@ class SketchVariantTests(unittest.TestCase):
             self.assertTrue((candidate_dir / header.name).exists())
 
     def test_missing_header_raises_for_representative(self) -> None:
+        """Representative staging should require the renamed input header."""
         # Representative-mode staging should fail fast if the generated header is missing.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_tcn_energy_representative.ino",
+                sketches / "analysis_sketches/tinyodom_inference_representative.ino",
                 "representative",
             )
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="representative")
@@ -1629,15 +1651,16 @@ class SketchVariantTests(unittest.TestCase):
                 server._sync_sketch_variant()
 
     def test_cadenced_runtime_requires_uniform_input_mode(self) -> None:
+        """Cadenced Arduino staging should still reject non-uniform inputs."""
         # Cadenced runtime mode should reject non-uniform input modes because the timing harness expects fixed windows.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_tcn_energy_representative.ino",
+                sketches / "analysis_sketches/tinyodom_inference_representative.ino",
                 "representative",
             )
-            header = sketches / "analysis_sketches/tinyodom_tcn_input_data.h"
+            header = sketches / "analysis_sketches/tinyodom_input_data.h"
             header.write_text("// header\n")
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="representative")
 
@@ -1662,11 +1685,12 @@ class SketchVariantTests(unittest.TestCase):
                 server._sync_sketch_variant()
 
     def test_energy_aware_false_uses_no_energy_sketch(self) -> None:
+        """No-energy uniform staging should use the generic no-energy sketch."""
         # Turning off energy awareness should switch to the no-energy sketch variant to avoid unnecessary harness instrumentation.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_no_energy.ino", "no_energy_shared")
+            self._write_sketch(sketches / "tinyodom_inference_no_energy.ino", "no_energy_shared")
             server = self._build_server(sketches, candidate_dir, energy_aware=False, input_mode="uniform")
 
             out_path = server._sync_sketch_variant()
@@ -1675,11 +1699,12 @@ class SketchVariantTests(unittest.TestCase):
             self.assertIn("no_energy_shared", out_path.read_text())
 
     def test_set_input_mode_updates_config_and_path(self) -> None:
+        """Input-mode updates should stage the renamed generic energy sketch."""
         # Input-mode switching should update both the active config and the selected sketch path together.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
-            self._write_sketch(sketches / "tinyodom_tcn_energy.ino", "uniform_shared")
+            self._write_sketch(sketches / "tinyodom_inference_energy.ino", "uniform_shared")
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server.set_input_mode("uniform")

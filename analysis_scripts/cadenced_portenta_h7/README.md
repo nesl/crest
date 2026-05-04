@@ -70,5 +70,5 @@ CSV contains one row per attempt and includes derived columns:
 This folder includes phase-specific sketch templates staged by the runner into
 the active TinyODOM build folder before each attempt:
 
-- `tinyodom_tcn_energy_back_to_back.ino`
-- `tinyodom_tcn_energy_cadenced.ino`
+- `tinyodom_inference_back_to_back.ino`
+- `tinyodom_inference_cadenced.ino`

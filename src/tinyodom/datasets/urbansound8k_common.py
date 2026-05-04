@@ -7,7 +7,8 @@ prevents label/logit ordering drift between preparation, loading, and scoring.
 
 from __future__ import annotations
 
-CACHE_VERSION = "v1_logmel_16k_2s_64mels_25ms_10ms"
+CACHE_SCHEMA_VERSION = 2
+CACHE_VERSION = "v2_logmel_16k_2s_64mels_25ms_10ms_folds"
 COMPONENT_NAME = "urbansound8k_mel"
 DATASET_NAME = "urbansound8k"
 FEATURE_KIND = "log_mel_power"
@@ -51,6 +52,8 @@ FOLD_SPLIT = {
     "val": (9,),
     "test": (10,),
 }
+ALL_FOLDS = tuple(range(1, 11))
+FOLD_ROTATION_DIRNAME = "fold_rotation"
 
 REQUIRED_METADATA_FIELDS = (
     "schema_version",
@@ -79,12 +82,15 @@ REQUIRED_METADATA_FIELDS = (
     "normalization_mean",
     "normalization_std",
     "normalization_epsilon",
+    "evaluation_protocol",
     "fold_split",
+    "normalization_scope",
     "batch_period_ms",
     "train_crop_variants",
     "crop_seed",
     "calibration_examples",
     "class_names",
+    "label_encoding",
 )
 
 REQUIRED_CACHE_ARRAYS = (

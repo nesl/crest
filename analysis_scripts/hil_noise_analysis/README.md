@@ -28,7 +28,7 @@ how input distributions affect latency and energy measurements.
   - Loads OxIOD windows using the same data loader and config parameters used by
     `hil_server.py` / `nas_model_client.py`.
   - Prints per-channel statistics to compare the real dataset to uniform `[0, 5]` inputs.
-  - Can export `sketches/analysis_sketches/tinyodom_tcn_input_data.h`, which embeds:
+  - Can export `sketches/analysis_sketches/tinyodom_input_data.h`, which embeds:
     - Per-channel mean/std/min/max values.
     - A fixed set of real windows (default 10) for the real-data sketch.
 
@@ -57,33 +57,33 @@ how input distributions affect latency and energy measurements.
 
 Energy-aware input modes map to the following sketches:
 
-- `sketches/tinyodom_tcn_energy.ino` (uniform [0,5] inputs)
-- `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino` (synthetic inputs using dataset mean/std + clamping)
-- `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino` (fixed real dataset windows)
+- `sketches/tinyodom_inference_energy.ino` (uniform [0,5] inputs)
+- `sketches/analysis_sketches/tinyodom_inference_representative.ino` (synthetic inputs using dataset mean/std + clamping)
+- `sketches/analysis_sketches/tinyodom_inference_real_data.ino` (fixed real dataset windows)
 
 The generated header lives alongside them:
 
-- `sketches/analysis_sketches/tinyodom_tcn_input_data.h`
+- `sketches/analysis_sketches/tinyodom_input_data.h`
 
 ## Config selection
 
 Set the following in `src/config/nas_config.yaml` to choose a variant when `energy_aware: true`:
 
-- `input_mode: "uniform"` uses `sketches/tinyodom_tcn_energy.ino`
-- `input_mode: "representative"` uses `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino`
-- `input_mode: "real"` uses `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino`
+- `input_mode: "uniform"` uses `sketches/tinyodom_inference_energy.ino`
+- `input_mode: "representative"` uses `sketches/analysis_sketches/tinyodom_inference_representative.ino`
+- `input_mode: "real"` uses `sketches/analysis_sketches/tinyodom_inference_real_data.ino`
 
 ## Input Mode Definitions
 
 - `uniform`: fills the model input window with random values in `[0, 5]`.
 - `representative`: uses synthetic values shaped by OxIOD channel statistics (mean/std with clamping).
-- `real`: replays fixed real OxIOD windows embedded in `tinyodom_tcn_input_data.h`.
+- `real`: replays fixed real OxIOD windows embedded in `tinyodom_input_data.h`.
 
 ## Two-Machine Workflow (GPU Train + HIL Scan)
 
 ```bash
 # 1) Optional: regenerate representative/real input header
-python analysis_scripts/hil_noise_analysis/oxiod_input_profile.py --split train --export-header sketches/analysis_sketches/tinyodom_tcn_input_data.h --real-window-count 10
+python analysis_scripts/hil_noise_analysis/oxiod_input_profile.py --split train --export-header sketches/analysis_sketches/tinyodom_input_data.h --real-window-count 10
 
 # 2) On the GPU host, train and package the fixed 50-epoch artifact
 python analysis_scripts/hil_noise_analysis/train_noise_scan_model.py \
@@ -153,7 +153,7 @@ The full staged workflow, optional flags, and artifact layout are documented in
   - If pandas import fails with a GLIBCXX/libstdc++ mismatch, the script falls back automatically.
 
 - `oxiod_input_profile.py`
-  - `--export-header` to rewrite `sketches/analysis_sketches/tinyodom_tcn_input_data.h`
+  - `--export-header` to rewrite `sketches/analysis_sketches/tinyodom_input_data.h`
   - `--export-stats-csv` for per-channel summary CSV output
   - `--real-window-count` (default: `10`) to control the embedded real-window set
 

@@ -1,4 +1,4 @@
-.PHONY: help install test integration-test test-all start-gpu start-hil smoke env-create arduino-setup stm32-setup prepare-dataset prepare-audio-dataset audio-desktop-smoke audio-stm32-hil-smoke clean
+.PHONY: help install test integration-test test-all start-gpu start-hil smoke env-create arduino-setup stm32-setup prepare-dataset prepare-audio-dataset audio-desktop-smoke audio-stm32-hil-smoke audio-portenta-hil-smoke clean
 
 PYTHON ?= python
 ENV ?= tinyodomex
@@ -6,6 +6,7 @@ OXIOD_ZIP ?= OxIOD.zip
 URBANSOUND8K_ARGS ?=
 AUDIO_SMOKE_ARGS ?=
 AUDIO_STM32_HIL_ARGS ?=
+AUDIO_PORTENTA_HIL_ARGS ?=
 
 help:
 	@echo "Targets:"
@@ -20,9 +21,10 @@ help:
 	@echo "  arduino-setup  Run Arduino CLI bootstrapper"
 	@echo "  stm32-setup    Validate STM32CubeCLT paths and bootstrap STM32CubeN6 firmware"
 	@echo "  prepare-dataset  Prepare OxIOD dataset (override OXIOD_ZIP=/path/to/OxIOD.zip)"
-	@echo "  prepare-audio-dataset  Prepare UrbanSound8K log-mel cache (override URBANSOUND8K_ARGS)"
+	@echo "  prepare-audio-dataset  Prepare UrbanSound8K log-mel cache (use URBANSOUND8K_ARGS=\"--fold-rotation\" for Phase 9 reports)"
 	@echo "  audio-desktop-smoke  Run a small hardware-free audio training smoke (override AUDIO_SMOKE_ARGS)"
 	@echo "  audio-stm32-hil-smoke  Run STM32 audio HIL smoke (override AUDIO_STM32_HIL_ARGS)"
+	@echo "  audio-portenta-hil-smoke  Run Portenta/BLE audio HIL smoke (override AUDIO_PORTENTA_HIL_ARGS)"
 	@echo "  clean          Remove Python cache/build artifacts"
 
 install:
@@ -75,6 +77,14 @@ audio-stm32-hil-smoke:
 		LD_LIBRARY_PATH="$$CONDA_PREFIX/lib:$${LD_LIBRARY_PATH:-}" $(PYTHON) analysis_scripts/audio_stm32_hil_smoke/run_audio_stm32_hil_smoke.py $(AUDIO_STM32_HIL_ARGS); \
 	else \
 		$(PYTHON) analysis_scripts/audio_stm32_hil_smoke/run_audio_stm32_hil_smoke.py $(AUDIO_STM32_HIL_ARGS); \
+	fi
+
+audio-portenta-hil-smoke:
+	CONDA_PREFIX="$${CONDA_PREFIX:-}" ; \
+	if [ -n "$$CONDA_PREFIX" ]; then \
+		LD_LIBRARY_PATH="$$CONDA_PREFIX/lib:$${LD_LIBRARY_PATH:-}" $(PYTHON) analysis_scripts/audio_portenta_hil_smoke/run_audio_portenta_hil_smoke.py $(AUDIO_PORTENTA_HIL_ARGS); \
+	else \
+		$(PYTHON) analysis_scripts/audio_portenta_hil_smoke/run_audio_portenta_hil_smoke.py $(AUDIO_PORTENTA_HIL_ARGS); \
 	fi
 
 clean:

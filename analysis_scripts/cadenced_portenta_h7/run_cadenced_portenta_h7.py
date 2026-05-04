@@ -41,8 +41,8 @@ MODEL_VARIANT_NAME = "approx_trained"
 MASTER_SUCCESS_CODE = 1
 
 PHASE_SKETCH_FILENAMES = {
-    PHASE_BACK_TO_BACK: "tinyodom_tcn_energy_back_to_back.ino",
-    PHASE_CADENCED: "tinyodom_tcn_energy_cadenced.ino",
+    PHASE_BACK_TO_BACK: "tinyodom_inference_back_to_back.ino",
+    PHASE_CADENCED: "tinyodom_inference_cadenced.ino",
 }
 
 CSV_COLUMNS = [
@@ -224,7 +224,7 @@ def _stage_phase_sketch(server: Any, phase: str, latency_budget_ms: float) -> Pa
     Returns
     -------
     pathlib.Path
-        Path to staged ``odom_tcn.ino``.
+        Path to staged ``{candidate_dir.name}.ino``.
     """
 
     if phase not in VALID_PHASES:
@@ -245,7 +245,7 @@ def _stage_phase_sketch(server: Any, phase: str, latency_budget_ms: float) -> Pa
     if phase == PHASE_CADENCED:
         sketch_text = _patch_cadence_define(sketch_text, latency_budget_ms)
 
-    staged_path = sketch_dir / "odom_tcn.ino"
+    staged_path = sketch_dir / f"{sketch_dir.name}.ino"
     staged_path.write_text(sketch_text)
     return staged_path
 

@@ -1,31 +1,31 @@
-# Audio DS-CNN desktop/bootstrap config targeting the STM32 N657 shape.
+# Audio DS-CNN config for Arduino-backed Portenta H7 CM7 smoke/HIL runs.
 #
-# This config targets the joint GPU plus STM32 HIL flow. Hardware-free audio
-# smoke tests should use analysis_scripts/audio_desktop_smoke instead.
+# Phase 8 measures classifier inference over precomputed log-mel tensors only.
+# Firmware-side microphone capture and audio frontend timing are out of scope.
 
 device:
-  name: STM32_NUCLEO_N657X0_Q
+  name: PORTENTA_H7
   hil: true
-  runtime_mode: cadenced
+  runtime_mode: back_to_back
   serial_port: "/dev/ttyACM0"
   measured_inference_runs: 10
-  dut_ready_timeout_s: 12.0
+  dut_ready_timeout_s: 14.5
   serial_timeout_s: 12.0
-  cpu_clock_mhz_options: [200, 300, 400, 600, 800]
+  portenta:
+    target_core: cm7
+    split: "75_25"
+    security: none
   harness_serial_port: "/dev/ttyACM1"
   harness_fqbn: "arduino:mbed_nano:nano33ble"
   harness_auto_flash: "once"
-  harness_ready_timeout_s: 5.0
-  harness_arm_timeout_s: 5.0
-  harness_active_timeout_s: 30.0
-  harness_done_timeout_s: 5.0
-  stm32:
-    project_root: "sketches/stm32/tinyodom_stm32_lrun"
-    appli_flash_address: "0x70100000"
-    wake_margin_us: 5000
-    min_sleep_us: 5000
-    weight_storage_mode: "external_flash"
-    weights_memory_pool: "analysis_scripts/stm32_example_project/nucleo_mypool.json"
+  harness_arm_pin: 3
+  harness_trigger_pin: 2
+  dut_arm_hold_ms: 600
+  harness_stable_low_ms: 500
+  harness_ready_timeout_s: 3.6
+  harness_arm_timeout_s: 0.0
+  harness_active_timeout_s: 12.0
+  harness_done_timeout_s: 3.6
 
 dataset:
   name: urbansound8k_mel
@@ -73,7 +73,7 @@ training:
   quantization: true
   latency_proxy_max_flops: 30000000.0
   train: true
-  energy_aware: true
+  energy_aware: false
   input_mode: "uniform"
 
 nas:
@@ -109,20 +109,13 @@ nas:
             type: metric
             metric: latency_budget_ms
   prune:
-    rules:
-      - rule: latency_budget
-        metric: latency_ms
-        condition: gt
-        reference:
-          type: metric
-          metric: latency_budget_ms
-        reason: "Latency exceeds deployment budget"
+    rules: []
 
 outputs:
   models_dir: "models"
   candidate_dir: "audio_dscnn"
   artifact_stem: "TinyOdomEx_UrbanSound8K"
-  log_file_name: "log_NAS_UrbanSound8K_STM32_NUCLEO_N657X0_Q.csv"
+  log_file_name: "log_NAS_UrbanSound8K_PORTENTA_H7.csv"
 
 network:
   host: "127.0.0.1"

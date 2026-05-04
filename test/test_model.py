@@ -1841,6 +1841,91 @@ class LoadSettingsTests(unittest.TestCase):
         self.assertEqual(selection["task_name"], "sound_classification")
         self.assertEqual(selection["model_family_name"], "audio_dscnn")
         self.assertEqual(selection["model_config"]["params"].export_variant, "untrained")
+        self.assertEqual(settings.evaluation.protocol, "fixed_split")
+        self.assertEqual(settings.evaluation.fold_rotation.test_folds, list(range(1, 11)))
+
+    def test_load_settings_validates_fold_rotation_config(self) -> None:
+        """Fold-rotation reporting config should require explicit cache roots."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 5",
+                        "dataset:",
+                        "  name: urbansound8k_mel",
+                        "  params:",
+                        "    cache_dir: cache/fixed",
+                        "    batch_period_ms: 2000",
+                        "evaluation:",
+                        "  protocol: fold_rotation",
+                        "  fold_rotation:",
+                        "    test_folds: [1, 2, 10]",
+                        *self._score_lines(),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "fold_rotation_cache_dir"):
+                load_config(config_path=config_path)
+
+            text = config_path.read_text(encoding="utf-8").replace(
+                "    batch_period_ms: 2000",
+                "    batch_period_ms: 2000\n    fold_rotation_cache_dir: cache/fold_rotation",
+            )
+            config_path.write_text(text, encoding="utf-8")
+            settings = load_config(config_path=config_path)
+
+        self.assertEqual(settings.evaluation.protocol, "fold_rotation")
+        self.assertEqual(settings.evaluation.fold_rotation.test_folds, [1, 2, 10])
+
+    def test_load_settings_rejects_fold_rotation_multiobjective(self) -> None:
+        """Fold rotation should fail fast for multi-objective NAS."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 5",
+                        "dataset:",
+                        "  name: urbansound8k_mel",
+                        "  params:",
+                        "    cache_dir: cache/fixed",
+                        "    fold_rotation_cache_dir: cache/fold_rotation",
+                        "    batch_period_ms: 2000",
+                        "evaluation:",
+                        "  protocol: fold_rotation",
+                        "nas:",
+                        "  score:",
+                        "    type: multi-objective",
+                        "    params:",
+                        "      objectives:",
+                        "        - metric: accuracy",
+                        "          direction: maximize",
+                        "  prune:",
+                        "    rules: []",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "single-objective"):
+                load_config(config_path=config_path)
 
     def test_audio_stm32_score_validates_against_classification_metrics(self) -> None:
         """Audio NAS scoring should use classification metrics, not RMSE terms."""

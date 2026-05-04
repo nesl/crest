@@ -10,13 +10,13 @@ For config semantics, see
 
 ## Directory Map
 
-- [`tinyodom_tcn_energy.ino`](tinyodom_tcn_energy.ino)
+- [`tinyodom_inference_energy.ino`](tinyodom_inference_energy.ino)
   Shared uniform-input Arduino runtime sketch used when
   `training.input_mode: uniform` and `training.energy_aware: true`.
-- [`tinyodom_tcn_no_energy.ino`](tinyodom_tcn_no_energy.ino)
+- [`tinyodom_inference_no_energy.ino`](tinyodom_inference_no_energy.ino)
   Shared uniform-input Arduino runtime sketch used when
   `training.input_mode: uniform` and `training.energy_aware: false`.
-- [`tinyodom_tcn_energy_cadenced.ino`](tinyodom_tcn_energy_cadenced.ino)
+- [`tinyodom_inference_energy_cadenced.ino`](tinyodom_inference_energy_cadenced.ino)
   Shared Arduino cadenced-pass sketch.
 - [`analysis_sketches/`](analysis_sketches)
   Analysis-oriented sketch variants and data headers for non-uniform input
@@ -38,14 +38,14 @@ The current Arduino runtime-selection path described in
 uses this layout:
 
 1. Uniform input mode:
-   - [`tinyodom_tcn_energy.ino`](tinyodom_tcn_energy.ino)
-   - [`tinyodom_tcn_no_energy.ino`](tinyodom_tcn_no_energy.ino)
+   - [`tinyodom_inference_energy.ino`](tinyodom_inference_energy.ino)
+   - [`tinyodom_inference_no_energy.ino`](tinyodom_inference_no_energy.ino)
 2. Cadenced second pass:
-   - [`tinyodom_tcn_energy_cadenced.ino`](tinyodom_tcn_energy_cadenced.ino)
+   - [`tinyodom_inference_energy_cadenced.ino`](tinyodom_inference_energy_cadenced.ino)
 3. Analysis input modes:
-   - [`analysis_sketches/tinyodom_tcn_energy_representative.ino`](analysis_sketches/tinyodom_tcn_energy_representative.ino)
-   - [`analysis_sketches/tinyodom_tcn_energy_real_data.ino`](analysis_sketches/tinyodom_tcn_energy_real_data.ino)
-   - [`analysis_sketches/tinyodom_tcn_input_data.h`](analysis_sketches/tinyodom_tcn_input_data.h)
+   - [`analysis_sketches/tinyodom_inference_representative.ino`](analysis_sketches/tinyodom_inference_representative.ino)
+   - [`analysis_sketches/tinyodom_inference_real_data.ino`](analysis_sketches/tinyodom_inference_real_data.ino)
+   - [`analysis_sketches/tinyodom_input_data.h`](analysis_sketches/tinyodom_input_data.h)
 4. Shared copied headers:
    - [`common/tinyodom_hil_config.h`](common/tinyodom_hil_config.h)
    - [`common/tinyodom_power.h`](common/tinyodom_power.h)

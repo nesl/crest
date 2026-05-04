@@ -110,6 +110,8 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
             calibration_examples=100,
             train_crop_variants=3,
             crop_seed=1337,
+            fold_rotation=False,
+            fold_rotation_test_folds="1,2,3",
         )
 
         config = prepare_urbansound8k.config_from_args(args)
@@ -118,6 +120,15 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
         self.assertEqual(config.batch_period_ms, 2000)
         self.assertEqual(config.train_crop_variants, 3)
         self.assertEqual(config.crop_seed, 1337)
+
+    def test_parse_test_folds_validates_unique_urban_sound_folds(self) -> None:
+        """Fold-list parsing should reject malformed rotation requests."""
+
+        self.assertEqual(prepare_urbansound8k.parse_test_folds("1,2,10"), (1, 2, 10))
+        with self.assertRaisesRegex(ValueError, "unique"):
+            prepare_urbansound8k.parse_test_folds("1,1")
+        with self.assertRaisesRegex(ValueError, "1 to 10"):
+            prepare_urbansound8k.parse_test_folds("11")
 
     def test_class_names_and_fold_split_match_contract(self) -> None:
         """Shared constants should freeze class order and NAS fold split."""
@@ -278,13 +289,39 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "n_fft"):
                     prepare_urbansound8k.build_cache_from_records(records, config, feature_fn=_fake_feature_fn)
 
+    def test_build_fold_rotation_caches_write_train_only_splits(self) -> None:
+        """Fold rotation should write per-fold schema-2 cache directories."""
+
+        with self.temporary_config() as config:
+            records = [
+                _record(f"fold-{fold}", fold, fold % len(prepare_urbansound8k.CLASS_NAMES))
+                for fold in prepare_urbansound8k.ALL_FOLDS
+            ]
+
+            fold_dirs = prepare_urbansound8k.build_fold_rotation_caches(
+                records,
+                config,
+                test_folds=(1, 10),
+                feature_fn=_fake_feature_fn,
+            )
+
+            self.assertEqual([path.name for path in fold_dirs], ["fold_01", "fold_10"])
+            metadata = prepare_urbansound8k.json.loads((fold_dirs[0] / "metadata.json").read_text())
+            self.assertEqual(metadata["schema_version"], prepare_urbansound8k.CACHE_SCHEMA_VERSION)
+            self.assertEqual(metadata["evaluation_protocol"], "fold_rotation")
+            self.assertEqual(metadata["rotation_fold_index"], 1)
+            self.assertEqual(metadata["fold_split"]["test"], [1])
+            self.assertEqual(metadata["fold_split"]["val"], [2])
+            with np.load(fold_dirs[0] / "calibration.npz", allow_pickle=False) as calibration:
+                self.assertTrue(set(calibration["folds"].tolist()).issubset(set(metadata["fold_split"]["train"])))
+
     def test_validate_cache_rejects_each_required_metadata_mismatch(self) -> None:
         """validate_cache should reject all contract metadata mismatches."""
 
         mutable_fields = [
             field
             for field in prepare_urbansound8k.REQUIRED_METADATA_FIELDS
-            if field not in {"normalization_mean", "normalization_std"}
+            if field not in {"schema_version", "normalization_mean", "normalization_std"}
         ]
         for field in mutable_fields:
             with self.subTest(field=field):
@@ -358,6 +395,27 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
 
             self.assertEqual(rebuilt_dir, cache_dir)
             self.assertEqual(rebuilt_metadata["n_fft"], prepare_urbansound8k.N_FFT)
+
+    def test_schema_one_cache_rebuilds_without_force(self) -> None:
+        """Schema upgrades should rebuild stale caches without manual deletion."""
+
+        with self.temporary_config() as config:
+            records = [_record("train", 1, 0), _record("val", 9, 1), _record("test", 10, 2)]
+            cache_dir = prepare_urbansound8k.build_cache_from_records(records, config, feature_fn=_fake_feature_fn)
+            metadata_path = cache_dir / "metadata.json"
+            metadata = prepare_urbansound8k.json.loads(metadata_path.read_text())
+            metadata["schema_version"] = 1
+            metadata.pop("evaluation_protocol")
+            metadata.pop("normalization_scope")
+            metadata.pop("label_encoding")
+            metadata_path.write_text(prepare_urbansound8k.json.dumps(metadata), encoding="utf-8")
+
+            rebuilt_dir = prepare_urbansound8k.build_cache_from_records(records, config, feature_fn=_fake_feature_fn)
+            rebuilt_metadata = prepare_urbansound8k.json.loads(metadata_path.read_text())
+
+            self.assertEqual(rebuilt_dir, cache_dir)
+            self.assertEqual(rebuilt_metadata["schema_version"], prepare_urbansound8k.CACHE_SCHEMA_VERSION)
+            self.assertEqual(rebuilt_metadata["evaluation_protocol"], "fixed_split")
 
     def test_download_requires_license_acceptance_before_soundata_import(self) -> None:
         """Download mode should reject missing license acceptance before download."""

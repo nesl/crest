@@ -17,7 +17,9 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from tinyodom.datasets.urbansound8k_common import (  # noqa: E402
+    ALL_FOLDS,
     BATCH_PERIOD_MS,
+    CACHE_SCHEMA_VERSION,
     CALIBRATION_EXAMPLES,
     CACHE_VERSION,
     CENTER,
@@ -47,22 +49,54 @@ from tinyodom.datasets.urbansound8k_common import (  # noqa: E402
 from tinyodom.datasets.urbansound8k_mel import UrbanSound8KMelDataset  # noqa: E402
 
 
-def _metadata(batch_period_ms: int = BATCH_PERIOD_MS) -> dict[str, object]:
+def _rotation_split(test_fold: int) -> dict[str, tuple[int, ...]]:
+    """Build the Phase 9 fold-rotation split for tests.
+
+    Parameters
+    ----------
+    test_fold : int
+        Held-out test fold.
+
+    Returns
+    -------
+    dict[str, tuple[int, ...]]
+        Fold split mapping.
+    """
+
+    val_fold = int(test_fold) % len(ALL_FOLDS) + 1
+    train_folds = tuple(fold for fold in ALL_FOLDS if fold not in {int(test_fold), val_fold})
+    return {"train": train_folds, "val": (val_fold,), "test": (int(test_fold),)}
+
+
+def _metadata(
+    batch_period_ms: int = BATCH_PERIOD_MS,
+    *,
+    fold_split: dict[str, tuple[int, ...]] | None = None,
+    evaluation_protocol: str = "fixed_split",
+    rotation_fold_index: int | None = None,
+) -> dict[str, object]:
     """Build valid cache metadata for dataset tests.
 
     Parameters
     ----------
     batch_period_ms : int, optional
         Batch period stored in the metadata fixture.
+    fold_split : dict[str, tuple[int, ...]] | None, optional
+        Fold split stored in metadata.
+    evaluation_protocol : str, optional
+        Cache protocol stored in metadata.
+    rotation_fold_index : int | None, optional
+        Held-out fold stored for fold-rotation caches.
 
     Returns
     -------
     dict[str, object]
-        Metadata matching the Phase 1 cache contract.
+        Metadata matching the schema-2 cache contract.
     """
 
-    return {
-        "schema_version": 1,
+    active_split = FOLD_SPLIT if fold_split is None else fold_split
+    metadata = {
+        "schema_version": CACHE_SCHEMA_VERSION,
         "dataset_name": DATASET_NAME,
         "component_name": COMPONENT_NAME,
         "cache_version": CACHE_VERSION,
@@ -88,16 +122,28 @@ def _metadata(batch_period_ms: int = BATCH_PERIOD_MS) -> dict[str, object]:
         "normalization_mean": [0.0] * MEL_BINS,
         "normalization_std": [1.0] * MEL_BINS,
         "normalization_epsilon": NORMALIZATION_EPSILON,
-        "fold_split": {key: list(value) for key, value in FOLD_SPLIT.items()},
+        "evaluation_protocol": evaluation_protocol,
+        "fold_split": {key: list(value) for key, value in active_split.items()},
+        "normalization_scope": "train_split",
         "batch_period_ms": batch_period_ms,
         "train_crop_variants": TRAIN_CROP_VARIANTS,
         "crop_seed": CROP_SEED,
         "calibration_examples": CALIBRATION_EXAMPLES,
         "class_names": list(CLASS_NAMES),
+        "label_encoding": LABEL_ENCODING,
     }
+    if evaluation_protocol == "fold_rotation":
+        metadata["rotation_fold_index"] = rotation_fold_index
+    return metadata
 
 
-def _split_payload(split_name: str, *, labels: np.ndarray | None = None, folds: np.ndarray | None = None) -> dict[str, np.ndarray]:
+def _split_payload(
+    split_name: str,
+    *,
+    labels: np.ndarray | None = None,
+    folds: np.ndarray | None = None,
+    fold_split: dict[str, tuple[int, ...]] | None = None,
+) -> dict[str, np.ndarray]:
     """Build one valid split payload for dataset tests.
 
     Parameters
@@ -108,6 +154,8 @@ def _split_payload(split_name: str, *, labels: np.ndarray | None = None, folds: 
         Optional label override.
     folds : numpy.ndarray | None, optional
         Optional fold override.
+    fold_split : dict[str, tuple[int, ...]] | None, optional
+        Fold split used to choose default rows.
 
     Returns
     -------
@@ -115,7 +163,8 @@ def _split_payload(split_name: str, *, labels: np.ndarray | None = None, folds: 
         `.npz` payload matching the cache schema.
     """
 
-    expected_folds = FOLD_SPLIT["train"] if split_name == "calibration" else FOLD_SPLIT[split_name]
+    active_split = FOLD_SPLIT if fold_split is None else fold_split
+    expected_folds = active_split["train"] if split_name == "calibration" else active_split[split_name]
     row_count = 2
     return {
         "inputs": np.ones((row_count, EXPECTED_FRAMES, MEL_BINS), dtype=np.float32),
@@ -129,7 +178,12 @@ def _split_payload(split_name: str, *, labels: np.ndarray | None = None, folds: 
     }
 
 
-def _write_cache(cache_dir: Path, *, metadata: dict[str, object] | None = None) -> None:
+def _write_cache(
+    cache_dir: Path,
+    *,
+    metadata: dict[str, object] | None = None,
+    fold_split: dict[str, tuple[int, ...]] | None = None,
+) -> None:
     """Write a complete valid cache fixture.
 
     Parameters
@@ -138,6 +192,8 @@ def _write_cache(cache_dir: Path, *, metadata: dict[str, object] | None = None) 
         Destination cache directory.
     metadata : dict[str, object] | None, optional
         Optional metadata override.
+    fold_split : dict[str, tuple[int, ...]] | None, optional
+        Fold split used by split payloads.
 
     Returns
     -------
@@ -151,7 +207,7 @@ def _write_cache(cache_dir: Path, *, metadata: dict[str, object] | None = None) 
         encoding="utf-8",
     )
     for split_name in ("train", "val", "test", "calibration"):
-        np.savez_compressed(cache_dir / f"{split_name}.npz", **_split_payload(split_name))
+        np.savez_compressed(cache_dir / f"{split_name}.npz", **_split_payload(split_name, fold_split=fold_split))
 
 
 class UrbanSound8KMelDatasetTests(unittest.TestCase):
@@ -181,7 +237,80 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         self.assertEqual(bundle.metadata["num_classes"], len(CLASS_NAMES))
         self.assertEqual(bundle.metadata["batch_period_ms"], float(BATCH_PERIOD_MS))
         self.assertEqual(bundle.metadata["label_encoding"], LABEL_ENCODING)
+        self.assertEqual(bundle.metadata["evaluation_protocol"], "fixed_split")
         self.assertIs(bundle.calibration, dataset.make_calibration_data(bundle, Dict()))
+
+    def test_loads_fold_rotation_cache_with_metadata_split(self) -> None:
+        """A rotated cache should validate folds from metadata.
+
+        Returns
+        -------
+        None
+            Asserts fold-rotation metadata reaches the loaded bundle.
+        """
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = Path(tmpdir) / "fold_01"
+            fold_split = _rotation_split(1)
+            metadata = _metadata(
+                fold_split=fold_split,
+                evaluation_protocol="fold_rotation",
+                rotation_fold_index=1,
+            )
+            _write_cache(cache_dir, metadata=metadata, fold_split=fold_split)
+            bundle = UrbanSound8KMelDataset().load(
+                Dict(cache_dir=str(cache_dir), batch_period_ms=BATCH_PERIOD_MS)
+            )
+
+        self.assertEqual(bundle.metadata["evaluation_protocol"], "fold_rotation")
+        self.assertEqual(bundle.metadata["rotation_fold_index"], 1)
+        self.assertEqual(bundle.metadata["fold_split"]["test"], [1])
+        self.assertEqual(set(bundle.val.metadata["folds"].tolist()), {2})
+
+    def test_stale_schema_fails_with_prepare_hint(self) -> None:
+        """Schema-1 caches should fail with a regeneration hint.
+
+        Returns
+        -------
+        None
+            Asserts stale cache metadata is rejected.
+        """
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = Path(tmpdir) / CACHE_VERSION
+            metadata = _metadata()
+            metadata["schema_version"] = 1
+            metadata.pop("evaluation_protocol")
+            metadata.pop("normalization_scope")
+            metadata.pop("label_encoding")
+            _write_cache(cache_dir, metadata=metadata)
+            with self.assertRaisesRegex(ValueError, "make prepare-audio-dataset"):
+                UrbanSound8KMelDataset().load(
+                    Dict(cache_dir=str(cache_dir), batch_period_ms=BATCH_PERIOD_MS)
+                )
+
+    def test_fold_rotation_metadata_mismatch_fails(self) -> None:
+        """Rotation fold metadata must match its declared split.
+
+        Returns
+        -------
+        None
+            Asserts inconsistent rotation metadata is rejected.
+        """
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = Path(tmpdir) / "fold_01"
+            fold_split = _rotation_split(1)
+            metadata = _metadata(
+                fold_split=fold_split,
+                evaluation_protocol="fold_rotation",
+                rotation_fold_index=2,
+            )
+            _write_cache(cache_dir, metadata=metadata, fold_split=fold_split)
+            with self.assertRaisesRegex(ValueError, "rotation_fold_index"):
+                UrbanSound8KMelDataset().load(
+                    Dict(cache_dir=str(cache_dir), batch_period_ms=BATCH_PERIOD_MS)
+                )
 
     def test_rejects_cache_version_param(self) -> None:
         """Phase 3 should reject the dead `cache_version` config field.

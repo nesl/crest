@@ -230,13 +230,13 @@ For sketch ownership and directory roles, see
 [`../../../sketches/README.md`](../../../sketches/README.md).
 
 1. Shared uniform variants:
-   - `sketches/tinyodom_tcn_energy.ino`
-   - `sketches/tinyodom_tcn_no_energy.ino`
-   - `sketches/tinyodom_tcn_energy_cadenced.ino`
+   - `sketches/tinyodom_inference_energy.ino`
+   - `sketches/tinyodom_inference_no_energy.ino`
+   - `sketches/tinyodom_inference_energy_cadenced.ino`
 2. Shared analysis variants:
-   - `sketches/analysis_sketches/tinyodom_tcn_energy_representative.ino`
-   - `sketches/analysis_sketches/tinyodom_tcn_energy_real_data.ino`
-   - `sketches/analysis_sketches/tinyodom_tcn_input_data.h`
+   - `sketches/analysis_sketches/tinyodom_inference_representative.ino`
+   - `sketches/analysis_sketches/tinyodom_inference_real_data.ino`
+   - `sketches/analysis_sketches/tinyodom_input_data.h`
 3. Shared headers copied from `sketches/common/`:
    - `tinyodom_hil_config.h`
    - `tinyodom_power.h`

@@ -242,8 +242,8 @@ class CadencedPortentaSummaryTests(unittest.TestCase):
         self.assertAlmostEqual(summary["energy_mj_per_inference_mean"], 8.0)
         self.assertAlmostEqual(summary["avg_power_mw_mean"], 32.0)
 
-    def test_stage_phase_sketch_uses_candidate_dir_and_odom_staged_name(self):
-        """Portenta phase staging should write odom_tcn.ino under candidate_dir."""
+    def test_stage_phase_sketch_uses_candidate_dir_basename(self):
+        """Portenta phase staging should use the candidate directory basename."""
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             candidate_dir = root / "candidate"
@@ -276,7 +276,7 @@ class CadencedPortentaSummaryTests(unittest.TestCase):
                     latency_budget_ms=10.0,
                 )
 
-            self.assertEqual(staged, candidate_dir / "odom_tcn.ino")
+            self.assertEqual(staged, candidate_dir / "candidate.ino")
             self.assertTrue((candidate_dir / "common" / "tinyodom_hil_config.h").is_file())
 
 
