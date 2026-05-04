@@ -1,9 +1,10 @@
 # TinyODOM-EX
 
-TinyODOM-EX is a hardware-aware tinyML NAS repo. It combines dataset, task, and
+TinyODOM-EX is a hardware-aware embedded machine learning NAS repo. It combines dataset, task, and
 model-family selection with board-specific hardware-in-the-loop measurement so
 the same training/NAS flow can target odometry and audio-classification models
-on Arduino-class boards, Portenta H7, and the current STM32 N6 backend.
+on resource-constrained microcontrollers including Nano 33 BLE, Portenta H7,
+and STM32 N6.
 
 ## Architecture At A Glance
 
@@ -28,7 +29,7 @@ For the source-level architecture and extension points, see
    [src/config/README.md](src/config/README.md) plus [src/README.md](src/README.md).
    For the UrbanSound8K audio DS-CNN path, start from
    [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
-   and use `make audio-desktop-smoke` for a quick hardware-free check.
+   and use the audio desktop analysis runner for a quick hardware-free check.
 
 2. **Arduino HIL**
    Use this for Arduino CLI-backed DUTs and harness-backed measurement flows.
@@ -37,7 +38,7 @@ For the source-level architecture and extension points, see
    [src/config/nas_config_portenta.yaml](src/config/nas_config_portenta.yaml)
    for Portenta H7. For the audio DS-CNN smoke path, use
    [src/config/nas_config_audio_portenta.yaml](src/config/nas_config_audio_portenta.yaml)
-   with `make audio-portenta-hil-smoke`. Then read
+   with the Portenta audio HIL analysis runner. Then read
    [src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md)
    and [sketches/README.md](sketches/README.md).
 
@@ -45,7 +46,7 @@ For the source-level architecture and extension points, see
    Use this for the current STM32 N6 backend.
    Start from [src/config/nas_config.yaml](src/config/nas_config.yaml), then
    use [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
-   for the audio DS-CNN smoke path. Then
+   for the audio DS-CNN HIL path. Then
    read [src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md)
    and the committed STM32 workspace notes under
    [sketches/stm32/tinyodom_stm32_lrun/README.md](sketches/stm32/tinyodom_stm32_lrun/README.md).
@@ -270,21 +271,6 @@ Artifacts are written under the configured `outputs.models_dir` and
 - `models/<study_name>/train_history.json`
 - `models/<study_name>/summary.json`
 - generated TFLite and `.keras` artifacts
-
-## Smoke Tests
-
-- Audio desktop training smoke:
-  [analysis_scripts/audio_desktop_smoke/README.md](analysis_scripts/audio_desktop_smoke/README.md)
-- Audio STM32 HIL smoke:
-  [analysis_scripts/audio_stm32_hil_smoke/README.md](analysis_scripts/audio_stm32_hil_smoke/README.md)
-- Audio Portenta/BLE HIL smoke:
-  [analysis_scripts/audio_portenta_hil_smoke/README.md](analysis_scripts/audio_portenta_hil_smoke/README.md)
-- Quick HIL sanity check:
-  [analysis_scripts/hil_single_run/README.md](analysis_scripts/hil_single_run/README.md)
-- STM32 toy AI smoke test:
-  [analysis_scripts/stm32_example_project/README.md](analysis_scripts/stm32_example_project/README.md)
-- Additional one-off hardware analysis packages:
-  [analysis_scripts/README.md](analysis_scripts/README.md)
 
 ## Docs Map
 

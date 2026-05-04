@@ -1265,7 +1265,7 @@ class HILServer:
         ``device.portenta.target_core``, ``training.energy_aware``, and
         ``training.input_mode`` in the loaded config. Uniform sketches use the
         shared root ``sketches/tinyodom_inference_*.ino`` assets, while
-        representative/real analysis variants continue to use
+        dataset-specific representative/real analysis variants continue to use
         ``sketches/analysis_sketches``.
 
         Returns
@@ -1293,8 +1293,9 @@ class HILServer:
         Parameters
         ----------
         input_mode : str
-            Desired input mode (``"uniform"``, ``"representative"``, or
-            ``"real"``).
+            Desired input mode, such as ``"uniform"``,
+            ``"oxiod_representative"``, ``"oxiod_real"``,
+            ``"urbansound8k_representative"``, or ``"urbansound8k_real"``.
         runtime_phase : str, optional
             Runtime sketch phase (``"back_to_back"`` or ``"cadenced"``).
 

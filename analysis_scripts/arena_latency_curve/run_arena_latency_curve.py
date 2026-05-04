@@ -28,7 +28,7 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 SRC_DIR = REPO_ROOT / "src"
 
 VALID_DEVICES = ("ARDUINO_NANO_33_BLE_SENSE", "PORTENTA_H7")
-VALID_INPUT_MODES = ("uniform", "representative", "real")
+VALID_INPUT_MODES = ("uniform", "oxiod_representative", "oxiod_real")
 VALID_PORTENTA_CORES = ("cm7", "cm4")
 DEFAULT_ERROR_CODE_EXCEPTION = -999
 
@@ -319,7 +319,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input-mode",
         default=None,
-        help="Input mode override: uniform, representative, real.",
+        help="Input mode override: uniform, oxiod_representative, oxiod_real.",
     )
     parser.add_argument(
         "--model-variant",

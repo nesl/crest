@@ -734,7 +734,8 @@ def _sync_arduino_sketch_variant_for_config(
 
     training_cfg = _cfg_get(config, "training", None)
     energy_aware = bool(_cfg_get(training_cfg, "energy_aware", False))
-    input_mode = str(_cfg_get(training_cfg, "input_mode", "uniform")).lower()
+    input_mode = str(_cfg_get(training_cfg, "input_mode", "uniform")).strip().lower()
+    header_name: str | None = None
     if normalized_runtime_phase == "cadenced":
         if input_mode != "uniform":
             raise ValueError(
@@ -747,14 +748,26 @@ def _sync_arduino_sketch_variant_for_config(
         variant_name = "tinyodom_inference_no_energy.ino"
     else:
         variants = {
-            "uniform": ("tinyodom_inference_energy.ino", _resolve_uniform_variant_dir()),
-            "representative": (
+            "uniform": ("tinyodom_inference_energy.ino", _resolve_uniform_variant_dir(), None),
+            "oxiod_representative": (
                 "tinyodom_inference_representative.ino",
                 sketch_variants_dir / "analysis_sketches",
+                "oxiod_input_data.h",
             ),
-            "real": (
+            "oxiod_real": (
                 "tinyodom_inference_real_data.ino",
                 sketch_variants_dir / "analysis_sketches",
+                "oxiod_input_data.h",
+            ),
+            "urbansound8k_representative": (
+                "tinyodom_inference_representative.ino",
+                sketch_variants_dir / "analysis_sketches",
+                "urbansound8k_input_data.h",
+            ),
+            "urbansound8k_real": (
+                "tinyodom_inference_real_data.ino",
+                sketch_variants_dir / "analysis_sketches",
+                "urbansound8k_input_data.h",
             ),
         }
         if input_mode not in variants:
@@ -762,7 +775,7 @@ def _sync_arduino_sketch_variant_for_config(
             raise ValueError(
                 f"Unsupported input_mode '{input_mode}'. Expected one of: {allowed}."
             )
-        variant_name, variant_dir = variants[input_mode]
+        variant_name, variant_dir, header_name = variants[input_mode]
 
     variant_source = variant_dir / variant_name
     if not variant_source.exists():
@@ -782,15 +795,11 @@ def _sync_arduino_sketch_variant_for_config(
     if variant_common_source.exists() and variant_common_source != common_source:
         shutil.copytree(variant_common_source, outputs_dir / "common", dirs_exist_ok=True)
 
-    needs_header = variant_name in {
-        "tinyodom_inference_representative.ino",
-        "tinyodom_inference_real_data.ino",
-    }
-    header_source = sketch_variants_dir / "analysis_sketches" / "tinyodom_input_data.h"
-    if needs_header:
+    if header_name is not None:
+        header_source = sketch_variants_dir / "analysis_sketches" / header_name
         if not header_source.exists():
             raise FileNotFoundError(f"Input header not found: {header_source}")
-        shutil.copyfile(header_source, outputs_dir / header_source.name)
+        shutil.copyfile(header_source, outputs_dir / "tinyodom_input_data.h")
     return sketch_target
 
 

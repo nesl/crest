@@ -371,7 +371,6 @@ class NASModelClient:
     def _build_model_context(
         self,
         bundle: DatasetBundle,
-        task: Any,
         target_spec: Any,
     ) -> ModelBuildContext:
         """Build the normalized model-family context for one dataset/task pair.
@@ -2160,7 +2159,6 @@ class NASModelClient:
                 history = self._train_with_decoded_hparams(
                     family_hparams,
                     bundle=pipeline.bundle,
-                    task=pipeline.task,
                     target_spec=pipeline.target_spec,
                     model_build_context=pipeline.model_build_context,
                     model_config=pipeline.selection["model_config"],
@@ -2175,6 +2173,7 @@ class NASModelClient:
                     checkpoint_path=checkpoint_path,
                     metrics_path=metrics_path,
                     bundle=pipeline.bundle,
+                    task=pipeline.task,
                     target_spec=pipeline.target_spec,
                     model_build_context=pipeline.model_build_context,
                     model_config=pipeline.selection["model_config"],

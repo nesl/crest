@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 def _load_module(module_name: str, relative_path: str):
@@ -71,6 +71,10 @@ clock_tick_latency = _load_module(
 stm32_lrun_common = _load_module(
     "stm32_lrun_common_for_tests",
     "analysis_scripts/stm32_example_project/stm32_lrun_common.py",
+)
+single_hil = _load_module(
+    "single_hil_for_tests",
+    "analysis_scripts/hil_single_run/run_single_hil.py",
 )
 
 
@@ -178,6 +182,32 @@ class AnalysisCadenceHelperTests(unittest.TestCase):
                     "dataset": {"params": {"batch_period_ms": 0}},
                 }
             )
+
+
+class SingleHILRunTests(unittest.TestCase):
+    """Validate single-run HIL wrapper behavior."""
+
+    def test_single_hil_uses_configured_export_variant(self) -> None:
+        """Single HIL runner should not force a hard-coded model variant."""
+
+        server = MagicMock()
+        server.config.device.harness_arm_pin = 3
+        server.config.device.harness_trigger_pin = 2
+        server.config.device.dut_arm_hold_ms = 600
+        server.config.device.harness_stable_low_ms = 500
+        server.determine_metrics.return_value = {"latency_ms": 1.0}
+
+        argv = ["run_single_hil.py", "--config", "src/config/nas_config.yaml"]
+        with patch.object(sys, "argv", argv), patch.object(
+            single_hil, "HILServer", return_value=server
+        ), patch.object(single_hil, "_build_hyperparams", return_value={"nb_filters": 2}), patch.object(
+            single_hil,
+            "split_hil_request_hyperparams",
+            return_value=({"nb_filters": 2}, {"flops": 100}),
+        ):
+            self.assertEqual(single_hil.main(), 0)
+
+        server.determine_metrics.assert_called_once_with({"nb_filters": 2}, {"flops": 100})
 
 
 class CadencedPortentaSummaryTests(unittest.TestCase):

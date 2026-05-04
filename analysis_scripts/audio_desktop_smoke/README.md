@@ -9,14 +9,14 @@ and writes checkpoint, history, and metrics artifacts.
 ## Command
 
 ```bash
-make audio-desktop-smoke
+python analysis_scripts/audio_desktop_smoke/run_audio_desktop_smoke.py
 ```
 
 Useful overrides:
 
 ```bash
-make audio-desktop-smoke AUDIO_SMOKE_ARGS="--epochs 2 --max-train-examples 256 --max-val-examples 128"
-make audio-desktop-smoke AUDIO_SMOKE_ARGS="--config src/config/nas_config_audio_portenta.yaml"
+python analysis_scripts/audio_desktop_smoke/run_audio_desktop_smoke.py --epochs 2 --max-train-examples 256 --max-val-examples 128
+python analysis_scripts/audio_desktop_smoke/run_audio_desktop_smoke.py --config src/config/nas_config_audio_portenta.yaml
 ```
 
 The default config is `src/config/nas_config_audio_stm32.yaml`; the runner does

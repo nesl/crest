@@ -1794,6 +1794,7 @@ class LoadSettingsTests(unittest.TestCase):
             ("nas_config_ble.yaml", "odom_tcn", "approx_trained"),
             ("nas_config_portenta.yaml", "odom_tcn", "approx_trained"),
             ("nas_config_audio_stm32.yaml", "audio_dscnn", "untrained"),
+            ("nas_config_audio_portenta.yaml", "audio_dscnn", "untrained"),
         ]
         for filename, family, export_variant in cases:
             with self.subTest(filename=filename):
@@ -1807,6 +1808,30 @@ class LoadSettingsTests(unittest.TestCase):
 
                 self.assertEqual(settings.model.family, family)
                 self.assertEqual(selection["model_config"]["params"].export_variant, export_variant)
+
+    def test_shipped_configs_use_production_budgets_and_audio_default_search(self) -> None:
+        """Checked-in configs should use production budgets and default audio search."""
+
+        expected_budget = {
+            "nas_epochs": 55,
+            "model_epochs": 990,
+            "nas_trials": 150,
+            "nas_multiobjective_population_size": 50,
+            "max_total_trials": 300,
+        }
+        for filename in (
+            "nas_config.yaml",
+            "nas_config_ble.yaml",
+            "nas_config_portenta.yaml",
+            "nas_config_audio_stm32.yaml",
+            "nas_config_audio_portenta.yaml",
+        ):
+            with self.subTest(filename=filename):
+                settings = load_config(config_path=ROOT_DIR / "src/config" / filename)
+                for key, value in expected_budget.items():
+                    self.assertEqual(settings.training[key], value)
+                if filename.startswith("nas_config_audio"):
+                    self.assertEqual(settings.model.search, {})
 
     def test_config_readme_lists_audio_config_and_artifact_stem(self) -> None:
         """Config documentation should mention the audio config and new stem key."""

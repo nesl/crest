@@ -47,28 +47,14 @@ model:
   family: audio_dscnn
   params:
     export_variant: untrained
-  search:
-    base_channels: [4, 8, 12, 16, 20, 24, 32]
-    num_blocks: [2, 3, 4, 5, 6]
-    kernel_time: [3, 5]
-    kernel_freq: [3, 5]
-    stride_schedule: ["light", "balanced", "aggressive", "early_time", "early_freq", "late"]
-    channel_growth: [1.0, 1.5, 2.0]
-    max_channels: [64, 96, 128]
-    depth_multiplier: [1, 2]
-    pointwise_scale: [0.75, 1.0, 1.25, 1.5]
-    dropout_rate: [0.0, 0.1, 0.2, 0.3]
-    norm_flag: [true, false]
-    dense_units: [0, 16, 32, 64]
-    global_pool_type: ["avg", "max"]
-    activation: ["relu", "relu6"]
+  search: {}  # Empty search uses AudioDSCNNFamily.AUDIO_DSCNN_SEARCH_CHOICES.
 
 training:
-  nas_epochs: 5
-  model_epochs: 30
-  nas_trials: 25
-  nas_multiobjective_population_size: 10
-  max_total_trials: 50
+  nas_epochs: 55
+  model_epochs: 990
+  nas_trials: 150
+  nas_multiobjective_population_size: 50
+  max_total_trials: 300
   quantization: true
   latency_proxy_max_flops: 30000000.0
   train: true

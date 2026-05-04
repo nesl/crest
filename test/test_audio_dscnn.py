@@ -202,6 +202,17 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
         self.assertEqual(sampled["activation"], "relu")
         self.assertEqual(sampled["global_pool_type"], "avg")
 
+    def test_empty_search_uses_family_default_choices(self) -> None:
+        """An empty search block should use the full family default surface."""
+
+        trial = DummyTrial()
+        config = Dict(family="audio_dscnn", params=Dict(), search=Dict())
+
+        self.family.sample_hparams(trial, self.ctx, config)
+
+        for name, choices in AUDIO_DSCNN_SEARCH_CHOICES.items():
+            self.assertEqual(trial.choices[name], choices)
+
     def test_validate_config_rejects_invalid_sections_and_legacy_keys(self) -> None:
         """Config validation should fail on unsupported params and search values."""
 

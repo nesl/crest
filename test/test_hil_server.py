@@ -1472,7 +1472,7 @@ class SketchVariantTests(unittest.TestCase):
         energy_aware : bool
             Whether energy-aware sketch variants should be selected.
         input_mode : str
-            Requested input mode (uniform/representative/real).
+            Requested input mode.
         device_name : str, optional
             Device profile used to route uniform sketch variants.
         target_core : str | None, optional
@@ -1585,8 +1585,8 @@ class SketchVariantTests(unittest.TestCase):
             self.assertTrue(out_path.exists())
             self.assertIn("no_energy_shared_cm4", out_path.read_text())
 
-    def test_selects_representative_variant_and_copies_header(self) -> None:
-        """Representative staging should copy the renamed sketch and input header."""
+    def test_selects_oxiod_representative_variant_and_copies_header(self) -> None:
+        """OxIOD representative staging should copy the sketch and staged include header."""
         # Representative input-mode runs should switch sketches and copy the generated header that drives the sample payload.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
@@ -1595,18 +1595,19 @@ class SketchVariantTests(unittest.TestCase):
                 sketches / "analysis_sketches/tinyodom_inference_representative.ino",
                 "representative",
             )
-            header = sketches / "analysis_sketches/tinyodom_input_data.h"
+            header = sketches / "analysis_sketches/oxiod_input_data.h"
             header.write_text("// header\n")
-            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="representative")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="oxiod_representative")
 
             out_path = server._sync_sketch_variant()
 
             self.assertTrue(out_path.exists())
             self.assertIn("representative", out_path.read_text())
-            self.assertTrue((candidate_dir / header.name).exists())
+            self.assertTrue((candidate_dir / "tinyodom_input_data.h").exists())
+            self.assertEqual((candidate_dir / "tinyodom_input_data.h").read_text(), "// header\n")
 
-    def test_selects_real_variant_and_copies_header(self) -> None:
-        """Real-data staging should copy the renamed sketch and input header."""
+    def test_selects_oxiod_real_variant_and_copies_header(self) -> None:
+        """OxIOD real-data staging should copy the sketch and staged include header."""
         # Real-input runs should stage the real-data sketch and copy the matching generated header.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
@@ -1615,18 +1616,48 @@ class SketchVariantTests(unittest.TestCase):
                 sketches / "analysis_sketches/tinyodom_inference_real_data.ino",
                 "real",
             )
-            header = sketches / "analysis_sketches/tinyodom_input_data.h"
+            header = sketches / "analysis_sketches/oxiod_input_data.h"
             header.write_text("// header\n")
-            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="real")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="oxiod_real")
 
             out_path = server._sync_sketch_variant()
 
             self.assertTrue(out_path.exists())
             self.assertIn("real", out_path.read_text())
-            self.assertTrue((candidate_dir / header.name).exists())
+            self.assertTrue((candidate_dir / "tinyodom_input_data.h").exists())
+
+    def test_selects_urbansound8k_variants_and_copies_audio_header(self) -> None:
+        """UrbanSound8K modes should stage the shared sketches with the audio header."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            candidate_dir = Path(tmpdir) / "audio_dscnn"
+            self._write_sketch(
+                sketches / "analysis_sketches/tinyodom_inference_representative.ino",
+                "representative",
+            )
+            self._write_sketch(
+                sketches / "analysis_sketches/tinyodom_inference_real_data.ino",
+                "real",
+            )
+            header = sketches / "analysis_sketches/urbansound8k_input_data.h"
+            header.write_text("// audio header\n")
+            server = self._build_server(
+                sketches,
+                candidate_dir,
+                energy_aware=True,
+                input_mode="urbansound8k_representative",
+            )
+
+            representative_path = server._sync_sketch_variant()
+            self.assertIn("representative", representative_path.read_text())
+            self.assertEqual((candidate_dir / "tinyodom_input_data.h").read_text(), "// audio header\n")
+
+            real_path = server.set_input_mode("urbansound8k_real")
+            self.assertIn("real", real_path.read_text())
+            self.assertEqual((candidate_dir / "tinyodom_input_data.h").read_text(), "// audio header\n")
 
     def test_missing_header_raises_for_representative(self) -> None:
-        """Representative staging should require the renamed input header."""
+        """Dataset representative staging should require its input header."""
         # Representative-mode staging should fail fast if the generated header is missing.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
@@ -1635,7 +1666,7 @@ class SketchVariantTests(unittest.TestCase):
                 sketches / "analysis_sketches/tinyodom_inference_representative.ino",
                 "representative",
             )
-            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="representative")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="oxiod_representative")
 
             with self.assertRaises(FileNotFoundError):
                 server._sync_sketch_variant()
@@ -1647,8 +1678,19 @@ class SketchVariantTests(unittest.TestCase):
             candidate_dir = Path(tmpdir) / "odom_tcn"
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="bad_mode")
 
-            with self.assertRaises(ValueError):
+            with self.assertRaisesRegex(ValueError, "Unsupported input_mode"):
                 server._sync_sketch_variant()
+
+    def test_old_generic_input_modes_are_unsupported(self) -> None:
+        """Old generic representative/real modes should fail through normal validation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches = Path(tmpdir) / "sketches"
+            candidate_dir = Path(tmpdir) / "odom_tcn"
+            for mode in ("representative", "real"):
+                with self.subTest(mode=mode):
+                    server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode=mode)
+                    with self.assertRaisesRegex(ValueError, "Unsupported input_mode"):
+                        server._sync_sketch_variant()
 
     def test_cadenced_runtime_requires_uniform_input_mode(self) -> None:
         """Cadenced Arduino staging should still reject non-uniform inputs."""
@@ -1660,12 +1702,12 @@ class SketchVariantTests(unittest.TestCase):
                 sketches / "analysis_sketches/tinyodom_inference_representative.ino",
                 "representative",
             )
-            header = sketches / "analysis_sketches/tinyodom_input_data.h"
+            header = sketches / "analysis_sketches/oxiod_input_data.h"
             header.write_text("// header\n")
-            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="representative")
+            server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="oxiod_representative")
 
             with self.assertRaises(ValueError):
-                server.set_input_mode("representative", runtime_phase="cadenced")
+                server.set_input_mode("oxiod_representative", runtime_phase="cadenced")
 
     def test_portenta_uniform_requires_target_core(self) -> None:
         # Uniform Portenta sketch selection needs an explicit target core so the server does not guess between CM4 and CM7.

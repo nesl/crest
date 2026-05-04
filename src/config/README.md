@@ -19,38 +19,12 @@ reference for the current score/prune surface. Use the BLE and Portenta files
 when you want board-specific starting points for those Arduino-backed targets.
 Use [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml) for the
 desktop-first UrbanSound8K / DS-CNN audio path before moving into STM32 HIL
-smoke work. Use [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml)
+work. Use [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml)
 for the Phase 8 Arduino audio path on Portenta H7 CM7.
 
-The current audio STM32 smoke command is:
-
-```bash
-make audio-stm32-hil-smoke AUDIO_STM32_HIL_ARGS="--preflight-only"
-```
-
-Use `--prepare-only` to run ST Edge AI analyze/generate/staging without board
-upload, and omit both mode flags for a full STM32 HIL timing run. This smoke
-path measures classifier inference over precomputed log-mel feature tensors; it
-does not include firmware-side microphone capture or audio feature extraction.
-
-The current audio Portenta/BLE smoke command is:
-
-```bash
-make audio-portenta-hil-smoke AUDIO_PORTENTA_HIL_ARGS="--preflight-only"
-```
-
-Use `--prepare-only` to export, stage, and compile the Arduino candidate
-without upload or measurement. Add `--device-name ARDUINO_NANO_33_BLE_SENSE`
-to exercise the BLE compile/preflight path.
-
-The hardware-free audio training smoke command is:
-
-```bash
-make audio-desktop-smoke
-```
-
-Use `AUDIO_SMOKE_ARGS` to override epochs, row limits, config path, or output
-directory for this host-only check.
+Audio analysis runners live under [`../../analysis_scripts`](../../analysis_scripts).
+They measure classifier inference over precomputed log-mel feature tensors; they
+do not include firmware-side microphone capture or audio feature extraction.
 
 Phase 9 adds optional audio final fold-rotation reporting through:
 
@@ -212,6 +186,9 @@ Current runtime behavior:
 
 - `training.energy_aware` defaults to `false` when omitted
 - `training.input_mode` defaults to `uniform` when omitted
+- `training.input_mode` supports dataset-agnostic `uniform` plus
+  dataset-specific analysis modes: `oxiod_representative`, `oxiod_real`,
+  `urbansound8k_representative`, and `urbansound8k_real`
 - `training.max_total_trials` defaults to `training.nas_trials * 2` when
   omitted
 
@@ -229,6 +206,10 @@ Current keys:
 - `model.family`
 - `model.params`
 - `model.search`
+
+For `audio_dscnn`, `model.search: {}` means "use the model-family default
+search surface" from `AudioDSCNNFamily.AUDIO_DSCNN_SEARCH_CHOICES`. Add keys
+under `model.search` only when you want to narrow that default surface.
 
 Current caveats:
 

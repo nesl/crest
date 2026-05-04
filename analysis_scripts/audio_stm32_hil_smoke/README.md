@@ -12,31 +12,31 @@ firmware-side feature extraction.
 Hardware-free preflight:
 
 ```bash
-make audio-stm32-hil-smoke AUDIO_STM32_HIL_ARGS="--preflight-only"
+python analysis_scripts/audio_stm32_hil_smoke/run_audio_stm32_hil_smoke.py --preflight-only
 ```
 
 ST Edge AI generation and STM32 candidate staging only:
 
 ```bash
-make audio-stm32-hil-smoke AUDIO_STM32_HIL_ARGS="--prepare-only"
+python analysis_scripts/audio_stm32_hil_smoke/run_audio_stm32_hil_smoke.py --prepare-only
 ```
 
 Full board run:
 
 ```bash
-make audio-stm32-hil-smoke AUDIO_STM32_HIL_ARGS="--serial-port /dev/ttyACM0"
+python analysis_scripts/audio_stm32_hil_smoke/run_audio_stm32_hil_smoke.py --serial-port /dev/ttyACM0
 ```
 
 Useful overrides:
 
 ```bash
-make audio-stm32-hil-smoke AUDIO_STM32_HIL_ARGS="--runtime-mode cadenced --measured-runs 10 --cpu-clock-mhz 600"
+python analysis_scripts/audio_stm32_hil_smoke/run_audio_stm32_hil_smoke.py --runtime-mode cadenced --measured-runs 10 --cpu-clock-mhz 600
 ```
 
 Harness-assisted power metrics:
 
 ```bash
-make audio-stm32-hil-smoke AUDIO_STM32_HIL_ARGS="--serial-port /dev/ttyACM0 --harness-serial-port /dev/ttyACM1 --runtime-mode cadenced --measured-runs 10 --cpu-clock-mhz 600 --energy-aware"
+python analysis_scripts/audio_stm32_hil_smoke/run_audio_stm32_hil_smoke.py --serial-port /dev/ttyACM0 --harness-serial-port /dev/ttyACM1 --runtime-mode cadenced --measured-runs 10 --cpu-clock-mhz 600 --energy-aware
 ```
 
 ## Outputs
@@ -53,6 +53,7 @@ candidate-local TFLite artifact and applies the configured quantization path.
 With the default audio STM32 config, that staged candidate uses int8 input, so
 `AI_NETWORK_IN_1_SIZE_BYTES` is expected to be `201 * 64 = 12864`.
 
-The STM32 LRUN template is shared across TinyODOM model families. Phase 6 still
-uses precomputed log-mel features; microphone capture and the on-device audio
-frontend remain out of scope for this smoke script.
+The STM32 LRUN template runs the generated ST Edge AI network and HIL timing
+protocol for any staged model. Phase 6 still uses precomputed log-mel features;
+microphone capture and on-device audio frontend processing remain out of scope
+for this smoke script.

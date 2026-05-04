@@ -236,7 +236,8 @@ For sketch ownership and directory roles, see
 2. Shared analysis variants:
    - `sketches/analysis_sketches/tinyodom_inference_representative.ino`
    - `sketches/analysis_sketches/tinyodom_inference_real_data.ino`
-   - `sketches/analysis_sketches/tinyodom_input_data.h`
+   - `sketches/analysis_sketches/oxiod_input_data.h`
+   - `sketches/analysis_sketches/urbansound8k_input_data.h`
 3. Shared headers copied from `sketches/common/`:
    - `tinyodom_hil_config.h`
    - `tinyodom_power.h`

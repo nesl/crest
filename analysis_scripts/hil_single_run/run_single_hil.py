@@ -64,9 +64,15 @@ def main() -> int:
     parser.add_argument(
         "--input-mode",
         type=str.lower,
-        choices=["uniform", "representative", "real"],
+        choices=[
+            "uniform",
+            "oxiod_representative",
+            "oxiod_real",
+            "urbansound8k_representative",
+            "urbansound8k_real",
+        ],
         default=None,
-        help="Override input_mode for this run (uniform/representative/real).",
+        help="Override input_mode for this run.",
     )
     parser.add_argument(
         "--output",
@@ -122,7 +128,6 @@ def main() -> int:
     metrics = server.determine_metrics(
         family_hparams,
         runtime_metadata,
-        model_variant="approx_trained",
     )
 
     print("Single HIL metrics:")

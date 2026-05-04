@@ -27,7 +27,7 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 SRC_DIR = REPO_ROOT / "src"
 
 VALID_DEVICE = "PORTENTA_H7"
-VALID_INPUT_MODES = ("uniform", "representative", "real")
+VALID_INPUT_MODES = ("uniform", "oxiod_representative", "oxiod_real")
 VALID_PORTENTA_CORES = ("cm7", "cm4")
 DEFAULT_ERROR_CODE_EXCEPTION = -999
 MASTER_SUCCESS_CODE = 1
@@ -254,7 +254,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input-mode",
         default="uniform",
-        help="Input mode override: uniform, representative, or real.",
+        help="Input mode override: uniform, oxiod_representative, or oxiod_real.",
     )
     parser.add_argument(
         "--output-csv",

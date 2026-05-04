@@ -7,9 +7,9 @@ buffering, FFT, mel filtering, or firmware-side frontend timing.
 ## Modes
 
 ```bash
-make audio-portenta-hil-smoke AUDIO_PORTENTA_HIL_ARGS="--preflight-only"
-make audio-portenta-hil-smoke AUDIO_PORTENTA_HIL_ARGS="--prepare-only"
-make audio-portenta-hil-smoke
+python analysis_scripts/audio_portenta_hil_smoke/run_audio_portenta_hil_smoke.py --preflight-only
+python analysis_scripts/audio_portenta_hil_smoke/run_audio_portenta_hil_smoke.py --prepare-only
+python analysis_scripts/audio_portenta_hil_smoke/run_audio_portenta_hil_smoke.py
 ```
 
 - `--preflight-only`: load config/cache, build the seeded untrained model, and
@@ -21,7 +21,7 @@ make audio-portenta-hil-smoke
 Use BLE through the same path:
 
 ```bash
-make audio-portenta-hil-smoke AUDIO_PORTENTA_HIL_ARGS="--device-name ARDUINO_NANO_33_BLE_SENSE --prepare-only"
+python analysis_scripts/audio_portenta_hil_smoke/run_audio_portenta_hil_smoke.py --device-name ARDUINO_NANO_33_BLE_SENSE --prepare-only
 ```
 
 BLE may block because the int8 input tensor alone is `12,864` bytes before

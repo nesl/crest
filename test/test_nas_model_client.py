@@ -1521,6 +1521,7 @@ class FoldRotationReportingTests(unittest.TestCase):
                 protocol="fold_rotation",
                 fold_rotation=Dict(test_folds=[1, 2]),
             )
+            fold_tasks = {}
 
             def _pipeline_for_fold(fold_cache_dir: Path) -> SimpleNamespace:
                 """Build one fake fold pipeline from the requested cache path.
@@ -1539,6 +1540,7 @@ class FoldRotationReportingTests(unittest.TestCase):
                 fold = int(fold_cache_dir.name.split("_")[1])
                 task = MagicMock()
                 task.generate_closeout_artifacts.return_value = {"fold": fold}
+                fold_tasks[fold] = task
                 return SimpleNamespace(
                     bundle=client.dataset_bundle,
                     target_spec=client.target_spec,
@@ -1553,10 +1555,11 @@ class FoldRotationReportingTests(unittest.TestCase):
             with patch.object(client, "_best_trial_params", return_value={"nb_filters": 2}), patch.object(
                 client, "_bootstrap_fold_pipeline", side_effect=_pipeline_for_fold
             ), patch.object(
-                client, "_train_with_decoded_hparams", return_value={"loss": [1.0]}
+                client, "_train_with_decoded_hparams", autospec=True, return_value={"loss": [1.0]}
             ) as train_mock, patch.object(
                 client,
                 "_evaluate_checkpoint_with_context",
+                autospec=True,
                 side_effect=[
                     {"accuracy": 0.8, "macro_f1": 0.7, "loss": 0.5},
                     {"accuracy": 0.9, "macro_f1": 0.8, "loss": 0.4},
@@ -1572,6 +1575,9 @@ class FoldRotationReportingTests(unittest.TestCase):
             self.assertEqual(result["completed_test_folds"], [1, 2])
             self.assertEqual(train_mock.call_count, 2)
             self.assertEqual(eval_mock.call_count, 2)
+            self.assertNotIn("task", train_mock.call_args_list[0].kwargs)
+            self.assertIs(eval_mock.call_args_list[0].kwargs["task"], fold_tasks[1])
+            self.assertIs(eval_mock.call_args_list[1].kwargs["task"], fold_tasks[2])
             self.assertFalse(eval_mock.call_args_list[0].kwargs["export_tflite"])
             summary = json.loads(Path(result["summary_path"]).read_text(encoding="utf-8"))
             self.assertTrue(summary["partial"])
@@ -1601,10 +1607,11 @@ class FoldRotationReportingTests(unittest.TestCase):
             with patch.object(client, "_best_trial_params", return_value={"nb_filters": 2}), patch.object(
                 client, "_bootstrap_fold_pipeline", return_value=pipeline
             ), patch.object(
-                client, "_train_with_decoded_hparams", return_value={"loss": [1.0]}
+                client, "_train_with_decoded_hparams", autospec=True, return_value={"loss": [1.0]}
             ), patch.object(
                 client,
                 "_evaluate_checkpoint_with_context",
+                autospec=True,
                 side_effect=[
                     {"accuracy": 0.8, "macro_f1": 0.7, "loss": 0.5},
                     {"accuracy": float("nan"), "macro_f1": 0.8, "loss": 0.4},

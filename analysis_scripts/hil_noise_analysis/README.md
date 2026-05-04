@@ -6,7 +6,7 @@ how input distributions affect latency and energy measurements.
 ## Scripts
 
 - `hil_energy_noise_scan.py`
-  - Runs a multi-mode (`uniform` / `representative` / `real`) HIL noise scan.
+  - Runs a multi-mode (`uniform` / `oxiod_representative` / `oxiod_real`) HIL noise scan.
   - Runs one or more model variants (`trained_50ep`, `untrained`) against each input mode.
   - Re-syncs the Arduino sketch variant for each input mode and records per-run metrics.
   - Writes a CSV with `model_variant`, `input_mode`, and per-run metrics.
@@ -28,9 +28,14 @@ how input distributions affect latency and energy measurements.
   - Loads OxIOD windows using the same data loader and config parameters used by
     `hil_server.py` / `nas_model_client.py`.
   - Prints per-channel statistics to compare the real dataset to uniform `[0, 5]` inputs.
-  - Can export `sketches/analysis_sketches/tinyodom_input_data.h`, which embeds:
+  - Can export `sketches/analysis_sketches/oxiod_input_data.h`, which embeds:
     - Per-channel mean/std/min/max values.
     - A fixed set of real windows (default 10) for the real-data sketch.
+
+- `urbansound8k_input_profile.py`
+  - Loads cached UrbanSound8K log-mel tensors from `dataset.params.cache_dir`.
+  - Can export `sketches/analysis_sketches/urbansound8k_input_data.h` for
+    audio representative/real HIL input modes.
 
 - `hil_energy_noise_analysis.py`
   - Analyzes the noise scan CSV and writes summary stats plus plots.
@@ -61,29 +66,34 @@ Energy-aware input modes map to the following sketches:
 - `sketches/analysis_sketches/tinyodom_inference_representative.ino` (synthetic inputs using dataset mean/std + clamping)
 - `sketches/analysis_sketches/tinyodom_inference_real_data.ino` (fixed real dataset windows)
 
-The generated header lives alongside them:
+Dataset-specific generated headers live alongside them:
 
-- `sketches/analysis_sketches/tinyodom_input_data.h`
+- `sketches/analysis_sketches/oxiod_input_data.h`
+- `sketches/analysis_sketches/urbansound8k_input_data.h`
 
 ## Config selection
 
 Set the following in `src/config/nas_config.yaml` to choose a variant when `energy_aware: true`:
 
 - `input_mode: "uniform"` uses `sketches/tinyodom_inference_energy.ino`
-- `input_mode: "representative"` uses `sketches/analysis_sketches/tinyodom_inference_representative.ino`
-- `input_mode: "real"` uses `sketches/analysis_sketches/tinyodom_inference_real_data.ino`
+- `input_mode: "oxiod_representative"` uses `sketches/analysis_sketches/tinyodom_inference_representative.ino` with `oxiod_input_data.h`
+- `input_mode: "oxiod_real"` uses `sketches/analysis_sketches/tinyodom_inference_real_data.ino` with `oxiod_input_data.h`
+- `input_mode: "urbansound8k_representative"` uses `sketches/analysis_sketches/tinyodom_inference_representative.ino` with `urbansound8k_input_data.h`
+- `input_mode: "urbansound8k_real"` uses `sketches/analysis_sketches/tinyodom_inference_real_data.ino` with `urbansound8k_input_data.h`
 
 ## Input Mode Definitions
 
 - `uniform`: fills the model input window with random values in `[0, 5]`.
-- `representative`: uses synthetic values shaped by OxIOD channel statistics (mean/std with clamping).
-- `real`: replays fixed real OxIOD windows embedded in `tinyodom_input_data.h`.
+- `oxiod_representative`: uses synthetic values shaped by OxIOD channel statistics (mean/std with clamping).
+- `oxiod_real`: replays fixed real OxIOD windows embedded in `oxiod_input_data.h`.
+- `urbansound8k_representative`: uses synthetic values shaped by cached log-mel statistics.
+- `urbansound8k_real`: replays fixed cached log-mel windows embedded in `urbansound8k_input_data.h`.
 
 ## Two-Machine Workflow (GPU Train + HIL Scan)
 
 ```bash
 # 1) Optional: regenerate representative/real input header
-python analysis_scripts/hil_noise_analysis/oxiod_input_profile.py --split train --export-header sketches/analysis_sketches/tinyodom_input_data.h --real-window-count 10
+python analysis_scripts/hil_noise_analysis/oxiod_input_profile.py --split train --export-header sketches/analysis_sketches/oxiod_input_data.h --real-window-count 10
 
 # 2) On the GPU host, train and package the fixed 50-epoch artifact
 python analysis_scripts/hil_noise_analysis/train_noise_scan_model.py \
@@ -99,7 +109,7 @@ scp analysis_scripts/hil_noise_analysis/artifacts/noise_scan_50ep.json <hil_host
 # 4) On the HIL host, run trained vs untrained scan across the three input modes
 python analysis_scripts/hil_noise_analysis/hil_energy_noise_scan.py \
   --model-variants trained_50ep,untrained \
-  --input-modes uniform,representative,real \
+  --input-modes uniform,oxiod_representative,oxiod_real \
   --trained-checkpoint analysis_scripts/hil_noise_analysis/artifacts/noise_scan_50ep.keras \
   --trained-meta analysis_scripts/hil_noise_analysis/artifacts/noise_scan_50ep.json \
   --csv-path hil_energy_noise_scan.csv
@@ -153,7 +163,7 @@ The full staged workflow, optional flags, and artifact layout are documented in
   - If pandas import fails with a GLIBCXX/libstdc++ mismatch, the script falls back automatically.
 
 - `oxiod_input_profile.py`
-  - `--export-header` to rewrite `sketches/analysis_sketches/tinyodom_input_data.h`
+  - `--export-header` to rewrite `sketches/analysis_sketches/oxiod_input_data.h`
   - `--export-stats-csv` for per-channel summary CSV output
   - `--real-window-count` (default: `10`) to control the embedded real-window set
 

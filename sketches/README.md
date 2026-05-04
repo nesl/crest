@@ -45,7 +45,8 @@ uses this layout:
 3. Analysis input modes:
    - [`analysis_sketches/tinyodom_inference_representative.ino`](analysis_sketches/tinyodom_inference_representative.ino)
    - [`analysis_sketches/tinyodom_inference_real_data.ino`](analysis_sketches/tinyodom_inference_real_data.ino)
-   - [`analysis_sketches/tinyodom_input_data.h`](analysis_sketches/tinyodom_input_data.h)
+   - [`analysis_sketches/oxiod_input_data.h`](analysis_sketches/oxiod_input_data.h)
+   - [`analysis_sketches/urbansound8k_input_data.h`](analysis_sketches/urbansound8k_input_data.h)
 4. Shared copied headers:
    - [`common/tinyodom_hil_config.h`](common/tinyodom_hil_config.h)
    - [`common/tinyodom_power.h`](common/tinyodom_power.h)
