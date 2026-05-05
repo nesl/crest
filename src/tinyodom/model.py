@@ -61,6 +61,7 @@ logger = logging.getLogger(__name__)
 
 VALID_SCORE_TYPES = {"scoring-function", "multi-objective"}
 VALID_QUANTIZATION_MODES = {"float", "int8_ptq"}
+VALID_COMPILE_WHEN_HIL_DISABLED = {"auto", "true", "false"}
 BOARD_QUANTIZATION_CAPABILITIES = {
     "STM32_NUCLEO_N657X0_Q": {"float", "int8_ptq"},
     "PORTENTA_H7": {"float", "int8_ptq"},
@@ -1979,6 +1980,15 @@ def load_config(
     config.training.drop_rate_choices = DROP_RATE_CHOICES
 
     device = config.device
+
+    raw_compile_when_hil_disabled = device.get("compile_when_hil_disabled", "auto")
+    if isinstance(raw_compile_when_hil_disabled, bool):
+        device.compile_when_hil_disabled = "true" if raw_compile_when_hil_disabled else "false"
+    else:
+        compile_when_hil_disabled = str(raw_compile_when_hil_disabled).strip().lower()
+        if compile_when_hil_disabled not in VALID_COMPILE_WHEN_HIL_DISABLED:
+            raise ValueError("device.compile_when_hil_disabled must be one of: auto, true, false.")
+        device.compile_when_hil_disabled = compile_when_hil_disabled
 
     def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
         """Read a value from mapping-like or namespace-like config objects.

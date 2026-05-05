@@ -197,7 +197,12 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
             energy_aware=False,
             nas_multiobjective_population_size=8,
         ),
-        device=SimpleNamespace(name="TEST_DEVICE", hil=True, serial_port="ttyACM0"),
+        device=SimpleNamespace(
+            name="TEST_DEVICE",
+            hil=True,
+            compile_when_hil_disabled="auto",
+            serial_port="ttyACM0",
+        ),
         nas=SimpleNamespace(
             score=Dict(
                 type="scoring-function",
@@ -615,13 +620,16 @@ class ObjectiveTests(unittest.TestCase):
             mode="search",
             combine_train_val=False,
         )
-        self.client._evaluate_model_with_backend.assert_called_once()
+        self.assertEqual(self.client._evaluate_model_with_backend.call_count, 2)
         self.assertEqual(
-            self.client._evaluate_model_with_backend.call_args.kwargs["evaluation_backend"],
-            "tflite",
+            [call.kwargs["evaluation_backend"] for call in self.client._evaluate_model_with_backend.call_args_list],
+            ["tflite", "keras"],
         )
         self.assertEqual(result, -0.3)
         self.mock_log.assert_called_once()
+        logged_outcome = self.mock_log.call_args.kwargs["trial_outcome"]
+        self.assertEqual(logged_outcome.task_metrics["rmse_total"], 0.3)
+        self.assertEqual(logged_outcome.task_metrics["keras_rmse_total"], 0.3)
 
     def test_objective_prunes_before_training_on_config_rule(self) -> None:
         # Config-level prune rules should short-circuit the trial before fit() so obviously bad candidates do not waste training time.
@@ -997,6 +1005,171 @@ class ObjectiveTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             self.client.objective(trial)
+
+    def test_objective_auto_pure_desktop_skips_hil_for_rmse_flops(self) -> None:
+        """Auto non-HIL mode should skip compile for local RMSE/FLOPs scoring."""
+        self.client.config.device.hil = False
+        self.client.config.device.compile_when_hil_disabled = "auto"
+        self.client.config.device.cpu_clock_mhz_options = [200, 400]
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="rmse_total", direction="minimize"),
+                    Dict(metric="flops", direction="minimize"),
+                ]
+            ),
+        )
+        self.client._hil_request = MagicMock()
+        trial = DummyTrial()
+
+        result = self.client.objective(trial)
+
+        self.assertEqual(result, (0.3, 1234.0))
+        self.client._hil_request.assert_not_called()
+        self.assertNotIn("cpu_clock_mhz_index", trial.params)
+        logged_metrics = self.mock_log.call_args.kwargs["metrics"]
+        self.assertFalse(logged_metrics["hil_enabled"])
+        self.assertFalse(logged_metrics["energy_aware"])
+        self.assertEqual(logged_metrics["error_code"], HIL_MASTER_SUCCESS)
+        self.assertEqual(logged_metrics["ram_bytes"], -1)
+        self.assertEqual(logged_metrics["cadenced_energy_mj_per_trial"], -1.0)
+
+    def test_objective_false_pure_desktop_skips_hil_for_rmse_flops(self) -> None:
+        """Explicit false non-HIL mode should run pure desktop scoring."""
+        self.client.config.device.hil = False
+        self.client.config.device.compile_when_hil_disabled = "false"
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="rmse_total", direction="minimize"),
+                    Dict(metric="flops", direction="minimize"),
+                ]
+            ),
+        )
+        self.client._hil_request = MagicMock()
+
+        result = self.client.objective(DummyTrial())
+
+        self.assertEqual(result, (0.3, 1234.0))
+        self.client._hil_request.assert_not_called()
+
+    def test_objective_auto_non_hil_compiles_for_flash_metric(self) -> None:
+        """Auto non-HIL mode should preserve compile-only proxy behavior."""
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "external_flash_bytes": 64,
+            "arena_bytes": 1024,
+            "latency_ms": -1.0,
+        }
+        self.client.config.device.hil = False
+        self.client.config.device.compile_when_hil_disabled = "auto"
+        self.client.config.training.train = False
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(objectives=[Dict(metric="flash_bytes", direction="minimize")]),
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+
+        result = self.client.objective(DummyTrial())
+
+        self.assertEqual(result, (512.0,))
+        self.client._hil_request.assert_called_once()
+
+    def test_objective_false_non_hil_rejects_compile_metrics(self) -> None:
+        """Pure desktop mode should fail fast when compile metrics are required."""
+        self.client.config.device.hil = False
+        self.client.config.device.compile_when_hil_disabled = "false"
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="flash_bytes", direction="minimize"),
+                    Dict(metric="ram_bytes", direction="minimize"),
+                    Dict(metric="external_flash_bytes", direction="minimize"),
+                    Dict(metric="arena_bytes", direction="minimize"),
+                ]
+            ),
+        )
+        self.client._hil_request = MagicMock()
+
+        with self.assertRaisesRegex(ValueError, "compile-derived metric"):
+            self.client.objective(DummyTrial())
+
+        self.client._hil_request.assert_not_called()
+        self.client.model_family.sample_hparams.assert_not_called()
+
+    def test_objective_non_hil_rejects_runtime_metrics_in_derived_score(self) -> None:
+        """Runtime-only dependencies should fail before trial execution."""
+        self.client.config.device.hil = False
+        self.client.config.device.compile_when_hil_disabled = "auto"
+        self.client.config.nas.score = Dict(
+            type="scoring-function",
+            metrics=Dict(
+                active_energy=Dict(
+                    type="energy-budget-from-power",
+                    power_mw=Dict(type="metric", metric="avg_power_mw"),
+                    duration_ms=Dict(type="metric", metric="latency_budget_ms"),
+                )
+            ),
+            params=Dict(terms=[Dict(type="weighted", metric="active_energy", weight=-1.0)]),
+        )
+        self.client._hil_request = MagicMock()
+
+        with self.assertRaisesRegex(ValueError, "runtime-only metric"):
+            self.client.objective(DummyTrial())
+
+        self.client._hil_request.assert_not_called()
+        self.client.model_family.sample_hparams.assert_not_called()
+
+    def test_objective_hil_true_ignores_compile_when_hil_disabled(self) -> None:
+        """Real HIL mode should still request hardware metrics."""
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+        }
+        self.client.config.device.hil = True
+        self.client.config.device.compile_when_hil_disabled = "false"
+        self.client._hil_request = MagicMock(return_value=metrics)
+
+        self.client.objective(DummyTrial())
+
+        self.client._hil_request.assert_called_once()
+
+    def test_objective_pure_desktop_train_false_flops_omits_quantization_search(self) -> None:
+        """No-op deployment choices should not expand pure desktop flops-only search."""
+        self.client.config.device.hil = False
+        self.client.config.device.compile_when_hil_disabled = "false"
+        self.client.config.training.train = False
+        self.client.config.training.quantization = Dict(
+            mode="int8_ptq",
+            search=True,
+            choices=["float", "int8_ptq"],
+        )
+        self.client.config.nas.score = Dict(
+            type="scoring-function",
+            metrics=Dict(),
+            params=Dict(terms=[Dict(type="weighted", metric="flops", weight=-1.0)]),
+        )
+        self.client._hil_request = MagicMock()
+        trial = DummyTrial()
+
+        result = self.client.objective(trial)
+
+        self.assertEqual(result, -1234.0)
+        self.client._hil_request.assert_not_called()
+        self.client.task.build_fit_plan.assert_not_called()
+        self.assertNotIn("quantization_mode", trial.params)
 
 
 class SmokeTestTests(unittest.TestCase):
@@ -1474,6 +1647,42 @@ class EvaluateCheckpointTests(unittest.TestCase):
 
             self.assertEqual(metrics["hyperparameters"], {"nb_filters": 8})
             self.assertEqual(metrics["quantization_mode"], "int8_ptq")
+
+    def test_evaluate_checkpoint_tflite_logs_keras_accuracy(self) -> None:
+        """TFLite checkpoint evaluation should persist paired Keras accuracy."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            client.task.evaluate_predictions.return_value = EvaluationResult(
+                metrics={"accuracy": 0.7, "loss": 0.4},
+                predictions=None,
+            )
+            client.task.evaluate.return_value = EvaluationResult(
+                metrics={"accuracy": 0.9, "loss": 0.2},
+                predictions=None,
+            )
+            client.config.training.quantization.mode = "int8_ptq"
+            client.config.training.quantization.choices = ["int8_ptq"]
+            metrics_path = base / "metrics.json"
+
+            with patch("nas_model_client.convert_to_tflite_model"), patch(
+                "nas_model_client.predict_tflite_model",
+                return_value=np.zeros((2, 1), dtype=np.float32),
+            ):
+                metrics = client.evaluate_checkpoint(
+                    checkpoint_path=base / "ckpt.keras",
+                    metrics_path=metrics_path,
+                    export_tflite=False,
+                    evaluation_backend="tflite",
+                )
+
+            self.assertEqual(metrics["accuracy"], 0.7)
+            self.assertEqual(metrics["keras_accuracy"], 0.9)
+            with metrics_path.open() as handle:
+                persisted = json.load(handle)
+            self.assertEqual(persisted["keras_accuracy"], 0.9)
+            csv_text = metrics_path.with_suffix(".csv").read_text(encoding="utf-8")
+            self.assertIn("keras_accuracy", csv_text)
 
     def test_evaluate_checkpoint_exports_tflite_when_requested(self) -> None:
         # Checkpoint evaluation should export TFLite when requested so downstream deployment steps do not need a second conversion pass.

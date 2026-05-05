@@ -8,6 +8,7 @@ import argparse
 import copy
 from collections.abc import Mapping
 import csv
+from dataclasses import dataclass
 import json
 import logging
 import shutil
@@ -43,6 +44,7 @@ from tinyodom.microcontrollers import (
 )
 from tinyodom.builtin_components import ensure_builtin_components_registered
 from tinyodom.component_selection import cfg_get, resolve_component_selection
+from tinyodom.cadence import resolve_batch_period_ms
 from tinyodom.model import (
     NONNEGATIVE_METRICS,
     ScoreConfigEvaluationError,
@@ -74,6 +76,40 @@ tf.autograph.set_verbosity(0)
 logger = logging.getLogger(__name__)
 
 RUNNER_OWNED_TRIAL_PARAM_KEYS = frozenset({"cpu_clock_mhz_index", "quantization_mode"})
+COMPILE_DERIVED_METRICS = frozenset(
+    {"ram_bytes", "flash_bytes", "external_flash_bytes", "arena_bytes"}
+)
+RUNTIME_ONLY_METRICS = frozenset(
+    {
+        "latency_ms",
+        "energy_mj_per_inference",
+        "avg_power_mw",
+        "avg_current_ma",
+        "bus_voltage_v",
+        "clock_hz",
+        "harness_latency_ms",
+    }
+)
+
+
+@dataclass(frozen=True)
+class NASMetricDependencies:
+    """Classified metric dependencies for one NAS score/prune policy.
+
+    Parameters
+    ----------
+    metrics : frozenset[str]
+        All active score/prune metrics and their recursively referenced
+        derived-metric dependencies.
+    compile_derived : frozenset[str]
+        Metrics that require the compile-only HIL backend path.
+    runtime_only : frozenset[str]
+        Metrics that require real on-device runtime measurement.
+    """
+
+    metrics: frozenset[str]
+    compile_derived: frozenset[str]
+    runtime_only: frozenset[str]
 
 
 def _family_trial_params(params: Mapping[str, Any]) -> dict[str, Any]:
@@ -649,13 +685,21 @@ class NASModelClient:
             }
         )
 
-    def _resolve_trial_quantization_mode(self, trial: optuna.Trial) -> str:
+    def _resolve_trial_quantization_mode(
+        self,
+        trial: optuna.Trial,
+        *,
+        allow_search: bool = True,
+    ) -> str:
         """Resolve the deployment quantization mode for one NAS trial.
 
         Parameters
         ----------
         trial : optuna.Trial
             Trial object used only when quantization search is enabled.
+        allow_search : bool, optional
+            Whether this trial has a deployment backend or TFLite validation
+            path where quantization can affect behavior.
 
         Returns
         -------
@@ -664,10 +708,185 @@ class NASModelClient:
         """
 
         quantization = self.config.training.quantization
-        if bool(getattr(quantization, "search", False)):
+        if allow_search and bool(getattr(quantization, "search", False)):
             choices = list(getattr(quantization, "choices", []))
             return str(trial.suggest_categorical("quantization_mode", choices))
         return configured_quantization_mode(self.config)
+
+    @staticmethod
+    def _metric_is_runtime_only(metric_name: str) -> bool:
+        """Return whether a metric requires real on-device runtime data.
+
+        Parameters
+        ----------
+        metric_name : str
+            Metric name from the NAS score or prune policy.
+
+        Returns
+        -------
+        bool
+            ``True`` when the metric cannot be produced by desktop or
+            compile-only execution.
+        """
+
+        return metric_name in RUNTIME_ONLY_METRICS or metric_name.startswith("cadenced_")
+
+    def _classify_nas_metric_dependencies(self) -> NASMetricDependencies:
+        """Classify active score/prune metric dependencies for HIL decisions.
+
+        Returns
+        -------
+        NASMetricDependencies
+            Active dependencies grouped by local, compile-derived, and
+            runtime-only availability.
+        """
+
+        score_config = self.config.nas.score
+        score_metrics = getattr(score_config, "metrics", Dict())
+        visited: set[str] = set()
+
+        def _add_reference(reference: Any, stack: tuple[str, ...] = ()) -> None:
+            """Add a typed metric reference to the active dependency set."""
+            if reference is not None and getattr(reference, "type", None) == "metric":
+                _add_metric(str(reference.metric), stack)
+
+        def _add_metric(metric_name: str, stack: tuple[str, ...] = ()) -> None:
+            """Add one metric and recursively add derived dependencies."""
+            if metric_name in stack:
+                return
+            visited.add(metric_name)
+            if metric_name not in score_metrics:
+                return
+            metric_cfg = score_metrics[metric_name]
+            metric_type = str(getattr(metric_cfg, "type", "")).strip().lower()
+            if metric_type == "add":
+                for child_metric in getattr(metric_cfg, "metrics", []):
+                    _add_metric(str(child_metric), stack + (metric_name,))
+            elif metric_type == "energy-budget-from-power":
+                _add_reference(getattr(metric_cfg, "power_mw", None), stack + (metric_name,))
+                _add_reference(getattr(metric_cfg, "duration_ms", None), stack + (metric_name,))
+
+        if is_multiobjective_score_config(score_config):
+            for objective in getattr(score_config.params, "objectives", []):
+                _add_metric(str(objective.metric))
+        else:
+            for term in getattr(score_config.params, "terms", []):
+                _add_metric(str(term.metric))
+                _add_reference(getattr(term, "reference", None))
+
+        for rule_cfg in getattr(self.config.nas.prune, "rules", []):
+            _add_metric(str(rule_cfg.metric))
+            _add_reference(getattr(rule_cfg, "reference", None))
+
+        compile_derived = {metric for metric in visited if metric in COMPILE_DERIVED_METRICS}
+        runtime_only = {metric for metric in visited if self._metric_is_runtime_only(metric)}
+        return NASMetricDependencies(
+            metrics=frozenset(visited),
+            compile_derived=frozenset(compile_derived),
+            runtime_only=frozenset(runtime_only),
+        )
+
+    def _should_collect_compile_metrics(
+        self,
+        dependencies: NASMetricDependencies,
+    ) -> bool:
+        """Return whether this trial should request HIL/compile metrics.
+
+        Parameters
+        ----------
+        dependencies : NASMetricDependencies
+            Classified dependencies for the active NAS policy.
+
+        Returns
+        -------
+        bool
+            ``True`` when ``objective`` should call ``_hil_request``.
+
+        Raises
+        ------
+        ValueError
+            If a non-HIL policy references runtime-only metrics, or explicitly
+            disables compile while depending on compile-derived metrics.
+        """
+
+        if bool(self.config.device.hil):
+            return True
+
+        if dependencies.runtime_only:
+            metric_list = ", ".join(sorted(dependencies.runtime_only))
+            raise ValueError(
+                "device.hil=false cannot score or prune on runtime-only metric(s): "
+                f"{metric_list}. Enable device.hil or remove those metrics."
+            )
+
+        compile_policy = str(
+            self._cfg_get(self.config.device, "compile_when_hil_disabled", "auto")
+        ).strip().lower()
+        if compile_policy == "true":
+            return True
+        if compile_policy == "false":
+            if dependencies.compile_derived:
+                metric_list = ", ".join(sorted(dependencies.compile_derived))
+                raise ValueError(
+                    "device.compile_when_hil_disabled=false cannot satisfy "
+                    f"compile-derived metric(s): {metric_list}."
+                )
+            return False
+        if compile_policy != "auto":
+            raise ValueError("device.compile_when_hil_disabled must be one of: auto, true, false.")
+        return bool(dependencies.compile_derived)
+
+    def _latency_budget_metric_value(self) -> float:
+        """Resolve the local latency-budget metric for desktop trials.
+
+        Returns
+        -------
+        float
+            Positive latency budget in milliseconds, or ``-1.0`` when no
+            dataset/device cadence contract is available.
+        """
+
+        try:
+            return float(
+                resolve_batch_period_ms(
+                    self.dataset_config,
+                    getattr(self.dataset_bundle, "metadata", None),
+                    self.config.device,
+                )
+            )
+        except ValueError:
+            return -1.0
+
+    def _synthesize_desktop_success_metrics(self) -> dict[str, Any]:
+        """Build a complete successful metrics payload for pure desktop trials.
+
+        Returns
+        -------
+        dict[str, Any]
+            Metrics dictionary with logging-required keys populated using
+            desktop-safe values and unavailable sentinels.
+        """
+
+        metrics: dict[str, Any] = {
+            "ram_bytes": -1,
+            "flash_bytes": -1,
+            "external_flash_bytes": -1,
+            "arena_bytes": -1,
+            "latency_ms": -1.0,
+            "latency_budget_ms": self._latency_budget_metric_value(),
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+            "cpu_clock_mhz_requested": -1,
+            "clock_hz": -1.0,
+            "hil_enabled": False,
+            "energy_aware": False,
+            "weight_storage_mode": "embedded",
+        }
+        set_error_code(metrics, HIL_MASTER_SUCCESS)
+        apply_cadenced_metric_defaults(metrics, metrics)
+        return metrics
 
     def _export_tflite_for_evaluation(
         self,
@@ -937,6 +1156,8 @@ class NASModelClient:
         artifacts_dir = self._artifacts_dir()
         log_path = artifacts_dir / self.config.outputs.log_file_name
         batch_size = 256
+        metric_dependencies = self._classify_nas_metric_dependencies()
+        collect_compile_metrics = self._should_collect_compile_metrics(metric_dependencies)
         family_hparams = self.model_family.sample_hparams(
             trial,
             self.model_build_context,
@@ -959,7 +1180,11 @@ class NASModelClient:
             self.model_build_context,
             self.model_config,
         )
-        quantization_mode = self._resolve_trial_quantization_mode(trial)
+        uses_quantized_deployment_path = collect_compile_metrics or bool(self.config.training.train)
+        quantization_mode = self._resolve_trial_quantization_mode(
+            trial,
+            allow_search=uses_quantized_deployment_path,
+        )
         runtime_metadata = self._build_runtime_metadata(
             flops,
             batch_size,
@@ -971,7 +1196,7 @@ class NASModelClient:
         # than the network topology itself.
         cpu_clock_mhz_options = self._cfg_get(self.config.device, "cpu_clock_mhz_options", None)
         device_options_overrides = None
-        if cpu_clock_mhz_options is not None:
+        if collect_compile_metrics and cpu_clock_mhz_options is not None:
             cpu_clock_mhz_index = trial.suggest_int(
                 "cpu_clock_mhz_index",
                 0,
@@ -986,7 +1211,9 @@ class NASModelClient:
                 cpu_clock_mhz_options,
             )
 
-        # Ask the HIL server to evaluate the candidate for resource usage and latency.
+        # Ask the HIL server to evaluate the candidate for resource usage and
+        # latency, or synthesize a desktop-only payload when the active policy
+        # does not need compile-derived metrics.
         request_payload = {
             "family_hparams": family_hparams,
             "runtime_metadata": runtime_metadata,
@@ -994,26 +1221,39 @@ class NASModelClient:
         }
         if device_options_overrides is not None:
             request_payload["device_options_overrides"] = device_options_overrides
-        metrics = self._hil_request(request_payload)
-        metrics.setdefault("hil_enabled", bool(self.config.device.hil))
-        metrics.setdefault("energy_aware", bool(self.config.training.energy_aware))
+        if collect_compile_metrics:
+            metrics = self._hil_request(request_payload)
+            metrics.setdefault("hil_enabled", bool(self.config.device.hil))
+            metrics.setdefault("energy_aware", bool(self.config.training.energy_aware))
+        else:
+            metrics = self._synthesize_desktop_success_metrics()
 
-        # Gets the hardware *estimated* specifications for the target device
-        device_options = self._hardware_limit_device_options()
-        max_ram, max_flash = return_hardware_specs(
-            self.config.device.name,
-            device_options=device_options,
+        needs_hardware_limits = (
+            collect_compile_metrics
+            or bool({"max_ram_bytes", "max_flash_bytes"} & set(metric_dependencies.metrics))
         )
-        metrics["max_ram_bytes"] = float(max_ram)
-        metrics["max_flash_bytes"] = float(max_flash)
-        try:
-            runtime_device = get_microcontroller_device(
-                str(self.config.device.name),
-                serial_port=self._cfg_get(self.config.device, "serial_port", None),
+        device_options = None
+        runtime_device = None
+        max_ram = -1.0
+        max_flash = -1.0
+        if needs_hardware_limits:
+            # Gets the hardware *estimated* specifications for the target device
+            device_options = self._hardware_limit_device_options()
+            max_ram, max_flash = return_hardware_specs(
+                self.config.device.name,
                 device_options=device_options,
             )
-        except ValueError:
-            runtime_device = None
+        metrics["max_ram_bytes"] = float(max_ram)
+        metrics["max_flash_bytes"] = float(max_flash)
+        if collect_compile_metrics:
+            try:
+                runtime_device = get_microcontroller_device(
+                    str(self.config.device.name),
+                    serial_port=self._cfg_get(self.config.device, "serial_port", None),
+                    device_options=device_options,
+                )
+            except ValueError:
+                runtime_device = None
 
         penalty_acc = -100.0
         task_nonnegative_metric_names = set(self.metric_contract.nonnegative_metric_names)
@@ -1113,32 +1353,33 @@ class NASModelClient:
             # Any other non-success code also prunes the trial with diagnostics.
             return _fail_with_penalty(f"HIL error code {error_code}")
 
-        flash_failure = metrics["flash_bytes"] == -1
-        resources_ok = (
-            np.isfinite(metrics["ram_bytes"])
-            and metrics["ram_bytes"] < max_ram
-            and metrics["flash_bytes"] < max_flash
-        )
-        # STM Phase 1 compile-only runs do not participate in tensor-arena
-        # sizing, so `arena_bytes=-1` is an expected sentinel there. Keep the
-        # historical arena validity gate for Arduino/TFLM backends.
-        arena_ok = (
-            metrics["arena_bytes"] != -1
-            or (
-                runtime_device is not None
-                and not runtime_device.requires_arena_validation()
+        if collect_compile_metrics:
+            flash_failure = metrics["flash_bytes"] == -1
+            resources_ok = (
+                np.isfinite(metrics["ram_bytes"])
+                and metrics["ram_bytes"] < max_ram
+                and metrics["flash_bytes"] < max_flash
             )
-        )
+            # STM Phase 1 compile-only runs do not participate in tensor-arena
+            # sizing, so `arena_bytes=-1` is an expected sentinel there. Keep the
+            # historical arena validity gate for Arduino/TFLM backends.
+            arena_ok = (
+                metrics["arena_bytes"] != -1
+                or (
+                    runtime_device is not None
+                    and not runtime_device.requires_arena_validation()
+                )
+            )
 
-        # Distinguish between missing flash metrics, numeric resource overflow,
-        # and backends that intentionally skip arena validation.
-        if flash_failure or not resources_ok or not arena_ok:
-            # Treat missing/invalid resource numbers as fatal so Optuna can move on.
-            if not flash_failure and not resources_ok:
-                set_error_code(metrics, HIL_MASTER_FATAL)
-            elif not flash_failure and not arena_ok:
-                set_error_code(metrics, HIL_MASTER_ARENA_EXHAUSTED)
-            return _fail_with_penalty("Resource or arena check failed")
+            # Distinguish between missing flash metrics, numeric resource overflow,
+            # and backends that intentionally skip arena validation.
+            if flash_failure or not resources_ok or not arena_ok:
+                # Treat missing/invalid resource numbers as fatal so Optuna can move on.
+                if not flash_failure and not resources_ok:
+                    set_error_code(metrics, HIL_MASTER_FATAL)
+                elif not flash_failure and not arena_ok:
+                    set_error_code(metrics, HIL_MASTER_ARENA_EXHAUSTED)
+                return _fail_with_penalty("Resource or arena check failed")
 
         prune_hit = evaluate_prune_rules(
             metrics=metrics,
@@ -1199,6 +1440,19 @@ class NASModelClient:
                     evaluation_backend="tflite",
                 )
                 task_metrics = dict(evaluation_result.metrics)
+                keras_evaluation_result = self._evaluate_model_with_backend(
+                    model=model,
+                    split=self.dataset_bundle.val,
+                    split_name="validation_keras",
+                    quantization_mode=quantization_mode,
+                    evaluation_backend="keras",
+                )
+                task_metrics.update(
+                    {
+                        f"keras_{metric_name}": metric_value
+                        for metric_name, metric_value in keras_evaluation_result.metrics.items()
+                    }
+                )
                 self._sync_task_metrics(metrics, task_metrics)
                 self._apply_non_hil_success_sentinels(metrics)
                 score_result = evaluate_score_config(
@@ -1851,6 +2105,7 @@ class NASModelClient:
                 task_config,
                 target_spec,
             )
+            keras_evaluation_result = evaluation_result
         elif evaluation_backend == "tflite":
             representative_split = None
             if quantization_requires_calibration(resolved_quantization_mode):
@@ -1869,6 +2124,12 @@ class NASModelClient:
                 task_config,
                 target_spec,
             )
+            keras_evaluation_result = task.evaluate(
+                model,
+                bundle.test,
+                task_config,
+                target_spec,
+            )
         else:
             raise ValueError("evaluation_backend must be 'keras' or 'tflite'.")
         task_metrics = {}
@@ -1877,6 +2138,12 @@ class NASModelClient:
                 task_metrics[metric_name] = raw_value.item()
             else:
                 task_metrics[metric_name] = raw_value
+        for metric_name, raw_value in keras_evaluation_result.metrics.items():
+            prefixed_name = f"keras_{metric_name}"
+            if isinstance(raw_value, np.generic):
+                task_metrics[prefixed_name] = raw_value.item()
+            else:
+                task_metrics[prefixed_name] = raw_value
 
         tflite_written = None
         if export_tflite:

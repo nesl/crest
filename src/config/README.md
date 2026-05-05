@@ -12,6 +12,7 @@ The current shipped config examples are:
 - [`nas_config_portenta.yaml`](nas_config_portenta.yaml)
 - [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml)
 - [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml)
+- [`nas_config_flops_rmse.yaml`](nas_config_flops_rmse.yaml)
 
 Use [`nas_config.yaml`](nas_config.yaml) as the default starting point for the
 repo. It is the main STM32-oriented example config and the most complete
@@ -21,6 +22,9 @@ Use [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml) for the
 desktop-first UrbanSound8K / DS-CNN audio path before moving into STM32 HIL
 work. Use [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml)
 for the Phase 8 Arduino audio path on Portenta H7 CM7.
+Use [`nas_config_flops_rmse.yaml`](nas_config_flops_rmse.yaml) for a pure
+desktop OxIOD NAS run that optimizes validation RMSE against FLOPs without HIL
+or compile-only resource proxy metrics.
 
 Audio analysis runners live under [`../../analysis_scripts`](../../analysis_scripts).
 They measure classifier inference over precomputed log-mel feature tensors; they
@@ -89,6 +93,13 @@ Common keys:
   Target device identifier.
 - `device.hil`
   Enables or disables hardware-in-the-loop measurement.
+- `device.compile_when_hil_disabled`
+  Controls whether `device.hil: false` still calls the HIL server for
+  compile-only proxy metrics. Valid values are `auto`, `true`, and `false`;
+  YAML booleans are accepted and normalized to `true`/`false`. The default
+  `auto` compiles only when the active score/prune policy references
+  compile-derived metrics such as `ram_bytes`, `flash_bytes`,
+  `external_flash_bytes`, or `arena_bytes`.
 - `device.runtime_mode`
   `back_to_back` or `cadenced`.
 - `device.latency_budget_ms`
@@ -295,7 +306,12 @@ Current practical guidance:
   prune rules
 - use `multi-objective` when you want a Pareto front instead of one scalar
 - keep non-HIL configs away from score/prune terms that require measured
-  latency or energy
+  latency or energy. `latency_ms`, energy/power/current/voltage metrics,
+  `clock_hz`, `harness_latency_ms`, and `cadenced_*` metrics require
+  `device.hil: true`.
+- set `device.compile_when_hil_disabled: false` for pure desktop scores such
+  as RMSE/FLOPs; leave it as `auto` when non-HIL score/prune terms still need
+  compile-derived resource metrics.
 - in cadenced multi-objective runs, overload remains telemetry rather than an
   automatic prune
 
