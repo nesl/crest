@@ -1,0 +1,36 @@
+{
+  "memory": {
+    "mempools": [
+      {
+        "name": "POOL_INTERNAL",
+        "prop": {
+          "throughput": "HIGH",
+          "latency": "LOW"
+        },
+        "size": {
+          "value": "1024",
+          "magnitude": "KBYTES"
+        },
+        "offset": {
+          "value": "0x24100000",
+          "magnitude": "BYTES"
+        }
+      },
+      {
+        "name": "POOL_NPU",
+        "prop": {
+          "throughput": "HIGH",
+          "latency": "MID"
+        },
+        "size": {
+          "value": "1792",
+          "magnitude": "KBYTES"
+        },
+        "offset": {
+          "value": "0x24200000",
+          "magnitude": "BYTES"
+        }
+      }
+    ]
+  }
+}
