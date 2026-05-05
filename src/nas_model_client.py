@@ -2138,12 +2138,13 @@ class NASModelClient:
                 task_metrics[metric_name] = raw_value.item()
             else:
                 task_metrics[metric_name] = raw_value
-        for metric_name, raw_value in keras_evaluation_result.metrics.items():
-            prefixed_name = f"keras_{metric_name}"
-            if isinstance(raw_value, np.generic):
-                task_metrics[prefixed_name] = raw_value.item()
-            else:
-                task_metrics[prefixed_name] = raw_value
+        if evaluation_backend == "tflite":
+            for metric_name, raw_value in keras_evaluation_result.metrics.items():
+                prefixed_name = f"keras_{metric_name}"
+                if isinstance(raw_value, np.generic):
+                    task_metrics[prefixed_name] = raw_value.item()
+                else:
+                    task_metrics[prefixed_name] = raw_value
 
         tflite_written = None
         if export_tflite:

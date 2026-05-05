@@ -1596,6 +1596,8 @@ class EvaluateCheckpointTests(unittest.TestCase):
             self.assertTrue(metrics_path.with_suffix(".csv").is_file())
             self.assertAlmostEqual(metrics["rmse_vel_x"], 0.0)
             self.assertAlmostEqual(metrics["rmse_vel_y"], 0.0)
+            self.assertNotIn("keras_rmse_vel_x", metrics)
+            self.assertNotIn("keras_rmse_total", metrics)
             self.assertEqual(metrics["checkpoint_path"], str(base / "ckpt.keras"))
 
     def test_evaluate_checkpoint_preserves_task_defined_metric_names(self) -> None:
