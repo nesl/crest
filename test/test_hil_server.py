@@ -196,7 +196,7 @@ class HILServerTestCase(unittest.TestCase):
         self.config = Dict(
             network=SimpleNamespace(host="127.0.0.1", port=6000, recv_timeout_sec=1, send_timeout_sec=1),
             training=Dict(
-                quantization="float",
+                quantization=Dict(mode="int8_ptq", search=False, choices=["int8_ptq"]),
                 latency_proxy_max_flops=5_000_000,
                 energy_aware=False,  # default sketch variant for unit tests
             ),
@@ -348,6 +348,7 @@ class HILServerTestCase(unittest.TestCase):
         payload: dict[str, object] = {
             "family_hparams": self.request_family_hparams() if family_hparams is None else family_hparams,
             "runtime_metadata": self.request_runtime_metadata() if runtime_metadata is None else runtime_metadata,
+            "quantization_mode": "int8_ptq",
         }
         if device_options_overrides is not None:
             payload["device_options_overrides"] = device_options_overrides
@@ -392,6 +393,7 @@ class DetermineMetricsTests(HILServerTestCase):
         self.assertEqual(prepare_request.model_variant, "approx_trained")
         self.assertIsNone(prepare_request.checkpoint_path)
         self.assertIs(prepare_request.calibration_split, self.calibration_split)
+        self.assertEqual(prepare_request.quantization_mode, "int8_ptq")
         self.assertEqual(FakeModelFamily.materialize_calls[0]["model_variant"], "approx_trained")
         self.assertIsNone(FakeModelFamily.materialize_calls[0]["checkpoint_path"])
         self.assertEqual(len(FakeTask.validate_model_outputs_calls), 1)
@@ -886,6 +888,7 @@ class StartLoopTests(HILServerTestCase):
         server.determine_metrics.assert_called_once_with(
             family_hparams=self.request_family_hparams(),
             runtime_metadata=self.request_runtime_metadata(flops=1, timesteps=32, input_dim=2),
+            quantization_mode="int8_ptq",
             device_options_overrides=None,
         )
         self.socket.send_json.assert_called_once_with(metrics)
@@ -908,6 +911,7 @@ class StartLoopTests(HILServerTestCase):
         server.determine_metrics.assert_called_once_with(
             family_hparams=self.request_family_hparams(),
             runtime_metadata=self.request_runtime_metadata(flops=1, timesteps=32, input_dim=2),
+            quantization_mode="int8_ptq",
             device_options_overrides={"cpu_clock_mhz": 400},
         )
 
@@ -927,6 +931,7 @@ class StartLoopTests(HILServerTestCase):
         server.determine_metrics.assert_called_once_with(
             family_hparams=self.request_family_hparams(),
             runtime_metadata=self.request_runtime_metadata(flops=1, timesteps=32, input_dim=2),
+            quantization_mode="int8_ptq",
             device_options_overrides=None,
         )
 

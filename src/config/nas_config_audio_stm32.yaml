@@ -55,7 +55,10 @@ training:
   nas_trials: 150
   nas_multiobjective_population_size: 50
   max_total_trials: 300
-  quantization: true
+  quantization:
+    mode: int8_ptq
+    search: true
+    choices: [float, int8_ptq]
   latency_proxy_max_flops: 30000000.0
   train: true
   energy_aware: true

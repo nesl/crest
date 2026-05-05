@@ -35,7 +35,7 @@ from tinyodom.analysis_support import (
     resolve_task_contract,
 )
 from tinyodom.hardware import convert_to_tflite_model
-from tinyodom.model import DEFAULT_CONFIG_PATH, load_config
+from tinyodom.model import DEFAULT_CONFIG_PATH, configured_quantization_mode, load_config
 from tinyodom.pipeline_types import DataSplit, DatasetBundle
 
 
@@ -153,7 +153,7 @@ def main() -> int:
     convert_to_tflite_model(
         model=model,
         training_data=training_data.inputs,
-        quantization=bool(config.training.quantization),
+        quantization_mode=configured_quantization_mode(config),
         output_name=output_tflite,
     )
 
@@ -161,7 +161,7 @@ def main() -> int:
     timestamp_utc = _to_utc_timestamp()
 
     print(f"loader={loader_name}")
-    print(f"quantization={bool(config.training.quantization)}")
+    print(f"quantization_mode={configured_quantization_mode(config)}")
     print(f"tflite_path={output_tflite}")
     print(f"tflite_quant_op_count={op_count}")
     print(f"tflite_quant_add_count={add_count}")
@@ -178,7 +178,7 @@ def main() -> int:
             "best_epoch_so_far": "",
             "early_stopped": False,
             "global_wait_counter": 0,
-            "quantization_enabled": bool(config.training.quantization),
+            "quantization_mode": configured_quantization_mode(config),
             "tflite_quant_path": str(output_tflite),
             "tflite_quant_bytes": int(output_tflite.stat().st_size),
             "tflite_quant_op_count": op_count,

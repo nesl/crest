@@ -34,6 +34,7 @@ from tinyodom.hardware import (
     HIL_MASTER_RAM_OVERFLOW,
     HIL_MASTER_SUCCESS,
     convert_to_tflite_model,
+    predict_tflite_model,
     return_hardware_specs,
 )
 from tinyodom.microcontrollers import (
@@ -45,6 +46,7 @@ from tinyodom.component_selection import cfg_get, resolve_component_selection
 from tinyodom.model import (
     NONNEGATIVE_METRICS,
     ScoreConfigEvaluationError,
+    configured_quantization_mode,
     build_trial_outcome,
     apply_cadenced_metric_defaults,
     evaluate_prune_rules,
@@ -53,6 +55,7 @@ from tinyodom.model import (
     is_multiobjective_score_config,
     log_trial,
     load_config,
+    quantization_requires_calibration,
     require_logical_input_shape,
     TrialOutcome,
     DEFAULT_CONFIG_PATH,
@@ -69,6 +72,27 @@ logging.getLogger("absl").setLevel(logging.ERROR)
 tf.autograph.set_verbosity(0)
 
 logger = logging.getLogger(__name__)
+
+RUNNER_OWNED_TRIAL_PARAM_KEYS = frozenset({"cpu_clock_mhz_index", "quantization_mode"})
+
+
+def _family_trial_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Return Optuna parameters that belong to model-family decoding.
+
+    Parameters
+    ----------
+    params : Mapping[str, Any]
+        Raw Optuna trial parameters, including both model-family search values
+        and runner-owned deployment/runtime choices.
+
+    Returns
+    -------
+    dict[str, Any]
+        Parameters safe to pass to ``ModelFamilyABC.decode_trial_hparams``.
+    """
+
+    return {key: value for key, value in params.items() if key not in RUNNER_OWNED_TRIAL_PARAM_KEYS}
+
 
 class NASModelClient:
     """Client that orchestrates HIL-assisted NAS, training, and evaluation.
@@ -625,6 +649,109 @@ class NASModelClient:
             }
         )
 
+    def _resolve_trial_quantization_mode(self, trial: optuna.Trial) -> str:
+        """Resolve the deployment quantization mode for one NAS trial.
+
+        Parameters
+        ----------
+        trial : optuna.Trial
+            Trial object used only when quantization search is enabled.
+
+        Returns
+        -------
+        str
+            Selected deployment quantization mode.
+        """
+
+        quantization = self.config.training.quantization
+        if bool(getattr(quantization, "search", False)):
+            choices = list(getattr(quantization, "choices", []))
+            return str(trial.suggest_categorical("quantization_mode", choices))
+        return configured_quantization_mode(self.config)
+
+    def _export_tflite_for_evaluation(
+        self,
+        *,
+        model: Any,
+        split_name: str,
+        quantization_mode: str,
+    ) -> Path:
+        """Export a temporary TFLite model for host-side evaluation.
+
+        Parameters
+        ----------
+        model : Any
+            Keras model to export.
+        split_name : str
+            Evaluation split label used in the temporary filename.
+        quantization_mode : str
+            Deployment quantization mode for export.
+
+        Returns
+        -------
+        pathlib.Path
+            Path to the written TFLite flatbuffer.
+        """
+
+        output_path = self._artifacts_dir() / f"{self.study_name}_{split_name}_eval.tflite"
+        representative_split = None
+        if quantization_requires_calibration(quantization_mode):
+            representative_split = self.dataset_bundle.calibration or self.dataset_bundle.train
+        convert_to_tflite_model(
+            model=model,
+            training_data=None if representative_split is None else representative_split.inputs,
+            quantization_mode=quantization_mode,
+            output_name=output_path,
+        )
+        return output_path
+
+    def _evaluate_model_with_backend(
+        self,
+        *,
+        model: Any,
+        split: DataSplit,
+        split_name: str,
+        quantization_mode: str,
+        evaluation_backend: str = "keras",
+    ):
+        """Evaluate a model through the selected host backend.
+
+        Parameters
+        ----------
+        model : Any
+            Keras model to evaluate or export.
+        split : DataSplit
+            Dataset split to score.
+        split_name : str
+            Label used for temporary artifacts.
+        quantization_mode : str
+            Deployment quantization mode used by TFLite evaluation.
+        evaluation_backend : {"keras", "tflite"}, optional
+            Host evaluation backend.
+
+        Returns
+        -------
+        EvaluationResult
+            Task-owned evaluation result.
+        """
+
+        if evaluation_backend == "keras":
+            return self.task.evaluate(model, split, self.task_config, self.target_spec)
+        if evaluation_backend != "tflite":
+            raise ValueError("evaluation_backend must be 'keras' or 'tflite'.")
+        tflite_path = self._export_tflite_for_evaluation(
+            model=model,
+            split_name=split_name,
+            quantization_mode=quantization_mode,
+        )
+        predictions = predict_tflite_model(tflite_path, split.inputs)
+        return self.task.evaluate_predictions(
+            predictions,
+            split,
+            self.task_config,
+            self.target_spec,
+        )
+
     @staticmethod
     def _apply_non_hil_success_sentinels(metrics: dict[str, Any]) -> None:
         """Apply legacy non-HIL sentinels before scoring or logging.
@@ -832,6 +959,7 @@ class NASModelClient:
             self.model_build_context,
             self.model_config,
         )
+        quantization_mode = self._resolve_trial_quantization_mode(trial)
         runtime_metadata = self._build_runtime_metadata(
             flops,
             batch_size,
@@ -862,6 +990,7 @@ class NASModelClient:
         request_payload = {
             "family_hparams": family_hparams,
             "runtime_metadata": runtime_metadata,
+            "quantization_mode": quantization_mode,
         }
         if device_options_overrides is not None:
             request_payload["device_options_overrides"] = device_options_overrides
@@ -935,6 +1064,7 @@ class NASModelClient:
                     task_metrics={},
                     hyperparams=dict(hyperparams),
                     artifact_summary=None,
+                    quantization_mode=quantization_mode,
                 )
             else:
                 trial_outcome = TrialOutcome(
@@ -945,6 +1075,7 @@ class NASModelClient:
                     task_metrics={},
                     hyperparams=dict(hyperparams),
                     artifact_summary=None,
+                    quantization_mode=quantization_mode,
                 )
 
             log_trial(
@@ -1039,6 +1170,7 @@ class NASModelClient:
                     score_result=score_result,
                     task_metrics=task_metrics,
                     hyperparams=dict(hyperparams),
+                    quantization_mode=quantization_mode,
                 )
             else:
                 fit_plan = self.task.build_fit_plan(
@@ -1059,11 +1191,12 @@ class NASModelClient:
                     self.model_build_context,
                     self.model_config,
                 )
-                evaluation_result = self.task.evaluate(
-                    model,
-                    self.dataset_bundle.val,
-                    self.task_config,
-                    self.target_spec,
+                evaluation_result = self._evaluate_model_with_backend(
+                    model=model,
+                    split=self.dataset_bundle.val,
+                    split_name="validation",
+                    quantization_mode=quantization_mode,
+                    evaluation_backend="tflite",
                 )
                 task_metrics = dict(evaluation_result.metrics)
                 self._sync_task_metrics(metrics, task_metrics)
@@ -1079,6 +1212,7 @@ class NASModelClient:
                     task_metrics=task_metrics,
                     hyperparams=dict(hyperparams),
                     artifact_summary=evaluation_result.artifacts,
+                    quantization_mode=quantization_mode,
                 )
         except ScoreConfigEvaluationError:
             return _fail_with_penalty(
@@ -1442,6 +1576,7 @@ class NASModelClient:
             study_storage=storage_uri,
             study_name=study_name,
             export_tflite=True,
+            evaluation_backend="tflite",
         )
 
         # 5) Let the task decide whether it owns any extra closeout artifacts.
@@ -1546,11 +1681,7 @@ class NASModelClient:
         """
 
         study = optuna.load_study(study_name=study_name, storage=study_storage)
-        return {
-            key: value
-            for key, value in study.best_trial.params.items()
-            if key != "cpu_clock_mhz_index"
-        }
+        return _family_trial_params(study.best_trial.params)
 
     def _train_with_decoded_hparams(
         self,
@@ -1650,6 +1781,8 @@ class NASModelClient:
         study_storage: str | None,
         study_name: str | None,
         export_tflite: bool,
+        evaluation_backend: str = "keras",
+        quantization_mode: str | None = None,
         tflite_path: Path | None = None,
     ) -> dict:
         """Evaluate one checkpoint using explicit data and build context.
@@ -1678,6 +1811,10 @@ class NASModelClient:
             Optuna study name for best-hyperparameter reporting.
         export_tflite : bool
             Whether to export a TFLite artifact.
+        evaluation_backend : {"keras", "tflite"}, optional
+            Host backend used for checkpoint scoring.
+        quantization_mode : str | None, optional
+            Deployment quantization mode used for TFLite export/evaluation.
         tflite_path : pathlib.Path | None, optional
             Destination TFLite path when exporting.
 
@@ -1695,12 +1832,45 @@ class NASModelClient:
             model_build_context,
             model_config,
         )
-        evaluation_result = task.evaluate(
-            model,
-            bundle.test,
-            task_config,
-            target_spec,
+        best_params = None
+        best_quantization_mode = None
+        if study_storage and study_name:
+            study = optuna.load_study(study_name=study_name, storage=study_storage)
+            raw_best_params = dict(study.best_trial.params)
+            best_params = _family_trial_params(raw_best_params)
+            best_quantization_mode = raw_best_params.get("quantization_mode")
+        resolved_quantization_mode = (
+            quantization_mode
+            or best_quantization_mode
+            or configured_quantization_mode(self.config)
         )
+        if evaluation_backend == "keras":
+            evaluation_result = task.evaluate(
+                model,
+                bundle.test,
+                task_config,
+                target_spec,
+            )
+        elif evaluation_backend == "tflite":
+            representative_split = None
+            if quantization_requires_calibration(resolved_quantization_mode):
+                representative_split = bundle.calibration or bundle.train
+            eval_tflite_path = metrics_path.with_suffix(".eval.tflite")
+            convert_to_tflite_model(
+                model=model,
+                training_data=None if representative_split is None else representative_split.inputs,
+                quantization_mode=resolved_quantization_mode,
+                output_name=eval_tflite_path,
+            )
+            predictions = predict_tflite_model(eval_tflite_path, bundle.test.inputs)
+            evaluation_result = task.evaluate_predictions(
+                predictions,
+                bundle.test,
+                task_config,
+                target_spec,
+            )
+        else:
+            raise ValueError("evaluation_backend must be 'keras' or 'tflite'.")
         task_metrics = {}
         for metric_name, raw_value in evaluation_result.metrics.items():
             if isinstance(raw_value, np.generic):
@@ -1708,23 +1878,20 @@ class NASModelClient:
             else:
                 task_metrics[metric_name] = raw_value
 
-        best_params = None
-        if study_storage and study_name:
-            study = optuna.load_study(study_name=study_name, storage=study_storage)
-            best_params = study.best_trial.params
-
         tflite_written = None
         if export_tflite:
             if not self.model_family.supports_tflite():
                 raise ValueError(
                     f"Model family '{self.model_family_name}' does not support TFLite export."
-                )
+            )
             tflite_path = Path(tflite_path) if tflite_path else Path(self.config.outputs.tflite_model_path)
-            representative_split = bundle.calibration or bundle.train
+            representative_split = None
+            if quantization_requires_calibration(resolved_quantization_mode):
+                representative_split = bundle.calibration or bundle.train
             convert_to_tflite_model(
                 model=model,
-                training_data=representative_split.inputs,
-                quantization=self.config.training.quantization,
+                training_data=representative_split.inputs if representative_split is not None else None,
+                quantization_mode=resolved_quantization_mode,
                 output_name=tflite_path,
             )
             tflite_written = str(tflite_path)
@@ -1735,6 +1902,8 @@ class NASModelClient:
             "study_name": study_name,
             "study_storage": study_storage,
             "hyperparameters": best_params,
+            "quantization_mode": resolved_quantization_mode,
+            "evaluation_backend": evaluation_backend,
             "tflite_path": tflite_written,
             **task_metrics,
         }
@@ -1899,6 +2068,7 @@ class NASModelClient:
         study_storage: str | None = None,
         study_name: str | None = None,
         export_tflite: bool = False,
+        evaluation_backend: str = "keras",
         tflite_path: Path | None = None,
     ) -> dict:
         """
@@ -1916,6 +2086,8 @@ class NASModelClient:
             Optuna study name for metadata/logging (optional).
         export_tflite : bool, optional
             Whether to export a TFLite flatbuffer from the loaded checkpoint.
+        evaluation_backend : {"keras", "tflite"}, optional
+            Host backend used for final scoring.
         tflite_path : Path | None, optional
             Destination for the TFLite file. Defaults to `config.outputs.tflite_model_path`.
 
@@ -1944,6 +2116,7 @@ class NASModelClient:
             study_storage=study_storage,
             study_name=study_name,
             export_tflite=export_tflite,
+            evaluation_backend=evaluation_backend,
             tflite_path=tflite_path,
         )
 
@@ -2139,6 +2312,7 @@ class NASModelClient:
             return {}
         requested_folds = self._fold_rotation_test_folds()
         best_params = self._best_trial_params(study_storage, study_name)
+        default_quantization_mode = configured_quantization_mode(self.config)
         output_dir = Path(output_dir)
         per_fold: list[dict[str, Any]] = []
         completed_folds: list[int] = []
@@ -2197,6 +2371,7 @@ class NASModelClient:
                 required_metrics = self._require_finite_fold_metrics(metrics, fold)
                 row = {
                     "fold": fold,
+                    "quantization_mode": metrics.get("quantization_mode", default_quantization_mode),
                     **required_metrics,
                     "history_path": str(history_path),
                     "metrics_path": str(metrics_path),
@@ -2223,7 +2398,16 @@ class NASModelClient:
         with open(csv_path, "w", newline="") as f:
             writer = csv.DictWriter(
                 f,
-                fieldnames=["fold", "accuracy", "macro_f1", "loss", "history_path", "metrics_path", "checkpoint_path"],
+                fieldnames=[
+                    "fold",
+                    "quantization_mode",
+                    "accuracy",
+                    "macro_f1",
+                    "loss",
+                    "history_path",
+                    "metrics_path",
+                    "checkpoint_path",
+                ],
             )
             writer.writeheader()
             for row in per_fold:
@@ -2473,12 +2657,18 @@ class NASModelClient:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
 
         study = optuna.load_study(study_name=study_name, storage=study_storage)
-        best_params = study.best_trial.params
+        raw_best_params = dict(study.best_trial.params)
+        best_params = _family_trial_params(raw_best_params)
+        quantization_mode = raw_best_params.get(
+            "quantization_mode",
+            test_metrics.get("quantization_mode", configured_quantization_mode(self.config)),
+        )
         summary = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "study_name": study_name,
             "study_storage": study_storage,
             "best_params": best_params,
+            "quantization_mode": quantization_mode,
             "history_path": str(history_path),
             "loss_plots": loss_plots,
             "test_metrics": test_metrics,

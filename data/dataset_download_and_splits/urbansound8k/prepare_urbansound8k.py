@@ -54,6 +54,44 @@ from tinyodom.datasets.urbansound8k_common import (  # noqa: E402
 
 FeatureFn = Callable[[np.ndarray, int], np.ndarray]
 FoldSplit = dict[str, tuple[int, ...]]
+ProgressFactory = Callable[[Iterable[Any], str], Iterable[Any]]
+
+
+def progress_iter(iterable: Iterable[Any], description: str) -> Iterable[Any]:
+    """Yield items while emitting progress for long preparation phases.
+
+    Parameters
+    ----------
+    iterable : iterable
+        Items to process.
+    description : str
+        Human-readable phase label shown in progress output.
+
+    Returns
+    -------
+    iterable
+        Wrapped iterable. Uses ``tqdm`` when available and falls back to
+        line-buffered progress messages otherwise.
+    """
+
+    items = list(iterable)
+    total = len(items)
+    if total == 0:
+        print(f"{description}: 0/0", flush=True)
+        return iter(())
+    try:
+        from tqdm.auto import tqdm  # type: ignore
+    except ImportError:
+        def _fallback() -> Iterable[Any]:
+            interval = max(1, min(25, total // 10 or 1))
+            print(f"{description}: 0/{total}", flush=True)
+            for index, item in enumerate(items, start=1):
+                yield item
+                if index == total or index % interval == 0:
+                    print(f"{description}: {index}/{total}", flush=True)
+
+        return _fallback()
+    return tqdm(items, desc=description, unit="clip")
 
 
 @dataclass(frozen=True)
@@ -609,6 +647,8 @@ def build_split_payload(
     config: PrepConfig,
     feature_fn: FeatureFn = compute_log_mel_features,
     normalization: tuple[np.ndarray, np.ndarray] | None = None,
+    progress: ProgressFactory | None = None,
+    progress_label: str | None = None,
 ) -> dict[str, np.ndarray]:
     """Build one split payload in the cache `.npz` schema.
 
@@ -624,6 +664,10 @@ def build_split_payload(
         Feature extraction function used for tests or production.
     normalization : tuple[numpy.ndarray, numpy.ndarray] | None, optional
         Optional mean/std arrays. When omitted, raw log-mel features are kept.
+    progress : callable | None, optional
+        Optional iterable wrapper used to report long-running progress.
+    progress_label : str | None, optional
+        Label passed to ``progress`` for this split.
 
     Returns
     -------
@@ -640,7 +684,13 @@ def build_split_payload(
     pad_before: list[int] = []
     pad_after: list[int] = []
 
-    for record in sorted(records, key=lambda item: item.clip_id):
+    sorted_records = sorted(records, key=lambda item: item.clip_id)
+    active_records = (
+        progress(sorted_records, progress_label or f"{split_name} clips")
+        if progress is not None
+        else sorted_records
+    )
+    for record in active_records:
         resampled = resample_audio(record.waveform, record.sample_rate)
         starts = (
             train_crop_starts(record.clip_id, resampled.shape[0], config)
@@ -902,6 +952,8 @@ def build_cache_from_records(
     evaluation_protocol: str = "fixed_split",
     rotation_fold_index: int | None = None,
     cache_dir: Path | None = None,
+    progress: ProgressFactory | None = None,
+    progress_prefix: str | None = None,
 ) -> Path:
     """Generate or reuse a deterministic UrbanSound8K feature cache.
 
@@ -923,6 +975,10 @@ def build_cache_from_records(
         Held-out fold for fold-rotation caches.
     cache_dir : pathlib.Path | None, optional
         Destination override. Defaults to ``config.cache_dir``.
+    progress : callable | None, optional
+        Optional iterable wrapper used to report clip-level progress.
+    progress_prefix : str | None, optional
+        Prefix included in progress labels for this cache.
 
     Returns
     -------
@@ -943,9 +999,18 @@ def build_cache_from_records(
             return cache_dir
 
     splits = split_records(records, active_split)
+    label_prefix = progress_prefix or str(cache_dir.name)
     # Generate train features before all other splits so normalization is based
     # on the expanded training crop rows and never deferred to the loader.
-    train_payload_raw = build_split_payload(splits["train"], "train", config, feature_fn=feature_fn)
+    print(f"Building UrbanSound8K cache: {cache_dir}", flush=True)
+    train_payload_raw = build_split_payload(
+        splits["train"],
+        "train",
+        config,
+        feature_fn=feature_fn,
+        progress=progress,
+        progress_label=f"{label_prefix} train",
+    )
     mean, std = compute_normalization_stats(train_payload_raw["inputs"])
     normalization = (mean, std)
     payloads = {
@@ -953,16 +1018,35 @@ def build_cache_from_records(
             **train_payload_raw,
             "inputs": normalize_features(train_payload_raw["inputs"], mean, std),
         },
-        "val": build_split_payload(splits["val"], "val", config, feature_fn=feature_fn, normalization=normalization),
-        "test": build_split_payload(splits["test"], "test", config, feature_fn=feature_fn, normalization=normalization),
+        "val": build_split_payload(
+            splits["val"],
+            "val",
+            config,
+            feature_fn=feature_fn,
+            normalization=normalization,
+            progress=progress,
+            progress_label=f"{label_prefix} val",
+        ),
+        "test": build_split_payload(
+            splits["test"],
+            "test",
+            config,
+            feature_fn=feature_fn,
+            normalization=normalization,
+            progress=progress,
+            progress_label=f"{label_prefix} test",
+        ),
         "calibration": build_split_payload(
             select_calibration_records(splits["train"], config.calibration_examples),
             "calibration",
             config,
             feature_fn=feature_fn,
             normalization=normalization,
+            progress=progress,
+            progress_label=f"{label_prefix} calibration",
         ),
     }
+    print(f"Writing UrbanSound8K cache: {cache_dir}", flush=True)
     write_cache(
         cache_dir,
         expected_metadata(
@@ -975,6 +1059,7 @@ def build_cache_from_records(
         ),
         payloads,
     )
+    print(f"Finished UrbanSound8K cache: {cache_dir}", flush=True)
     return cache_dir
 
 
@@ -985,6 +1070,7 @@ def build_fold_rotation_caches(
     test_folds: Sequence[int] = ALL_FOLDS,
     force: bool = False,
     feature_fn: FeatureFn = compute_log_mel_features,
+    progress: ProgressFactory | None = None,
 ) -> list[Path]:
     """Generate schema-2 fold-rotation caches for requested test folds.
 
@@ -1000,6 +1086,8 @@ def build_fold_rotation_caches(
         Whether to overwrite conflicting existing caches.
     feature_fn : callable, optional
         Feature extractor used for production or tests.
+    progress : callable | None, optional
+        Optional iterable wrapper used to report clip-level progress.
 
     Returns
     -------
@@ -1008,7 +1096,9 @@ def build_fold_rotation_caches(
     """
 
     written: list[Path] = []
-    for test_fold in parse_test_folds(test_folds):
+    parsed_test_folds = parse_test_folds(test_folds)
+    for fold_index, test_fold in enumerate(parsed_test_folds, start=1):
+        print(f"Building fold-rotation cache {fold_index}/{len(parsed_test_folds)}: fold_{test_fold:02d}", flush=True)
         fold_split = fold_split_for_test_fold(test_fold)
         # Each fold has its own train-derived normalization, so rotated caches
         # are full cache directories rather than views over the fixed split.
@@ -1022,6 +1112,8 @@ def build_fold_rotation_caches(
                 evaluation_protocol="fold_rotation",
                 rotation_fold_index=test_fold,
                 cache_dir=config.fold_rotation_cache_dir / f"fold_{test_fold:02d}",
+                progress=progress,
+                progress_prefix=f"fold_{test_fold:02d}",
             )
         )
     return written
@@ -1110,13 +1202,15 @@ def count_validation_issues(validation_payload: Any) -> int:
     return 1 if validation_payload else 0
 
 
-def records_from_soundata(dataset: Any) -> list[ClipRecord]:
+def records_from_soundata(dataset: Any, progress: ProgressFactory | None = None) -> list[ClipRecord]:
     """Load `ClipRecord` objects from a soundata UrbanSound8K dataset.
 
     Parameters
     ----------
     dataset : object
         soundata dataset object exposing `load_clips()`.
+    progress : callable | None, optional
+        Optional iterable wrapper used to report clip-loading progress.
 
     Returns
     -------
@@ -1125,7 +1219,9 @@ def records_from_soundata(dataset: Any) -> list[ClipRecord]:
     """
 
     records: list[ClipRecord] = []
-    for clip_id, clip in sorted(dataset.load_clips().items()):
+    clips = sorted(dataset.load_clips().items())
+    active_clips = progress(clips, "load clips") if progress is not None else clips
+    for clip_id, clip in active_clips:
         audio_value = getattr(clip, "audio", None)
         if audio_value is None:
             audio_value = clip.load_audio()
@@ -1153,8 +1249,14 @@ def main() -> None:
         download=bool(args.download),
         accept_license=bool(args.accept_license),
     )
-    records = records_from_soundata(dataset)
-    cache_dir = build_cache_from_records(records, config, force=bool(args.force))
+    records = records_from_soundata(dataset, progress=progress_iter)
+    cache_dir = build_cache_from_records(
+        records,
+        config,
+        force=bool(args.force),
+        progress=progress_iter,
+        progress_prefix="fixed_split",
+    )
     print(f"UrbanSound8K cache prepared in {cache_dir}")
     if bool(getattr(args, "fold_rotation", False)):
         fold_dirs = build_fold_rotation_caches(
@@ -1162,6 +1264,7 @@ def main() -> None:
             config,
             test_folds=parse_test_folds(getattr(args, "fold_rotation_test_folds", ALL_FOLDS)),
             force=bool(args.force),
+            progress=progress_iter,
         )
         print(f"UrbanSound8K fold-rotation caches prepared in {config.fold_rotation_cache_dir}")
         print(f"Prepared {len(fold_dirs)} fold-rotation cache(s).")

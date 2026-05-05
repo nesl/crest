@@ -514,8 +514,37 @@ class OdometryRegressionTask(TaskABC):
             values.
         """
 
-        del task_config, target_spec
         predictions = model.predict(split.inputs)
+        return self.evaluate_predictions(predictions, split, task_config, target_spec)
+
+    def evaluate_predictions(
+        self,
+        predictions: Any,
+        split: DataSplit,
+        task_config: Any,
+        target_spec: TargetSpec,
+    ) -> EvaluationResult:
+        """Evaluate odometry RMSE metrics from normalized predictions.
+
+        Parameters
+        ----------
+        predictions : Any
+            Prediction payload whose first two entries are ``velx`` and
+            ``vely`` outputs.
+        split : DataSplit
+            Split containing mapping-style ``velx`` and ``vely`` targets.
+        task_config : Any
+            Task-local configuration subtree.
+        target_spec : TargetSpec
+            Task-owned target specification.
+
+        Returns
+        -------
+        EvaluationResult
+            Flat RMSE metrics and raw predictions.
+        """
+
+        del task_config, target_spec
         # Preserve the legacy output-index contract from the current TinyODOM
         # model: predictions[0] is velx and predictions[1] is vely.
         rmse_vel_x = mean_squared_error(split.targets["velx"], predictions[0], squared=False)

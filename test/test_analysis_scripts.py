@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 
@@ -60,9 +61,21 @@ stm32_phase2_candidate = _load_module(
     "stm32_phase2_candidate",
     "analysis_scripts/stm32_example_project/stm32_phase2_candidate.py",
 )
+stm32_backend_phase2_smoke = _load_module(
+    "stm32_backend_phase2_smoke",
+    "analysis_scripts/stm32_example_project/smoke_test_stm32_backend_phase2.py",
+)
+stm32_backend_phase4_smoke = _load_module(
+    "stm32_backend_phase4_smoke",
+    "analysis_scripts/stm32_example_project/smoke_test_stm32_backend_phase4.py",
+)
 arena_latency_curve = _load_module(
     "arena_latency_curve",
     "analysis_scripts/arena_latency_curve/run_arena_latency_curve.py",
+)
+arena_latency_curve_failure_probe = _load_module(
+    "arena_latency_curve_failure_probe",
+    "analysis_scripts/arena_latency_curve/run_arena_latency_curve_failure_probe.py",
 )
 clock_tick_latency = _load_module(
     "clock_tick_latency",
@@ -457,8 +470,22 @@ class AnalysisScriptCandidateDirTests(unittest.TestCase):
 
 
 class Stm32MeasuredRunsTests(unittest.TestCase):
+    def _phase2_bundle(self, *, quantization_mode: str = "int8_ptq", calibration_inputs=object()):
+        """Build a fake Phase 2 candidate bundle for script smoke tests."""
+
+        return SimpleNamespace(
+            config=SimpleNamespace(),
+            calibration_inputs=calibration_inputs,
+            hyperparams={"nb_filters": 8},
+            model=object(),
+            metadata=Namespace(model_variant="approx_trained", quantization_mode=quantization_mode),
+            window_size=4,
+            input_dim=6,
+        )
+
     def test_phase2_candidate_uses_configured_device_name_in_tflite_filename(self):
         # Phase-two candidate naming should embed the configured device name in the TFLite artifact.
+        convert_mock = unittest.mock.Mock()
         bundle = type(
             "Bundle",
             (),
@@ -468,7 +495,11 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
                     (),
                     {
                         "device": type("Device", (), {"name": "STM32_NUCLEO_N657X0_Q"})(),
-                        "training": type("Training", (), {"quantization": True})(),
+                        "training": type(
+                            "Training",
+                            (),
+                            {"quantization": {"mode": "int8_ptq", "search": False, "choices": ["int8_ptq"]}},
+                        )(),
                     },
                 )(),
                 "model": object(),
@@ -489,7 +520,7 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
                         "tinyodom.hardware": type(
                             "HardwareModule",
                             (),
-                            {"convert_to_tflite_model": unittest.mock.Mock()},
+                            {"convert_to_tflite_model": convert_mock},
                         )()
                     },
                 ),
@@ -504,6 +535,176 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
             "TinyOdomEx_OxIOD_STM32_NUCLEO_N657X0_Q_approx_trained.tflite",
         )
         self.assertEqual(metadata, {"model_variant": "approx_trained"})
+        self.assertIs(convert_mock.call_args.kwargs["training_data"], bundle.calibration_inputs)
+
+    def test_phase2_candidate_float_export_omits_calibration_data(self):
+        """Float candidate export should not require representative data."""
+
+        convert_mock = unittest.mock.Mock()
+        bundle = type(
+            "Bundle",
+            (),
+            {
+                "config": type(
+                    "Config",
+                    (),
+                    {
+                        "device": type("Device", (), {"name": "STM32_NUCLEO_N657X0_Q"})(),
+                        "training": type(
+                            "Training",
+                            (),
+                            {"quantization": {"mode": "float", "search": False, "choices": ["float"]}},
+                        )(),
+                    },
+                )(),
+                "model": object(),
+                "calibration_inputs": None,
+                "metadata": {"model_variant": "approx_trained"},
+                "window_size": 4,
+                "input_dim": 6,
+            },
+        )()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch.object(stm32_phase2_candidate, "load_or_build_perturbed_candidate", return_value=bundle),
+                patch.dict(
+                    sys.modules,
+                    {
+                        "tinyodom.hardware": type(
+                            "HardwareModule",
+                            (),
+                            {"convert_to_tflite_model": convert_mock},
+                        )()
+                    },
+                ),
+            ):
+                stm32_phase2_candidate.export_perturbed_candidate_tflite(
+                    Path("/tmp/nas_config.yaml"),
+                    Path(tmpdir),
+                )
+
+        self.assertIsNone(convert_mock.call_args.kwargs["training_data"])
+        self.assertEqual(convert_mock.call_args.kwargs["quantization_mode"], "float")
+
+    def test_stm32_backend_phase2_smoke_uses_candidate_prepare_request(self):
+        """Phase 2 smoke runner should call the current backend preparation API."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "config.yaml"
+            project_root = root / "project"
+            staged_root = root / "staged"
+            config_path.write_text("device:\n  name: STM32_NUCLEO_N657X0_Q\n", encoding="utf-8")
+            project_root.mkdir()
+            bundle = self._phase2_bundle()
+            device = MagicMock()
+            device.prepare_candidate.return_value = staged_root
+            device.compile.return_value = SimpleNamespace(
+                success=True,
+                build_dir=root / "build",
+                flash_bytes=1024,
+                ram_bytes=512,
+            )
+
+            with patch.object(stm32_backend_phase2_smoke, "get_device", return_value=device), patch.object(
+                stm32_backend_phase2_smoke,
+                "load_or_build_perturbed_candidate",
+                return_value=bundle,
+            ):
+                exit_code = stm32_backend_phase2_smoke.main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--project-root",
+                        str(project_root),
+                        "--output-root",
+                        str(root / "out"),
+                        "--compile-only",
+                    ]
+                )
+
+        self.assertEqual(exit_code, stm32_backend_phase2_smoke.EXIT_SUCCESS)
+        request = device.prepare_candidate.call_args.kwargs["request"]
+        self.assertEqual(request.quantization_mode, "int8_ptq")
+        self.assertEqual(request.input_shape, (4, 6))
+        self.assertIs(request.calibration_split.inputs, bundle.calibration_inputs)
+
+    def test_stm32_backend_phase4_smoke_uses_candidate_prepare_request(self):
+        """Phase 4 smoke runner should call the current backend preparation API."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "config.yaml"
+            project_root = root / "project"
+            staged_root = root / "staged"
+            config_path.write_text("device:\n  name: STM32_NUCLEO_N657X0_Q\n", encoding="utf-8")
+            project_root.mkdir()
+            device = MagicMock()
+            device.prepare_candidate.return_value = staged_root
+            device.compile.return_value = SimpleNamespace(
+                success=True,
+                build_dir=root / "build",
+                flash_bytes=1024,
+                ram_bytes=512,
+            )
+
+            with patch.object(stm32_backend_phase4_smoke, "get_device", return_value=device), patch.object(
+                stm32_backend_phase4_smoke,
+                "load_or_build_perturbed_candidate",
+                return_value=self._phase2_bundle(quantization_mode="float", calibration_inputs=None),
+            ):
+                exit_code = stm32_backend_phase4_smoke.main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--project-root",
+                        str(project_root),
+                        "--output-root",
+                        str(root / "out"),
+                        "--compile-only",
+                    ]
+                )
+
+        self.assertEqual(exit_code, stm32_backend_phase4_smoke.EXIT_SUCCESS)
+        request = device.prepare_candidate.call_args.kwargs["request"]
+        self.assertEqual(request.quantization_mode, "float")
+        self.assertIsNone(request.calibration_split)
+
+    def test_analysis_float_artifact_preparation_skips_calibration(self):
+        """Float analysis exports should pass no representative data."""
+
+        for module in (arena_latency_curve, arena_latency_curve_failure_probe, clock_tick_latency):
+            with self.subTest(module=module.__name__):
+                server = SimpleNamespace(
+                    model_family=SimpleNamespace(materialize_export_model=MagicMock(return_value=object())),
+                    model_build_context=object(),
+                    model_config={},
+                    task=SimpleNamespace(compile_model=MagicMock()),
+                    task_config={},
+                    target_spec=object(),
+                    config=SimpleNamespace(
+                        training=SimpleNamespace(quantization=SimpleNamespace(mode="float")),
+                        outputs=SimpleNamespace(tflite_model_path="model.tflite", candidate_dir="candidate"),
+                    ),
+                    get_calibration_inputs=MagicMock(side_effect=AssertionError("calibration should not be fetched")),
+                )
+                convert_tflite = MagicMock()
+
+                module._prepare_model_artifacts(
+                    server=server,
+                    hyperparams={"nb_filters": 4},
+                    model_variant="untrained",
+                    trained_checkpoint=None,
+                    convert_to_tflite_model_fn=convert_tflite,
+                    convert_to_cpp_model_fn=MagicMock(),
+                    require_calibration_inputs_fn=MagicMock(
+                        side_effect=AssertionError("calibration should not be required")
+                    ),
+                )
+
+                self.assertIsNone(convert_tflite.call_args.kwargs["training_data"])
+                self.assertEqual(convert_tflite.call_args.kwargs["quantization_mode"], "float")
 
     def test_write_phase_config_header_writes_measured_runs_and_clamps(self):
         # Phase-config headers should record measured-run counts and clamp settings so generated STM32 workspaces match the requested run mode.

@@ -27,7 +27,7 @@ from tinyodom.microcontrollers import (  # noqa: E402
     resolve_device_options,
 )
 from tinyodom.errors import HIL_ERROR_OK, HIL_MASTER_SUCCESS  # noqa: E402
-from tinyodom.model import load_config  # noqa: E402
+from tinyodom.model import configured_quantization_mode, load_config, quantization_requires_calibration  # noqa: E402
 from tinyodom.pipeline_types import DataSplit  # noqa: E402
 from tinyodom.runtime_bootstrap import BootstrappedPipeline, bootstrap_pipeline  # noqa: E402
 
@@ -60,8 +60,9 @@ class AudioPortentaSmokePreflight:
         Keras model materialized for export.
     runtime_metadata : dict[str, Any]
         HIL request metadata for logical feature-shaped input.
-    calibration_split : DataSplit
-        Cached representative feature samples used by export preparation.
+    calibration_split : DataSplit or None
+        Cached representative feature samples used by export preparation when
+        the selected deployment mode requires calibration.
     request : CandidatePrepareRequest
         Backend preparation request for prepare-only mode.
     diagnostic_tflite_path : Path
@@ -79,7 +80,7 @@ class AudioPortentaSmokePreflight:
     hparams: dict[str, Any]
     model: Any
     runtime_metadata: dict[str, Any]
-    calibration_split: DataSplit
+    calibration_split: DataSplit | None
     request: CandidatePrepareRequest
     diagnostic_tflite_path: Path
     output_dir: Path
@@ -540,7 +541,12 @@ def build_preflight(args: argparse.Namespace) -> AudioPortentaSmokePreflight:
         checkpoint_path=checkpoint_path,
     )
     pipeline.task.validate_model_outputs(model, pipeline.target_spec)
-    calibration_split = require_calibration_split(pipeline.bundle.calibration)
+    quantization_mode = configured_quantization_mode(config)
+    calibration_split = (
+        require_calibration_split(pipeline.bundle.calibration)
+        if quantization_requires_calibration(quantization_mode)
+        else None
+    )
     runtime_metadata = build_runtime_metadata(model, pipeline, model_config)
     export_diagnostic_tflite(model, diagnostic_tflite_path)
     request = CandidatePrepareRequest(
@@ -550,6 +556,7 @@ def build_preflight(args: argparse.Namespace) -> AudioPortentaSmokePreflight:
         artifact_root=Path(config.outputs.candidate_dir),
         tflite_model_path=Path(config.outputs.tflite_model_path),
         calibration_split=calibration_split,
+        quantization_mode=quantization_mode,
         input_shape=pipeline.model_build_context.input_shape,
         checkpoint_path=checkpoint_path,
     )

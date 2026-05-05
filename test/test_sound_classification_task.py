@@ -329,9 +329,12 @@ class SoundClassificationTaskTests(unittest.TestCase):
             bundle = _bundle()
             target_spec = task.build_target_spec(bundle, Dict())
             result = task.evaluate(model, bundle.val, Dict(), target_spec)
+            prediction_result = task.evaluate_predictions(logits, bundle.val, Dict(), target_spec)
 
         self.assertEqual(model.predict_calls, 1)
         self.assertEqual(result.predictions, [0, 2, 1])
+        self.assertEqual(prediction_result.predictions, result.predictions)
+        self.assertEqual(prediction_result.metrics, result.metrics)
         self.assertAlmostEqual(result.metrics["accuracy"], 2.0 / 3.0)
         self.assertAlmostEqual(result.metrics["macro_f1"], (1.0 + (2.0 / 3.0)) / 10.0)
         json.dumps(result.metrics)

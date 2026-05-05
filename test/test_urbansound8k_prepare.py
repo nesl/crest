@@ -315,6 +315,36 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
             with np.load(fold_dirs[0] / "calibration.npz", allow_pickle=False) as calibration:
                 self.assertTrue(set(calibration["folds"].tolist()).issubset(set(metadata["fold_split"]["train"])))
 
+    def test_build_cache_progress_wrapper_labels_long_phases(self) -> None:
+        """Cache generation should expose progress labels for long phases."""
+
+        with self.temporary_config() as config:
+            records = [_record("train", 1, 0), _record("val", 9, 1), _record("test", 10, 2)]
+            labels: list[str] = []
+
+            def _progress(iterable, description):
+                """Record progress labels while preserving iteration semantics."""
+                labels.append(description)
+                return iterable
+
+            prepare_urbansound8k.build_cache_from_records(
+                records,
+                config,
+                feature_fn=_fake_feature_fn,
+                progress=_progress,
+                progress_prefix="fixed_split",
+            )
+
+        self.assertEqual(
+            labels,
+            [
+                "fixed_split train",
+                "fixed_split val",
+                "fixed_split test",
+                "fixed_split calibration",
+            ],
+        )
+
     def test_validate_cache_rejects_each_required_metadata_mismatch(self) -> None:
         """validate_cache should reject all contract metadata mismatches."""
 
@@ -518,7 +548,7 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
             prepare_urbansound8k.main()
 
         init_dataset.assert_called_once()
-        records_from_dataset.assert_called_once_with(fake_dataset)
+        records_from_dataset.assert_called_once_with(fake_dataset, progress=prepare_urbansound8k.progress_iter)
         build_cache.assert_called_once()
 
     def temporary_config(self):

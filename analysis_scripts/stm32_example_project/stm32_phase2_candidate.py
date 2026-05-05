@@ -16,7 +16,7 @@ from tinyodom.analysis_support import (
     require_calibration_inputs,
 )
 from tinyodom.builtin_components import ensure_builtin_components_registered
-from tinyodom.model import load_config
+from tinyodom.model import configured_quantization_mode, load_config, quantization_requires_calibration
 from tinyodom.runtime_bootstrap import bootstrap_pipeline
 
 DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "config" / "nas_config.yaml"
@@ -28,7 +28,7 @@ class Phase2CandidateBundle:
     """Shared fixed candidate bundle used by STM Phase 2 scripts."""
 
     config: Dict
-    calibration_inputs: Any
+    calibration_inputs: Any | None
     hyperparams: Dict
     model: Any
     metadata: Dict
@@ -41,12 +41,15 @@ def load_or_build_perturbed_candidate(config_path: Path) -> Phase2CandidateBundl
     ensure_builtin_components_registered()
     config = load_config(config_path)
     pipeline = bootstrap_pipeline(config)
+    quantization_mode = configured_quantization_mode(config)
     calibration_split = pipeline.dataset.make_calibration_data(
         pipeline.bundle,
         pipeline.selection["dataset_config"],
     )
-    calibration_inputs = require_calibration_inputs(
-        None if calibration_split is None else calibration_split.inputs
+    calibration_inputs = (
+        require_calibration_inputs(None if calibration_split is None else calibration_split.inputs)
+        if quantization_requires_calibration(quantization_mode)
+        else None
     )
     window_size = int(pipeline.model_build_context.input_shape[0])
     input_dim = int(pipeline.model_build_context.input_shape[1])
@@ -66,7 +69,7 @@ def load_or_build_perturbed_candidate(config_path: Path) -> Phase2CandidateBundl
         model_variant=PERTURBED_VARIANT_NAME,
         input_mode="uniform",
         energy_aware=True,
-        quantization=bool(config.training.quantization),
+        quantization_mode=quantization_mode,
         hyperparams={
             "nb_filters": int(hyperparams.nb_filters),
             "kernel_size": int(hyperparams.kernel_size),
@@ -103,7 +106,7 @@ def export_perturbed_candidate_tflite(config_path: Path, output_root: Path) -> t
     convert_to_tflite_model(
         model=bundle.model,
         training_data=bundle.calibration_inputs,
-        quantization=bool(bundle.config.training.quantization),
+        quantization_mode=configured_quantization_mode(bundle.config),
         output_name=tflite_path,
     )
     return tflite_path, bundle.metadata

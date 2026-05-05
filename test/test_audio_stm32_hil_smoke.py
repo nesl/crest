@@ -28,7 +28,7 @@ from tinyodom.pipeline_types import DataSplit, ModelBuildContext, TargetSpec  # 
 class AudioSTM32HILSmokeTests(unittest.TestCase):
     """Validate the Phase 6 STM32 audio smoke runner."""
 
-    def _config(self) -> Dict:
+    def _config(self, *, quantization_mode: str = "int8_ptq") -> Dict:
         """Build a minimal mutable audio STM32 config."""
 
         return Dict(
@@ -46,7 +46,10 @@ class AudioSTM32HILSmokeTests(unittest.TestCase):
                 measured_inference_runs=10,
                 stm32=Dict(project_root="sketches/stm32/tinyodom_stm32_lrun"),
             ),
-            training=Dict(energy_aware=False, quantization=True),
+            training=Dict(
+                energy_aware=False,
+                quantization=Dict(mode=quantization_mode, search=False, choices=[quantization_mode]),
+            ),
             model=Dict(params=Dict(export_variant="untrained")),
         )
 
@@ -110,16 +113,22 @@ class AudioSTM32HILSmokeTests(unittest.TestCase):
         values.update(overrides)
         return argparse.Namespace(**values)
 
-    def _patch_preflight_dependencies(self, pipeline: SimpleNamespace | None = None):
+    def _patch_preflight_dependencies(
+        self,
+        pipeline: SimpleNamespace | None = None,
+        *,
+        config: Dict | None = None,
+    ):
         """Patch heavy preflight dependencies for one smoke test."""
 
         active_pipeline = self._pipeline() if pipeline is None else pipeline
+        active_config = self._config() if config is None else config
         converter = MagicMock()
         converter.convert.return_value = b"real-tflite-bytes"
         return (
             active_pipeline,
             patch("run_audio_stm32_hil_smoke.ensure_audio_components_registered"),
-            patch("run_audio_stm32_hil_smoke.load_config", return_value=self._config()),
+            patch("run_audio_stm32_hil_smoke.load_config", return_value=active_config),
             patch("run_audio_stm32_hil_smoke.bootstrap_pipeline", return_value=active_pipeline),
             patch(
                 "run_audio_stm32_hil_smoke.tf.lite.TFLiteConverter.from_keras_model",
@@ -183,6 +192,23 @@ class AudioSTM32HILSmokeTests(unittest.TestCase):
             self.assertEqual(preflight.request.input_shape, (201, 64))
             self.assertEqual(preflight.request.model_variant, "untrained")
             self.assertEqual(preflight.request.artifact_root, Path(tmpdir).resolve() / "candidates")
+
+    def test_float_preflight_does_not_require_calibration_split(self) -> None:
+        """Float deployment preflight should not require cached calibration rows."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir), preflight_only=True)
+            pipeline = self._pipeline(calibration_rows=0)
+            config = self._config(quantization_mode="float")
+            pipeline, ensure_patch, config_patch, bootstrap_patch, converter_patch = self._patch_preflight_dependencies(
+                pipeline,
+                config=config,
+            )
+            with ensure_patch, config_patch, bootstrap_patch, converter_patch:
+                preflight = smoke.build_preflight(args)
+
+            self.assertIsNone(preflight.request.calibration_split)
+            self.assertEqual(preflight.request.quantization_mode, "float")
 
     def test_preflight_missing_cache_mentions_prepare_target(self) -> None:
         """Missing cache failures in preflight should point to the prepare target."""

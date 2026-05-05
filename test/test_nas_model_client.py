@@ -139,6 +139,12 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
                 predictions=[legacy_dataset.x_vel, legacy_dataset.y_vel],
             )
         ),
+        evaluate_predictions=MagicMock(
+            return_value=EvaluationResult(
+                metrics={"rmse_vel_x": 0.1, "rmse_vel_y": 0.2, "rmse_total": 0.3},
+                predictions=[legacy_dataset.x_vel, legacy_dataset.y_vel],
+            )
+        ),
     )
     model_family = SimpleNamespace(
         validate_config=MagicMock(),
@@ -184,7 +190,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
             train=True,
             nas_epochs=10,
             model_epochs=20,
-            quantization="float",
+            quantization=Dict(mode="float", search=False, choices=["float"]),
             latency_proxy_max_flops=1_000_000,
             nas_trials=2,
             max_total_trials=4,
@@ -249,6 +255,12 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     # Stub the ZMQ context/socket to avoid opening real network resources.
     client.socket = MagicMock()
     client.context = MagicMock()
+    client._evaluate_model_with_backend = MagicMock(
+        return_value=EvaluationResult(
+            metrics={"rmse_vel_x": 0.1, "rmse_vel_y": 0.2, "rmse_total": 0.3},
+            predictions=[legacy_dataset.x_vel, legacy_dataset.y_vel],
+        )
+    )
     return client
 
 
@@ -603,7 +615,11 @@ class ObjectiveTests(unittest.TestCase):
             mode="search",
             combine_train_val=False,
         )
-        self.client.task.evaluate.assert_called_once()
+        self.client._evaluate_model_with_backend.assert_called_once()
+        self.assertEqual(
+            self.client._evaluate_model_with_backend.call_args.kwargs["evaluation_backend"],
+            "tflite",
+        )
         self.assertEqual(result, -0.3)
         self.mock_log.assert_called_once()
 
@@ -777,6 +793,7 @@ class ObjectiveTests(unittest.TestCase):
         sent_payload = self.client._hil_request.call_args.args[0]
         self.assertIn("family_hparams", sent_payload)
         self.assertIn("runtime_metadata", sent_payload)
+        self.assertEqual(sent_payload["quantization_mode"], "float")
         self.assertEqual(sent_payload["device_options_overrides"], {"cpu_clock_mhz": 200})
         self.assertNotIn("model_variant", sent_payload)
         self.assertNotIn("cpu_clock_mhz", sent_payload["family_hparams"])
@@ -800,7 +817,31 @@ class ObjectiveTests(unittest.TestCase):
         self.client.objective(trial)
 
         sent_payload = self.client._hil_request.call_args.args[0]
-        self.assertEqual(set(sent_payload.keys()), {"family_hparams", "runtime_metadata"})
+        self.assertEqual(set(sent_payload.keys()), {"family_hparams", "runtime_metadata", "quantization_mode"})
+
+    def test_objective_samples_quantization_mode_when_search_enabled(self) -> None:
+        """Quantization search should sample before HIL and keep mode top-level."""
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+        }
+        self.client.config.training.quantization = Dict(
+            mode="int8_ptq",
+            search=True,
+            choices=["float", "int8_ptq"],
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        self.client.objective(trial)
+
+        sent_payload = self.client._hil_request.call_args.args[0]
+        self.assertEqual(trial.params["quantization_mode"], "float")
+        self.assertEqual(sent_payload["quantization_mode"], "float")
+        self.assertNotIn("quantization_mode", sent_payload["family_hparams"])
 
     def test_objective_stm_phase1_allows_arena_sentinel(self) -> None:
         """Ensure STM Phase 1 does not get pruned solely for ``arena_bytes=-1``.
@@ -1272,6 +1313,7 @@ class TrainBestTrialTests(unittest.TestCase):
                     "norm_flag": True,
                     "dilations_index": 0,
                     "cpu_clock_mhz_index": 2,
+                    "quantization_mode": "int8_ptq",
                 }
             )
 
@@ -1408,6 +1450,31 @@ class EvaluateCheckpointTests(unittest.TestCase):
             self.assertAlmostEqual(persisted["f1_macro"], 0.8)
             self.assertAlmostEqual(persisted["loss"], 0.25)
 
+    def test_evaluate_checkpoint_keeps_quantization_out_of_hparams(self) -> None:
+        """Checkpoint metrics should report quantization separately from hparams."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            best_trial = SimpleNamespace(
+                params={"nb_filters": 8, "quantization_mode": "int8_ptq", "cpu_clock_mhz_index": 1}
+            )
+
+            with patch(
+                "nas_model_client.optuna.load_study",
+                return_value=SimpleNamespace(best_trial=best_trial),
+            ):
+                metrics = client.evaluate_checkpoint(
+                    checkpoint_path=base / "ckpt.keras",
+                    metrics_path=base / "metrics.json",
+                    study_storage="sqlite:///optuna.db",
+                    study_name="demo",
+                    export_tflite=False,
+                )
+
+            self.assertEqual(metrics["hyperparameters"], {"nb_filters": 8})
+            self.assertEqual(metrics["quantization_mode"], "int8_ptq")
+
     def test_evaluate_checkpoint_exports_tflite_when_requested(self) -> None:
         # Checkpoint evaluation should export TFLite when requested so downstream deployment steps do not need a second conversion pass.
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1442,9 +1509,8 @@ class EvaluateCheckpointTests(unittest.TestCase):
 
             self.assertTrue(mock_convert.called)
             self.assertEqual(mock_convert.call_args.kwargs["output_name"], tflite_path)
-            self.assertTrue(
-                np.array_equal(mock_convert.call_args.kwargs["training_data"], calibration_inputs)
-            )
+            self.assertIsNone(mock_convert.call_args.kwargs["training_data"])
+            self.assertEqual(mock_convert.call_args.kwargs["quantization_mode"], "float")
 
     def test_evaluate_checkpoint_rejects_tflite_when_family_does_not_support_it(self) -> None:
         # TFLite export should fail fast when the active model family opts out of export support.
@@ -1561,8 +1627,8 @@ class FoldRotationReportingTests(unittest.TestCase):
                 "_evaluate_checkpoint_with_context",
                 autospec=True,
                 side_effect=[
-                    {"accuracy": 0.8, "macro_f1": 0.7, "loss": 0.5},
-                    {"accuracy": 0.9, "macro_f1": 0.8, "loss": 0.4},
+                    {"accuracy": 0.8, "macro_f1": 0.7, "loss": 0.5, "quantization_mode": "int8_ptq"},
+                    {"accuracy": 0.9, "macro_f1": 0.8, "loss": 0.4, "quantization_mode": "int8_ptq"},
                 ],
             ) as eval_mock:
                 result = client.run_fold_rotation_final_evaluation(
@@ -1579,9 +1645,11 @@ class FoldRotationReportingTests(unittest.TestCase):
             self.assertIs(eval_mock.call_args_list[0].kwargs["task"], fold_tasks[1])
             self.assertIs(eval_mock.call_args_list[1].kwargs["task"], fold_tasks[2])
             self.assertFalse(eval_mock.call_args_list[0].kwargs["export_tflite"])
+            self.assertNotIn("quantization_mode", eval_mock.call_args_list[0].kwargs)
             summary = json.loads(Path(result["summary_path"]).read_text(encoding="utf-8"))
             self.assertTrue(summary["partial"])
             self.assertEqual(summary["status"], "success")
+            self.assertEqual(summary["folds"][0]["quantization_mode"], "int8_ptq")
             self.assertAlmostEqual(summary["aggregates"]["accuracy"]["mean"], 0.85)
             self.assertIsNotNone(summary["aggregates"]["accuracy"]["std"])
 
@@ -1734,7 +1802,9 @@ class SummaryBundleTests(unittest.TestCase):
 
             class DummyStudy:
                 def __init__(self):
-                    self.best_trial = SimpleNamespace(params={"nb_filters": 8})
+                    self.best_trial = SimpleNamespace(
+                        params={"nb_filters": 8, "quantization_mode": "int8_ptq", "cpu_clock_mhz_index": 1}
+                    )
 
             with patch("nas_model_client.optuna.load_study", return_value=DummyStudy()):
                 summary_path = client.write_summary_bundle(
@@ -1750,6 +1820,7 @@ class SummaryBundleTests(unittest.TestCase):
             self.assertTrue(summary_path.is_file())
             content = json.loads(summary_path.read_text())
             self.assertEqual(content["best_params"], {"nb_filters": 8})
+            self.assertEqual(content["quantization_mode"], "int8_ptq")
             self.assertEqual(content["loss_plots"], loss_plots)
             self.assertEqual(content["test_metrics"], test_metrics)
             self.assertEqual(content["task_closeout_artifacts"], closeout_artifacts)

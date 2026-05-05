@@ -47,6 +47,8 @@ from .errors import (
 from .microcontrollers.arduino_base import normalize_power_metrics
 from .microcontrollers import get_device as get_microcontroller_device
 
+VALID_TFLITE_QUANTIZATION_MODES = {"float", "int8_ptq"}
+
 def _probe_xxd() -> Optional[str]:
     """Return the resolved ``xxd`` path when available.
 
@@ -119,8 +121,8 @@ if not XXD_BIN:
 # -----------------------------------------------------------------------------
 def convert_to_tflite_model(
     model: tf.keras.Model,
-    training_data,
-    quantization: bool = False,
+    training_data=None,
+    quantization_mode: str = "float",
     output_name: Union[str, Path] = "g_model.tflite",
 ) -> None:
     """
@@ -130,12 +132,13 @@ def convert_to_tflite_model(
     ----------
     model : tf.keras.Model
         Source Keras model to serialize.
-    training_data : array-like
-        Calibration samples used when ``quantization`` is enabled. The array
-        must include a sample axis because representative batches are emitted
-        one sample at a time.
-    quantization : bool, optional
-        Whether to apply post-training int8 quantization.
+    training_data : array-like, optional
+        Calibration samples used when ``quantization_mode`` is ``"int8_ptq"``.
+        The array must include a sample axis because representative batches are
+        emitted one sample at a time.
+    quantization_mode : str, optional
+        Deployment export mode. ``"float"`` emits a float32 model and
+        ``"int8_ptq"`` applies full-integer post-training quantization.
     output_name : Union[str, Path], optional
         Destination filename for the flatbuffer.
 
@@ -146,15 +149,19 @@ def convert_to_tflite_model(
     Notes
     -----
     The representative dataset is capped at the first 100 samples. Input and
-    output dtypes stay ``float32`` unless post-training int8 quantization is
-    enabled.
+    output dtypes stay ``float32`` unless ``int8_ptq`` is selected.
     """
     output_path = Path(output_name)
+    normalized_mode = str(quantization_mode).strip().lower()
+    if normalized_mode not in VALID_TFLITE_QUANTIZATION_MODES:
+        raise ValueError("quantization_mode must be one of: float, int8_ptq.")
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.inference_input_type = tf.float32
     converter.inference_output_type = tf.float32
 
-    if quantization:
+    if normalized_mode == "int8_ptq":
+        if training_data is None:
+            raise ValueError("int8_ptq export requires representative calibration data.")
         data = np.asarray(training_data, dtype=np.float32)
         if data.ndim < 2:
             raise ValueError("`training_data` must include a sample dimension.")
@@ -182,6 +189,113 @@ def convert_to_tflite_model(
     flatbuffer = converter.convert()
     # Persist the flatbuffer so the downstream conversion step can embed it.
     output_path.write_bytes(flatbuffer)
+
+
+def _quantize_tflite_tensor(value: np.ndarray, tensor_detail: dict[str, object]) -> np.ndarray:
+    """Quantize one input tensor using interpreter-provided parameters.
+
+    Parameters
+    ----------
+    value : numpy.ndarray
+        Float32 tensor batch to feed into the interpreter.
+    tensor_detail : dict[str, object]
+        Entry from ``interpreter.get_input_details()``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Tensor cast or quantized to the interpreter input dtype.
+    """
+
+    dtype = tensor_detail["dtype"]
+    if dtype in (np.float32, np.float64):
+        return value.astype(dtype)
+    scale, zero_point = tensor_detail.get("quantization", (0.0, 0))
+    if not scale:
+        return value.astype(dtype)
+    quantized = np.round(value / float(scale) + int(zero_point))
+    info = np.iinfo(dtype)
+    return np.clip(quantized, info.min, info.max).astype(dtype)
+
+
+def _dequantize_tflite_tensor(value: np.ndarray, tensor_detail: dict[str, object]) -> np.ndarray:
+    """Dequantize one output tensor using interpreter-provided parameters.
+
+    Parameters
+    ----------
+    value : numpy.ndarray
+        Raw tensor returned by the interpreter.
+    tensor_detail : dict[str, object]
+        Entry from ``interpreter.get_output_details()``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Float32 output tensor.
+    """
+
+    dtype = tensor_detail["dtype"]
+    if dtype in (np.float32, np.float64):
+        return np.asarray(value, dtype=np.float32)
+    scale, zero_point = tensor_detail.get("quantization", (0.0, 0))
+    if not scale:
+        return np.asarray(value, dtype=np.float32)
+    return (np.asarray(value, dtype=np.float32) - int(zero_point)) * float(scale)
+
+
+def predict_tflite_model(
+    tflite_path: Union[str, Path],
+    inputs,
+) -> np.ndarray | list[np.ndarray]:
+    """Run host-side TFLite inference over a split input batch.
+
+    Parameters
+    ----------
+    tflite_path : str | pathlib.Path
+        TFLite flatbuffer path.
+    inputs : array-like
+        Split inputs with a leading sample dimension.
+
+    Returns
+    -------
+    numpy.ndarray | list[numpy.ndarray]
+        Float32 predictions normalized to the task-facing Keras shape. Single
+        output models return one array; multi-output models return an ordered
+        list of arrays.
+    """
+
+    data = np.asarray(inputs, dtype=np.float32)
+    if data.ndim < 1:
+        raise ValueError("TFLite evaluation inputs must include a sample dimension.")
+    interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+    if len(input_details) != 1:
+        raise ValueError("TFLite evaluation supports single-input models only.")
+    input_detail = input_details[0]
+    sample_shape = tuple(int(dim) for dim in input_detail["shape"][1:])
+    if sample_shape and tuple(data.shape[1:]) != sample_shape:
+        interpreter.resize_tensor_input(input_detail["index"], [1, *data.shape[1:]])
+    interpreter.allocate_tensors()
+    input_detail = interpreter.get_input_details()[0]
+    output_details = interpreter.get_output_details()
+
+    outputs: list[list[np.ndarray]] = [[] for _ in output_details]
+    for sample in data:
+        batch = sample[np.newaxis, ...].astype(np.float32)
+        interpreter.set_tensor(
+            input_detail["index"],
+            _quantize_tflite_tensor(batch, input_detail),
+        )
+        interpreter.invoke()
+        for output_index, output_detail in enumerate(output_details):
+            raw_output = interpreter.get_tensor(output_detail["index"])
+            outputs[output_index].append(_dequantize_tflite_tensor(raw_output, output_detail))
+
+    merged_outputs = [np.concatenate(parts, axis=0) for parts in outputs]
+    if len(merged_outputs) == 1:
+        return merged_outputs[0]
+    return merged_outputs
 
 def convert_to_cpp_model(
         tflite_path: Union[str, Path],

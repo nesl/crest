@@ -442,12 +442,17 @@ def _prepare_model_artifacts(
         checkpoint_path=trained_checkpoint,
     )
     server.task.compile_model(model, server.task_config, server.target_spec)
-    calibration_inputs = require_calibration_inputs_fn(server.get_calibration_inputs())
+    quantization_mode = str(server.config.training.quantization.mode)
+    calibration_inputs = (
+        require_calibration_inputs_fn(server.get_calibration_inputs())
+        if quantization_mode == "int8_ptq"
+        else None
+    )
 
     convert_to_tflite_model_fn(
         model=model,
         training_data=calibration_inputs,
-        quantization=bool(server.config.training.quantization),
+        quantization_mode=quantization_mode,
         output_name=str(server.config.outputs.tflite_model_path),
     )
     convert_to_cpp_model_fn(
