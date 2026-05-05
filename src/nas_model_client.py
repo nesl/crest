@@ -552,6 +552,18 @@ class NASModelClient:
         """
         return get_score_config_directions(self.config.nas.score)
 
+    def _study_metric_names(self) -> list[str]:
+        """Return Optuna metric names for the active score config.
+
+        Returns
+        -------
+        list[str]
+            Metric names aligned with the objective return order.
+        """
+        if self._score_is_multiobjective():
+            return [str(obj.metric) for obj in self.config.nas.score.params.objectives]
+        return ["score"]
+
     def _hardware_limit_device_options(self) -> dict[str, str] | None:
         """Build board options required to resolve dynamic hardware limits.
 
@@ -1580,6 +1592,7 @@ class NASModelClient:
                     sampler=sampler,
                     load_if_exists=True,
                 )
+            single_trial_study.set_metric_names(self._study_metric_names())
             try:
                 single_trial_study.optimize(self.objective, n_trials=trials)
             except Exception as exc:
@@ -1682,6 +1695,7 @@ class NASModelClient:
                 sampler=sampler,
                 load_if_exists=True,  # resume if the study already exists
             )
+        study.set_metric_names(self._study_metric_names())
         # Make sure we never shrink the total budget when resuming an existing study.
         max_total_trials = max(max_total_trials, len(study.trials))
 
