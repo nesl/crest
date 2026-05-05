@@ -1923,6 +1923,7 @@ class LoadSettingsTests(unittest.TestCase):
             ("nas_config_portenta.yaml", "odom_tcn", "approx_trained"),
             ("nas_config_audio_stm32.yaml", "audio_dscnn", "untrained"),
             ("nas_config_audio_portenta.yaml", "audio_dscnn", "untrained"),
+            ("nas_config_flops_rmse.yaml", "odom_tcn", "approx_trained"),
         ]
         for filename, family, export_variant in cases:
             with self.subTest(filename=filename):
@@ -1953,6 +1954,7 @@ class LoadSettingsTests(unittest.TestCase):
             "nas_config_portenta.yaml",
             "nas_config_audio_stm32.yaml",
             "nas_config_audio_portenta.yaml",
+            "nas_config_flops_rmse.yaml",
         ):
             with self.subTest(filename=filename):
                 settings = load_config(config_path=ROOT_DIR / "src/config" / filename)
@@ -1966,8 +1968,10 @@ class LoadSettingsTests(unittest.TestCase):
         readme = (ROOT_DIR / "src/config/README.md").read_text(encoding="utf-8")
 
         self.assertIn("nas_config_audio_stm32.yaml", readme)
+        self.assertIn("nas_config_flops_rmse.yaml", readme)
         self.assertIn("artifact_stem", readme)
         self.assertIn("export_variant", readme)
+        self.assertIn("compile_when_hil_disabled", readme)
 
     def test_audio_stm32_config_derives_audio_artifact_names(self) -> None:
         """The audio STM32 config should derive artifact names from its stem."""
@@ -2284,6 +2288,77 @@ class LoadSettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.device.runtime_mode, "back_to_back")
         self.assertIsNone(settings.device.latency_budget_ms)
+        self.assertEqual(settings.device.compile_when_hil_disabled, "auto")
+
+    def test_load_settings_accepts_compile_when_hil_disabled_modes(self) -> None:
+        """The non-HIL compile policy should normalize supported YAML shapes."""
+        cases = {
+            "auto": "auto",
+            "true": "true",
+            "false": "false",
+            "true_bool": True,
+            "false_bool": False,
+        }
+        for label, raw_value in cases.items():
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    tmp_path = Path(tmpdir)
+                    cfg = tmp_path / "config.yaml"
+                    value_text = str(raw_value).lower() if isinstance(raw_value, bool) else f"\"{raw_value}\""
+                    cfg.write_text(
+                        "\n".join(
+                            [
+                                "device:",
+                                "  name: TEST_DEVICE",
+                                f"  compile_when_hil_disabled: {value_text}",
+                                "training:",
+                                "  nas_trials: 10",
+                                "  quantization:",
+                                "    mode: int8_ptq",
+                                "    search: false",
+                                "    choices: [int8_ptq]",
+                                *self._score_lines(include_quantization=False),
+                                "outputs:",
+                                f"  models_dir: \"{tmp_path / 'models'}\"",
+                                f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                                "  artifact_stem: \"TinyOdomEx_Test\"",
+                            ]
+                        )
+                    )
+
+                    settings = load_config(config_path=cfg)
+
+                expected = str(raw_value).lower() if isinstance(raw_value, bool) else raw_value
+                self.assertEqual(settings.device.compile_when_hil_disabled, expected)
+
+    def test_load_settings_rejects_invalid_compile_when_hil_disabled(self) -> None:
+        """Invalid non-HIL compile policy values should fail during config load."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "  compile_when_hil_disabled: sometimes",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        *self._score_lines(include_quantization=False),
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "device.compile_when_hil_disabled"):
+                load_config(config_path=cfg)
 
     def test_load_settings_accepts_runtime_mode_and_latency_budget_override(self) -> None:
         # Runtime mode and latency budget override should remain a supported config shape.

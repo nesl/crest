@@ -1,0 +1,78 @@
+# Pure desktop OxIOD NAS example: minimize validation RMSE and model FLOPs.
+
+device:
+  name: STM32_NUCLEO_N657X0_Q
+  hil: false
+  compile_when_hil_disabled: false
+  runtime_mode: back_to_back
+  serial_port: "/dev/ttyACM0"
+  measured_inference_runs: 10
+  dut_ready_timeout_s: 12.0
+  serial_timeout_s: 12.0
+  stm32:
+    project_root: "sketches/stm32/tinyodom_stm32_lrun"
+    appli_flash_address: "0x70100000"
+    weight_storage_mode: "external_flash"
+    weights_memory_pool: "analysis_scripts/stm32_example_project/nucleo_mypool.json"
+
+dataset:
+  name: oxiod
+  params:
+    sampling_rate_hz: 100
+    window_size: 200
+    stride: 20
+    directory: "data/oxiod/"
+    calibration_windows: 10000
+
+task:
+  name: odometry_regression
+  params:
+    early_stopping_patience: 40
+
+model:
+  family: odom_tcn
+  params:
+    export_variant: approx_trained
+  search: {}
+
+training:
+  nas_epochs: 55
+  model_epochs: 990
+  nas_trials: 150
+  nas_multiobjective_population_size: 50
+  max_total_trials: 300
+  quantization:
+    mode: int8_ptq
+    search: false
+    choices: [int8_ptq]
+  latency_proxy_max_flops: 30000000.0
+  train: true
+  energy_aware: false
+  input_mode: "uniform"
+
+nas:
+  score:
+    type: multi-objective
+    params:
+      objectives:
+        - metric: rmse_total
+          direction: minimize
+        - metric: flops
+          direction: minimize
+  prune:
+    rules: []
+
+outputs:
+  models_dir: "models"
+  candidate_dir: "odom_tcn"
+  artifact_stem: "TinyOdomEx_OxIOD"
+  log_file_name: "log_NAS_Oxiod_STM32_NUCLEO_N657X0_Q_FLOPS_RMSE.csv"
+
+network:
+  host: "127.0.0.1"
+  port: 6001
+  recv_timeout_sec: 720
+  send_timeout_sec: 720
+
+logging:
+  level: "INFO"

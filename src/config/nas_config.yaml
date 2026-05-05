@@ -2,6 +2,7 @@
 device:
   name: STM32_NUCLEO_N657X0_Q
   hil: true
+  compile_when_hil_disabled: auto           # With hil:false, choose compile-only proxy automatically when score/prune needs compile metrics; use false for pure desktop runs.
   runtime_mode: cadenced                     # Shared runtime control: `back_to_back` or `cadenced`.
   # latency_budget_ms: 200.0                # Optional shared cadence-budget override. Defaults to dataset batch_period_ms, then stride / sampling_rate_hz * 1000.
   serial_port: "/dev/ttyACM0"
