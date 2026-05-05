@@ -92,6 +92,7 @@ tools/arduino-cli.yaml
 *.log
 *.keras
 *.json
+!analysis_scripts/stm32_example_project/nucleo_mypool.json
 
 # Probe summaries
 analysis_scripts/hil_noise_analysis/op_transition_probe_output/op_transition_probe_summary.txt
