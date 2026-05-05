@@ -1187,7 +1187,11 @@ class SmokeTestTests(unittest.TestCase):
             def __init__(self):
                 self.best_trial = SimpleNamespace(value=1.0, params={}, user_attrs={})
                 self.optimize_calls = []
+                self.metric_names_calls = []
                 self.trials = []
+
+            def set_metric_names(self, metric_names):
+                self.metric_names_calls.append(list(metric_names))
 
             def optimize(self, func, n_trials):
                 self.optimize_calls.append((func, n_trials))
@@ -1233,6 +1237,10 @@ class SmokeTestTests(unittest.TestCase):
                 self.best_trials = [trial]
                 self.trials = [trial]
                 self.optimize_calls = []
+                self.metric_names_calls = []
+
+            def set_metric_names(self, metric_names):
+                self.metric_names_calls.append(list(metric_names))
 
             def optimize(self, func, n_trials):
                 self.optimize_calls.append((func, n_trials))
@@ -1243,6 +1251,7 @@ class SmokeTestTests(unittest.TestCase):
             client.smoke_test(train=True, hil=False, trials=1, epochs=1)
 
         self.assertEqual(fake_study.optimize_calls[0][1], 1)
+        self.assertEqual(fake_study.metric_names_calls, [["rmse_total", "latency_ms"]])
         kwargs = mock_create.call_args.kwargs
         self.assertEqual(kwargs["directions"], ["minimize", "minimize"])
         self.assertTrue(kwargs["load_if_exists"])
@@ -1256,7 +1265,11 @@ class SmokeTestTests(unittest.TestCase):
             def __init__(self):
                 self.best_trial = SimpleNamespace(value=1.0, params={}, user_attrs={})
                 self.optimize_calls = []
+                self.metric_names_calls = []
                 self.trials = []
+
+            def set_metric_names(self, metric_names):
+                self.metric_names_calls.append(list(metric_names))
 
             def optimize(self, func, n_trials):
                 self.optimize_calls.append((func, n_trials))
@@ -1267,6 +1280,7 @@ class SmokeTestTests(unittest.TestCase):
 
         self.assertEqual(mock_create.call_args.kwargs["direction"], "maximize")
         self.assertTrue(mock_create.call_args.kwargs["load_if_exists"])
+        self.assertEqual(fake_study.metric_names_calls, [["score"]])
 
     def test_smoke_test_defaults_to_loaded_hil_setting(self) -> None:
         # Smoke tests should inherit the loaded HIL flag so validation exercises the same execution mode the real run will use.
@@ -1283,7 +1297,11 @@ class SmokeTestTests(unittest.TestCase):
             def __init__(self):
                 self.best_trial = SimpleNamespace(value=1.0, params={}, user_attrs={})
                 self.optimize_calls = []
+                self.metric_names_calls = []
                 self.trials = []
+
+            def set_metric_names(self, metric_names):
+                self.metric_names_calls.append(list(metric_names))
 
             def optimize(self, func, n_trials):
                 self.optimize_calls.append((func, n_trials))
@@ -1377,6 +1395,10 @@ class RunNASTests(unittest.TestCase):
             self.best_trial = SimpleNamespace(value=None, params={})
             self.best_value = None
             self.enqueue_calls = []
+            self.metric_names_calls = []
+
+        def set_metric_names(self, metric_names):
+            self.metric_names_calls.append(list(metric_names))
 
         def optimize(self, func, n_trials):
             self.optimize_calls.append(n_trials)
@@ -1421,6 +1443,32 @@ class RunNASTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_run_nas_sets_multiobjective_metric_names(self) -> None:
+        """Multi-objective studies should expose configured objective names."""
+        client = _build_test_client()
+        client.config.training.nas_trials = 1
+        client.config.training.max_total_trials = 1
+        client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="rmse_total", direction="minimize"),
+                    Dict(metric="latency_ms", direction="minimize"),
+                ]
+            ),
+        )
+        dummy = self.DummyStudy([TrialState.COMPLETE])
+        client.objective = MagicMock()
+
+        with patch("nas_model_client.optuna.create_study", return_value=dummy) as mock_create:
+            study = client.run_nas(study_name="demo", storage="sqlite:///dummy.db")
+
+        self.assertIs(study, dummy)
+        self.assertEqual(mock_create.call_args.kwargs["directions"], ["minimize", "minimize"])
+        self.assertEqual(dummy.metric_names_calls, [["rmse_total", "latency_ms"]])
+        self.assertEqual(dummy.optimize_calls, [1])
 
     def test_run_nas_honors_max_total_trials_cap(self) -> None:
         # The orchestration loop should still stop at the global trial cap even if completed-trial target has not been met.
