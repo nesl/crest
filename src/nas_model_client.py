@@ -73,6 +73,27 @@ tf.autograph.set_verbosity(0)
 
 logger = logging.getLogger(__name__)
 
+RUNNER_OWNED_TRIAL_PARAM_KEYS = frozenset({"cpu_clock_mhz_index", "quantization_mode"})
+
+
+def _family_trial_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Return Optuna parameters that belong to model-family decoding.
+
+    Parameters
+    ----------
+    params : Mapping[str, Any]
+        Raw Optuna trial parameters, including both model-family search values
+        and runner-owned deployment/runtime choices.
+
+    Returns
+    -------
+    dict[str, Any]
+        Parameters safe to pass to ``ModelFamilyABC.decode_trial_hparams``.
+    """
+
+    return {key: value for key, value in params.items() if key not in RUNNER_OWNED_TRIAL_PARAM_KEYS}
+
+
 class NASModelClient:
     """Client that orchestrates HIL-assisted NAS, training, and evaluation.
 
@@ -1660,11 +1681,7 @@ class NASModelClient:
         """
 
         study = optuna.load_study(study_name=study_name, storage=study_storage)
-        return {
-            key: value
-            for key, value in study.best_trial.params.items()
-            if key not in {"cpu_clock_mhz_index", "quantization_mode"}
-        }
+        return _family_trial_params(study.best_trial.params)
 
     def _train_with_decoded_hparams(
         self,
@@ -1819,12 +1836,9 @@ class NASModelClient:
         best_quantization_mode = None
         if study_storage and study_name:
             study = optuna.load_study(study_name=study_name, storage=study_storage)
-            best_params = {
-                key: value
-                for key, value in study.best_trial.params.items()
-                if key not in {"cpu_clock_mhz_index", "quantization_mode"}
-            }
-            best_quantization_mode = study.best_trial.params.get("quantization_mode")
+            raw_best_params = dict(study.best_trial.params)
+            best_params = _family_trial_params(raw_best_params)
+            best_quantization_mode = raw_best_params.get("quantization_mode")
         resolved_quantization_mode = (
             quantization_mode
             or best_quantization_mode
@@ -2643,12 +2657,9 @@ class NASModelClient:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
 
         study = optuna.load_study(study_name=study_name, storage=study_storage)
-        best_params = {
-            key: value
-            for key, value in study.best_trial.params.items()
-            if key not in {"cpu_clock_mhz_index", "quantization_mode"}
-        }
-        quantization_mode = study.best_trial.params.get(
+        raw_best_params = dict(study.best_trial.params)
+        best_params = _family_trial_params(raw_best_params)
+        quantization_mode = raw_best_params.get(
             "quantization_mode",
             test_metrics.get("quantization_mode", configured_quantization_mode(self.config)),
         )

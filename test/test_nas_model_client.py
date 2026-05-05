@@ -1313,6 +1313,7 @@ class TrainBestTrialTests(unittest.TestCase):
                     "norm_flag": True,
                     "dilations_index": 0,
                     "cpu_clock_mhz_index": 2,
+                    "quantization_mode": "int8_ptq",
                 }
             )
 
@@ -1448,6 +1449,31 @@ class EvaluateCheckpointTests(unittest.TestCase):
                 persisted = json.load(handle)
             self.assertAlmostEqual(persisted["f1_macro"], 0.8)
             self.assertAlmostEqual(persisted["loss"], 0.25)
+
+    def test_evaluate_checkpoint_keeps_quantization_out_of_hparams(self) -> None:
+        """Checkpoint metrics should report quantization separately from hparams."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            best_trial = SimpleNamespace(
+                params={"nb_filters": 8, "quantization_mode": "int8_ptq", "cpu_clock_mhz_index": 1}
+            )
+
+            with patch(
+                "nas_model_client.optuna.load_study",
+                return_value=SimpleNamespace(best_trial=best_trial),
+            ):
+                metrics = client.evaluate_checkpoint(
+                    checkpoint_path=base / "ckpt.keras",
+                    metrics_path=base / "metrics.json",
+                    study_storage="sqlite:///optuna.db",
+                    study_name="demo",
+                    export_tflite=False,
+                )
+
+            self.assertEqual(metrics["hyperparameters"], {"nb_filters": 8})
+            self.assertEqual(metrics["quantization_mode"], "int8_ptq")
 
     def test_evaluate_checkpoint_exports_tflite_when_requested(self) -> None:
         # Checkpoint evaluation should export TFLite when requested so downstream deployment steps do not need a second conversion pass.
