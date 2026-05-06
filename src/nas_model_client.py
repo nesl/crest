@@ -34,8 +34,9 @@ from tinyodom.hardware import (
     HIL_MASTER_FLASH_OVERFLOW,
     HIL_MASTER_RAM_OVERFLOW,
     HIL_MASTER_SUCCESS,
+    TFLiteSubprocessError,
     convert_to_tflite_model,
-    predict_tflite_model,
+    predict_tflite_model_subprocess,
     return_hardware_specs,
 )
 from tinyodom.microcontrollers import (
@@ -975,7 +976,7 @@ class NASModelClient:
             split_name=split_name,
             quantization_mode=quantization_mode,
         )
-        predictions = predict_tflite_model(tflite_path, split.inputs)
+        predictions = predict_tflite_model_subprocess(tflite_path, split.inputs)
         return self.task.evaluate_predictions(
             predictions,
             split,
@@ -1444,13 +1445,19 @@ class NASModelClient:
                     self.model_build_context,
                     self.model_config,
                 )
-                evaluation_result = self._evaluate_model_with_backend(
-                    model=model,
-                    split=self.dataset_bundle.val,
-                    split_name="validation",
-                    quantization_mode=quantization_mode,
-                    evaluation_backend="tflite",
-                )
+                try:
+                    evaluation_result = self._evaluate_model_with_backend(
+                        model=model,
+                        split=self.dataset_bundle.val,
+                        split_name="validation",
+                        quantization_mode=quantization_mode,
+                        evaluation_backend="tflite",
+                    )
+                except TFLiteSubprocessError as exc:
+                    prune_reason = "TFLite evaluation failed"
+                    if not self._score_is_multiobjective():
+                        prune_reason = f"{prune_reason}: {exc}"
+                    return _fail_with_penalty(prune_reason)
                 task_metrics = dict(evaluation_result.metrics)
                 keras_evaluation_result = self._evaluate_model_with_backend(
                     model=model,
@@ -2131,7 +2138,7 @@ class NASModelClient:
                 quantization_mode=resolved_quantization_mode,
                 output_name=eval_tflite_path,
             )
-            predictions = predict_tflite_model(eval_tflite_path, bundle.test.inputs)
+            predictions = predict_tflite_model_subprocess(eval_tflite_path, bundle.test.inputs)
             evaluation_result = task.evaluate_predictions(
                 predictions,
                 bundle.test,

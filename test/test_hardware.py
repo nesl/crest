@@ -54,7 +54,10 @@ from tinyodom.hardware import (  # noqa: E402
     convert_to_cpp_model,
     convert_to_tflite_model,
     get_model_memory_usage,
+    predict_tflite_model,
+    predict_tflite_model_subprocess,
     return_hardware_specs,
+    TFLiteSubprocessError,
 )
 from tinyodom import hil_protocol  # noqa: E402
 from tinyodom.devices import ArduinoDevice  # noqa: E402
@@ -262,6 +265,99 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
             convert_to_tflite_model(self.model, self.train_x, output_name=model_path)
             with self.assertRaises(FileExistsError):
                 convert_to_cpp_model(model_path, output_path)
+
+
+class TFLiteSubprocessPredictionTests(TinyModelMixin, unittest.TestCase):
+    """Validate isolated host-side TFLite prediction behavior."""
+
+    def test_subprocess_prediction_matches_direct_single_output(self) -> None:
+        """Subprocess prediction should match direct single-output inference."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tflite_path = Path(tmpdir) / "model_float.tflite"
+            convert_to_tflite_model(self.model, self.train_x, output_name=tflite_path)
+
+            direct = predict_tflite_model(tflite_path, self.train_x[:3])
+            isolated = predict_tflite_model_subprocess(tflite_path, self.train_x[:3], timeout_sec=60.0)
+
+        self.assertIsInstance(isolated, np.ndarray)
+        self.assertEqual(isolated.shape, direct.shape)
+        self.assertEqual(isolated.dtype, direct.dtype)
+        np.testing.assert_allclose(isolated, direct, rtol=1e-5, atol=1e-5)
+
+    def test_subprocess_prediction_preserves_multi_output_order(self) -> None:
+        """Subprocess prediction should preserve ordered multi-output results."""
+        inputs = tf.keras.Input(shape=(4,), name="input")
+        shared = tf.keras.layers.Dense(3, activation="relu")(inputs)
+        output_0 = tf.keras.layers.Dense(1, activation="linear", name="first")(shared)
+        output_1 = tf.keras.layers.Dense(2, activation="linear", name="second")(shared)
+        model = tf.keras.Model(inputs=inputs, outputs=[output_0, output_1])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tflite_path = Path(tmpdir) / "multi_output.tflite"
+            convert_to_tflite_model(model, self.train_x, output_name=tflite_path)
+
+            direct = predict_tflite_model(tflite_path, self.train_x[:4])
+            isolated = predict_tflite_model_subprocess(tflite_path, self.train_x[:4], timeout_sec=60.0)
+
+        self.assertIsInstance(direct, list)
+        self.assertIsInstance(isolated, list)
+        self.assertEqual(len(isolated), 2)
+        for isolated_output, direct_output in zip(isolated, direct):
+            self.assertEqual(isolated_output.shape, direct_output.shape)
+            np.testing.assert_allclose(isolated_output, direct_output, rtol=1e-5, atol=1e-5)
+
+    def test_subprocess_nonzero_return_raises(self) -> None:
+        """Nonzero worker exits should raise a structured subprocess error."""
+        failed_process = _FakeCompletedProcess(returncode=2, stderr="worker failed")
+
+        with patch("tinyodom.hardware.subprocess.run", return_value=failed_process):
+            with self.assertRaises(TFLiteSubprocessError) as raised:
+                predict_tflite_model_subprocess("model.tflite", self.train_x[:1], timeout_sec=0.1)
+
+        self.assertFalse(raised.exception.timeout)
+        self.assertEqual(raised.exception.return_code, 2)
+        self.assertIn("worker failed", raised.exception.stderr_tail)
+
+    def test_subprocess_signal_return_keeps_stderr_tail(self) -> None:
+        """Signal-style worker exits should keep useful stderr diagnostics."""
+        stderr = "prefix\n" + ("x" * 4100) + "abort details"
+        failed_process = _FakeCompletedProcess(returncode=-6, stderr=stderr)
+
+        with patch("tinyodom.hardware.subprocess.run", return_value=failed_process):
+            with self.assertRaises(TFLiteSubprocessError) as raised:
+                predict_tflite_model_subprocess("model.tflite", self.train_x[:1], timeout_sec=0.1)
+
+        self.assertEqual(raised.exception.return_code, -6)
+        self.assertIn("abort details", raised.exception.stderr_tail)
+        self.assertLessEqual(len(raised.exception.stderr_tail), 4000)
+
+    def test_subprocess_timeout_raises_timeout_error(self) -> None:
+        """Timed-out workers should be reported as timeout subprocess errors."""
+        timeout = subprocess.TimeoutExpired(
+            cmd=["python", "-m", "tinyodom.tflite_predict_worker"],
+            timeout=0.1,
+            stderr="hung inside interpreter",
+        )
+
+        with patch("tinyodom.hardware.subprocess.run", side_effect=timeout):
+            with self.assertRaises(TFLiteSubprocessError) as raised:
+                predict_tflite_model_subprocess("model.tflite", self.train_x[:1], timeout_sec=0.1)
+
+        self.assertTrue(raised.exception.timeout)
+        self.assertIsNone(raised.exception.return_code)
+        self.assertIn("hung inside interpreter", raised.exception.stderr_tail)
+
+    def test_subprocess_missing_output_contract_raises(self) -> None:
+        """Zero-exit workers without outputs should raise a subprocess error."""
+        completed_process = _FakeCompletedProcess(returncode=0, stderr="no output file")
+
+        with patch("tinyodom.hardware.subprocess.run", return_value=completed_process):
+            with self.assertRaises(TFLiteSubprocessError) as raised:
+                predict_tflite_model_subprocess("model.tflite", self.train_x[:1], timeout_sec=0.1)
+
+        self.assertFalse(raised.exception.timeout)
+        self.assertEqual(raised.exception.return_code, 0)
+        self.assertIn("no output file", raised.exception.stderr_tail)
 
 
 class SpecHelperTests(unittest.TestCase):
