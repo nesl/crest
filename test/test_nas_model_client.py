@@ -329,6 +329,26 @@ class HILRequestTests(unittest.TestCase):
 
         client.socket.send_json.assert_called_once()
 
+    def test_hil_request_opens_socket_lazily(self) -> None:
+        """The HIL socket should connect only when a HIL request is sent."""
+        client = _build_test_client()
+        fake_socket = MagicMock()
+        fake_socket.recv_json.return_value = {"ram_bytes": 2048}
+        fake_context = MagicMock()
+        fake_context.socket.return_value = fake_socket
+        client.socket = None
+        client.context = None
+
+        with patch("nas_model_client.zmq.Context.instance", return_value=fake_context):
+            result = client._hil_request(
+                {"family_hparams": {"nb_filters": 4}, "runtime_metadata": {"flops": 1}}
+            )
+
+        fake_context.socket.assert_called_once_with(zmq.REQ)
+        fake_socket.connect.assert_called_once_with("tcp://localhost:5555")
+        fake_socket.send_json.assert_called_once()
+        self.assertEqual(result, {"ram_bytes": 2048})
+
 
 class InitializationTests(unittest.TestCase):
     """Validate the Phase 4 bootstrap and component-selection helpers."""
@@ -492,7 +512,8 @@ class InitializationTests(unittest.TestCase):
         self.assertIsInstance(client, NASModelClient)
         mock_load_config.assert_called_once_with(base / "config.yaml")
         bootstrap_mock.assert_called_once_with(config)
-        fake_socket.connect.assert_called_once()
+        fake_context.socket.assert_not_called()
+        fake_socket.connect.assert_not_called()
 
 class ObjectiveTests(unittest.TestCase):
     """Exercise Optuna objective branches with lightweight stubs."""
@@ -2197,9 +2218,24 @@ class CloseTests(unittest.TestCase):
         """
         # Closing the NAS client should shut down both the socket and the ZeroMQ context cleanly.
         client = _build_test_client()
+        socket = client.socket
+        context = client.context
         client.close()
-        client.socket.close.assert_called_once_with(linger=0)
-        client.context.term.assert_called_once()
+        socket.close.assert_called_once_with(linger=0)
+        context.term.assert_called_once()
+        self.assertIsNone(client.socket)
+        self.assertIsNone(client.context)
+
+    def test_close_tolerates_unopened_hil_socket(self) -> None:
+        """Closing before any HIL request should be a no-op."""
+        client = _build_test_client()
+        client.socket = None
+        client.context = None
+
+        client.close()
+
+        self.assertIsNone(client.socket)
+        self.assertIsNone(client.context)
 
 
 if __name__ == "__main__":

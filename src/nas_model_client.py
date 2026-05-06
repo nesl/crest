@@ -224,14 +224,8 @@ class NASModelClient:
         else:
             logger.info("Using single-objective NAS.")
 
-        self.context = zmq.Context.instance()
-        self.socket = self.context.socket(zmq.REQ)
-        self.socket.RCVTIMEO = self.config.network.recv_timeout_sec * 1000
-        self.socket.SNDTIMEO = self.config.network.send_timeout_sec * 1000  # Avoid hanging forever during tunnel hiccups
-
-        endpoint = f"tcp://{self.config.network.host}:{self.config.network.port}"
-        self.socket.connect(endpoint)
-        print(f"[REQ] Connected to HIL server at {endpoint}")
+        self.context = None
+        self.socket = None
 
         self.study_name = "default_study"
 
@@ -626,6 +620,30 @@ class NASModelClient:
                 "Is the board connected and is hil_server.py running?"
             ) from exc
 
+    def _ensure_hil_socket(self) -> None:
+        """Open the ZeroMQ REQ socket on first real HIL request.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        Desktop/proxy runs may load network settings for completeness but never
+        need HIL transport. Keeping socket setup lazy avoids noisy background
+        connection retries when ``device.hil`` and compile proxy collection are
+        disabled.
+        """
+
+        if self.socket is not None:
+            return
+        self.context = zmq.Context.instance()
+        self.socket = self.context.socket(zmq.REQ)
+        self.socket.RCVTIMEO = self.config.network.recv_timeout_sec * 1000
+        self.socket.SNDTIMEO = self.config.network.send_timeout_sec * 1000
+        endpoint = f"tcp://{self.config.network.host}:{self.config.network.port}"
+        self.socket.connect(endpoint)
+        print(f"[REQ] Connected to HIL server at {endpoint}")
 
     def _hil_request(self, payload):
         """Send a HIL request payload to the HIL server and receive metrics.
@@ -650,6 +668,7 @@ class NASModelClient:
         print(f"[REQ] Sending payload to {self.config.network.host}:{self.config.network.port}: {payload}")
 
         try:
+            self._ensure_hil_socket()
             self.socket.send_json(payload)
             metrics = self.socket.recv_json()
             print(f"[REQ] Received metrics: {metrics}")
@@ -2978,8 +2997,12 @@ class NASModelClient:
         -------
         None
         """
-        self.socket.close(linger=0)
-        self.context.term()
+        if self.socket is not None:
+            self.socket.close(linger=0)
+            self.socket = None
+        if self.context is not None:
+            self.context.term()
+            self.context = None
 
 
 if __name__ == "__main__":
