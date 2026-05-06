@@ -20,6 +20,20 @@ Current script contract:
 - Fixed TinyODOM helper scripts should route through
   `tinyodom.analysis_support` instead of importing build/FLOP helpers from
   `tinyodom.model`.
+- Host-side accuracy diagnostics can use
+  `compare_keras_tflite_accuracy.py` to load a trained checkpoint from a run
+  config, export fresh float and int8 TFLite artifacts, and compare all three
+  backends on the same dataset windows. The script prints tensor quantization
+  metadata, RMSE, output ranges, endpoint saturation fractions, and
+  Keras-vs-TFLite deltas. For example:
+
+  ```bash
+  conda run -n tinyodomex python analysis_scripts/compare_keras_tflite_accuracy.py \
+    --config models/OxIOD_FLOPS_PROXY_case1_1/nas_config_flops_rmse.yaml \
+    --split val \
+    --max-windows 4096 \
+    --keep-tflite-dir /tmp/tinyodom_compare
+  ```
 
 Recent Portenta H7 analysis packages in this folder rely on shared DUT clock
 telemetry emitted by `sketches/common/tinyodom_clock_telemetry.h`. When the

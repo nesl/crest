@@ -205,10 +205,17 @@ Current runtime behavior:
   `choices`; this expands the effective NAS search space and usually needs a
   larger trial budget. Mixed `float`/`int8_ptq` studies also conflate
   architecture quality with quantization effects, so compare them deliberately.
+- `int8_ptq` export uses full-integer TensorFlow Lite conversion with int8
+  inputs and outputs. Representative calibration data is taken from the
+  explicit calibration split when available, otherwise the training split, and
+  conversion samples up to 1000 windows evenly across that split. This avoids
+  calibrating on one contiguous prefix of an ordered time-series split.
 - HIL metrics are deployment-mode preflight metrics collected before training.
   Per-trial NAS scoring evaluates the trained checkpoint with host-side TFLite
-  on the validation split; final fixed-split reporting exports/evaluates the
-  trained TFLite on the test split after `train_best_trial`.
+  on the validation split using interpreter-provided input/output
+  scale/zero-point values and TFLite signature output order; final fixed-split
+  reporting exports/evaluates the trained TFLite on the test split after
+  `train_best_trial`.
 - Closeout artifacts may still be Keras-derived in this phase unless a specific
   path explicitly requests TFLite evaluation.
 - `training.input_mode` defaults to `uniform` when omitted

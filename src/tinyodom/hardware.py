@@ -50,6 +50,7 @@ from .microcontrollers.arduino_base import normalize_power_metrics
 from .microcontrollers import get_device as get_microcontroller_device
 
 VALID_TFLITE_QUANTIZATION_MODES = {"float", "int8_ptq"}
+MAX_REPRESENTATIVE_EXAMPLES = 1000
 
 
 class TFLiteSubprocessError(RuntimeError):
@@ -254,8 +255,9 @@ def convert_to_tflite_model(
 
     Notes
     -----
-    The representative dataset is capped at the first 100 samples. Input and
-    output dtypes stay ``float32`` unless ``int8_ptq`` is selected.
+    The representative dataset is capped at an evenly sampled subset of the
+    provided calibration data. Input and output dtypes stay ``float32`` unless
+    ``int8_ptq`` is selected.
     """
     output_path = Path(output_name)
     normalized_mode = str(quantization_mode).strip().lower()
@@ -271,8 +273,12 @@ def convert_to_tflite_model(
         data = np.asarray(training_data, dtype=np.float32)
         if data.ndim < 2:
             raise ValueError("`training_data` must include a sample dimension.")
+        if len(data) == 0:
+            raise ValueError("`training_data` must include at least one calibration sample.")
+        if not np.all(np.isfinite(data)):
+            raise ValueError("`training_data` calibration samples must be finite.")
 
-        max_examples = min(len(data), 100)
+        representative_samples = _representative_calibration_samples(data)
 
         def representative_dataset() -> Iterable[Sequence[tf.Tensor]]:
             """Yield calibration samples for post-training quantization.
@@ -282,7 +288,7 @@ def convert_to_tflite_model(
             list[tf.Tensor]
                 Single-sample batches formatted for the TFLite converter.
             """
-            for sample in data[:max_examples]:
+            for sample in representative_samples:
                 # Yield calibrated batches so the converter can determine proper scale/zero-point.
                 yield [tf.convert_to_tensor(sample[np.newaxis, ...], tf.float32)]
 
@@ -295,6 +301,33 @@ def convert_to_tflite_model(
     flatbuffer = converter.convert()
     # Persist the flatbuffer so the downstream conversion step can embed it.
     output_path.write_bytes(flatbuffer)
+
+
+def _representative_calibration_samples(data: np.ndarray) -> np.ndarray:
+    """Select a bounded, spread-out representative calibration subset.
+
+    Parameters
+    ----------
+    data : numpy.ndarray
+        Model-ready calibration inputs with a leading sample axis.
+
+    Returns
+    -------
+    numpy.ndarray
+        At most ``MAX_REPRESENTATIVE_EXAMPLES`` samples. When the input split is
+        larger than the cap, examples are selected evenly across the split
+        instead of taking one contiguous prefix.
+    """
+
+    if len(data) <= MAX_REPRESENTATIVE_EXAMPLES:
+        return data
+    indices = np.linspace(
+        0,
+        len(data) - 1,
+        num=MAX_REPRESENTATIVE_EXAMPLES,
+        dtype=np.int64,
+    )
+    return data[indices]
 
 
 def _quantize_tflite_tensor(value: np.ndarray, tensor_detail: dict[str, object]) -> np.ndarray:
@@ -349,6 +382,42 @@ def _dequantize_tflite_tensor(value: np.ndarray, tensor_detail: dict[str, object
     return (np.asarray(value, dtype=np.float32) - int(zero_point)) * float(scale)
 
 
+def _ordered_tflite_output_details(interpreter: tf.lite.Interpreter) -> list[dict[str, object]]:
+    """Return output tensor details in the model signature order when available.
+
+    Parameters
+    ----------
+    interpreter : tf.lite.Interpreter
+        Allocated interpreter for the model under evaluation.
+
+    Returns
+    -------
+    list[dict[str, object]]
+        Output tensor details ordered to match Keras ``model.outputs`` for
+        models exported with a single TFLite signature. Falls back to the
+        interpreter's default order when signature metadata is unavailable.
+    """
+
+    output_details = interpreter.get_output_details()
+    signature_list = interpreter.get_signature_list()
+    if len(signature_list) != 1:
+        return output_details
+
+    signature_key = next(iter(signature_list))
+    signature_output_names = list(signature_list[signature_key].get("outputs", ()))
+    signature_runner = interpreter.get_signature_runner(signature_key)
+    signature_outputs = signature_runner.get_output_details()
+    if len(signature_outputs) != len(output_details):
+        return output_details
+    if set(signature_output_names) != set(signature_outputs):
+        return output_details
+
+    return [
+        dict(signature_outputs[output_name])
+        for output_name in signature_output_names
+    ]
+
+
 def predict_tflite_model(
     tflite_path: Union[str, Path],
     inputs,
@@ -384,7 +453,7 @@ def predict_tflite_model(
         interpreter.resize_tensor_input(input_detail["index"], [1, *data.shape[1:]])
     interpreter.allocate_tensors()
     input_detail = interpreter.get_input_details()[0]
-    output_details = interpreter.get_output_details()
+    output_details = _ordered_tflite_output_details(interpreter)
 
     outputs: list[list[np.ndarray]] = [[] for _ in output_details]
     for sample in data:
