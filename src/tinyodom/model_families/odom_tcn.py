@@ -266,14 +266,16 @@ class OdomTCNFamily(ModelFamilyABC):
         ctx: ModelBuildContext,
         config: Any,
     ) -> dict[str, Any] | None:
-        """Return the built-in baseline TinyODOM NAS seed trial.
+        """Return the legacy baseline TinyODOM seed payload.
+
+        The main NAS driver no longer enqueues this payload for fresh studies.
 
         Parameters
         ----------
         ctx : ModelBuildContext
-            Build-time context. Unused for the current seed trial.
+            Build-time context. Unused for the current seed payload.
         config : Any
-            Model-family configuration subtree. Unused for the current seed trial.
+            Model-family configuration subtree. Unused for the current seed payload.
 
         Returns
         -------

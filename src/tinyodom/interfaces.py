@@ -530,7 +530,11 @@ class ModelFamilyABC(ABC):
         ctx: ModelBuildContext,
         config: Any,
     ) -> dict[str, Any] | None:
-        """Return an optional default seed trial for a new NAS study.
+        """Return a legacy default seed trial payload.
+
+        The main NAS driver does not enqueue this hook for fresh studies.
+        It remains on the interface for compatibility with older callers and
+        persisted model-family implementations.
 
         Parameters
         ----------
@@ -542,8 +546,8 @@ class ModelFamilyABC(ABC):
         Returns
         -------
         dict[str, Any] | None
-            Raw persisted-trial parameter mapping to enqueue for a new study,
-            or ``None`` when the family does not define a default seed trial.
+            Raw persisted-trial parameter mapping, or ``None`` when the family
+            does not define a legacy seed payload.
         """
 
         del ctx, config

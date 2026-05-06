@@ -1507,7 +1507,13 @@ class RunNASTests(unittest.TestCase):
             self.enqueue_calls.append(params)
 
     def test_run_nas_retries_until_completed_target(self) -> None:
-        # The orchestration loop should keep retrying until it reaches the requested number of completed trials, not just total attempts.
+        """Continue trials until the configured completion target is reached.
+
+        The orchestration loop should not enqueue the model family's default
+        seed trial; fresh NAS runs should begin with sampler-generated
+        candidates.
+        """
+
         client = _build_test_client()
         client.config.training.nas_trials = 2
         client.config.training.max_total_trials = 5
@@ -1522,19 +1528,7 @@ class RunNASTests(unittest.TestCase):
         self.assertEqual(sum(t.state == TrialState.COMPLETE for t in dummy.trials), 2)
         self.assertEqual(len(dummy.trials), 3)
         self.assertEqual(dummy.optimize_calls, [2, 1])
-        self.assertEqual(
-            dummy.enqueue_calls,
-            [
-                {
-                    "nb_filters": 10,
-                    "kernel_size": 12,
-                    "dropout_rate": 0.0,
-                    "use_skip_connections": False,
-                    "norm_flag": True,
-                    "dilations_index": 107,
-                }
-            ],
-        )
+        self.assertEqual(dummy.enqueue_calls, [])
 
     def test_run_nas_sets_multiobjective_metric_names(self) -> None:
         """Multi-objective studies should expose configured objective names."""
@@ -1563,7 +1557,12 @@ class RunNASTests(unittest.TestCase):
         self.assertEqual(dummy.optimize_calls, [1])
 
     def test_run_nas_honors_max_total_trials_cap(self) -> None:
-        # The orchestration loop should still stop at the global trial cap even if completed-trial target has not been met.
+        """Stop retrying when the global trial-attempt cap is reached.
+
+        Failed and pruned attempts should consume the cap without adding a
+        model-family seed trial to the study.
+        """
+
         client = _build_test_client()
         client.config.training.nas_trials = 2
         client.config.training.max_total_trials = 3
@@ -1578,19 +1577,7 @@ class RunNASTests(unittest.TestCase):
         self.assertEqual(len(dummy.trials), 3)
         self.assertEqual(dummy.optimize_calls, [2, 1])
         self.assertEqual(sum(t.state == TrialState.COMPLETE for t in dummy.trials), 0)
-        self.assertEqual(
-            dummy.enqueue_calls,
-            [
-                {
-                    "nb_filters": 10,
-                    "kernel_size": 12,
-                    "dropout_rate": 0.0,
-                    "use_skip_connections": False,
-                    "norm_flag": True,
-                    "dilations_index": 107,
-                }
-            ],
-        )
+        self.assertEqual(dummy.enqueue_calls, [])
 
 class TrainBestTrialTests(unittest.TestCase):
     """Best-trial retraining should honor the task abstraction."""

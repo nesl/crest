@@ -1684,9 +1684,7 @@ class NASModelClient:
         retry pruned/failed attempts until that target is met or
         `config.training.max_total_trials` is reached.
 
-        Failed and pruned trials still consume the total-attempt budget. A
-        baseline trial is only enqueued when the study is empty so resumed
-        studies do not accumulate duplicate seed candidates.
+        Failed and pruned trials still consume the total-attempt budget.
 
         Returns
         -------
@@ -1724,16 +1722,6 @@ class NASModelClient:
         study.set_metric_names(self._study_metric_names())
         # Make sure we never shrink the total budget when resuming an existing study.
         max_total_trials = max(max_total_trials, len(study.trials))
-
-        # Enqueue the best-known config from the non-energy NAS run as a baseline trial.
-        # Only enqueue if the study is new to avoid duplicates.
-        if len(study.trials) == 0:
-            seed_trial = self.model_family.default_seed_trial(
-                self.model_build_context,
-                self.model_config,
-            )
-            if seed_trial is not None:
-                study.enqueue_trial(seed_trial)
 
         def _trial_counts():
             """Count completed, pruned, and failed Optuna trials.

@@ -103,9 +103,8 @@ that matter most in the current code are:
   Optional config validation before use.
 - `validate_hparams(...)`
   Optional validation for one sampled hyperparameter set.
-- `decode_trial_hparams(...)` and `default_seed_trial(...)`
-  Optional family-owned hooks for reconstructing persisted trial params and
-  publishing a default seed trial when the family needs one.
+- `decode_trial_hparams(...)`
+  Optional family-owned hook for reconstructing persisted trial params.
 - `load_model(...)` and `custom_objects()`
   Used by the default trained-model materialization path.
 - `count_flops(...)` and `supports_tflite()`
