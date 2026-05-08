@@ -1,17 +1,33 @@
-# Pure desktop OxIOD NAS example: minimize validation RMSE and model FLOPs.
+# Case 1.5: STM32 N657 OxIOD measured-energy NAS, back-to-back runtime.
+#
+# Intended launch on the GPU host:
+#   CUDA_VISIBLE_DEVICES=1 TF_FORCE_GPU_ALLOW_GROWTH=true \
+#   python src/nas_model_client.py \
+#     --config src/config/nas_config_case1_5_stm32_b2b_oxiod.yaml \
+#     --study-name OxIOD_STM32_B2B_case1_5_t1
 
 device:
   name: STM32_NUCLEO_N657X0_Q
-  hil: false
-  compile_when_hil_disabled: false
+  hil: true
+  compile_when_hil_disabled: auto
   runtime_mode: back_to_back
   serial_port: "/dev/ttyACM0"
   measured_inference_runs: 10
   dut_ready_timeout_s: 12.0
   serial_timeout_s: 12.0
+  cpu_clock_mhz_options: [200, 300, 400, 600, 800]
+  harness_serial_port: "/dev/ttyACM1"
+  harness_fqbn: "arduino:mbed_nano:nano33ble"
+  harness_auto_flash: "once"
+  harness_ready_timeout_s: 5.0
+  harness_arm_timeout_s: 5.0
+  harness_active_timeout_s: 30.0
+  harness_done_timeout_s: 5.0
   stm32:
     project_root: "sketches/stm32/tinyodom_stm32_lrun"
     appli_flash_address: "0x70100000"
+    wake_margin_us: 5000
+    min_sleep_us: 5000
     weight_storage_mode: "external_flash"
     weights_memory_pool: "analysis_scripts/stm32_example_project/nucleo_mypool.json"
 
@@ -43,11 +59,11 @@ training:
   max_total_trials: 300
   quantization:
     mode: int8_ptq
-    search: false
-    choices: [int8_ptq]
+    search: true
+    choices: [float, int8_ptq]
   latency_proxy_max_flops: 30000000.0
   train: true
-  energy_aware: false
+  energy_aware: true
   input_mode: "uniform"
 
 nas:
@@ -57,7 +73,7 @@ nas:
       objectives:
         - metric: rmse_total
           direction: minimize
-        - metric: flops
+        - metric: energy_mj_per_inference
           direction: minimize
   prune:
     rules: []
@@ -65,8 +81,8 @@ nas:
 outputs:
   models_dir: "models"
   candidate_dir: "odom_tcn"
-  artifact_stem: "OxIOD_FLOPS_PROXY_case1_1"
-  log_file_name: "log_NAS_OxIOD_FLOPS_PROXY_case1_1.csv"
+  artifact_stem: "OxIOD_STM32_B2B_case1_5"
+  log_file_name: "log_NAS_OxIOD_STM32_B2B_case1_5.csv"
 
 network:
   host: "127.0.0.1"
