@@ -34,6 +34,7 @@ from tinyodom.hardware import (
     HIL_MASTER_RAM_OVERFLOW,
     HIL_MASTER_FATAL,
     HIL_MASTER_SUCCESS,
+    TFLiteSubprocessError,
 )  # noqa: E402
 from tinyodom.model import ScoreConfigEvaluationError, TrialOutcome  # noqa: E402
 from tinyodom.pipeline_types import (
@@ -328,6 +329,26 @@ class HILRequestTests(unittest.TestCase):
 
         client.socket.send_json.assert_called_once()
 
+    def test_hil_request_opens_socket_lazily(self) -> None:
+        """The HIL socket should connect only when a HIL request is sent."""
+        client = _build_test_client()
+        fake_socket = MagicMock()
+        fake_socket.recv_json.return_value = {"ram_bytes": 2048}
+        fake_context = MagicMock()
+        fake_context.socket.return_value = fake_socket
+        client.socket = None
+        client.context = None
+
+        with patch("nas_model_client.zmq.Context.instance", return_value=fake_context):
+            result = client._hil_request(
+                {"family_hparams": {"nb_filters": 4}, "runtime_metadata": {"flops": 1}}
+            )
+
+        fake_context.socket.assert_called_once_with(zmq.REQ)
+        fake_socket.connect.assert_called_once_with("tcp://localhost:5555")
+        fake_socket.send_json.assert_called_once()
+        self.assertEqual(result, {"ram_bytes": 2048})
+
 
 class InitializationTests(unittest.TestCase):
     """Validate the Phase 4 bootstrap and component-selection helpers."""
@@ -491,7 +512,8 @@ class InitializationTests(unittest.TestCase):
         self.assertIsInstance(client, NASModelClient)
         mock_load_config.assert_called_once_with(base / "config.yaml")
         bootstrap_mock.assert_called_once_with(config)
-        fake_socket.connect.assert_called_once()
+        fake_context.socket.assert_not_called()
+        fake_socket.connect.assert_not_called()
 
 class ObjectiveTests(unittest.TestCase):
     """Exercise Optuna objective branches with lightweight stubs."""
@@ -630,6 +652,76 @@ class ObjectiveTests(unittest.TestCase):
         logged_outcome = self.mock_log.call_args.kwargs["trial_outcome"]
         self.assertEqual(logged_outcome.task_metrics["rmse_total"], 0.3)
         self.assertEqual(logged_outcome.task_metrics["keras_rmse_total"], 0.3)
+
+    def test_objective_multiobjective_tflite_failure_returns_penalty_tuple(self) -> None:
+        """Multi-objective TFLite worker failures should return direction penalties."""
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+        }
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="rmse_total", direction="minimize"),
+                    Dict(metric="rmse_vel_x", direction="minimize"),
+                ]
+            ),
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+        self.client._evaluate_model_with_backend = MagicMock(
+            side_effect=TFLiteSubprocessError(
+                model_path="model.tflite",
+                return_code=-6,
+                timeout=False,
+                stderr_tail="abort",
+                command=["python", "-m", "tinyodom.tflite_predict_worker"],
+            )
+        )
+        trial = DummyTrial()
+
+        result = self.client.objective(trial)
+
+        self.assertEqual(result, (1e12, 1e12))
+        self.mock_log.assert_called_once()
+        self.assertEqual(self.mock_log.call_args.kwargs["prune_reason"], "TFLite evaluation failed")
+        self.client.task.evaluate.assert_not_called()
+
+    def test_objective_single_objective_tflite_failure_prunes(self) -> None:
+        """Single-objective TFLite worker failures should raise TrialPruned."""
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+        }
+        self.client._hil_request = MagicMock(return_value=metrics)
+        self.client._evaluate_model_with_backend = MagicMock(
+            side_effect=TFLiteSubprocessError(
+                model_path="model.tflite",
+                return_code=1,
+                timeout=False,
+                stderr_tail="worker failed",
+                command=["python", "-m", "tinyodom.tflite_predict_worker"],
+            )
+        )
+        trial = DummyTrial()
+
+        with self.assertRaises(optuna.TrialPruned) as raised:
+            self.client.objective(trial)
+
+        self.mock_log.assert_called_once()
+        prune_reason = self.mock_log.call_args.kwargs["prune_reason"]
+        self.assertIn("TFLite evaluation failed", prune_reason)
+        self.assertIn("exited with code 1", prune_reason)
+        self.assertIn("worker failed", prune_reason)
+        self.assertIn("worker failed", str(raised.exception))
+        self.assertEqual(trial.report_calls, [(-float("inf"), 0)])
 
     def test_objective_prunes_before_training_on_config_rule(self) -> None:
         # Config-level prune rules should short-circuit the trial before fit() so obviously bad candidates do not waste training time.
@@ -1415,7 +1507,13 @@ class RunNASTests(unittest.TestCase):
             self.enqueue_calls.append(params)
 
     def test_run_nas_retries_until_completed_target(self) -> None:
-        # The orchestration loop should keep retrying until it reaches the requested number of completed trials, not just total attempts.
+        """Continue trials until the configured completion target is reached.
+
+        The orchestration loop should not enqueue the model family's default
+        seed trial; fresh NAS runs should begin with sampler-generated
+        candidates.
+        """
+
         client = _build_test_client()
         client.config.training.nas_trials = 2
         client.config.training.max_total_trials = 5
@@ -1430,19 +1528,7 @@ class RunNASTests(unittest.TestCase):
         self.assertEqual(sum(t.state == TrialState.COMPLETE for t in dummy.trials), 2)
         self.assertEqual(len(dummy.trials), 3)
         self.assertEqual(dummy.optimize_calls, [2, 1])
-        self.assertEqual(
-            dummy.enqueue_calls,
-            [
-                {
-                    "nb_filters": 10,
-                    "kernel_size": 12,
-                    "dropout_rate": 0.0,
-                    "use_skip_connections": False,
-                    "norm_flag": True,
-                    "dilations_index": 107,
-                }
-            ],
-        )
+        self.assertEqual(dummy.enqueue_calls, [])
 
     def test_run_nas_sets_multiobjective_metric_names(self) -> None:
         """Multi-objective studies should expose configured objective names."""
@@ -1471,7 +1557,12 @@ class RunNASTests(unittest.TestCase):
         self.assertEqual(dummy.optimize_calls, [1])
 
     def test_run_nas_honors_max_total_trials_cap(self) -> None:
-        # The orchestration loop should still stop at the global trial cap even if completed-trial target has not been met.
+        """Stop retrying when the global trial-attempt cap is reached.
+
+        Failed and pruned attempts should consume the cap without adding a
+        model-family seed trial to the study.
+        """
+
         client = _build_test_client()
         client.config.training.nas_trials = 2
         client.config.training.max_total_trials = 3
@@ -1486,19 +1577,7 @@ class RunNASTests(unittest.TestCase):
         self.assertEqual(len(dummy.trials), 3)
         self.assertEqual(dummy.optimize_calls, [2, 1])
         self.assertEqual(sum(t.state == TrialState.COMPLETE for t in dummy.trials), 0)
-        self.assertEqual(
-            dummy.enqueue_calls,
-            [
-                {
-                    "nb_filters": 10,
-                    "kernel_size": 12,
-                    "dropout_rate": 0.0,
-                    "use_skip_connections": False,
-                    "norm_flag": True,
-                    "dilations_index": 107,
-                }
-            ],
-        )
+        self.assertEqual(dummy.enqueue_calls, [])
 
 class TrainBestTrialTests(unittest.TestCase):
     """Best-trial retraining should honor the task abstraction."""
@@ -1716,7 +1795,7 @@ class EvaluateCheckpointTests(unittest.TestCase):
             metrics_path = base / "metrics.json"
 
             with patch("nas_model_client.convert_to_tflite_model"), patch(
-                "nas_model_client.predict_tflite_model",
+                "nas_model_client.predict_tflite_model_subprocess",
                 return_value=np.zeros((2, 1), dtype=np.float32),
             ):
                 metrics = client.evaluate_checkpoint(
@@ -1733,6 +1812,36 @@ class EvaluateCheckpointTests(unittest.TestCase):
             self.assertEqual(persisted["keras_accuracy"], 0.9)
             csv_text = metrics_path.with_suffix(".csv").read_text(encoding="utf-8")
             self.assertIn("keras_accuracy", csv_text)
+
+    def test_evaluate_checkpoint_tflite_failure_propagates_without_metrics(self) -> None:
+        """TFLite checkpoint worker failures should not write success metrics."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            metrics_path = base / "metrics.json"
+            failure = TFLiteSubprocessError(
+                model_path=base / "model.tflite",
+                return_code=-6,
+                timeout=False,
+                stderr_tail="abort",
+                command=["python", "-m", "tinyodom.tflite_predict_worker"],
+            )
+
+            with patch("nas_model_client.convert_to_tflite_model"), patch(
+                "nas_model_client.predict_tflite_model_subprocess",
+                side_effect=failure,
+            ):
+                with self.assertRaises(TFLiteSubprocessError):
+                    client.evaluate_checkpoint(
+                        checkpoint_path=base / "ckpt.keras",
+                        metrics_path=metrics_path,
+                        export_tflite=False,
+                        evaluation_backend="tflite",
+                    )
+
+            self.assertFalse(metrics_path.exists())
+            self.assertFalse(metrics_path.with_suffix(".csv").exists())
+            client.task.evaluate.assert_not_called()
 
     def test_evaluate_checkpoint_exports_tflite_when_requested(self) -> None:
         # Checkpoint evaluation should export TFLite when requested so downstream deployment steps do not need a second conversion pass.
@@ -2096,9 +2205,24 @@ class CloseTests(unittest.TestCase):
         """
         # Closing the NAS client should shut down both the socket and the ZeroMQ context cleanly.
         client = _build_test_client()
+        socket = client.socket
+        context = client.context
         client.close()
-        client.socket.close.assert_called_once_with(linger=0)
-        client.context.term.assert_called_once()
+        socket.close.assert_called_once_with(linger=0)
+        context.term.assert_called_once()
+        self.assertIsNone(client.socket)
+        self.assertIsNone(client.context)
+
+    def test_close_tolerates_unopened_hil_socket(self) -> None:
+        """Closing before any HIL request should be a no-op."""
+        client = _build_test_client()
+        client.socket = None
+        client.context = None
+
+        client.close()
+
+        self.assertIsNone(client.socket)
+        self.assertIsNone(client.context)
 
 
 if __name__ == "__main__":

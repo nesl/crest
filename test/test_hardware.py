@@ -16,7 +16,7 @@ import serial
 # os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 import tensorflow as tf  # type: ignore[attr-defined]
 from tcn import TCN
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 tf.get_logger().setLevel('ERROR')  # Suppresses INFO and WARNING from TF's Python logger
 
@@ -49,15 +49,26 @@ from tinyodom.hardware import (  # noqa: E402
     _convert_to_cpp_model_python,
     _convert_to_cpp_model_xxd,
     _dequantize_tflite_tensor,
+    _ordered_tflite_output_details,
     _quantize_tflite_tensor,
+    _representative_calibration_samples,
+    _tflite_subprocess_env,
     arena_size_candidates,
     convert_to_cpp_model,
     convert_to_tflite_model,
     get_model_memory_usage,
+    predict_tflite_model,
+    predict_tflite_model_subprocess,
     return_hardware_specs,
+    TFLiteSubprocessError,
 )
 from tinyodom import hil_protocol  # noqa: E402
 from tinyodom.devices import ArduinoDevice  # noqa: E402
+from analysis_scripts.compare_keras_tflite_accuracy import (  # noqa: E402
+    _batched_tflite_predict,
+    _normalize_keras_prediction_outputs,
+    _require_odometry_targets,
+)
 from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
     ARDUINO_CLI_BIN,
     ARDUINO_CLI_CONFIG,
@@ -123,6 +134,16 @@ RAM_OVERFLOW_STDERR = (
 )
 
 class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
+    """Validate host-side TFLite conversion and C-array export helpers.
+
+    Notes
+    -----
+    The tests in this class use :class:`TinyModelMixin` to keep conversion
+    coverage fast while still exercising float export, int8 post-training
+    quantization, representative calibration validation, and legacy firmware
+    source generation paths.
+    """
+
     def test_convert_to_tflite_model_creates_file(self):
         # TFLite conversion should create the expected output file so later deployment steps can consume it directly.
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -171,6 +192,70 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
                     output_name=tflite_path,
                 )
 
+    def test_convert_to_tflite_model_int8_rejects_empty_calibration(self) -> None:
+        """Validate that empty int8 calibration arrays fail early.
+
+        Returns
+        -------
+        None
+            The test passes when conversion raises a user-facing
+            ``ValueError`` before invoking the TFLite converter.
+        """
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tflite_path = Path(tmpdir) / "model_int8.tflite"
+
+            with self.assertRaisesRegex(ValueError, "at least one"):
+                convert_to_tflite_model(
+                    self.model,
+                    training_data=np.empty((0, 4), dtype=np.float32),
+                    quantization_mode="int8_ptq",
+                    output_name=tflite_path,
+                )
+
+    def test_convert_to_tflite_model_int8_rejects_nonfinite_calibration(self) -> None:
+        """Validate that non-finite int8 calibration arrays fail early.
+
+        Returns
+        -------
+        None
+            The test passes when conversion raises a user-facing
+            ``ValueError`` before invoking the TFLite converter.
+        """
+
+        calibration = np.asarray(self.train_x, dtype=np.float32).copy()
+        calibration[0, 0] = np.nan
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tflite_path = Path(tmpdir) / "model_int8.tflite"
+
+            with self.assertRaisesRegex(ValueError, "finite"):
+                convert_to_tflite_model(
+                    self.model,
+                    training_data=calibration,
+                    quantization_mode="int8_ptq",
+                    output_name=tflite_path,
+                )
+
+    def test_representative_calibration_samples_are_spread_across_split(self) -> None:
+        """Validate representative samples are spread across ordered splits.
+
+        Returns
+        -------
+        None
+            The test passes when capped sampling includes the first and last
+            windows and does not use a contiguous prefix.
+        """
+
+        data = np.arange(1200, dtype=np.float32).reshape(1200, 1)
+
+        selected = _representative_calibration_samples(data)
+
+        self.assertEqual(selected.shape, (1000, 1))
+        self.assertEqual(float(selected[0, 0]), 0.0)
+        self.assertEqual(float(selected[-1, 0]), 1199.0)
+        self.assertGreater(float(selected[500, 0]), 500.0)
+
     def test_tflite_quant_helpers_use_interpreter_params(self):
         """TFLite tensor helpers should use scale and zero-point from details."""
         detail = {"dtype": np.int8, "quantization": (0.5, -3)}
@@ -181,6 +266,32 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
 
         np.testing.assert_array_equal(quantized, np.asarray([[-3, -1, -5]], dtype=np.int8))
         np.testing.assert_allclose(dequantized, values, atol=0.5)
+
+    def test_ordered_tflite_output_details_uses_signature_declaration_order(self) -> None:
+        """Validate TFLite output details follow signature declaration order.
+
+        Returns
+        -------
+        None
+            The test passes when non-lexical signature output names are returned
+            in the flatbuffer-declared order instead of sorted order.
+        """
+
+        runner = Mock()
+        runner.get_output_details.return_value = {
+            "z_vel": {"index": 10},
+            "a_vel": {"index": 11},
+        }
+        interpreter = Mock()
+        interpreter.get_output_details.return_value = [{"index": 11}, {"index": 10}]
+        interpreter.get_signature_list.return_value = {
+            "serving_default": {"outputs": ["z_vel", "a_vel"]}
+        }
+        interpreter.get_signature_runner.return_value = runner
+
+        ordered = _ordered_tflite_output_details(interpreter)
+
+        self.assertEqual([detail["index"] for detail in ordered], [10, 11])
 
     def test_convert_to_cpp_model_old_emits_sources(self):
         # Legacy C-array export should emit the expected source files for older embedded workflows.
@@ -262,6 +373,206 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
             convert_to_tflite_model(self.model, self.train_x, output_name=model_path)
             with self.assertRaises(FileExistsError):
                 convert_to_cpp_model(model_path, output_path)
+
+
+class TFLiteSubprocessPredictionTests(TinyModelMixin, unittest.TestCase):
+    """Validate isolated host-side TFLite prediction behavior.
+
+    Notes
+    -----
+    The tests in this class cover both direct interpreter prediction and the
+    subprocess wrapper used by NAS evaluation. Multi-output coverage asserts
+    that TFLite predictions preserve the Keras output contract.
+    """
+
+    def test_subprocess_env_disables_visible_gpus(self) -> None:
+        """Subprocess environment should hide training GPUs from TensorFlow."""
+
+        with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "1", "PYTHONPATH": "existing"}, clear=False):
+            env = _tflite_subprocess_env()
+
+        self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "-1")
+        self.assertTrue(env["PYTHONPATH"].startswith(str(SRC_DIR)))
+        self.assertIn("existing", env["PYTHONPATH"])
+
+    def test_subprocess_prediction_matches_direct_single_output(self) -> None:
+        """Subprocess prediction should match direct single-output inference."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tflite_path = Path(tmpdir) / "model_float.tflite"
+            convert_to_tflite_model(self.model, self.train_x, output_name=tflite_path)
+
+            direct = predict_tflite_model(tflite_path, self.train_x[:3])
+            isolated = predict_tflite_model_subprocess(tflite_path, self.train_x[:3], timeout_sec=60.0)
+
+        self.assertIsInstance(isolated, np.ndarray)
+        self.assertEqual(isolated.shape, direct.shape)
+        self.assertEqual(isolated.dtype, direct.dtype)
+        np.testing.assert_allclose(isolated, direct, rtol=1e-5, atol=1e-5)
+
+    def test_subprocess_prediction_preserves_multi_output_order(self) -> None:
+        """Subprocess prediction should preserve ordered multi-output results."""
+        inputs = tf.keras.Input(shape=(4,), name="input")
+        shared = tf.keras.layers.Dense(3, activation="relu")(inputs)
+        output_0 = tf.keras.layers.Dense(1, activation="linear", name="first")(shared)
+        output_1 = tf.keras.layers.Dense(2, activation="linear", name="second")(shared)
+        model = tf.keras.Model(inputs=inputs, outputs=[output_0, output_1])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tflite_path = Path(tmpdir) / "multi_output.tflite"
+            convert_to_tflite_model(model, self.train_x, output_name=tflite_path)
+
+            direct = predict_tflite_model(tflite_path, self.train_x[:4])
+            isolated = predict_tflite_model_subprocess(tflite_path, self.train_x[:4], timeout_sec=60.0)
+
+        self.assertIsInstance(direct, list)
+        self.assertIsInstance(isolated, list)
+        self.assertEqual(len(isolated), 2)
+        for isolated_output, direct_output in zip(isolated, direct):
+            self.assertEqual(isolated_output.shape, direct_output.shape)
+            np.testing.assert_allclose(isolated_output, direct_output, rtol=1e-5, atol=1e-5)
+
+    def test_prediction_preserves_keras_multi_output_order(self) -> None:
+        """Validate direct TFLite prediction preserves Keras output order.
+
+        Returns
+        -------
+        None
+            The test passes when direct host-side TFLite predictions match
+            Keras output shapes and values in the original output order.
+        """
+
+        inputs = tf.keras.Input(shape=(4,), name="input")
+        shared = tf.keras.layers.Dense(3, activation="relu")(inputs)
+        output_0 = tf.keras.layers.Dense(1, activation="linear", name="first")(shared)
+        output_1 = tf.keras.layers.Dense(2, activation="linear", name="second")(shared)
+        model = tf.keras.Model(inputs=inputs, outputs=[output_0, output_1])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tflite_path = Path(tmpdir) / "multi_output.tflite"
+            convert_to_tflite_model(model, self.train_x, output_name=tflite_path)
+
+            keras_outputs = model.predict(self.train_x[:4])
+            tflite_outputs = predict_tflite_model(tflite_path, self.train_x[:4])
+
+        self.assertIsInstance(tflite_outputs, list)
+        self.assertEqual(len(tflite_outputs), 2)
+        for keras_output, tflite_output in zip(keras_outputs, tflite_outputs):
+            self.assertEqual(tflite_output.shape, keras_output.shape)
+            np.testing.assert_allclose(tflite_output, keras_output, rtol=1e-5, atol=1e-5)
+
+    def test_batched_accuracy_diagnostic_predict_matches_direct_int8_order(self) -> None:
+        """Validate batched diagnostic prediction preserves int8 output order.
+
+        Returns
+        -------
+        None
+            The test passes when the diagnostic batch-inference helper matches
+            the direct host-side TFLite prediction helper for a quantized
+            multi-output model.
+        """
+
+        inputs = tf.keras.Input(shape=(4,), name="input")
+        shared = tf.keras.layers.Dense(3, activation="relu")(inputs)
+        output_0 = tf.keras.layers.Dense(1, activation="linear", name="first")(shared)
+        output_1 = tf.keras.layers.Dense(2, activation="linear", name="second")(shared)
+        model = tf.keras.Model(inputs=inputs, outputs=[output_0, output_1])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tflite_path = Path(tmpdir) / "multi_output_int8.tflite"
+            convert_to_tflite_model(
+                model,
+                self.train_x,
+                quantization_mode="int8_ptq",
+                output_name=tflite_path,
+            )
+
+            direct = predict_tflite_model(tflite_path, self.train_x[:5])
+            batched = _batched_tflite_predict(tflite_path, self.train_x[:5], batch_size=3)
+
+        self.assertIsInstance(direct, list)
+        self.assertEqual(len(batched), 2)
+        for direct_output, batched_output in zip(direct, batched):
+            self.assertEqual(batched_output.shape, direct_output.shape)
+            np.testing.assert_allclose(batched_output, direct_output, rtol=1e-6, atol=1e-6)
+
+    def test_accuracy_diagnostic_rejects_non_odometry_targets(self) -> None:
+        """Validate the diagnostic fails clearly for non-odometry targets.
+
+        Returns
+        -------
+        None
+            The test passes when a non-mapping target payload raises a
+            diagnostic-specific ``ValueError``.
+        """
+
+        with self.assertRaisesRegex(ValueError, "odometry"):
+            _require_odometry_targets(np.asarray([0, 1]))
+
+    def test_accuracy_diagnostic_rejects_single_output_predictions(self) -> None:
+        """Validate the diagnostic fails clearly for single-output models.
+
+        Returns
+        -------
+        None
+            The test passes when a single prediction array raises a
+            diagnostic-specific ``ValueError``.
+        """
+
+        with self.assertRaisesRegex(ValueError, "two Keras outputs"):
+            _normalize_keras_prediction_outputs(np.zeros((2, 1), dtype=np.float32))
+
+    def test_subprocess_nonzero_return_raises(self) -> None:
+        """Nonzero worker exits should raise a structured subprocess error."""
+        failed_process = _FakeCompletedProcess(returncode=2, stderr="worker failed")
+
+        with patch("tinyodom.hardware.subprocess.run", return_value=failed_process):
+            with self.assertRaises(TFLiteSubprocessError) as raised:
+                predict_tflite_model_subprocess("model.tflite", self.train_x[:1], timeout_sec=0.1)
+
+        self.assertFalse(raised.exception.timeout)
+        self.assertEqual(raised.exception.return_code, 2)
+        self.assertIn("worker failed", raised.exception.stderr_tail)
+
+    def test_subprocess_signal_return_keeps_stderr_tail(self) -> None:
+        """Signal-style worker exits should keep useful stderr diagnostics."""
+        stderr = "prefix\n" + ("x" * 4100) + "abort details"
+        failed_process = _FakeCompletedProcess(returncode=-6, stderr=stderr)
+
+        with patch("tinyodom.hardware.subprocess.run", return_value=failed_process):
+            with self.assertRaises(TFLiteSubprocessError) as raised:
+                predict_tflite_model_subprocess("model.tflite", self.train_x[:1], timeout_sec=0.1)
+
+        self.assertEqual(raised.exception.return_code, -6)
+        self.assertIn("abort details", raised.exception.stderr_tail)
+        self.assertLessEqual(len(raised.exception.stderr_tail), 4000)
+
+    def test_subprocess_timeout_raises_timeout_error(self) -> None:
+        """Timed-out workers should be reported as timeout subprocess errors."""
+        timeout = subprocess.TimeoutExpired(
+            cmd=["python", "-m", "tinyodom.tflite_predict_worker"],
+            timeout=0.1,
+            stderr="hung inside interpreter",
+        )
+
+        with patch("tinyodom.hardware.subprocess.run", side_effect=timeout):
+            with self.assertRaises(TFLiteSubprocessError) as raised:
+                predict_tflite_model_subprocess("model.tflite", self.train_x[:1], timeout_sec=0.1)
+
+        self.assertTrue(raised.exception.timeout)
+        self.assertIsNone(raised.exception.return_code)
+        self.assertIn("hung inside interpreter", raised.exception.stderr_tail)
+
+    def test_subprocess_missing_output_contract_raises(self) -> None:
+        """Zero-exit workers without outputs should raise a subprocess error."""
+        completed_process = _FakeCompletedProcess(returncode=0, stderr="no output file")
+
+        with patch("tinyodom.hardware.subprocess.run", return_value=completed_process):
+            with self.assertRaises(TFLiteSubprocessError) as raised:
+                predict_tflite_model_subprocess("model.tflite", self.train_x[:1], timeout_sec=0.1)
+
+        self.assertFalse(raised.exception.timeout)
+        self.assertEqual(raised.exception.return_code, 0)
+        self.assertIn("no output file", raised.exception.stderr_tail)
 
 
 class SpecHelperTests(unittest.TestCase):

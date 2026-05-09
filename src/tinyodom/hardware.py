@@ -8,7 +8,9 @@ device classes is in progress.
 
 from __future__ import annotations
 
+import os
 import shutil
+import sys
 from pathlib import Path
 from typing import Iterable, Sequence, Tuple, Union, Optional, Dict
 
@@ -48,6 +50,112 @@ from .microcontrollers.arduino_base import normalize_power_metrics
 from .microcontrollers import get_device as get_microcontroller_device
 
 VALID_TFLITE_QUANTIZATION_MODES = {"float", "int8_ptq"}
+MAX_REPRESENTATIVE_EXAMPLES = 1000
+
+
+class TFLiteSubprocessError(RuntimeError):
+    """Describe a failed isolated TFLite prediction subprocess.
+
+    Parameters
+    ----------
+    model_path : str | pathlib.Path
+        TFLite flatbuffer path supplied to the worker.
+    return_code : int | None
+        Worker process return code, or ``None`` when the process timed out
+        before returning.
+    timeout : bool
+        Whether the worker exceeded the parent-side timeout.
+    stderr_tail : str
+        Tail of worker stderr captured for diagnostics.
+    command : Sequence[str]
+        Command used to launch the worker process.
+    """
+
+    def __init__(
+        self,
+        *,
+        model_path: Union[str, Path],
+        return_code: int | None,
+        timeout: bool,
+        stderr_tail: str,
+        command: Sequence[str],
+    ) -> None:
+        """Initialize one subprocess failure description.
+
+        Parameters
+        ----------
+        model_path : str | pathlib.Path
+            TFLite flatbuffer path supplied to the worker.
+        return_code : int | None
+            Worker process return code, or ``None`` for timeout failures.
+        timeout : bool
+            Whether the worker exceeded the parent-side timeout.
+        stderr_tail : str
+            Captured worker stderr tail.
+        command : Sequence[str]
+            Command used to launch the worker process.
+
+        Returns
+        -------
+        None
+        """
+
+        self.model_path = Path(model_path)
+        self.return_code = return_code
+        self.timeout = bool(timeout)
+        self.stderr_tail = stderr_tail
+        self.command = tuple(command)
+        reason = "timed out" if self.timeout else f"exited with code {self.return_code}"
+        super().__init__(
+            f"TFLite subprocess {reason} for {self.model_path}. "
+            f"stderr tail: {self.stderr_tail or '<empty>'}"
+        )
+
+
+def _tflite_subprocess_env() -> dict[str, str]:
+    """Build an environment that can import ``tinyodom`` in subprocesses.
+
+    Returns
+    -------
+    dict[str, str]
+        Environment mapping with the repository ``src`` directory prepended to
+        ``PYTHONPATH`` and GPU visibility disabled for TensorFlow imports.
+    """
+
+    env = dict(os.environ)
+    env["CUDA_VISIBLE_DEVICES"] = "-1"
+    src_root = str(Path(__file__).resolve().parents[1])
+    existing_pythonpath = env.get("PYTHONPATH")
+    if existing_pythonpath:
+        env["PYTHONPATH"] = os.pathsep.join([src_root, existing_pythonpath])
+    else:
+        env["PYTHONPATH"] = src_root
+    return env
+
+
+def _stderr_tail(stderr: object, *, max_chars: int = 4000) -> str:
+    """Normalize captured stderr to a bounded diagnostic string.
+
+    Parameters
+    ----------
+    stderr : object
+        Captured stderr value from ``subprocess``.
+    max_chars : int, optional
+        Maximum number of trailing characters to keep.
+
+    Returns
+    -------
+    str
+        Normalized stderr tail.
+    """
+
+    if stderr is None:
+        return ""
+    if isinstance(stderr, bytes):
+        text = stderr.decode("utf-8", errors="replace")
+    else:
+        text = str(stderr)
+    return text[-max_chars:]
 
 def _probe_xxd() -> Optional[str]:
     """Return the resolved ``xxd`` path when available.
@@ -148,8 +256,9 @@ def convert_to_tflite_model(
 
     Notes
     -----
-    The representative dataset is capped at the first 100 samples. Input and
-    output dtypes stay ``float32`` unless ``int8_ptq`` is selected.
+    The representative dataset is capped at an evenly sampled subset of the
+    provided calibration data. Input and output dtypes stay ``float32`` unless
+    ``int8_ptq`` is selected.
     """
     output_path = Path(output_name)
     normalized_mode = str(quantization_mode).strip().lower()
@@ -165,8 +274,12 @@ def convert_to_tflite_model(
         data = np.asarray(training_data, dtype=np.float32)
         if data.ndim < 2:
             raise ValueError("`training_data` must include a sample dimension.")
+        if len(data) == 0:
+            raise ValueError("`training_data` must include at least one calibration sample.")
+        if not np.all(np.isfinite(data)):
+            raise ValueError("`training_data` calibration samples must be finite.")
 
-        max_examples = min(len(data), 100)
+        representative_samples = _representative_calibration_samples(data)
 
         def representative_dataset() -> Iterable[Sequence[tf.Tensor]]:
             """Yield calibration samples for post-training quantization.
@@ -176,7 +289,7 @@ def convert_to_tflite_model(
             list[tf.Tensor]
                 Single-sample batches formatted for the TFLite converter.
             """
-            for sample in data[:max_examples]:
+            for sample in representative_samples:
                 # Yield calibrated batches so the converter can determine proper scale/zero-point.
                 yield [tf.convert_to_tensor(sample[np.newaxis, ...], tf.float32)]
 
@@ -189,6 +302,33 @@ def convert_to_tflite_model(
     flatbuffer = converter.convert()
     # Persist the flatbuffer so the downstream conversion step can embed it.
     output_path.write_bytes(flatbuffer)
+
+
+def _representative_calibration_samples(data: np.ndarray) -> np.ndarray:
+    """Select a bounded, spread-out representative calibration subset.
+
+    Parameters
+    ----------
+    data : numpy.ndarray
+        Model-ready calibration inputs with a leading sample axis.
+
+    Returns
+    -------
+    numpy.ndarray
+        At most ``MAX_REPRESENTATIVE_EXAMPLES`` samples. When the input split is
+        larger than the cap, examples are selected evenly across the split
+        instead of taking one contiguous prefix.
+    """
+
+    if len(data) <= MAX_REPRESENTATIVE_EXAMPLES:
+        return data
+    indices = np.linspace(
+        0,
+        len(data) - 1,
+        num=MAX_REPRESENTATIVE_EXAMPLES,
+        dtype=np.int64,
+    )
+    return data[indices]
 
 
 def _quantize_tflite_tensor(value: np.ndarray, tensor_detail: dict[str, object]) -> np.ndarray:
@@ -243,6 +383,42 @@ def _dequantize_tflite_tensor(value: np.ndarray, tensor_detail: dict[str, object
     return (np.asarray(value, dtype=np.float32) - int(zero_point)) * float(scale)
 
 
+def _ordered_tflite_output_details(interpreter: tf.lite.Interpreter) -> list[dict[str, object]]:
+    """Return output tensor details in the model signature order when available.
+
+    Parameters
+    ----------
+    interpreter : tf.lite.Interpreter
+        Allocated interpreter for the model under evaluation.
+
+    Returns
+    -------
+    list[dict[str, object]]
+        Output tensor details ordered to match Keras ``model.outputs`` for
+        models exported with a single TFLite signature. Falls back to the
+        interpreter's default order when signature metadata is unavailable.
+    """
+
+    output_details = interpreter.get_output_details()
+    signature_list = interpreter.get_signature_list()
+    if len(signature_list) != 1:
+        return output_details
+
+    signature_key = next(iter(signature_list))
+    signature_output_names = list(signature_list[signature_key].get("outputs", ()))
+    signature_runner = interpreter.get_signature_runner(signature_key)
+    signature_outputs = signature_runner.get_output_details()
+    if len(signature_outputs) != len(output_details):
+        return output_details
+    if set(signature_output_names) != set(signature_outputs):
+        return output_details
+
+    return [
+        dict(signature_outputs[output_name])
+        for output_name in signature_output_names
+    ]
+
+
 def predict_tflite_model(
     tflite_path: Union[str, Path],
     inputs,
@@ -278,7 +454,7 @@ def predict_tflite_model(
         interpreter.resize_tensor_input(input_detail["index"], [1, *data.shape[1:]])
     interpreter.allocate_tensors()
     input_detail = interpreter.get_input_details()[0]
-    output_details = interpreter.get_output_details()
+    output_details = _ordered_tflite_output_details(interpreter)
 
     outputs: list[list[np.ndarray]] = [[] for _ in output_details]
     for sample in data:
@@ -296,6 +472,106 @@ def predict_tflite_model(
     if len(merged_outputs) == 1:
         return merged_outputs[0]
     return merged_outputs
+
+
+def predict_tflite_model_subprocess(
+    tflite_path: Union[str, Path],
+    inputs,
+    timeout_sec: float = 900.0,
+) -> np.ndarray | list[np.ndarray]:
+    """Run host-side TFLite inference in an isolated Python subprocess.
+
+    Parameters
+    ----------
+    tflite_path : str | pathlib.Path
+        TFLite flatbuffer path.
+    inputs : array-like
+        Split inputs with a leading sample dimension.
+    timeout_sec : float, optional
+        Maximum number of seconds to wait for the worker process.
+
+    Returns
+    -------
+    numpy.ndarray | list[numpy.ndarray]
+        Worker predictions. Single-output models return one array; multi-output
+        models return an ordered list of arrays.
+
+    Raises
+    ------
+    TFLiteSubprocessError
+        If the worker times out, exits nonzero, or does not write the expected
+        output contract.
+    """
+
+    model_path = Path(tflite_path)
+    data = np.asarray(inputs, dtype=np.float32)
+    command: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="tinyodom_tflite_") as tmpdir:
+        temp_dir = Path(tmpdir)
+        inputs_path = temp_dir / "inputs.npz"
+        outputs_path = temp_dir / "outputs.npz"
+        np.savez(inputs_path, inputs=data)
+        command = [
+            sys.executable,
+            "-m",
+            "tinyodom.tflite_predict_worker",
+            "--model",
+            str(model_path),
+            "--inputs",
+            str(inputs_path),
+            "--outputs",
+            str(outputs_path),
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=_tflite_subprocess_env(),
+                timeout=float(timeout_sec),
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TFLiteSubprocessError(
+                model_path=model_path,
+                return_code=None,
+                timeout=True,
+                stderr_tail=_stderr_tail(exc.stderr),
+                command=command,
+            ) from exc
+
+        if completed.returncode != 0:
+            raise TFLiteSubprocessError(
+                model_path=model_path,
+                return_code=completed.returncode,
+                timeout=False,
+                stderr_tail=_stderr_tail(completed.stderr),
+                command=command,
+            )
+
+        try:
+            with np.load(outputs_path, allow_pickle=False) as output_archive:
+                num_outputs = int(np.asarray(output_archive["num_outputs"]).item())
+                if num_outputs < 1:
+                    raise ValueError("TFLite worker wrote no outputs.")
+                predictions = [
+                    np.asarray(output_archive[f"output_{output_index}"])
+                    for output_index in range(num_outputs)
+                ]
+        except (OSError, KeyError, ValueError) as exc:
+            raise TFLiteSubprocessError(
+                model_path=model_path,
+                return_code=completed.returncode,
+                timeout=False,
+                stderr_tail=_stderr_tail(completed.stderr),
+                command=command,
+            ) from exc
+
+    if len(predictions) == 1:
+        return predictions[0]
+    return predictions
+
 
 def convert_to_cpp_model(
         tflite_path: Union[str, Path],

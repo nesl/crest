@@ -570,14 +570,16 @@ class AudioDSCNNFamily(ModelFamilyABC):
         ctx: ModelBuildContext,
         config: Any,
     ) -> dict[str, Any] | None:
-        """Return the built-in audio DS-CNN NAS seed trial.
+        """Return the legacy audio DS-CNN seed payload.
+
+        The main NAS driver no longer enqueues this payload for fresh studies.
 
         Parameters
         ----------
         ctx : ModelBuildContext
-            Build-time context. Unused for the seed payload.
+            Build-time context. Unused for the current seed payload.
         config : Any
-            Model-family config. Unused for the seed payload.
+            Model-family config. Unused for the current seed payload.
 
         Returns
         -------
