@@ -1017,6 +1017,264 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(result, (10.0, 512.0))
         self.mock_log.assert_called_once()
 
+    def test_objective_multiobjective_rule_hit_returns_penalty_tuple(self) -> None:
+        """Multi-objective prune-rule hits should log and return signed penalties.
+
+        Returns
+        -------
+        None
+            Asserts that post-HIL gates skip fit/evaluation and return
+            direction-aware penalties.
+        """
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 25.0,
+            "latency_budget_ms": 20.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="latency_ms", direction="minimize"),
+                    Dict(metric="rmse_total", direction="maximize"),
+                ]
+            ),
+        )
+        self.client.config.nas.prune = Dict(
+            rules=[
+                Dict(
+                    rule="deadline_miss_limit",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds deployment budget",
+                )
+            ]
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        result = self.client.objective(trial)
+
+        self.assertEqual(result, (1e12, -1e12))
+        self.client.model_family.build_model.assert_called_once()
+        self.client.task.compile_model.assert_called_once()
+        self.client.model_family.count_flops.assert_called_once()
+        self.client._hil_request.assert_called_once()
+        self.client.task.build_fit_plan.assert_not_called()
+        self.client.model_family.build_model.return_value.fit.assert_not_called()
+        self.client._evaluate_model_with_backend.assert_not_called()
+        self.mock_log.assert_called_once()
+        self.assertTrue(self.mock_log.call_args.kwargs["pruned"])
+        self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "deadline_miss_limit")
+        self.assertEqual(
+            self.mock_log.call_args.kwargs["prune_reason"],
+            "Latency exceeds deployment budget",
+        )
+
+    def test_objective_multiobjective_rule_reference_unavailable_reason(self) -> None:
+        """Unavailable prune reference metrics should be named in the reason.
+
+        Returns
+        -------
+        None
+            Asserts reference-metric unavailability is distinct from rule
+            metric unavailability.
+        """
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 25.0,
+            "latency_budget_ms": -1.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(objectives=[Dict(metric="latency_ms", direction="minimize")]),
+        )
+        self.client.config.nas.prune = Dict(
+            rules=[
+                Dict(
+                    rule="latency_reference",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds deployment budget",
+                )
+            ]
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+
+        result = self.client.objective(DummyTrial())
+
+        self.assertEqual(result, (1e12,))
+        self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "latency_reference")
+        self.assertEqual(
+            self.mock_log.call_args.kwargs["prune_reason"],
+            "Configured prune reference metric unavailable: latency_budget_ms",
+        )
+
+    def test_objective_multiobjective_custom_nonnegative_sentinel_fails_closed(self) -> None:
+        """Task-owned nonnegative prune metrics should treat -1 as unavailable.
+
+        Returns
+        -------
+        None
+            Asserts task nonnegative sentinel handling is applied before fit.
+        """
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+            "custom_feasibility": -1.0,
+        }
+        self.client.metric_contract = TaskMetricContract(
+            available_metric_names={"custom_feasibility", "rmse_total"},
+            training_only_metric_names={"rmse_total"},
+            nonnegative_metric_names={"custom_feasibility", "rmse_total"},
+            primary_metric_names={"rmse_total"},
+        )
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(objectives=[Dict(metric="latency_ms", direction="minimize")]),
+        )
+        self.client.config.nas.prune = Dict(
+            rules=[
+                Dict(
+                    rule="custom_prefit_gate",
+                    metric="custom_feasibility",
+                    condition="gt",
+                    reference=Dict(type="literal", value=0.0),
+                    reason="Custom feasibility failed",
+                )
+            ]
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+
+        result = self.client.objective(DummyTrial())
+
+        self.assertEqual(result, (1e12,))
+        self.client.task.build_fit_plan.assert_not_called()
+        self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "custom_prefit_gate")
+        self.assertEqual(
+            self.mock_log.call_args.kwargs["prune_reason"],
+            "Configured prune metric unavailable: custom_feasibility",
+        )
+
+    def test_objective_multiobjective_rule_miss_trains_and_evaluates(self) -> None:
+        """Non-matching multi-objective rules should continue through validation.
+
+        Returns
+        -------
+        None
+            Asserts rule misses continue into fit plus TFLite and Keras
+            validation.
+        """
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+            "latency_budget_ms": 20.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="latency_ms", direction="minimize"),
+                    Dict(metric="rmse_total", direction="minimize"),
+                ]
+            ),
+        )
+        self.client.config.nas.prune = Dict(
+            rules=[
+                Dict(
+                    rule="latency_budget",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds deployment budget",
+                )
+            ]
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+
+        result = self.client.objective(DummyTrial())
+
+        self.assertEqual(result, (10.0, 0.3))
+        self.client.task.build_fit_plan.assert_called_once()
+        self.assertEqual(self.client._evaluate_model_with_backend.call_count, 2)
+        self.assertFalse(self.mock_log.call_args.kwargs.get("pruned", False))
+
+    def test_objective_multiobjective_gated_optuna_trial_is_complete(self) -> None:
+        """Optuna should record gated multi-objective trials as COMPLETE.
+
+        Returns
+        -------
+        None
+            Asserts a gated multi-objective objective return is not an Optuna
+            PRUNED trial.
+        """
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 25.0,
+            "latency_budget_ms": 20.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(objectives=[Dict(metric="latency_ms", direction="minimize")]),
+        )
+        self.client.config.nas.prune = Dict(
+            rules=[
+                Dict(
+                    rule="latency_budget",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds deployment budget",
+                )
+            ]
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+        study = optuna.create_study(directions=["minimize"])
+
+        study.optimize(self.client.objective, n_trials=1)
+
+        self.assertEqual(len(study.trials), 1)
+        self.assertEqual(study.trials[0].state, TrialState.COMPLETE)
+        self.assertEqual(study.trials[0].values, [1e12])
+
     def test_objective_train_false_uses_generic_metric_sentinels(self) -> None:
         # Train-disabled trials should still emit generic metric sentinels so downstream logs keep a stable shape.
         metrics = {

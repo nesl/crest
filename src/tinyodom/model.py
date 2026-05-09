@@ -1664,7 +1664,8 @@ def _validate_prune_config(
     Raises
     ------
     ValueError
-        If any prune rule is invalid or incompatible with the score mode.
+        If any prune rule is invalid or references metrics that are unavailable
+        before task training.
     """
     prune_config = Dict(prune_input or {})
     raw_rules = prune_config.get("rules", [])
@@ -1672,9 +1673,6 @@ def _validate_prune_config(
         raw_rules = []
     if not isinstance(raw_rules, list):
         raise ValueError("nas.prune.rules must be a list when provided.")
-    if is_multiobjective_score_config(score_config) and len(raw_rules) > 0:
-        raise ValueError("nas.prune.rules is only supported when nas.score.type is scoring-function.")
-
     allowed_metric_names = allowed_base_metric_names | set(getattr(score_config, "metrics", Dict()).keys())
     normalized_rules = []
     for idx, raw_rule in enumerate(raw_rules):
@@ -1813,8 +1811,9 @@ def evaluate_prune_rules(
     hyperparams: Dict,
     score_config: Dict,
     prune_config: Dict,
+    task_nonnegative_metric_names: set[str] | None = None,
 ) -> tuple[str, str] | None:
-    """Evaluate pre-training prune rules against the current trial context.
+    """Evaluate post-build feasibility rules against the current trial context.
 
     Parameters
     ----------
@@ -1826,6 +1825,9 @@ def evaluate_prune_rules(
         Normalized score configuration that owns the derived metric registry.
     prune_config : addict.Dict
         Normalized prune configuration.
+    task_nonnegative_metric_names : set[str] | None, optional
+        Task-declared metric names that must not use negative unavailable
+        sentinels.
 
     Returns
     -------
@@ -1835,19 +1837,40 @@ def evaluate_prune_rules(
 
     Notes
     -----
-    Rules are evaluated in configuration order. If a configured metric or
-    reference is unavailable at prune time, that unavailability is itself
-    treated as a prune outcome for the current rule.
+    Rules are evaluated in configuration order after model build/compile, FLOP
+    counting, and HIL/compile metrics are available, but before task fitting or
+    validation evaluation. If a configured metric or reference is unavailable
+    at gate time, that unavailability is itself treated as a prune outcome for
+    the current rule.
     """
     context = dict(metrics)
     context["flops"] = hyperparams["flops"]
 
     for rule_cfg in getattr(prune_config, "rules", []):
         try:
-            metric_value = _resolve_metric_value(rule_cfg.metric, context, score_config)
-            reference_value = _typed_reference_value(rule_cfg.reference, context, score_config)
+            metric_value = _resolve_metric_value(
+                rule_cfg.metric,
+                context,
+                score_config,
+                task_nonnegative_metric_names,
+            )
         except ValueError:
             return rule_cfg.rule, f"Configured prune metric unavailable: {rule_cfg.metric}"
+
+        try:
+            reference_value = _typed_reference_value(
+                rule_cfg.reference,
+                context,
+                score_config,
+                task_nonnegative_metric_names,
+            )
+        except ValueError:
+            if rule_cfg.reference.type == "metric":
+                return (
+                    rule_cfg.rule,
+                    f"Configured prune reference metric unavailable: {rule_cfg.reference.metric}",
+                )
+            return rule_cfg.rule, "Configured prune reference unavailable"
 
         condition_matched = {
             "gt": metric_value > reference_value,
@@ -1881,7 +1904,8 @@ def load_config(
         ``src/config/nas_config.yaml``.
     task_metric_names : set[str] | None, optional
         Task-owned metric names that may appear in score or prune configs. When
-        omitted, only generic NAS-policy validation runs during config load.
+        omitted, generic NAS-policy validation may preserve metric names that
+        are unknown until a task contract is available.
     training_only_task_metric_names : set[str] | None, optional
         Task-owned metric names that are only available after training. When
         omitted, task-aware validation treats no task metrics as training-only.
@@ -1906,10 +1930,11 @@ def load_config(
     -----
     Besides parsing YAML, this helper normalizes derived artifact paths,
     validates board/runtime policy, and injects harness defaults. It always
-    performs the generic NAS score/prune validation pass. When
-    ``task_metric_names`` are supplied, it additionally validates the NAS
-    policy against that concrete task contract instead of deferring task-owned
-    metric checks to the later bootstrap step.
+    performs the generic NAS score/prune validation pass, preserving potential
+    task-owned metric names when no task context exists. When
+    ``task_metric_names`` are supplied, it rejects truly unknown metrics and
+    validates the NAS policy against that concrete task contract instead of
+    deferring task-owned metric checks to the later bootstrap step.
     """
     cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
     if not cfg_path.exists():

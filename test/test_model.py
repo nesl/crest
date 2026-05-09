@@ -2771,8 +2771,17 @@ class LoadSettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.nas.prune.rules, [])
 
-    def test_load_settings_rejects_prune_rules_for_multiobjective_score(self) -> None:
-        # Invalid prune rules for multiobjective score should fail during config load so unsupported NAS settings never reach execution.
+    def test_load_settings_accepts_prune_rules_for_multiobjective_score(self) -> None:
+        """Multi-objective score configs should accept pre-fit feasibility gates.
+
+        Returns
+        -------
+        None
+            Asserts valid multi-objective prune rules pass task-aware
+            validation.
+        """
+        # Multi-objective prune rules are post-build gates, not Optuna pruning,
+        # so valid pre-fit metrics should pass task-aware validation.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2798,11 +2807,13 @@ class LoadSettingsTests(unittest.TestCase):
                         "          direction: minimize",
                         "  prune:",
                         "    rules:",
-                        "      - metric: latency_ms",
+                        "      - rule: latency_budget",
+                        "        metric: latency_ms",
                         "        condition: gt",
                         "        reference:",
                         "          type: metric",
                         "          metric: latency_budget_ms",
+                        "        reason: Latency exceeds deployment budget",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
@@ -2811,8 +2822,14 @@ class LoadSettingsTests(unittest.TestCase):
                 )
             )
 
-            with self.assertRaisesRegex(ValueError, "only supported"):
-                load_config(config_path=cfg)
+            settings = load_config(
+                config_path=cfg,
+                task_metric_names={"rmse_total"},
+                training_only_task_metric_names={"rmse_total"},
+            )
+
+        self.assertEqual(settings.nas.prune.rules[0].rule, "latency_budget")
+        self.assertEqual(settings.nas.prune.rules[0].metric, "latency_ms")
 
     def test_load_settings_defers_prune_rules_that_depend_on_training_metrics_until_task_validation(self) -> None:
         """Task-dependent prune validation should run after the task contract is known."""
@@ -3329,6 +3346,62 @@ class LoadSettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.nas.prune.rules[0].metric, "custom_metric")
 
+    def test_validate_nas_policy_for_task_rejects_unknown_multiobjective_prune_metric(self) -> None:
+        """Task-aware validation should reject undeclared multi-objective gate metrics.
+
+        Returns
+        -------
+        None
+            Asserts generic load preserves the metric and task-aware validation
+            rejects it.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        "nas:",
+                        "  score:",
+                        "    type: multi-objective",
+                        "    params:",
+                        "      objectives:",
+                        "        - metric: flops",
+                        "          direction: minimize",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: custom_metric",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.prune.rules[0].metric, "custom_metric")
+        with self.assertRaisesRegex(ValueError, "unknown metric"):
+            validate_nas_policy_for_task(
+                settings,
+                task_metric_names={"different_metric"},
+                training_only_task_metric_names=set(),
+            )
+
     def test_load_settings_rejects_prune_rules_that_use_custom_training_only_task_metrics(self) -> None:
         """Prune rules may not directly read task metrics that need training."""
         # Custom training-only task metrics cannot appear in prune rules because those values are unavailable before fit() runs.
@@ -3377,6 +3450,112 @@ class LoadSettingsTests(unittest.TestCase):
                     training_only_task_metric_names={"custom_metric"},
                 )
 
+    def test_load_settings_rejects_multiobjective_prune_rules_with_training_only_metrics(self) -> None:
+        """Multi-objective prune rules may not read post-training task metrics.
+
+        Returns
+        -------
+        None
+            Asserts direct training-only task metrics are invalid in
+            multi-objective gates.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        "nas:",
+                        "  score:",
+                        "    type: multi-objective",
+                        "    params:",
+                        "      objectives:",
+                        "        - metric: flops",
+                        "          direction: minimize",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: custom_metric",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "training-only"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names={"custom_metric"},
+                )
+
+    def test_load_settings_rejects_multiobjective_prune_reference_with_training_only_metrics(self) -> None:
+        """Multi-objective prune references may not read post-training task metrics.
+
+        Returns
+        -------
+        None
+            Asserts reference metrics that need training are invalid in
+            multi-objective gates.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        "nas:",
+                        "  score:",
+                        "    type: multi-objective",
+                        "    params:",
+                        "      objectives:",
+                        "        - metric: flops",
+                        "          direction: minimize",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: flops",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: metric",
+                        "          metric: custom_metric",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "training-only"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names={"custom_metric"},
+                )
+
     def test_load_settings_rejects_prune_rules_that_depend_on_custom_training_only_task_metrics(self) -> None:
         """Prune rules may not depend indirectly on task metrics that need training."""
         # Derived prune metrics cannot close over training-only task signals because prune decisions happen before training.
@@ -3408,6 +3587,65 @@ class LoadSettingsTests(unittest.TestCase):
                         "        - type: weighted",
                         "          metric: flops",
                         "          weight: -1.0",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: combined_metric",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "training-only"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names={"custom_metric"},
+                )
+
+    def test_load_settings_rejects_multiobjective_prune_rules_with_training_dependent_derived_metrics(self) -> None:
+        """Multi-objective prune rules may not indirectly depend on training metrics.
+
+        Returns
+        -------
+        None
+            Asserts derived metrics that depend on training-only metrics are
+            invalid in multi-objective gates.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        "nas:",
+                        "  score:",
+                        "    type: multi-objective",
+                        "    metrics:",
+                        "      combined_metric:",
+                        "        type: add",
+                        "        metrics:",
+                        "          - custom_metric",
+                        "          - flops",
+                        "    params:",
+                        "      objectives:",
+                        "        - metric: flops",
+                        "          direction: minimize",
                         "  prune:",
                         "    rules:",
                         "      - rule: custom_task_gate",

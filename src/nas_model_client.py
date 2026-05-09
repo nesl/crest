@@ -1136,10 +1136,11 @@ class NASModelClient:
         This objective samples model hyperparameters (e.g., filters, kernel size,
         dilations) via Optuna, builds the corresponding TCN model to estimate
         FLOPs, queries a hardware-in-the-loop (HIL) server for resource/latency
-        metrics, and—when the candidate passes resource checks—trains and scores
-        the model on the OXIOD dataset. Trials are pruned on HIL errors or
-        resource violations. The returned objective is either a single score or
-        a multi-objective tuple depending on configuration.
+        metrics, and—when the candidate passes resource and configured
+        feasibility gates—trains and scores the model on the OXIOD dataset.
+        Trials are pruned on HIL errors or resource violations. The returned
+        objective is either a single score or a multi-objective tuple depending
+        on configuration.
 
         Parameters
         ----------
@@ -1175,15 +1176,17 @@ class NASModelClient:
         1. sample/build the model family hyperparameters
         2. request HIL metrics for the candidate
         3. apply hardware limit and arena checks
-        4. evaluate pre-training prune rules
+        4. evaluate post-build/pre-fit prune rules
         5. either train/evaluate the task or synthesize task-metric sentinels
         6. validate objective values and log the trial
 
         Single-objective runs prune by raising ``optuna.TrialPruned``.
-        Multi-objective runs instead return penalty tuples so the study can
-        keep its full objective shape. Sentinel conventions such as ``-1`` and
-        ``10000.0`` are used to preserve legacy logging/scoring expectations
-        when hardware or training metrics are unavailable.
+        Multi-objective HIL errors, resource failures, and feasibility gates
+        instead log ``pruned=True`` and return direction-aware penalty tuples
+        so Optuna records a complete trial with the configured objective shape.
+        Sentinel conventions such as ``-1`` and ``10000.0`` are used to
+        preserve legacy logging/scoring expectations when hardware or training
+        metrics are unavailable.
         """
         artifacts_dir = self._artifacts_dir()
         log_path = artifacts_dir / self.config.outputs.log_file_name
@@ -1418,6 +1421,7 @@ class NASModelClient:
             hyperparams=Dict(hyperparams),
             score_config=self.config.nas.score,
             prune_config=self.config.nas.prune,
+            task_nonnegative_metric_names=task_nonnegative_metric_names,
         )
         if prune_hit is not None:
             prune_rule, prune_reason = prune_hit

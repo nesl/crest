@@ -179,14 +179,9 @@ nas:
 # Optuna keeps a frontier of models that trade off accuracy against runtime.
 # This is the better fit when you want to inspect the quality/latency trade
 # space rather than committing to one fixed weighting policy up front.
-# Note: Pruning is not supported for multi objective studies in Optuna, so the 
-# `prune.rules` list is left empty here.
-#
-# When used with `device.runtime_mode: cadenced`, cadenced overload remains
-# telemetry in this mode. Trials with `cadenced_deadline_miss_count > 0` or
-# `cadenced_active_inference_latency_ms > latency_budget_ms` can still appear
-# on the Pareto frontier and should be post-filtered if schedulability is a hard
-# requirement.
+# `prune.rules` are supported here as post-build/post-HIL feasibility gates.
+# A matching rule logs `pruned=True`, skips fit/validation evaluation, returns
+# a direction-aware penalty tuple, and remains an Optuna COMPLETE trial.
 #
 # Example cadenced Pareto setup:
 # - objective 1 minimizes total RMSE
@@ -206,12 +201,19 @@ nas:
 #         - metric: cadenced_energy_mj_per_window
 #           direction: minimize
 #   prune:
-#     rules: []
+#     rules:
+#       - rule: cadenced_deadline_budget
+#         metric: cadenced_deadline_miss_count
+#         condition: gt
+#         reference:
+#           type: literal
+#           value: 0
+#         reason: "Cadenced deadline missed"
 
-# Alternative scalar cadenced-feasibility example.
+# Alternative cadenced-feasibility example.
 # Uncomment and adapt this shape if you want cadenced schedulability to be a
-# hard gate before training. This is the config-level version of "deadline
-# misses are infeasible".
+# hard gate before training. The same `prune.rules` shape works for scalar and
+# multi-objective scores.
 #
 # nas:
 #   score:

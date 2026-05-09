@@ -292,7 +292,7 @@ Current structure:
 - `nas.score.params`
   Score terms or objectives depending on `score.type`
 - `nas.prune.rules`
-  Optional pre-training hard-reject rules
+  Optional post-build/pre-fit feasibility gates
 
 Built-in derived metric types currently documented by the shipped config and
 validated in code include:
@@ -309,9 +309,14 @@ Current scalar term types include:
 
 Current practical guidance:
 
-- use `scoring-function` when you want one scalar score and config-driven
-  prune rules
+- use `scoring-function` when you want one scalar score
 - use `multi-objective` when you want a Pareto front instead of one scalar
+- use `nas.prune.rules` with either score type when a pre-fit metric should be
+  a hard feasibility gate. Rules run after model build/compile, FLOP counting,
+  and HIL/compile metric collection, but before `task.build_fit_plan`,
+  `model.fit`, TFLite validation, or Keras validation. Multi-objective gate
+  hits are logged with `pruned=True` but remain Optuna COMPLETE trials with
+  direction-aware penalty values.
 - keep non-HIL configs away from score/prune terms that require measured
   latency or energy. `latency_ms`, energy/power/current/voltage metrics,
   `clock_hz`, `harness_latency_ms`, and `cadenced_*` metrics require
@@ -319,8 +324,8 @@ Current practical guidance:
 - set `device.compile_when_hil_disabled: false` for pure desktop scores such
   as RMSE/FLOPs; leave it as `auto` when non-HIL score/prune terms still need
   compile-derived resource metrics.
-- in cadenced multi-objective runs, overload remains telemetry rather than an
-  automatic prune
+- in cadenced multi-objective runs, overload is telemetry unless you add a
+  `nas.prune.rules` gate such as `cadenced_deadline_miss_count > 0`
 
 The most readable examples remain in
 [`nas_config.yaml`](nas_config.yaml) itself.
