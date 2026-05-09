@@ -52,6 +52,7 @@ from tinyodom.hardware import (  # noqa: E402
     _ordered_tflite_output_details,
     _quantize_tflite_tensor,
     _representative_calibration_samples,
+    _tflite_subprocess_env,
     arena_size_candidates,
     convert_to_cpp_model,
     convert_to_tflite_model,
@@ -383,6 +384,16 @@ class TFLiteSubprocessPredictionTests(TinyModelMixin, unittest.TestCase):
     subprocess wrapper used by NAS evaluation. Multi-output coverage asserts
     that TFLite predictions preserve the Keras output contract.
     """
+
+    def test_subprocess_env_disables_visible_gpus(self) -> None:
+        """Subprocess environment should hide training GPUs from TensorFlow."""
+
+        with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "1", "PYTHONPATH": "existing"}, clear=False):
+            env = _tflite_subprocess_env()
+
+        self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "-1")
+        self.assertTrue(env["PYTHONPATH"].startswith(str(SRC_DIR)))
+        self.assertIn("existing", env["PYTHONPATH"])
 
     def test_subprocess_prediction_matches_direct_single_output(self) -> None:
         """Subprocess prediction should match direct single-output inference."""

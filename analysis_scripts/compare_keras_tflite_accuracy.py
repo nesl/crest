@@ -9,21 +9,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
-
 import numpy as np
-import tensorflow as tf
 from sklearn.metrics import mean_squared_error
-
-from tinyodom.builtin_components import ensure_builtin_components_registered
-from tinyodom.hardware import (
-    _dequantize_tflite_tensor,
-    _ordered_tflite_output_details,
-    _quantize_tflite_tensor,
-    convert_to_tflite_model,
-)
-from tinyodom.model import load_config
-from tinyodom.runtime_bootstrap import bootstrap_pipeline
 
 
 def _parse_args() -> argparse.Namespace:
@@ -194,6 +181,14 @@ def _batched_tflite_predict(
         Dequantized prediction arrays in Keras output order.
     """
 
+    import tensorflow as tf
+
+    from tinyodom.hardware import (
+        _dequantize_tflite_tensor,
+        _ordered_tflite_output_details,
+        _quantize_tflite_tensor,
+    )
+
     data = np.asarray(inputs, dtype=np.float32)
     interpreter = tf.lite.Interpreter(
         model_path=str(tflite_path),
@@ -262,6 +257,15 @@ def main() -> None:
     args = _parse_args()
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be positive.")
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
+
+    import tensorflow as tf
+
+    from tinyodom.builtin_components import ensure_builtin_components_registered
+    from tinyodom.hardware import convert_to_tflite_model
+    from tinyodom.model import load_config
+    from tinyodom.runtime_bootstrap import bootstrap_pipeline
+
     ensure_builtin_components_registered()
     config = load_config(args.config)
     pipeline = bootstrap_pipeline(config)

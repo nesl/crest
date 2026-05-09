@@ -119,10 +119,11 @@ def _tflite_subprocess_env() -> dict[str, str]:
     -------
     dict[str, str]
         Environment mapping with the repository ``src`` directory prepended to
-        ``PYTHONPATH``.
+        ``PYTHONPATH`` and GPU visibility disabled for TensorFlow imports.
     """
 
     env = dict(os.environ)
+    env["CUDA_VISIBLE_DEVICES"] = "-1"
     src_root = str(Path(__file__).resolve().parents[1])
     existing_pythonpath = env.get("PYTHONPATH")
     if existing_pythonpath:
