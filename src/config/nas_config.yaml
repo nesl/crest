@@ -151,11 +151,12 @@ nas:
           reference:
             type: metric
             metric: energy_budget_mj
-  prune:
+  feasibility:
+    train_if_infeasible: false
     rules:
-      # Pre-training latency gate.
-      # If the measured latency already exceeds the deployment budget, prune
-      # the trial before training so NAS does not waste time on it.
+      # Pre-training deployability constraint.
+      # If measured latency exceeds the deployment budget, Optuna records a
+      # signed feasibility violation and this config skips training.
       - rule: latency_budget
         metric: latency_ms
         condition: gt
@@ -163,7 +164,8 @@ nas:
           type: metric
           metric: latency_budget_ms
         reason: "Latency exceeds deployment budget"
-      # Optional energy gate that reuses the derived budget metric above.
+      # Optional energy feasibility constraint that reuses the derived budget
+      # metric above.
       # - rule: energy_budget
       #   metric: energy_mj_per_inference
       #   condition: gt
@@ -179,9 +181,9 @@ nas:
 # Optuna keeps a frontier of models that trade off accuracy against runtime.
 # This is the better fit when you want to inspect the quality/latency trade
 # space rather than committing to one fixed weighting policy up front.
-# `prune.rules` are supported here as post-build/post-HIL feasibility gates.
-# A matching rule logs `pruned=True`, skips fit/validation evaluation, returns
-# a direction-aware penalty tuple, and remains an Optuna COMPLETE trial.
+# `feasibility.rules` are supported here as post-build/post-HIL deployability
+# constraints. A matching rule logs `feasible=False`, persists signed Optuna
+# constraints, and skips training unless `train_if_infeasible: true`.
 #
 # Example cadenced Pareto setup:
 # - objective 1 minimizes total RMSE
@@ -200,7 +202,8 @@ nas:
 #         # This gives Optuna a Pareto tradeoff between model quality and energy.
 #         - metric: cadenced_energy_mj_per_window
 #           direction: minimize
-#   prune:
+#   feasibility:
+#     train_if_infeasible: false
 #     rules:
 #       - rule: cadenced_deadline_budget
 #         metric: cadenced_deadline_miss_count
@@ -212,8 +215,8 @@ nas:
 
 # Alternative cadenced-feasibility example.
 # Uncomment and adapt this shape if you want cadenced schedulability to be a
-# hard gate before training. The same `prune.rules` shape works for scalar and
-# multi-objective scores.
+# constrained deployability policy before training. The same rule shape works
+# for scalar and multi-objective scores.
 #
 # nas:
 #   score:
@@ -255,7 +258,8 @@ nas:
 #           reference:
 #             type: metric
 #             metric: energy_budget_mj
-#   prune:
+#   feasibility:
+#     train_if_infeasible: false
 #     rules:
 #       - rule: latency_budget
 #         metric: latency_ms
@@ -290,8 +294,8 @@ nas:
 # Alternative non-HIL scalar example.
 # Uncomment and adapt this shape if you want `device.hil: false` and do not
 # want the score to depend on measured latency or energy. In proxy mode those
-# metrics are unavailable, so keep the score/prune policy limited to metrics
-# that still exist before training or after proxy-only compilation.
+# metrics are unavailable, so keep the score/prune/feasibility policy limited
+# to metrics that still exist before training or after proxy-only compilation.
 #
 # device:
 #   hil: false

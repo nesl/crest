@@ -224,6 +224,10 @@ Current runtime behavior:
   `urbansound8k_representative`, and `urbansound8k_real`
 - `training.max_total_trials` defaults to `training.nas_trials * 2` when
   omitted
+- `training.nas_trials` is the target number of feasible completed trials when
+  `nas.feasibility.rules` is enabled. Infeasible, failed, and pruned attempts
+  still count against `training.max_total_trials`, so constrained hardware
+  runs usually need a larger total-attempt budget than the feasible target.
 
 ## `dataset`, `task`, and `model`
 
@@ -281,7 +285,7 @@ model:
 
 ## `nas`
 
-The `nas` block owns scoring and pruning policy.
+The `nas` block owns scoring, pruning, and constrained-feasibility policy.
 
 Current structure:
 
@@ -292,7 +296,14 @@ Current structure:
 - `nas.score.params`
   Score terms or objectives depending on `score.type`
 - `nas.prune.rules`
-  Optional post-build/pre-fit feasibility gates
+  Optional post-build/pre-fit hard termination gates
+- `nas.feasibility.train_if_infeasible`
+  Whether trials that violate feasibility constraints should still train and
+  return real objective values. Defaults to `false`.
+- `nas.feasibility.rules`
+  Optional post-build/pre-fit deployability constraints using the same rule
+  shape as `nas.prune.rules`: `rule`, `metric`, `condition`, `reference`, and
+  `reason`.
 
 Built-in derived metric types currently documented by the shipped config and
 validated in code include:
@@ -311,12 +322,26 @@ Current practical guidance:
 
 - use `scoring-function` when you want one scalar score
 - use `multi-objective` when you want a Pareto front instead of one scalar
-- use `nas.prune.rules` with either score type when a pre-fit metric should be
-  a hard feasibility gate. Rules run after model build/compile, FLOP counting,
+- use `nas.prune.rules` with either score type when a pre-fit metric should
+  hard-stop a trial before feasibility is evaluated. Rules run after model
+  build/compile, FLOP counting,
   and HIL/compile metric collection, but before `task.build_fit_plan`,
   `model.fit`, TFLite validation, or Keras validation. Multi-objective gate
   hits are logged with `pruned=True` but remain Optuna COMPLETE trials with
   direction-aware penalty values.
+- use `nas.feasibility.rules` for deployability constraints that should be
+  visible to Optuna constrained samplers. Feasibility is evaluated after hard
+  failures and `nas.prune.rules`; each rule persists one signed constraint
+  where `<= 0` is feasible and `> 0` is infeasible. With
+  `train_if_infeasible: false`, infeasible trials skip training and return
+  penalties while still consuming `training.max_total_trials`. With
+  `train_if_infeasible: true`, trials train normally but remain
+  constrained-infeasible for samplers, CSV filtering, and plots.
+- move latency/deadline budget gates such as `latency_ms > latency_budget_ms`
+  or `cadenced_deadline_miss_count > 0` to `nas.feasibility.rules` when you
+  want constrained dominance. Keep the same metric in `nas.prune.rules` only
+  when you deliberately want hard early termination for debugging or resource
+  protection.
 - keep non-HIL configs away from score/prune terms that require measured
   latency or energy. `latency_ms`, energy/power/current/voltage metrics,
   `clock_hz`, `harness_latency_ms`, and `cadenced_*` metrics require
@@ -325,7 +350,8 @@ Current practical guidance:
   as RMSE/FLOPs; leave it as `auto` when non-HIL score/prune terms still need
   compile-derived resource metrics.
 - in cadenced multi-objective runs, overload is telemetry unless you add a
-  `nas.prune.rules` gate such as `cadenced_deadline_miss_count > 0`
+  `nas.feasibility.rules` constraint such as
+  `cadenced_deadline_miss_count > 0`
 
 The most readable examples remain in
 [`nas_config.yaml`](nas_config.yaml) itself.

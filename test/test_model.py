@@ -32,6 +32,7 @@ from tinyodom.model import (
     collect_bn_layers,
     collect_non_bn_bias_layers,
     count_flops,
+    evaluate_feasibility_rules,
     evaluate_score_config,
     iter_layers,
     load_config,
@@ -3832,6 +3833,129 @@ class LoadSettingsTests(unittest.TestCase):
             settings = load_config(config_path=cfg)
 
         self.assertEqual(settings.nas.prune.rules[0].metric, "cadenced_error_code")
+
+    def test_load_settings_accepts_feasibility_rules(self) -> None:
+        """Valid pre-training feasibility rules should normalize from config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: flops",
+                        "          weight: -1.0",
+                        "  feasibility:",
+                        "    train_if_infeasible: true",
+                        "    rules:",
+                        "      - rule: latency_budget",
+                        "        metric: latency_ms",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: metric",
+                        "          metric: latency_budget_ms",
+                        "        reason: Latency exceeds budget",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertTrue(settings.nas.feasibility.train_if_infeasible)
+        self.assertEqual(settings.nas.feasibility.rules[0].rule, "latency_budget")
+        self.assertEqual(settings.nas.feasibility.rules[0].reference.metric, "latency_budget_ms")
+
+    def test_validate_nas_policy_rejects_training_only_feasibility_metric(self) -> None:
+        """Feasibility rules must not depend on post-training task metrics."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: flops",
+                        "          weight: -1.0",
+                        "  feasibility:",
+                        "    rules:",
+                        "      - rule: rmse_gate",
+                        "        metric: rmse_total",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+            with self.assertRaisesRegex(ValueError, "training-only metric 'rmse_total'"):
+                validate_nas_policy_for_task(
+                    settings,
+                    task_metric_names={"rmse_total"},
+                    training_only_task_metric_names={"rmse_total"},
+                )
+
+    def test_evaluate_feasibility_rules_computes_signed_constraints(self) -> None:
+        """Feasibility rules should emit signed Optuna constraints in order."""
+        score_config = Dict(type="scoring-function", metrics=Dict(), params=Dict())
+        feasibility_config = Dict(
+            rules=[
+                Dict(rule="gt", metric="latency_ms", condition="gt", reference=Dict(type="literal", value=10.0), reason=""),
+                Dict(rule="gte", metric="latency_ms", condition="gte", reference=Dict(type="literal", value=12.0), reason=""),
+                Dict(rule="lt", metric="latency_ms", condition="lt", reference=Dict(type="literal", value=20.0), reason=""),
+                Dict(rule="lte", metric="latency_ms", condition="lte", reference=Dict(type="literal", value=12.0), reason=""),
+            ]
+        )
+
+        result = evaluate_feasibility_rules(
+            metrics={"latency_ms": 12.0},
+            hyperparams=Dict(flops=1),
+            score_config=score_config,
+            feasibility_config=feasibility_config,
+        )
+
+        self.assertFalse(result.feasible)
+        self.assertEqual(result.status, "infeasible")
+        self.assertGreater(result.constraints[0], 0.0)
+        self.assertGreater(result.constraints[1], 0.0)
+        self.assertGreater(result.constraints[2], 0.0)
+        self.assertGreater(result.constraints[3], 0.0)
+        self.assertEqual(result.first_violation["rule"], "gt")
 
     def test_load_settings_missing_file(self) -> None:
         """Nonexistent config paths should raise FileNotFoundError."""

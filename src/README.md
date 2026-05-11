@@ -107,8 +107,8 @@ At a high level, the source tree is wired like this:
 3. The entry point runs the shared bootstrap in
    [`tinyodom/runtime_bootstrap.py`](tinyodom/runtime_bootstrap.py), which
    resolves component selection, instantiates the selected dataset/task/model
-   family, derives the target spec, and validates `nas.score` / `nas.prune`
-   against the task metric contract.
+   family, derives the target spec, and validates `nas.score`, `nas.prune`,
+   and `nas.feasibility` against the task metric contract.
 4. The selected dataset adapter loads data and produces a normalized
    `DatasetBundle`.
 5. The selected task adapter builds the target contract and training/evaluation
@@ -241,6 +241,7 @@ Stable shared columns include:
   error codes
 - score/objective metadata (`score_type`, `objective_*_json`)
 - pruning metadata
+- feasibility metadata and signed Optuna constraints
 - `artifact_summary_json`
 - cadenced runtime telemetry fields when present
 
@@ -360,7 +361,7 @@ For the current scoring, pruning, and runtime knobs, use:
 
 - [`config/README.md`](config/README.md) for the config reference
 - [`config/nas_config.yaml`](config/nas_config.yaml) for the default config shape
-- [`tinyodom/model.py`](tinyodom/model.py) for score/prune evaluation and HIL
-  request construction
+- [`tinyodom/model.py`](tinyodom/model.py) for score/prune/feasibility
+  evaluation and HIL request construction
 - [`hil_server.py`](hil_server.py) for the HIL-side request handling and
   backend failure shaping
