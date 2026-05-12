@@ -1684,38 +1684,45 @@ class LoadSettingsTests(unittest.TestCase):
             self.assertEqual(settings.training.quantization.choices, ["int8_ptq"])
 
     def test_load_settings_accepts_searchable_quantization_on_supported_board(self) -> None:
-        """Supported boards may opt into float/int8 PTQ quantization search."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_path = Path(tmpdir)
-            config_path = tmp_path / "config.yaml"
-            config_path.write_text(
-                "\n".join(
-                    [
-                        "device:",
-                        "  name: PORTENTA_H7",
-                        "  portenta:",
-                        "    target_core: cm7",
-                        "    split: 75_25",
-                        "    security: none",
-                        "training:",
-                        "  nas_trials: 5",
-                        "  quantization:",
-                        "    mode: int8_ptq",
-                        "    search: true",
-                        "    choices: [float, int8_ptq]",
-                        *self._score_lines(include_quantization=False),
-                        "outputs:",
-                        f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
-                    ]
-                )
-            )
+        """Arduino-backed supported boards may search float and int8 PTQ exports."""
+        for device_lines in (
+            [
+                "  name: PORTENTA_H7",
+                "  portenta:",
+                "    target_core: cm7",
+                "    split: 75_25",
+                "    security: none",
+            ],
+            ["  name: ARDUINO_NANO_33_BLE_SENSE"],
+        ):
+            with self.subTest(device=device_lines[0]):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    tmp_path = Path(tmpdir)
+                    config_path = tmp_path / "config.yaml"
+                    config_path.write_text(
+                        "\n".join(
+                            [
+                                "device:",
+                                *device_lines,
+                                "training:",
+                                "  nas_trials: 5",
+                                "  quantization:",
+                                "    mode: int8_ptq",
+                                "    search: true",
+                                "    choices: [float, int8_ptq]",
+                                *self._score_lines(include_quantization=False),
+                                "outputs:",
+                                f"  models_dir: \"{tmp_path / 'models'}\"",
+                                f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
+                                "  artifact_stem: \"TinyOdomEx_Test\"",
+                            ]
+                        )
+                    )
 
-            settings = load_config(config_path=config_path)
+                    settings = load_config(config_path=config_path)
 
-            self.assertTrue(settings.training.quantization.search)
-            self.assertEqual(settings.training.quantization.choices, ["float", "int8_ptq"])
+                    self.assertTrue(settings.training.quantization.search)
+                    self.assertEqual(settings.training.quantization.choices, ["float", "int8_ptq"])
 
     def test_load_settings_rejects_invalid_quantization_configs(self) -> None:
         """Quantization must use the new mapping shape and supported choices."""
@@ -1734,12 +1741,6 @@ class LoadSettingsTests(unittest.TestCase):
                 "    mode: float",
                 "    search: false",
                 "    choices: [int8_ptq]",
-            ],
-            "unsupported_ble_float": [
-                "  quantization:",
-                "    mode: float",
-                "    search: false",
-                "    choices: [float]",
             ],
         }
         for label, quantization_lines in cases.items():

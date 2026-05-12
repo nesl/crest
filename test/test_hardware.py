@@ -63,7 +63,7 @@ from tinyodom.hardware import (  # noqa: E402
     TFLiteSubprocessError,
 )
 from tinyodom import hil_protocol  # noqa: E402
-from tinyodom.devices import ArduinoDevice  # noqa: E402
+from tinyodom.devices import ArduinoDevice, CandidatePrepareRequest  # noqa: E402
 from analysis_scripts.compare_keras_tflite_accuracy import (  # noqa: E402
     _batched_tflite_predict,
     _normalize_keras_prediction_outputs,
@@ -2093,6 +2093,33 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
 
 
 class DeviceTimeoutPassThroughTests(unittest.TestCase):
+    def test_arduino_prepare_candidate_float_does_not_require_calibration(self):
+        """Arduino float exports should stage without representative data."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_root = Path(tmpdir) / "candidate"
+            request = CandidatePrepareRequest(
+                config=Mock(),
+                model=Mock(),
+                model_variant="approx_trained",
+                artifact_root=artifact_root,
+                tflite_model_path=Path(tmpdir) / "model.tflite",
+                calibration_split=None,
+                quantization_mode="float",
+                input_shape=(32, 6),
+            )
+            device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE")
+
+            with patch("tinyodom.hardware.convert_to_tflite_model") as tflite_mock, patch(
+                "tinyodom.hardware.convert_to_cpp_model"
+            ) as cpp_mock, patch("tinyodom.devices._sync_arduino_sketch_variant_for_config") as sync_mock:
+                prepared_dir = device.prepare_candidate(request=request)
+
+        self.assertEqual(prepared_dir, artifact_root)
+        self.assertIsNone(tflite_mock.call_args.kwargs["training_data"])
+        self.assertEqual(tflite_mock.call_args.kwargs["quantization_mode"], "float")
+        cpp_mock.assert_called_once()
+        sync_mock.assert_called_once_with(request.config, artifact_root)
+
     def test_arduino_device_measure_preserves_zero_timeouts(self):
         # Zero timeout overrides should survive measurement setup instead of being replaced by defaults.
         device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE")

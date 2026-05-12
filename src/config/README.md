@@ -197,9 +197,9 @@ Current runtime behavior:
 
 - `training.energy_aware` defaults to `false` when omitted
 - `training.quantization` is required and must use the mapping shape:
-  `mode`, `search`, and non-empty `choices`. Most shipped configs fix
-  `mode: int8_ptq`, `search: false`, and `choices: [int8_ptq]`; the audio
-  STM32 config intentionally searches `choices: [float, int8_ptq]`.
+  `mode`, `search`, and non-empty `choices`. The main measured-board configs
+  search `choices: [float, int8_ptq]` so float32 and int8 PTQ exports can be
+  compared on the same backend.
 - Supported v1 quantization modes are `float` and `int8_ptq`. Enabling
   `training.quantization.search: true` samples `quantization_mode` from
   `choices`; this expands the effective NAS search space and usually needs a

@@ -723,6 +723,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         self.assertEqual(phase_mock.call_args_list[1].kwargs["phase"], "cadenced")
         self.assertEqual(metrics.power_metrics["runtime_mode"], "cadenced")
         self.assertEqual(metrics.power_metrics["cadenced_error_code"], HIL_ERROR_OK)
+        self.assertAlmostEqual(metrics.latency_s, 0.080)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_active_inference_latency_ms"], 80.0)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_window_latency_ms"], 20000.0)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_energy_mj_per_window"], 1.25)
@@ -1468,7 +1469,7 @@ class STM32HelperTests(unittest.TestCase):
                 },
             )()
             telemetry = stm32_runtime.STM32RuntimeTelemetry(
-                latency_s=0.003,
+                latency_s=0.001,
                 serial_log=["STM32_AI_INIT=OK", "DUT READY", "STM32_AI_RUN=OK"],
                 power_metrics={
                     "clock_hz": 600000000.0,
@@ -1649,6 +1650,7 @@ class STM32HelperTests(unittest.TestCase):
                 5,
             )
             self.assertEqual(metrics.error_code, HIL_ERROR_OK)
+            self.assertEqual(metrics.latency_s, 0.003)
             self.assertEqual(metrics.external_flash_bytes, 4096)
             self.assertEqual(metrics.power_metrics["weight_storage_mode"], "external_flash")
             self.assertEqual(metrics.power_metrics["runs"], 5)

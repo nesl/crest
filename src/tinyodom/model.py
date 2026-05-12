@@ -65,7 +65,7 @@ VALID_COMPILE_WHEN_HIL_DISABLED = {"auto", "true", "false"}
 BOARD_QUANTIZATION_CAPABILITIES = {
     "STM32_NUCLEO_N657X0_Q": {"float", "int8_ptq"},
     "PORTENTA_H7": {"float", "int8_ptq"},
-    "ARDUINO_NANO_33_BLE_SENSE": {"int8_ptq"},
+    "ARDUINO_NANO_33_BLE_SENSE": {"float", "int8_ptq"},
 }
 VALID_DERIVED_METRIC_TYPES = {"add", "energy-budget-from-power"}
 VALID_TERM_TYPES = {"weighted", "normalized-weighted", "boundary", "target"}
