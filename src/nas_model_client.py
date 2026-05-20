@@ -66,6 +66,7 @@ from tinyodom.model import (
     score_config_uses_training_metrics,
     set_error_code,
 )
+from tinyodom.model_metrics import StaticMemoryEstimate
 from tinyodom.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
 from tinyodom.registry import dataset_registry, model_family_registry
 from tinyodom.runtime_bootstrap import bootstrap_pipeline
@@ -886,6 +887,7 @@ class NASModelClient:
         self,
         flops: int,
         batch_size: int,
+        static_memory: StaticMemoryEstimate,
     ) -> Dict:
         """Build runtime-owned request metadata for HIL and scoring paths.
 
@@ -895,6 +897,8 @@ class NASModelClient:
             FLOP count for the built model.
         batch_size : int
             Runner-owned batch size.
+        static_memory : StaticMemoryEstimate
+            Offline static tensor-memory proxy for the built model.
 
         Returns
         -------
@@ -911,6 +915,11 @@ class NASModelClient:
                 "timesteps": timesteps,
                 "input_dim": input_dim,
                 "flops": int(flops),
+                "weight_bytes": int(static_memory.weight_bytes),
+                "activation_bytes": int(static_memory.activation_bytes),
+                "memory_traffic_bytes": int(static_memory.memory_traffic_bytes),
+                "memory_proxy_dtype_bytes": int(static_memory.dtype_bytes),
+                "memory_proxy_warning_count": int(static_memory.warning_count),
             }
         )
 
@@ -1487,9 +1496,16 @@ class NASModelClient:
             trial,
             allow_search=uses_quantized_deployment_path,
         )
+        static_memory = self.model_family.estimate_static_memory(
+            model,
+            self.model_build_context,
+            self.model_config,
+            quantization_mode=quantization_mode,
+        )
         runtime_metadata = self._build_runtime_metadata(
             flops,
             batch_size,
+            static_memory,
         )
         hyperparams = Dict({**family_hparams, **runtime_metadata})
 
@@ -1529,6 +1545,15 @@ class NASModelClient:
             metrics.setdefault("energy_aware", bool(self.config.training.energy_aware))
         else:
             metrics = self._synthesize_desktop_success_metrics()
+        metrics.update(
+            {
+                "weight_bytes": int(runtime_metadata.weight_bytes),
+                "activation_bytes": int(runtime_metadata.activation_bytes),
+                "memory_traffic_bytes": int(runtime_metadata.memory_traffic_bytes),
+                "memory_proxy_dtype_bytes": int(runtime_metadata.memory_proxy_dtype_bytes),
+                "memory_proxy_warning_count": int(runtime_metadata.memory_proxy_warning_count),
+            }
+        )
 
         needs_hardware_limits = (
             collect_compile_metrics

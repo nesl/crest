@@ -37,6 +37,7 @@ from tinyodom.hardware import (
     TFLiteSubprocessError,
 )  # noqa: E402
 from tinyodom.model import ScoreConfigEvaluationError, TrialOutcome  # noqa: E402
+from tinyodom.model_metrics import StaticMemoryEstimate  # noqa: E402
 from tinyodom.pipeline_types import (
     DataSplit,
     DatasetBundle,
@@ -163,6 +164,15 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
         build_model=MagicMock(return_value=fake_built_model),
         load_model=MagicMock(return_value=fake_loaded_model),
         count_flops=MagicMock(return_value=1234),
+        estimate_static_memory=MagicMock(
+            return_value=StaticMemoryEstimate(
+                weight_bytes=12,
+                activation_bytes=34,
+                memory_traffic_bytes=46,
+                dtype_bytes=4,
+                warning_count=0,
+            )
+        ),
         supports_tflite=MagicMock(return_value=True),
         default_seed_trial=MagicMock(
             return_value={
@@ -635,6 +645,14 @@ class ObjectiveTests(unittest.TestCase):
             self.client.model_build_context,
             self.client.model_config,
         )
+        self.client.model_family.estimate_static_memory.assert_called_once_with(
+            self.client.model_family.build_model.return_value,
+            self.client.model_build_context,
+            self.client.model_config,
+            quantization_mode="float",
+        )
+        logged_hparams = self.mock_log.call_args.kwargs["trial_outcome"].hyperparams
+        self.assertEqual(logged_hparams["memory_traffic_bytes"], 46)
         self.client.task.build_fit_plan.assert_called_once_with(
             self.client.dataset_bundle,
             self.client.task_config,
@@ -986,6 +1004,8 @@ class ObjectiveTests(unittest.TestCase):
         self.assertNotIn("model_variant", sent_payload)
         self.assertNotIn("cpu_clock_mhz", sent_payload["family_hparams"])
         self.assertEqual(sent_payload["runtime_metadata"]["flops"], 1234)
+        self.assertEqual(sent_payload["runtime_metadata"]["memory_traffic_bytes"], 46)
+        self.assertEqual(sent_payload["runtime_metadata"]["memory_proxy_dtype_bytes"], 4)
         self.assertEqual(trial.params["cpu_clock_mhz_index"], 0)
 
     def test_objective_omits_device_overrides_when_clock_options_are_null(self) -> None:

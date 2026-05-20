@@ -27,10 +27,8 @@ from addict import Dict
 from tcn import TCN
 from tensorflow.keras import Input, Model
 from tensorflow.keras.layers import Dense, Flatten, MaxPooling1D, Reshape
-from tensorflow.python.framework.convert_to_constants import (
-    convert_variables_to_constants_v2,
-)
 
+from .model_metrics import count_flops_keras
 from .hardware import (
     HIL_controller,
     describe_error_code,
@@ -79,6 +77,11 @@ NONNEGATIVE_METRICS = {
     "max_flash_bytes",
     "external_flash_bytes",
     "flops",
+    "weight_bytes",
+    "activation_bytes",
+    "memory_traffic_bytes",
+    "memory_proxy_dtype_bytes",
+    "memory_proxy_warning_count",
     "latency_ms",
     "energy_mj_per_inference",
     "avg_power_mw",
@@ -103,6 +106,11 @@ INFRASTRUCTURE_SCORE_METRICS = {
     "max_flash_bytes",
     "external_flash_bytes",
     "flops",
+    "weight_bytes",
+    "activation_bytes",
+    "memory_traffic_bytes",
+    "memory_proxy_dtype_bytes",
+    "memory_proxy_warning_count",
     "latency_ms",
     "energy_mj_per_inference",
     "avg_power_mw",
@@ -180,6 +188,11 @@ TRIAL_LOG_STABLE_COLUMNS = (
     "external_flash_bytes",
     "weight_storage_mode",
     "flops",
+    "weight_bytes",
+    "activation_bytes",
+    "memory_traffic_bytes",
+    "memory_proxy_dtype_bytes",
+    "memory_proxy_warning_count",
     "latency_ms",
     "latency_budget_ms",
     "energy_mj_per_inference",
@@ -2576,32 +2589,14 @@ def count_flops(model, input_shape):
     Returns
     -------
     int
-        Total floating point operations for a single forward pass with batch size 1.
+        Static graph FLOP proxy for a single forward pass with batch size 1.
 
     Notes
     -----
-    The estimate freezes the TensorFlow graph with a batch size of 1 and then
-    delegates to the TensorFlow v1 profiler. It is useful for relative NAS
-    comparisons, but it still depends on TensorFlow profiler support for the
-    active ops.
+    Compatibility wrapper around :func:`tinyodom.model_metrics.count_flops_keras`.
     """
-    concrete = tf.function(model).get_concrete_function(
-        tf.TensorSpec([1, *input_shape], tf.float32)
-    )
-    frozen = convert_variables_to_constants_v2(concrete)
-    graph_def = frozen.graph.as_graph_def()
 
-    with tf.Graph().as_default() as graph:
-        tf.compat.v1.import_graph_def(graph_def, name="")
-        options = (
-            tf.compat.v1.profiler.ProfileOptionBuilder(
-                tf.compat.v1.profiler.ProfileOptionBuilder.float_operation()
-            )
-            .with_empty_output()
-            .build()
-        )
-        flops = tf.compat.v1.profiler.profile(graph, options=options)
-    return flops.total_float_ops
+    return count_flops_keras(model, tuple(int(dim) for dim in input_shape))
 
 
 def require_logical_input_shape(input_shape: Any) -> tuple[int, int]:
@@ -2715,6 +2710,20 @@ def _trial_log_row_mapping(
         "external_flash_bytes": metrics.get("external_flash_bytes", -1),
         "weight_storage_mode": metrics.get("weight_storage_mode", "embedded"),
         "flops": trial_outcome.hyperparams["flops"],
+        "weight_bytes": metrics.get("weight_bytes", trial_outcome.hyperparams.get("weight_bytes", -1)),
+        "activation_bytes": metrics.get("activation_bytes", trial_outcome.hyperparams.get("activation_bytes", -1)),
+        "memory_traffic_bytes": metrics.get(
+            "memory_traffic_bytes",
+            trial_outcome.hyperparams.get("memory_traffic_bytes", -1),
+        ),
+        "memory_proxy_dtype_bytes": metrics.get(
+            "memory_proxy_dtype_bytes",
+            trial_outcome.hyperparams.get("memory_proxy_dtype_bytes", -1),
+        ),
+        "memory_proxy_warning_count": metrics.get(
+            "memory_proxy_warning_count",
+            trial_outcome.hyperparams.get("memory_proxy_warning_count", -1),
+        ),
         "latency_ms": metrics["latency_ms"],
         "latency_budget_ms": metrics.get("latency_budget_ms", -1.0),
         "energy_mj_per_inference": metrics["energy_mj_per_inference"],
@@ -2751,7 +2760,14 @@ def _trial_log_row_mapping(
     for metric_name, value in trial_outcome.task_metrics.items():
         mapping[f"metric__{metric_name}"] = value
     for hyperparam_name, value in trial_outcome.hyperparams.items():
-        if hyperparam_name == "flops":
+        if hyperparam_name in {
+            "flops",
+            "weight_bytes",
+            "activation_bytes",
+            "memory_traffic_bytes",
+            "memory_proxy_dtype_bytes",
+            "memory_proxy_warning_count",
+        }:
             continue
         mapping[f"hparam__{hyperparam_name}"] = value
     return mapping
@@ -2964,6 +2980,29 @@ def log_trial(
     trial.set_user_attr("hil_error_code", metrics["error_code"])
     trial.set_user_attr("arena_bytes", metrics["arena_bytes"])
     trial.set_user_attr("flops", trial_outcome.hyperparams["flops"])
+    trial.set_user_attr("weight_bytes", metrics.get("weight_bytes", trial_outcome.hyperparams.get("weight_bytes", -1)))
+    trial.set_user_attr(
+        "activation_bytes",
+        metrics.get("activation_bytes", trial_outcome.hyperparams.get("activation_bytes", -1)),
+    )
+    trial.set_user_attr(
+        "memory_traffic_bytes",
+        metrics.get("memory_traffic_bytes", trial_outcome.hyperparams.get("memory_traffic_bytes", -1)),
+    )
+    trial.set_user_attr(
+        "memory_proxy_dtype_bytes",
+        metrics.get(
+            "memory_proxy_dtype_bytes",
+            trial_outcome.hyperparams.get("memory_proxy_dtype_bytes", -1),
+        ),
+    )
+    trial.set_user_attr(
+        "memory_proxy_warning_count",
+        metrics.get(
+            "memory_proxy_warning_count",
+            trial_outcome.hyperparams.get("memory_proxy_warning_count", -1),
+        ),
+    )
     trial.set_user_attr("error_code", metrics["error_code"])
     trial.set_user_attr(
         "score_type",
@@ -2997,7 +3036,14 @@ def log_trial(
     for metric_name, value in trial_outcome.task_metrics.items():
         trial.set_user_attr(f"metric__{metric_name}", value)
     for hyperparam_name, value in trial_outcome.hyperparams.items():
-        if hyperparam_name == "flops":
+        if hyperparam_name in {
+            "flops",
+            "weight_bytes",
+            "activation_bytes",
+            "memory_traffic_bytes",
+            "memory_proxy_dtype_bytes",
+            "memory_proxy_warning_count",
+        }:
             continue
         trial.set_user_attr(f"hparam__{hyperparam_name}", value)
     for field_name in CADENCED_ALL_FIELDS:

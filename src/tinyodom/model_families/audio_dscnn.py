@@ -18,9 +18,8 @@ from tensorflow.keras.layers import (
     ReLU,
     Reshape,
 )
-from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
-
 from ..interfaces import ModelFamilyABC
+from ..model_metrics import count_flops_keras
 from ..pipeline_types import ModelBuildContext, TargetSpec
 
 BASE_CHANNELS_CHOICES = (4, 8, 12, 16, 20, 24, 32)
@@ -385,39 +384,6 @@ def _pointwise_filters(hparams: dict[str, Any], block_index: int) -> int:
     return min(hparams["max_channels"], max(1, filters))
 
 
-def _count_flops(model: tf.keras.Model, input_shape: tuple[int, int]) -> int:
-    """Estimate DS-CNN FLOPs from a frozen TensorFlow graph.
-
-    Parameters
-    ----------
-    model : tensorflow.keras.Model
-        Built Keras model to profile.
-    input_shape : tuple[int, int]
-        Logical ``(frames, mel_bins)`` input shape.
-
-    Returns
-    -------
-    int
-        Forward-pass FLOP count for batch size 1.
-    """
-
-    concrete = tf.function(model).get_concrete_function(
-        tf.TensorSpec([1, *input_shape], tf.float32)
-    )
-    frozen = convert_variables_to_constants_v2(concrete)
-    graph_def = frozen.graph.as_graph_def()
-    with tf.Graph().as_default() as graph:
-        tf.compat.v1.import_graph_def(graph_def, name="")
-        options = (
-            tf.compat.v1.profiler.ProfileOptionBuilder(
-                tf.compat.v1.profiler.ProfileOptionBuilder.float_operation()
-            )
-            .with_empty_output()
-            .build()
-        )
-        flops = tf.compat.v1.profiler.profile(graph, options=options)
-    return int(flops.total_float_ops)
-
 
 class AudioDSCNNFamily(ModelFamilyABC):
     """Explicit depthwise-plus-pointwise CNN family for log-mel audio classification."""
@@ -732,7 +698,7 @@ class AudioDSCNNFamily(ModelFamilyABC):
 
         del config
         input_shape = self._validate_input_shape(ctx.input_shape)
-        return _count_flops(model, input_shape)
+        return count_flops_keras(model, input_shape)
 
     @staticmethod
     def _validate_input_shape(input_shape: tuple[int, ...] | None) -> tuple[int, int]:

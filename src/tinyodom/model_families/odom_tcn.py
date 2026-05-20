@@ -13,9 +13,16 @@ import tensorflow as tf
 from tcn import TCN
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Flatten, Input, MaxPooling1D, Reshape
-from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
-
 from ..interfaces import ModelFamilyABC
+from ..model_metrics import (
+    StaticMemoryEstimate,
+    count_flops_keras,
+    dtype_bytes_for_quantization,
+    estimate_static_memory_keras,
+    layer_tensor_elements,
+    tensor_shape_elements,
+    unique_weight_bytes,
+)
 from ..pipeline_types import ModelBuildContext
 
 logger = logging.getLogger(__name__)
@@ -143,38 +150,202 @@ def apply_combined_perturbation(
     return bn_touched, bias_touched
 
 
-def _count_flops(model: tf.keras.Model, input_shape: tuple[int, int]) -> int:
-    """Estimate Odom TCN FLOPs from a frozen TensorFlow graph.
+def _conv_output_channels(layer: tf.keras.layers.Layer) -> int | None:
+    """Infer output channel count for a Conv1D-like TCN child layer.
+
+    Parameters
+    ----------
+    layer : tensorflow.keras.layers.Layer
+        Candidate TCN child layer.
+
+    Returns
+    -------
+    int | None
+        Output channel count when available from layer attributes or weights.
+    """
+
+    filters = getattr(layer, "filters", None)
+    if filters is not None:
+        return int(filters)
+    weights = getattr(layer, "weights", []) or []
+    if weights:
+        shape = list(weights[0].shape)
+        if shape:
+            return int(shape[-1])
+    return None
+
+
+def _activation_bytes(elements: int | None, dtype_bytes: int) -> tuple[int, int]:
+    """Return activation bytes and warning increment for an element count.
+
+    Parameters
+    ----------
+    elements : int | None
+        Activation element count.
+    dtype_bytes : int
+        Deployment dtype width.
+
+    Returns
+    -------
+    tuple[int, int]
+        Bytes and warning increment.
+    """
+
+    if elements is None:
+        return 0, 1
+    return int(elements) * int(dtype_bytes), 0
+
+
+def _estimate_odom_tcn_static_memory(
+    model: tf.keras.Model,
+    *,
+    quantization_mode: str,
+) -> StaticMemoryEstimate:
+    """Estimate static tensor traffic for OdomTCN including TCN internals.
 
     Parameters
     ----------
     model : tensorflow.keras.Model
-        Built Keras model to profile.
-    input_shape : tuple[int, int]
-        Logical `(timesteps, input_dim)` input shape.
+        Built OdomTCN model.
+    quantization_mode : str
+        Deployment quantization mode used to choose scalar byte width.
 
     Returns
     -------
-    int
-        Forward-pass FLOP count for batch size 1.
+    StaticMemoryEstimate
+        Static memory proxy estimate for batch size 1.
     """
 
-    concrete = tf.function(model).get_concrete_function(
-        tf.TensorSpec([1, *input_shape], tf.float32)
-    )
-    frozen = convert_variables_to_constants_v2(concrete)
-    graph_def = frozen.graph.as_graph_def()
-    with tf.Graph().as_default() as graph:
-        tf.compat.v1.import_graph_def(graph_def, name="")
-        options = (
-            tf.compat.v1.profiler.ProfileOptionBuilder(
-                tf.compat.v1.profiler.ProfileOptionBuilder.float_operation()
+    dtype_bytes = dtype_bytes_for_quantization(quantization_mode)
+    seen_weights: set[int] = set()
+    weight_bytes = 0
+    activation_bytes = 0
+    warning_count = 0
+
+    def add_operation(
+        layer: tf.keras.layers.Layer | None,
+        *,
+        input_elements: int | None,
+        output_elements: int | None,
+        inferred_shape: bool = False,
+    ) -> None:
+        """Accumulate one static memory operation.
+
+        Parameters
+        ----------
+        layer : tensorflow.keras.layers.Layer | None
+            Layer whose unique weights should be counted.
+        input_elements : int | None
+            Input activation element count.
+        output_elements : int | None
+            Output activation element count.
+        inferred_shape : bool, optional
+            Whether the activation shape came from architecture-aware inference.
+        """
+
+        nonlocal weight_bytes, activation_bytes, warning_count
+        input_bytes, input_warning = _activation_bytes(input_elements, dtype_bytes)
+        output_bytes, output_warning = _activation_bytes(output_elements, dtype_bytes)
+        activation_bytes += input_bytes + output_bytes
+        warning_count += input_warning + output_warning
+        if inferred_shape:
+            warning_count += 1
+        if layer is not None:
+            weight_bytes += unique_weight_bytes(
+                layer,
+                dtype_bytes=dtype_bytes,
+                seen_weights=seen_weights,
             )
-            .with_empty_output()
-            .build()
+
+    for layer in model.layers:
+        if isinstance(layer, tf.keras.layers.InputLayer):
+            continue
+        if type(layer).__name__ != "TCN":
+            add_operation(
+                layer,
+                input_elements=layer_tensor_elements(layer, "input"),
+                output_elements=layer_tensor_elements(layer, "output"),
+            )
+            continue
+
+        input_shape = getattr(getattr(layer, "input", None), "shape", None)
+        output_elements = layer_tensor_elements(layer, "output")
+        residual_blocks = list(getattr(layer, "residual_blocks", []) or [])
+        if input_shape is None or len(input_shape) < 3 or not residual_blocks:
+            generic = estimate_static_memory_keras(model, quantization_mode=quantization_mode)
+            return StaticMemoryEstimate(
+                weight_bytes=generic.weight_bytes,
+                activation_bytes=generic.activation_bytes,
+                memory_traffic_bytes=generic.memory_traffic_bytes,
+                dtype_bytes=generic.dtype_bytes,
+                warning_count=generic.warning_count + 1,
+            )
+
+        timesteps = int(input_shape[1])
+        current_channels = int(input_shape[2])
+        for block in residual_blocks:
+            residual_channels = current_channels
+            block_layers = list(getattr(block, "_layers", []) or getattr(block, "layers", []) or [])
+            if not block_layers:
+                warning_count += 1
+                continue
+            for child in block_layers:
+                layer_type = type(child).__name__
+                if layer_type == "Conv1D":
+                    output_channels = _conv_output_channels(child)
+                    if output_channels is None:
+                        input_elements = None
+                        output_child_elements = None
+                    else:
+                        input_channels = (
+                            residual_channels
+                            if str(child.name).startswith("matching_")
+                            else current_channels
+                        )
+                        input_elements = timesteps * input_channels
+                        output_child_elements = timesteps * output_channels
+                        if not str(child.name).startswith("matching_"):
+                            current_channels = output_channels
+                elif layer_type == "Lambda" and str(child.name).startswith("matching_"):
+                    input_elements = timesteps * residual_channels
+                    output_child_elements = timesteps * residual_channels
+                else:
+                    input_elements = timesteps * current_channels
+                    output_child_elements = timesteps * current_channels
+                add_operation(
+                    child,
+                    input_elements=input_elements,
+                    output_elements=output_child_elements,
+                    inferred_shape=True,
+                )
+            current_channels = _conv_output_channels(block_layers[0]) or current_channels
+
+        add_operation(
+            None,
+            input_elements=timesteps * current_channels,
+            output_elements=output_elements,
+            inferred_shape=True,
         )
-        flops = tf.compat.v1.profiler.profile(graph, options=options)
-    return int(flops.total_float_ops)
+
+    for weight in model.weights:
+        key = id(weight)
+        if key in seen_weights:
+            continue
+        seen_weights.add(key)
+        elements = tensor_shape_elements(weight)
+        if elements is None:
+            warning_count += 1
+            continue
+        weight_bytes += elements * dtype_bytes
+
+    return StaticMemoryEstimate(
+        weight_bytes=int(weight_bytes),
+        activation_bytes=int(activation_bytes),
+        memory_traffic_bytes=int(weight_bytes + activation_bytes),
+        dtype_bytes=int(dtype_bytes),
+        warning_count=int(warning_count),
+    )
+
 
 
 class OdomTCNFamily(ModelFamilyABC):
@@ -387,6 +558,40 @@ class OdomTCNFamily(ModelFamilyABC):
 
         return {"TCN": TCN}
 
+    def estimate_static_memory(
+        self,
+        model: tf.keras.Model,
+        ctx: ModelBuildContext,
+        config: Any,
+        *,
+        quantization_mode: str,
+    ) -> StaticMemoryEstimate:
+        """Estimate static memory traffic for Odom TCN models.
+
+        Parameters
+        ----------
+        model : tensorflow.keras.Model
+            Built Odom TCN model.
+        ctx : ModelBuildContext
+            Build-time context. Unused because the built model carries the
+            concrete TCN input shape.
+        config : Any
+            Model-family configuration subtree. Unused for this estimate.
+        quantization_mode : str
+            Deployment quantization mode used to choose scalar byte width.
+
+        Returns
+        -------
+        StaticMemoryEstimate
+            Static tensor memory traffic estimate for batch size 1.
+        """
+
+        del ctx, config
+        return _estimate_odom_tcn_static_memory(
+            model,
+            quantization_mode=quantization_mode,
+        )
+
     def count_flops(
         self,
         model: tf.keras.Model,
@@ -418,7 +623,7 @@ class OdomTCNFamily(ModelFamilyABC):
         del config
         if ctx.input_shape is None or len(ctx.input_shape) < 2:
             raise ValueError("OdomTCNFamily requires a 2D input shape: (timesteps, input_dim).")
-        return _count_flops(model, (int(ctx.input_shape[0]), int(ctx.input_shape[1])))
+        return count_flops_keras(model, (int(ctx.input_shape[0]), int(ctx.input_shape[1])))
 
     def materialize_export_model(
         self,

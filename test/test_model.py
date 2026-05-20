@@ -1926,6 +1926,7 @@ class LoadSettingsTests(unittest.TestCase):
             ("nas_config_audio_stm32.yaml", "audio_dscnn", "untrained"),
             ("nas_config_audio_portenta.yaml", "audio_dscnn", "untrained"),
             ("nas_config_flops_rmse.yaml", "odom_tcn", "approx_trained"),
+            ("nas_config_case1_1_memory_proxy_rmse.yaml", "odom_tcn", "approx_trained"),
         ]
         for filename, family, export_variant in cases:
             with self.subTest(filename=filename):
@@ -1957,6 +1958,7 @@ class LoadSettingsTests(unittest.TestCase):
             "nas_config_audio_stm32.yaml",
             "nas_config_audio_portenta.yaml",
             "nas_config_flops_rmse.yaml",
+            "nas_config_case1_1_memory_proxy_rmse.yaml",
         ):
             with self.subTest(filename=filename):
                 settings = load_config(config_path=ROOT_DIR / "src/config" / filename)
@@ -1971,6 +1973,7 @@ class LoadSettingsTests(unittest.TestCase):
 
         self.assertIn("nas_config_audio_stm32.yaml", readme)
         self.assertIn("nas_config_flops_rmse.yaml", readme)
+        self.assertIn("nas_config_case1_1_memory_proxy_rmse.yaml", readme)
         self.assertIn("artifact_stem", readme)
         self.assertIn("export_variant", readme)
         self.assertIn("compile_when_hil_disabled", readme)
@@ -4241,6 +4244,11 @@ class LogTrialTests(unittest.TestCase):
             "flash_bytes": 2000,
             "external_flash_bytes": 3000,
             "weight_storage_mode": "external_flash",
+            "weight_bytes": 4096,
+            "activation_bytes": 8192,
+            "memory_traffic_bytes": 12288,
+            "memory_proxy_dtype_bytes": 1,
+            "memory_proxy_warning_count": 4,
             "rmse_total": 0.3,
             "latency_ms": 10,
             "latency_budget_ms": -1,
@@ -4269,6 +4277,11 @@ class LogTrialTests(unittest.TestCase):
         """Return a representative hyperparameter payload for trial-log tests."""
         return {
             "flops": 1_000_000,
+            "weight_bytes": 4096,
+            "activation_bytes": 8192,
+            "memory_traffic_bytes": 12288,
+            "memory_proxy_dtype_bytes": 1,
+            "memory_proxy_warning_count": 4,
             "nb_filters": 32,
             "kernel_size": 3,
             "dilations": [1, 2, 4],
@@ -4354,6 +4367,23 @@ class LogTrialTests(unittest.TestCase):
                 rows[1][header_index["weight_storage_mode"]],
                 metrics["weight_storage_mode"],
             )
+            self.assertEqual(int(rows[1][header_index["weight_bytes"]]), metrics["weight_bytes"])
+            self.assertEqual(
+                int(rows[1][header_index["activation_bytes"]]),
+                metrics["activation_bytes"],
+            )
+            self.assertEqual(
+                int(rows[1][header_index["memory_traffic_bytes"]]),
+                metrics["memory_traffic_bytes"],
+            )
+            self.assertEqual(
+                int(rows[1][header_index["memory_proxy_dtype_bytes"]]),
+                metrics["memory_proxy_dtype_bytes"],
+            )
+            self.assertEqual(
+                int(rows[1][header_index["memory_proxy_warning_count"]]),
+                metrics["memory_proxy_warning_count"],
+            )
             self.assertEqual(
                 float(rows[1][header_index["latency_ms"]]), metrics["latency_ms"]
             )
@@ -4424,6 +4454,21 @@ class LogTrialTests(unittest.TestCase):
                 fake_trial.attrs["weight_storage_mode"],
                 metrics["weight_storage_mode"],
             )
+            self.assertEqual(fake_trial.attrs["weight_bytes"], metrics["weight_bytes"])
+            self.assertEqual(fake_trial.attrs["activation_bytes"], metrics["activation_bytes"])
+            self.assertEqual(
+                fake_trial.attrs["memory_traffic_bytes"],
+                metrics["memory_traffic_bytes"],
+            )
+            self.assertEqual(
+                fake_trial.attrs["memory_proxy_dtype_bytes"],
+                metrics["memory_proxy_dtype_bytes"],
+            )
+            self.assertEqual(
+                fake_trial.attrs["memory_proxy_warning_count"],
+                metrics["memory_proxy_warning_count"],
+            )
+            self.assertNotIn("hparam__memory_traffic_bytes", fake_trial.attrs)
             self.assertEqual(fake_trial.attrs["task_metrics"], trial_outcome.task_metrics)
             self.assertEqual(fake_trial.attrs["metric__rmse_vel_x"], 0.1)
             self.assertEqual(fake_trial.attrs["metric__rmse_vel_y"], 0.2)
