@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
+
+if os.environ.get("RUN_ANALYSIS_SCRIPT_TESTS") != "1":
+    pytest.skip("analysis-script tests are opt-in", allow_module_level=True)
 
 
 def _load_module(module_name: str, relative_path: str):

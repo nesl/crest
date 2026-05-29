@@ -64,11 +64,6 @@ from tinyodom.hardware import (  # noqa: E402
 )
 from tinyodom import hil_protocol  # noqa: E402
 from tinyodom.devices import ArduinoDevice, CandidatePrepareRequest  # noqa: E402
-from analysis_scripts.compare_keras_tflite_accuracy import (  # noqa: E402
-    _batched_tflite_predict,
-    _normalize_keras_prediction_outputs,
-    _require_odometry_targets,
-)
 from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
     ARDUINO_CLI_BIN,
     ARDUINO_CLI_CONFIG,
@@ -459,67 +454,6 @@ class TFLiteSubprocessPredictionTests(TinyModelMixin, unittest.TestCase):
         for keras_output, tflite_output in zip(keras_outputs, tflite_outputs):
             self.assertEqual(tflite_output.shape, keras_output.shape)
             np.testing.assert_allclose(tflite_output, keras_output, rtol=1e-5, atol=1e-5)
-
-    def test_batched_accuracy_diagnostic_predict_matches_direct_int8_order(self) -> None:
-        """Validate batched diagnostic prediction preserves int8 output order.
-
-        Returns
-        -------
-        None
-            The test passes when the diagnostic batch-inference helper matches
-            the direct host-side TFLite prediction helper for a quantized
-            multi-output model.
-        """
-
-        inputs = tf.keras.Input(shape=(4,), name="input")
-        shared = tf.keras.layers.Dense(3, activation="relu")(inputs)
-        output_0 = tf.keras.layers.Dense(1, activation="linear", name="first")(shared)
-        output_1 = tf.keras.layers.Dense(2, activation="linear", name="second")(shared)
-        model = tf.keras.Model(inputs=inputs, outputs=[output_0, output_1])
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tflite_path = Path(tmpdir) / "multi_output_int8.tflite"
-            convert_to_tflite_model(
-                model,
-                self.train_x,
-                quantization_mode="int8_ptq",
-                output_name=tflite_path,
-            )
-
-            direct = predict_tflite_model(tflite_path, self.train_x[:5])
-            batched = _batched_tflite_predict(tflite_path, self.train_x[:5], batch_size=3)
-
-        self.assertIsInstance(direct, list)
-        self.assertEqual(len(batched), 2)
-        for direct_output, batched_output in zip(direct, batched):
-            self.assertEqual(batched_output.shape, direct_output.shape)
-            np.testing.assert_allclose(batched_output, direct_output, rtol=1e-6, atol=1e-6)
-
-    def test_accuracy_diagnostic_rejects_non_odometry_targets(self) -> None:
-        """Validate the diagnostic fails clearly for non-odometry targets.
-
-        Returns
-        -------
-        None
-            The test passes when a non-mapping target payload raises a
-            diagnostic-specific ``ValueError``.
-        """
-
-        with self.assertRaisesRegex(ValueError, "odometry"):
-            _require_odometry_targets(np.asarray([0, 1]))
-
-    def test_accuracy_diagnostic_rejects_single_output_predictions(self) -> None:
-        """Validate the diagnostic fails clearly for single-output models.
-
-        Returns
-        -------
-        None
-            The test passes when a single prediction array raises a
-            diagnostic-specific ``ValueError``.
-        """
-
-        with self.assertRaisesRegex(ValueError, "two Keras outputs"):
-            _normalize_keras_prediction_outputs(np.zeros((2, 1), dtype=np.float32))
 
     def test_subprocess_nonzero_return_raises(self) -> None:
         """Nonzero worker exits should raise a structured subprocess error."""

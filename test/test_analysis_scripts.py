@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,11 @@ from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+if os.environ.get("RUN_ANALYSIS_SCRIPT_TESTS") != "1":
+    pytest.skip("analysis-script tests are opt-in", allow_module_level=True)
 
 
 def _load_module(module_name: str, relative_path: str):

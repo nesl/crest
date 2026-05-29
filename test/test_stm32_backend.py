@@ -3285,6 +3285,12 @@ class STM32HelperTests(unittest.TestCase):
             staged_root = Path(tmpdir) / canonical_root.name
             shutil.copytree(canonical_root, staged_root)
             _write_text(
+                staged_root / "FSBL" / "Inc" / "stm32_extmem_conf.h",
+                "#define EXTMEM_LRUN_SOURCE_SIZE 0x00020000\n",
+            )
+            _write_text(staged_root / "Appli" / "Inc" / "main.h", "#pragma once\n")
+            _write_text(staged_root / "Appli" / "Src" / "system_stm32n6xx_s.c", "void SystemInit(void) {}\n")
+            _write_text(
                 staged_root / "Appli" / "Inc" / "network_data_params.h",
                 "#define AI_NETWORK_DATA_ACTIVATIONS_SIZE (47688)\n",
             )
