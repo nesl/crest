@@ -23,35 +23,19 @@ INFERENCE_BUDGET_MJ = 400.0
 SCORE_ENERGY_WEIGHT = 0.10
 
 
-def find_repo_root() -> Path:
-    """Return the repository root containing ``src/config``."""
-
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "src" / "config").is_dir():
-            return parent
-    return Path(__file__).resolve().parents[3]
-
-
-REPO_ROOT = find_repo_root()
-CASE3_ROOT = REPO_ROOT / "models" / "crest_case_3"
-DEFAULT_OUTPUT_DIR = CASE3_ROOT / "comparisons" / "case3_audio_selection_tradeoff"
-DEFAULT_PORTENTA_LOG = (
-    CASE3_ROOT
-    / "nas_runs"
-    / "UrbanSound8K_DSCNN_PORTENTA_M7_AUDIO_case3_1_t1"
-    / "log_NAS_UrbanSound8K_DSCNN_PORTENTA_M7_AUDIO_case3_1_t1.csv"
-)
-DEFAULT_STM_LOG = (
-    CASE3_ROOT
-    / "nas_runs"
-    / "UrbanSound8K_DSCNN_STM32_AUDIO_case3_2_t1"
-    / "log_NAS_UrbanSound8K_DSCNN_STM32_AUDIO_case3_2_t1.csv"
-)
-
-
 @dataclass(frozen=True)
 class NativeRun:
-    """Plot inputs for one Case 3 audio NAS run."""
+    """Plot inputs for one Case 3 audio NAS run.
+
+    Parameters
+    ----------
+    label : str
+        Board label used in titles.
+    log_path : pathlib.Path
+        Native NAS log CSV.
+    color : str
+        Matplotlib color for this run.
+    """
 
     label: str
     log_path: Path
@@ -59,7 +43,22 @@ class NativeRun:
 
 
 def numeric_series(frame: pd.DataFrame, column: str, default: float | None = None) -> pd.Series:
-    """Return a numeric column with a default for missing data."""
+    """Return a numeric column with a default for missing data.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        Source frame.
+    column : str
+        Column to parse.
+    default : float or None, optional
+        Fallback value when the column is absent.
+
+    Returns
+    -------
+    pandas.Series
+        Numeric series aligned to ``frame``.
+    """
 
     if column in frame.columns:
         return pd.to_numeric(frame[column], errors="coerce")
@@ -67,7 +66,22 @@ def numeric_series(frame: pd.DataFrame, column: str, default: float | None = Non
 
 
 def boolean_series(frame: pd.DataFrame, column: str, default: bool) -> pd.Series:
-    """Return a boolean column parsed from common CSV string encodings."""
+    """Return a boolean column parsed from common CSV string encodings.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        Source frame.
+    column : str
+        Column to parse.
+    default : bool
+        Fallback value when the column is absent.
+
+    Returns
+    -------
+    pandas.Series
+        Boolean series aligned to ``frame``.
+    """
 
     if column not in frame.columns:
         return pd.Series([default] * len(frame), index=frame.index, dtype="bool")
@@ -78,7 +92,18 @@ def boolean_series(frame: pd.DataFrame, column: str, default: bool) -> pd.Series
 
 
 def valid_scored_trials(frame: pd.DataFrame) -> pd.DataFrame:
-    """Filter a NAS log to successful, feasible, finite-score trials."""
+    """Filter a NAS log to successful, feasible, finite-score trials.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        Raw NAS log frame.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Filtered frame preserving original row indices.
+    """
 
     error_code = numeric_series(frame, "error_code")
     pruned = boolean_series(frame, "pruned", False)
@@ -98,7 +123,13 @@ def valid_scored_trials(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def configure_matplotlib() -> None:
-    """Apply compact paper-figure styling consistent with Case 3 plots."""
+    """Apply compact paper-figure styling consistent with Case 3 plots.
+
+    Returns
+    -------
+    None
+        Updates process-wide Matplotlib rcParams.
+    """
 
     plt.rcParams.update(
         {
@@ -122,7 +153,18 @@ def configure_matplotlib() -> None:
 
 
 def selected_rows(valid: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series]:
-    """Return score-selected, highest macro-F1, and lowest-energy rows."""
+    """Return score-selected, highest macro-F1, and lowest-energy rows.
+
+    Parameters
+    ----------
+    valid : pandas.DataFrame
+        Valid scored NAS trials.
+
+    Returns
+    -------
+    tuple[pandas.Series, pandas.Series, pandas.Series]
+        Score-selected, highest-macro-F1, and lowest-energy rows.
+    """
 
     score_selected = valid.loc[numeric_series(valid, "score").idxmax()]
     highest_f1 = valid.loc[numeric_series(valid, "metric__macro_f1").idxmax()]
@@ -131,7 +173,22 @@ def selected_rows(valid: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series]
 
 
 def row_summary(run: NativeRun, label: str, row: pd.Series) -> dict[str, float | int | str]:
-    """Summarize one highlighted trial row for CSV output."""
+    """Summarize one highlighted trial row for CSV output.
+
+    Parameters
+    ----------
+    run : NativeRun
+        Run metadata.
+    label : str
+        Selection label.
+    row : pandas.Series
+        Highlighted NAS log row.
+
+    Returns
+    -------
+    dict[str, float | int | str]
+        CSV-ready summary row.
+    """
 
     return {
         "board": run.label,
@@ -157,7 +214,28 @@ def plot_run(
     trial_norm: Normalize | None = None,
     trial_cmap: str = "viridis",
 ) -> list[dict[str, float | int | str]]:
-    """Plot one board's macro-F1/energy tradeoff panel."""
+    """Plot one board's macro-F1/energy tradeoff panel.
+
+    Parameters
+    ----------
+    axis : matplotlib.axes.Axes
+        Target axes.
+    run : NativeRun
+        Run metadata and log path.
+    log_x : bool, default=False
+        Whether to use log scaling on energy.
+    color_by_trial : bool, default=False
+        Whether to color points by trial index.
+    trial_norm : matplotlib.colors.Normalize or None, optional
+        Color normalization for trial-index coloring.
+    trial_cmap : str, default="viridis"
+        Colormap for trial-index coloring.
+
+    Returns
+    -------
+    list[dict[str, float | int | str]]
+        Highlighted-row summaries.
+    """
 
     raw = pd.read_csv(run.log_path)
     valid = valid_scored_trials(raw)
@@ -236,12 +314,29 @@ def plot_run(
 def plot_selection_tradeoff(
     native_runs: Sequence[NativeRun],
     output_dir: Path,
+    output_stem: str,
     *,
     log_x: bool = False,
     vertical: bool = False,
     color_by_trial: bool = False,
 ) -> None:
-    """Plot the Case 3 macro-F1/energy score-selection tradeoff."""
+    """Plot the Case 3 macro-F1/energy score-selection tradeoff.
+
+    Parameters
+    ----------
+    native_runs : Sequence[NativeRun]
+        Native NAS runs to plot.
+    output_dir : pathlib.Path
+        Destination directory.
+    output_stem : str
+        Output filename stem.
+    log_x : bool, default=False
+        Whether to use log scaling on energy.
+    vertical : bool, default=False
+        Whether to stack panels vertically.
+    color_by_trial : bool, default=False
+        Whether to color trials by NAS log row index.
+    """
 
     if vertical:
         fig, axes = plt.subplots(len(native_runs), 1, figsize=(3.45, 5.15), sharex=True, sharey=True)
@@ -315,24 +410,29 @@ def plot_selection_tradeoff(
     fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.90 if vertical else 0.912))
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_stem = "case3_audio_selection_tradeoff"
-    if log_x:
-        output_stem += "_logx"
-    if vertical:
-        output_stem += "_vert"
-    if color_by_trial:
-        output_stem += "_heat"
-    summary_stem = f"{output_stem}_summary" if log_x else "case3_audio_selection_tradeoff_summary"
-    if vertical:
-        summary_stem = f"{output_stem}_summary"
+    summary_stem = f"{output_stem}_summary"
     pd.DataFrame(summaries).to_csv(output_dir / f"{summary_stem}.csv", index=False)
     for suffix in ("png", "pdf"):
         fig.savefig(output_dir / f"{output_stem}.{suffix}", bbox_inches="tight")
     plt.close(fig)
 
 
-def plot_selection_tradeoff_v2(native_runs: Sequence[NativeRun], output_dir: Path) -> None:
-    """Plot a narrower side-by-side selection tradeoff clipped at 800 mJ."""
+def plot_selection_tradeoff_v2(
+    native_runs: Sequence[NativeRun],
+    output_dir: Path,
+    output_stem: str,
+) -> None:
+    """Plot a narrower side-by-side selection tradeoff clipped at 800 mJ.
+
+    Parameters
+    ----------
+    native_runs : Sequence[NativeRun]
+        Native NAS runs to plot.
+    output_dir : pathlib.Path
+        Destination directory.
+    output_stem : str
+        Output filename stem.
+    """
 
     with plt.rc_context(
         {
@@ -381,19 +481,26 @@ def plot_selection_tradeoff_v2(native_runs: Sequence[NativeRun], output_dir: Pat
         fig.tight_layout(rect=(-0.015, -0.055, 1.015, 0.94), w_pad=0.45)
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame(summaries).to_csv(output_dir / "case3_audio_selection_tradeoff_v2_summary.csv", index=False)
+        pd.DataFrame(summaries).to_csv(output_dir / f"{output_stem}_summary.csv", index=False)
         for suffix in ("png", "pdf"):
-            fig.savefig(output_dir / f"case3_audio_selection_tradeoff_v2.{suffix}")
+            fig.savefig(output_dir / f"{output_stem}.{suffix}")
         plt.close(fig)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    """Build the command-line argument parser."""
+    """Build the command-line argument parser.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured parser.
+    """
 
     parser = argparse.ArgumentParser(description="Plot Case 3 audio macro-F1/energy selection tradeoffs.")
-    parser.add_argument("--portenta-log", type=Path, default=DEFAULT_PORTENTA_LOG)
-    parser.add_argument("--stm-log", type=Path, default=DEFAULT_STM_LOG)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--portenta-log", type=Path, required=True)
+    parser.add_argument("--stm-log", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--output-stem", required=True, help="Output filename stem.")
     parser.add_argument("--log-x", action="store_true", help="Use a log scale for measured inference energy.")
     parser.add_argument("--vertical", action="store_true", help="Stack board panels vertically for a single-column figure.")
     parser.add_argument("--color-by-trial", action="store_true", help="Color feasible scored trials by NAS log row index.")
@@ -402,7 +509,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the plotting entry point."""
+    """Run the plotting entry point.
+
+    Parameters
+    ----------
+    argv : Sequence[str] or None, optional
+        Command-line arguments excluding the executable name.
+
+    Returns
+    -------
+    int
+        Process exit code.
+    """
 
     args = build_arg_parser().parse_args(argv)
     configure_matplotlib()
@@ -412,9 +530,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     ]
     output_dir = args.output_dir.expanduser().resolve()
     if args.v2:
-        plot_selection_tradeoff_v2(native_runs, output_dir)
+        plot_selection_tradeoff_v2(native_runs, output_dir, args.output_stem)
     else:
-        plot_selection_tradeoff(native_runs, output_dir, log_x=args.log_x, vertical=args.vertical, color_by_trial=args.color_by_trial)
+        plot_selection_tradeoff(
+            native_runs,
+            output_dir,
+            args.output_stem,
+            log_x=args.log_x,
+            vertical=args.vertical,
+            color_by_trial=args.color_by_trial,
+        )
     print(f"Wrote Case 3 audio selection tradeoff figure to {output_dir}")
     return 0
 

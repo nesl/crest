@@ -958,8 +958,33 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-dir",
-        default="models/replays/combined_front_comparison",
+        required=True,
         help="Directory for combined plots and summary CSV.",
+    )
+    parser.add_argument(
+        "--fronts-stem",
+        required=True,
+        help="Output filename stem for the combined front plot.",
+    )
+    parser.add_argument(
+        "--subplot-fronts-stem",
+        required=True,
+        help="Output filename stem for the faceted front plot.",
+    )
+    parser.add_argument(
+        "--regret-stem",
+        required=True,
+        help="Output filename stem for the energy-regret plot.",
+    )
+    parser.add_argument(
+        "--candidate-outcomes-stem",
+        required=True,
+        help="Output filename stem for the candidate-outcome plot.",
+    )
+    parser.add_argument(
+        "--summary-stem",
+        required=True,
+        help="Output filename stem for the summary CSV.",
     )
     parser.add_argument(
         "--feasible-only",
@@ -1013,30 +1038,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     suffix = "_feasible_only" if args.feasible_only else ""
     plot_combined_fronts(
         loaded_pairs,
-        output_dir / f"combined_measured_energy_rmse_fronts{suffix}.png",
+        output_dir / f"{args.fronts_stem}{suffix}.png",
         title=args.title,
         x_scale=args.x_scale,
     )
     plot_subplot_fronts(
         loaded_pairs,
-        output_dir / f"combined_measured_energy_rmse_front_subplots{suffix}.png",
+        output_dir / f"{args.subplot_fronts_stem}{suffix}.png",
         title=args.title,
         x_scale=args.x_scale,
         subplot_cols=args.subplot_cols,
     )
     plot_combined_regret(
         loaded_pairs,
-        output_dir / f"combined_energy_regret_vs_rmse{suffix}.png",
+        output_dir / f"{args.regret_stem}{suffix}.png",
         title="Combined FLOPs-proxy replay energy regret",
         x_scale=args.x_scale,
     )
     plot_candidate_outcome_counts(
         loaded_pairs,
-        output_dir / f"combined_replay_candidate_outcomes{suffix}.png",
+        output_dir / f"{args.candidate_outcomes_stem}{suffix}.png",
         title="CREST front and FLOPs-proxy replay candidate outcomes",
     )
     summary_rows = [summarize_pair(pair) for pair in loaded_pairs]
-    write_summary_csv(output_dir / f"combined_replay_summary{suffix}.csv", summary_rows)
+    write_summary_csv(output_dir / f"{args.summary_stem}{suffix}.csv", summary_rows)
     for row in summary_rows:
         print(
             f"{row['label']}: CREST front={row['crest_front_points']}, "

@@ -20,43 +20,6 @@ import pandas as pd
 
 SUCCESS_ERROR_CODE = 1
 
-def find_repo_root() -> Path:
-    """Return the repository root containing ``src/config``.
-
-    Returns
-    -------
-    pathlib.Path
-        Repository root path.
-    """
-
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "src" / "config").is_dir():
-            return parent
-    return Path(__file__).resolve().parents[2]
-
-
-REPO_ROOT = find_repo_root()
-CASE3_ROOT = REPO_ROOT / "models" / "crest_case_3"
-DEFAULT_OUTPUT_DIR = CASE3_ROOT / "comparisons" / "case3_audio_cross_board_transfer"
-DEFAULT_STM_LOG = (
-    CASE3_ROOT
-    / "nas_runs"
-    / "UrbanSound8K_DSCNN_STM32_AUDIO_case3_2_t1"
-    / "log_NAS_UrbanSound8K_DSCNN_STM32_AUDIO_case3_2_t1.csv"
-)
-DEFAULT_PORTENTA_LOG = (
-    CASE3_ROOT
-    / "nas_runs"
-    / "UrbanSound8K_DSCNN_PORTENTA_M7_AUDIO_case3_1_t1"
-    / "log_NAS_UrbanSound8K_DSCNN_PORTENTA_M7_AUDIO_case3_1_t1.csv"
-)
-DEFAULT_STM_ON_PORTENTA_REPLAY = (
-    CASE3_ROOT / "replays" / "case3_2_stm32_best_on_portenta_m7" / "replay_results.csv"
-)
-DEFAULT_PORTENTA_ON_STM_REPLAY = (
-    CASE3_ROOT / "replays" / "case3_1_portenta_best_on_stm32" / "replay_results.csv"
-)
-
 
 @dataclass(frozen=True)
 class NativeRun:
@@ -213,7 +176,11 @@ def configure_matplotlib() -> None:
     )
 
 
-def plot_score_progress(native_runs: Sequence[NativeRun], output_dir: Path) -> None:
+def plot_score_progress(
+    native_runs: Sequence[NativeRun],
+    output_dir: Path,
+    output_stem: str,
+) -> None:
     """Plot score-over-trial progress for the native Case 3 searches.
 
     Parameters
@@ -222,6 +189,8 @@ def plot_score_progress(native_runs: Sequence[NativeRun], output_dir: Path) -> N
         Native NAS runs to plot.
     output_dir : pathlib.Path
         Directory for generated figure files.
+    output_stem : str
+        Output filename stem.
     """
 
     fig, axes = plt.subplots(
@@ -316,7 +285,7 @@ def plot_score_progress(native_runs: Sequence[NativeRun], output_dir: Path) -> N
 
     output_dir.mkdir(parents=True, exist_ok=True)
     for suffix in ("png", "pdf"):
-        fig.savefig(output_dir / f"case3_score_progress_subplots.{suffix}", bbox_inches="tight")
+        fig.savefig(output_dir / f"{output_stem}.{suffix}", bbox_inches="tight")
     plt.close(fig)
 
 def transfer_points(
@@ -491,7 +460,12 @@ def plot_transfer_panel(
     axis.set_ylim(0.752, 0.781)
     axis.grid(True, alpha=0.3)
 
-def plot_transfer(points: Sequence[TransferPoint], output_dir: Path) -> None:
+def plot_transfer(
+    points: Sequence[TransferPoint],
+    output_dir: Path,
+    output_stem: str,
+    points_stem: str,
+) -> None:
     """Plot cross-board replay quality transfer against energy and latency.
 
     Parameters
@@ -500,6 +474,10 @@ def plot_transfer(points: Sequence[TransferPoint], output_dir: Path) -> None:
         Four highlighted native/replay points.
     output_dir : pathlib.Path
         Directory for generated outputs.
+    output_stem : str
+        Output filename stem.
+    points_stem : str
+        Transfer-points CSV filename stem.
     """
 
     frame = point_dataframe(points)
@@ -577,14 +555,25 @@ def plot_transfer(points: Sequence[TransferPoint], output_dir: Path) -> None:
     fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.92))
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    frame.to_csv(output_dir / "case3_cross_board_transfer_points.csv", index=False)
+    frame.to_csv(output_dir / f"{points_stem}.csv", index=False)
     for suffix in ("png", "pdf"):
-        fig.savefig(output_dir / f"case3_cross_board_transfer_quality_energy_latency.{suffix}", bbox_inches="tight")
+        fig.savefig(output_dir / f"{output_stem}.{suffix}", bbox_inches="tight")
     plt.close(fig)
 
 
 def board_short(label: str) -> str:
-    """Return a compact board label for endpoint annotations."""
+    """Return a compact board label for endpoint annotations.
+
+    Parameters
+    ----------
+    label : str
+        Full board label.
+
+    Returns
+    -------
+    str
+        Compact board label.
+    """
 
     if "STM32" in label:
         return "STM32"
@@ -594,7 +583,18 @@ def board_short(label: str) -> str:
 
 
 def endpoint_label(point: pd.Series) -> str:
-    """Return direct label for native/replay transfer endpoints."""
+    """Return direct label for native/replay transfer endpoints.
+
+    Parameters
+    ----------
+    point : pandas.Series
+        Transfer point row.
+
+    Returns
+    -------
+    str
+        Multiline endpoint label.
+    """
 
     board = board_short(point["measurement_board"])
     if point["point_type"] == "Native optimum":
@@ -602,8 +602,18 @@ def endpoint_label(point: pd.Series) -> str:
     return f"replay\non {board}"
 
 
-def plot_transfer_v2(points: Sequence[TransferPoint], output_dir: Path) -> None:
-    """Plot a simplified dumbbell-style cross-board replay view."""
+def plot_transfer_v2(points: Sequence[TransferPoint], output_dir: Path, output_stem: str) -> None:
+    """Plot a simplified dumbbell-style cross-board replay view.
+
+    Parameters
+    ----------
+    points : Sequence[TransferPoint]
+        Four highlighted native/replay points.
+    output_dir : pathlib.Path
+        Directory for generated outputs.
+    output_stem : str
+        Output filename stem.
+    """
 
     frame = point_dataframe(points)
     architecture_order = ["STM-selected", "Portenta-selected"]
@@ -712,11 +722,11 @@ def plot_transfer_v2(points: Sequence[TransferPoint], output_dir: Path) -> None:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     fig.savefig(
-        output_dir / "case3_cross_board_transfer_quality_energy_latency_v2.png",
+        output_dir / f"{output_stem}.png",
         bbox_inches="tight",
         dpi=400,
     )
-    fig.savefig(output_dir / "case3_cross_board_transfer_quality_energy_latency_v2.pdf", bbox_inches="tight")
+    fig.savefig(output_dir / f"{output_stem}.pdf", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -730,11 +740,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     """
 
     parser = argparse.ArgumentParser(description="Plot Case 3 audio cross-board NAS transfer figures.")
-    parser.add_argument("--stm-log", type=Path, default=DEFAULT_STM_LOG)
-    parser.add_argument("--portenta-log", type=Path, default=DEFAULT_PORTENTA_LOG)
-    parser.add_argument("--stm-on-portenta-replay", type=Path, default=DEFAULT_STM_ON_PORTENTA_REPLAY)
-    parser.add_argument("--portenta-on-stm-replay", type=Path, default=DEFAULT_PORTENTA_ON_STM_REPLAY)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--stm-log", type=Path, required=True)
+    parser.add_argument("--portenta-log", type=Path, required=True)
+    parser.add_argument("--stm-on-portenta-replay", type=Path, required=True)
+    parser.add_argument("--portenta-on-stm-replay", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--score-progress-stem", required=True, help="Score-progress output filename stem.")
+    parser.add_argument("--transfer-stem", required=True, help="Original transfer output filename stem.")
+    parser.add_argument("--transfer-v2-stem", required=True, help="Compact transfer output filename stem.")
+    parser.add_argument("--transfer-points-stem", required=True, help="Transfer-points CSV filename stem.")
     return parser
 
 
@@ -755,19 +769,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
     configure_matplotlib()
     native_runs = [
-        NativeRun("Portenta H7 native search", args.portenta_log, "#D55E00", "s"),
-        NativeRun("STM32 N657 native search", args.stm_log, "#0072B2", "o"),
+        NativeRun("Portenta H7 native search", args.portenta_log.expanduser(), "#D55E00", "s"),
+        NativeRun("STM32 N657 native search", args.stm_log.expanduser(), "#0072B2", "o"),
     ]
     output_dir = args.output_dir.expanduser().resolve()
-    plot_score_progress(native_runs, output_dir)
+    plot_score_progress(native_runs, output_dir, args.score_progress_stem)
     points = transfer_points(
-        stm_log=args.stm_log,
-        portenta_log=args.portenta_log,
-        stm_on_portenta_replay=args.stm_on_portenta_replay,
-        portenta_on_stm_replay=args.portenta_on_stm_replay,
+        stm_log=args.stm_log.expanduser(),
+        portenta_log=args.portenta_log.expanduser(),
+        stm_on_portenta_replay=args.stm_on_portenta_replay.expanduser(),
+        portenta_on_stm_replay=args.portenta_on_stm_replay.expanduser(),
     )
-    plot_transfer(points, output_dir)
-    plot_transfer_v2(points, output_dir)
+    plot_transfer(points, output_dir, args.transfer_stem, args.transfer_points_stem)
+    plot_transfer_v2(points, output_dir, args.transfer_v2_stem)
     print(f"Wrote Case 3 transfer figures to {output_dir}")
     return 0
 

@@ -19,7 +19,6 @@ from matplotlib.ticker import LogFormatterMathtext
 import numpy as np
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
@@ -31,127 +30,55 @@ from plot_combined_replay_fronts import load_pair  # noqa: E402
 CREST_COLOR = "#1f77b4"
 REPLAY_COLOR = "#ff7f0e"
 MEMORY_REPLAY_COLOR = "#2ca02c"
-OUTPUT_BASENAME = "combined_measured_energy_rmse_front_subplots_v2"
-DEFAULT_OUTPUT_DIR = Path("models/replays/visualizations/combined_flops_proxy_replay_ordered_targets_logx")
 DEFAULT_FONT_SCALE = 1.397
 DEFAULT_LEGEND_FONT_SCALE = 1.65
 DEFAULT_WSPACE_SCALE = 0.5
 
 
-def repo_path(*relative_paths: str) -> Path:
-    """Return the first existing repository-relative path.
+def parse_target(value: str) -> tuple[PairInput, PairInput]:
+    """Parse one Case Study 1 target specification.
 
     Parameters
     ----------
-    *relative_paths : str
-        Candidate paths relative to the repository root.
+    value : str
+        CLI value formatted as
+        ``LABEL=MEASURED_RUN_DIR,FLOPS_REPLAY_PATH,MEMORY_REPLAY_PATH``.
 
     Returns
     -------
-    pathlib.Path
-        Existing resolved path, or the first candidate if none exist.
+    tuple[PairInput, PairInput]
+        FLOPs-proxy and memory-traffic-proxy pair inputs for the same target.
+
+    Raises
+    ------
+    ValueError
+        If the argument is malformed.
     """
 
-    for relative_path in relative_paths:
-        path = (REPO_ROOT / relative_path).resolve()
-        if path.exists():
-            return path
-    return (REPO_ROOT / relative_paths[0]).resolve()
-
-
-def default_pairs() -> list[PairInput]:
-    """Return the ordered Case Study 1 target comparisons.
-
-    Returns
-    -------
-    list[PairInput]
-        Four target comparisons in paper order.
-    """
-
-    return [
-        PairInput(
-            label="BLE33",
-            crest_run_dir=repo_path(
-                "models/OxIOD_BLE33_B2B_case1_2_t1",
-                "models/CREST_case1/models/OxIOD_BLE33_B2B_case1_2_t1",
-            ),
-            replay_path=repo_path(
-                "models/replays/data/flops_case1_1_t3_on_ble33",
-                "models/CREST_case1/replays/data/flops_case1_1_t3_on_ble33",
-            ),
-        ),
-        PairInput(
-            label="Portenta M4",
-            crest_run_dir=repo_path(
-                "models/OxIOD_PORTENTA_M4_B2B_case1_4_t5",
-                "models/CREST_case1/models/OxIOD_PORTENTA_M4_B2B_case1_4_t5",
-            ),
-            replay_path=repo_path(
-                "models/replays/data/flops_case1_1_t3_on_portenta_m4",
-                "models/CREST_case1/replays/data/flops_case1_1_t3_on_portenta_m4",
-            ),
-        ),
-        PairInput(
-            label="Portenta M7",
-            crest_run_dir=repo_path(
-                "models/OxIOD_PORTENTA_M7_B2B_case1_3_t1",
-                "models/CREST_case1/models/OxIOD_PORTENTA_M7_B2B_case1_3_t1",
-            ),
-            replay_path=repo_path(
-                "models/replays/data/flops_case1_1_t3_on_portenta_m7",
-                "models/CREST_case1/replays/data/flops_case1_1_t3_on_portenta_m7",
-            ),
-        ),
-        PairInput(
-            label="STM32 N657",
-            crest_run_dir=repo_path(
-                "models/OxIOD_STM32_B2B_case1_5_t1",
-                "models/CREST_case1/models/OxIOD_STM32_B2B_case1_5_t1",
-            ),
-            replay_path=repo_path(
-                "models/replays/data/flops_case1_1_t3_on_stm32_cadenced",
-                "models/CREST_case1/replays/data/flops_case1_1_t3_on_stm32_cadenced",
-            ),
-        ),
-    ]
-
-
-def default_memory_pairs() -> list[PairInput]:
-    """Return the ordered Case Study 1 memory-traffic-proxy replay comparisons.
-
-    Returns
-    -------
-    list[PairInput]
-        Four target comparisons in the same paper order as ``default_pairs``.
-    """
-
-    default = default_pairs()
-    memory_replay_paths = {
-        "BLE33": repo_path(
-            "models/CREST_case1/replays/data/memory_case1_1_on_ble33_v2",
-            "models/replays/data/memory_case1_1_on_ble33_v2",
-        ),
-        "Portenta M4": repo_path(
-            "models/CREST_case1/replays/data/memory_case1_1_on_portenta_m4_v2",
-            "models/replays/data/memory_case1_1_on_portenta_m4_v2",
-        ),
-        "Portenta M7": repo_path(
-            "models/CREST_case1/replays/data/memory_case1_1_on_portenta_m7_v2",
-            "models/replays/data/memory_case1_1_on_portenta_m7_v2",
-        ),
-        "STM32 N657": repo_path(
-            "models/CREST_case1/replays/data/memory_case1_1_on_stm32_b2b_v2",
-            "models/replays/data/memory_case1_1_on_stm32_b2b_v2",
-        ),
-    }
-    return [
-        PairInput(
-            label=pair.label,
-            crest_run_dir=pair.crest_run_dir,
-            replay_path=memory_replay_paths[pair.label],
+    if "=" not in value:
+        raise ValueError(
+            "--target must use LABEL=MEASURED_RUN_DIR,FLOPS_REPLAY_PATH,MEMORY_REPLAY_PATH"
         )
-        for pair in default
-    ]
+    label, raw_paths = value.split("=", 1)
+    label = label.strip()
+    parts = [part.strip() for part in raw_paths.split(",")]
+    if not label or len(parts) != 3 or any(not part for part in parts):
+        raise ValueError(
+            "--target must use LABEL=MEASURED_RUN_DIR,FLOPS_REPLAY_PATH,MEMORY_REPLAY_PATH"
+        )
+    measured_run_dir, flops_replay_path, memory_replay_path = parts
+    return (
+        PairInput(
+            label=label,
+            crest_run_dir=Path(measured_run_dir).expanduser().resolve(),
+            replay_path=Path(flops_replay_path).expanduser().resolve(),
+        ),
+        PairInput(
+            label=label,
+            crest_run_dir=Path(measured_run_dir).expanduser().resolve(),
+            replay_path=Path(memory_replay_path).expanduser().resolve(),
+        )
+    )
 
 
 def point_key_set(points: Sequence[Any]) -> set[str]:
@@ -398,11 +325,7 @@ def write_summary(
         "Case Study 1 combined measured-energy vs static-proxy replay front summary",
         "",
         "Inputs:",
-        "  BLE33: models/OxIOD_BLE33_B2B_case1_2_t1 + models/replays/data/flops_case1_1_t3_on_ble33",
-        "  Portenta M4: models/OxIOD_PORTENTA_M4_B2B_case1_4_t5 + models/replays/data/flops_case1_1_t3_on_portenta_m4",
-        "  Portenta M7: models/OxIOD_PORTENTA_M7_B2B_case1_3_t1 + models/replays/data/flops_case1_1_t3_on_portenta_m7",
-        "  STM32 N657: models/OxIOD_STM32_B2B_case1_5_t1 + models/replays/data/flops_case1_1_t3_on_stm32_cadenced",
-        "  Memory traffic proxy replays: models/CREST_case1/replays/data/memory_case1_1_on_*_v2",
+        "  Supplied by repeated --target CLI arguments in plot order.",
         "",
         f"FLOPs source-front candidates per target: {rows[0]['replay_total_candidates'] if rows else 0}",
         f"Scheduled replay target measurements: {total_replay_scheduled}",
@@ -710,8 +633,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     """
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Output directory.")
-    parser.add_argument("--basename", default=OUTPUT_BASENAME, help="Output file basename.")
+    parser.add_argument(
+        "--target",
+        action="append",
+        required=True,
+        help=(
+            "Target as LABEL=MEASURED_RUN_DIR,FLOPS_REPLAY_PATH,MEMORY_REPLAY_PATH. "
+            "Repeat to control subplot order."
+        ),
+    )
+    parser.add_argument("--output-dir", required=True, help="Output directory.")
+    parser.add_argument("--basename", required=True, help="Output file basename.")
     parser.add_argument(
         "--layout",
         choices=("grid", "row", "column"),
@@ -754,8 +686,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
 
     args = build_arg_parser().parse_args(argv)
-    pairs = [load_pair(pair, feasible_only=False) for pair in default_pairs()]
-    memory_pairs = [load_pair(pair, feasible_only=False) for pair in default_memory_pairs()]
+    parsed_targets = [parse_target(value) for value in args.target]
+    pairs = [load_pair(flops_pair, feasible_only=False) for flops_pair, _memory_pair in parsed_targets]
+    memory_pairs = [load_pair(memory_pair, feasible_only=False) for _flops_pair, memory_pair in parsed_targets]
     paths = plot_case1_fronts_v2(
         pairs,
         Path(args.output_dir),

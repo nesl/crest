@@ -30,16 +30,24 @@ plt.rcParams.update(
 )
 
 
-DEFAULT_LOG = (
-    "models/CREST_case1/models/OxIOD_STM32_CADENCED_case2_2_t3/"
-    "log_NAS_OxIOD_STM32_CADENCED_case2_2_t3.csv"
-)
-DEFAULT_OUTDIR = "outputs/plots"
 DEFAULT_DPI = 400
 
 
 def as_float(row: dict[str, str], key: str) -> float:
-    """Return a CSV field as float, or NaN when absent."""
+    """Return a CSV field as a float.
+
+    Parameters
+    ----------
+    row : dict[str, str]
+        CSV row dictionary.
+    key : str
+        Field name to parse.
+
+    Returns
+    -------
+    float
+        Parsed value, or ``NaN`` when the field is absent or invalid.
+    """
 
     try:
         value = row.get(key, "")
@@ -49,7 +57,20 @@ def as_float(row: dict[str, str], key: str) -> float:
 
 
 def r_squared(xs: list[float], ys: list[float]) -> float:
-    """Return ordinary least-squares R^2 for a simple linear fit."""
+    """Return ordinary least-squares R-squared for a simple linear fit.
+
+    Parameters
+    ----------
+    xs : list[float]
+        X-axis observations.
+    ys : list[float]
+        Y-axis observations.
+
+    Returns
+    -------
+    float
+        Coefficient of determination, or ``NaN`` when it cannot be computed.
+    """
 
     if len(xs) < 3:
         return math.nan
@@ -64,7 +85,21 @@ def r_squared(xs: list[float], ys: list[float]) -> float:
 
 
 def linear_fit(xs: list[float], ys: list[float]) -> tuple[float, float, float]:
-    """Return slope, intercept, and R^2 for a simple linear fit."""
+    """Return slope, intercept, and R-squared for a simple linear fit.
+
+    Parameters
+    ----------
+    xs : list[float]
+        X-axis observations.
+    ys : list[float]
+        Y-axis observations.
+
+    Returns
+    -------
+    tuple[float, float, float]
+        Slope, intercept, and R-squared. Values are ``NaN`` when the fit is
+        degenerate.
+    """
 
     x_mean = sum(xs) / len(xs)
     y_mean = sum(ys) / len(ys)
@@ -83,7 +118,24 @@ def load_paired_rows(
     min_latency_ms: float,
     max_latency_ms: float,
 ) -> list[dict[str, Any]]:
-    """Load rows with successful B2B and cadenced phases for one clock."""
+    """Load rows with successful B2B and cadenced phases for one clock.
+
+    Parameters
+    ----------
+    log_path : pathlib.Path
+        NAS log CSV path.
+    cpu_mhz : str
+        Requested CPU clock label to keep.
+    min_latency_ms : float
+        Inclusive lower latency bound for both phases.
+    max_latency_ms : float
+        Inclusive upper latency bound for both phases.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Normalized rows used by the motivation plot.
+    """
 
     rows: list[dict[str, Any]] = []
     with log_path.open(newline="") as fp:
@@ -122,7 +174,20 @@ def load_paired_rows(
 
 
 def flip_score(lower_b2b: dict[str, Any], higher_b2b: dict[str, Any]) -> float:
-    """Score a ranking flip by visible B2B separation and cadenced reversal."""
+    """Score a ranking flip by visible B2B separation and cadenced reversal.
+
+    Parameters
+    ----------
+    lower_b2b : dict[str, Any]
+        Row with lower continuous-mode energy.
+    higher_b2b : dict[str, Any]
+        Row with higher continuous-mode energy.
+
+    Returns
+    -------
+    float
+        Heuristic score used only to choose an automatic callout pair.
+    """
 
     b2b_gap = abs(
         higher_b2b["b2b_energy_mj_per_inference"]
@@ -139,7 +204,23 @@ def flip_score(lower_b2b: dict[str, Any], higher_b2b: dict[str, Any]) -> float:
 
 
 def find_flip_pair(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return a high-contrast pair that flips energy ranking."""
+    """Return a high-contrast pair that flips energy ranking.
+
+    Parameters
+    ----------
+    rows : list[dict[str, Any]]
+        Candidate paired measurements.
+
+    Returns
+    -------
+    tuple[dict[str, Any], dict[str, Any]]
+        Lower-B2B-energy and higher-B2B-energy rows.
+
+    Raises
+    ------
+    ValueError
+        If no ranking flip exists in the filtered rows.
+    """
 
     candidates: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
     for first, second in itertools.combinations(rows, 2):
@@ -164,7 +245,25 @@ def find_flip_pair(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str
 
 
 def row_by_id(rows: list[dict[str, Any]], row_id: str) -> dict[str, Any]:
-    """Return one loaded row by original CSV line number."""
+    """Return one loaded row by original CSV line number.
+
+    Parameters
+    ----------
+    rows : list[dict[str, Any]]
+        Loaded rows.
+    row_id : str
+        Original CSV line number stored in the ``row`` field.
+
+    Returns
+    -------
+    dict[str, Any]
+        Matching row.
+
+    Raises
+    ------
+    ValueError
+        If ``row_id`` is not present after filtering.
+    """
 
     for row in rows:
         if row["row"] == row_id:
@@ -173,7 +272,15 @@ def row_by_id(rows: list[dict[str, Any]], row_id: str) -> dict[str, Any]:
 
 
 def write_points_csv(rows: list[dict[str, Any]], path: Path) -> None:
-    """Write the normalized paired points used by the plot."""
+    """Write the normalized paired points used by the plot.
+
+    Parameters
+    ----------
+    rows : list[dict[str, Any]]
+        Loaded plot rows.
+    path : pathlib.Path
+        Destination CSV path.
+    """
 
     fieldnames = [
         "row",
@@ -209,7 +316,37 @@ def add_panel(
     xlim: tuple[float, float],
     ylim: tuple[float, float],
 ) -> None:
-    """Draw one scatter panel and optional zoom callout."""
+    """Draw one scatter panel and optional zoom callout.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Target axes.
+    rows : list[dict[str, Any]]
+        Rows to draw.
+    title : str
+        Panel title prefix.
+    x_key : str
+        Row field used for x coordinates.
+    y_key : str
+        Row field used for y coordinates.
+    y_label : str
+        Y-axis label.
+    highlights : dict[str, tuple[str, str]]
+        Highlight mapping from row id to label/color pair.
+    add_inset : bool
+        Whether to draw the zoom inset.
+    inset_loc : str
+        Matplotlib inset location.
+    inset_show_ticks : bool
+        Whether inset tick labels are shown.
+    flip_participants : set[str] or None
+        Optional row ids that participate in ranking flips.
+    xlim : tuple[float, float]
+        X-axis limits.
+    ylim : tuple[float, float]
+        Y-axis limits.
+    """
 
     normal = [row for row in rows if row["row"] not in highlights]
     if flip_participants is None:
@@ -386,7 +523,18 @@ def add_panel(
 
 
 def count_flips(rows: list[dict[str, Any]]) -> tuple[int, int]:
-    """Return number of ranking flips and candidate pairs."""
+    """Return number of ranking flips and candidate pairs.
+
+    Parameters
+    ----------
+    rows : list[dict[str, Any]]
+        Loaded rows.
+
+    Returns
+    -------
+    tuple[int, int]
+        Number of flips and number of comparable pairs.
+    """
 
     pairs = 0
     flips = 0
@@ -408,7 +556,18 @@ def count_flips(rows: list[dict[str, Any]]) -> tuple[int, int]:
 
 
 def flip_participant_rows(rows: list[dict[str, Any]]) -> set[str]:
-    """Return row IDs that participate in at least one ranking flip."""
+    """Return row ids that participate in at least one ranking flip.
+
+    Parameters
+    ----------
+    rows : list[dict[str, Any]]
+        Loaded rows.
+
+    Returns
+    -------
+    set[str]
+        Row ids included in at least one flip pair.
+    """
 
     participants: set[str] = set()
     for first, second in itertools.combinations(rows, 2):
@@ -441,7 +600,31 @@ def build_plot(
     b2b_ylim: tuple[float, float],
     cadenced_ylim: tuple[float, float],
 ) -> None:
-    """Build B2B/cadenced panels."""
+    """Build B2B/cadenced panels.
+
+    Parameters
+    ----------
+    rows : list[dict[str, Any]]
+        Loaded rows.
+    highlights : dict[str, tuple[str, str]]
+        Highlight mapping from row id to label/color pair.
+    out_path : pathlib.Path
+        Output path without suffix.
+    dpi : int
+        PNG output DPI.
+    add_inset : bool
+        Whether to draw the stacked-layout inset.
+    color_flip_participants : bool
+        Whether to color all flip-participating points.
+    layout : {"stacked", "side-by-side"}
+        Figure layout.
+    xlim : tuple[float, float]
+        X-axis limits for both panels.
+    b2b_ylim : tuple[float, float]
+        Continuous-mode y-axis limits.
+    cadenced_ylim : tuple[float, float]
+        Cadenced-mode y-axis limits.
+    """
 
     flip_participants = flip_participant_rows(rows) if color_flip_participants else None
     if layout == "side-by-side":
@@ -516,9 +699,17 @@ def build_plot(
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments.
+
+    Returns
+    -------
+    argparse.Namespace
+        Parsed CLI arguments.
+    """
+
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--log", type=Path, default=Path(DEFAULT_LOG))
-    parser.add_argument("--outdir", type=Path, default=Path(DEFAULT_OUTDIR))
+    parser.add_argument("--log", type=Path, required=True)
+    parser.add_argument("--outdir", type=Path, required=True)
     parser.add_argument("--dpi", type=int, default=DEFAULT_DPI)
     parser.add_argument("--cpu-mhz", default="200")
     parser.add_argument("--min-latency-ms", type=float, default=0.0)
@@ -541,12 +732,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-inset", action="store_true")
     parser.add_argument(
         "--stem",
-        default="oxiod_stm32_cadenced_motivation_200mhz_stacked_callout",
+        required=True,
+        help="Output filename stem for PNG/PDF and points CSV.",
     )
     return parser.parse_args()
 
 
 def main() -> None:
+    """Run the plotting CLI.
+
+    Returns
+    -------
+    None
+        Writes PNG, PDF, and point-summary CSV files.
+    """
+
     args = parse_args()
     args.outdir.mkdir(parents=True, exist_ok=True)
     rows = load_paired_rows(

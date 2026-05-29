@@ -21,10 +21,6 @@ CADENCED_COLOR = "#ff7f0e"
 SUCCESS_ERROR_CODE = 1
 DEFAULT_LATENCY_BUDGET_MS = 200.0
 DEFAULT_WINDOW_BUDGET_MS = 2000.0
-DEFAULT_OUTPUT_DIR = Path(
-    "models/crest_case_2_v2/comparisons/case2_b2b_cadenced_cross_runtime_fronts"
-)
-DEFAULT_PLOT_NAME = "case2_b2b_cadenced_cross_runtime_fronts"
 CASE3_MATCH_WIDTH_IN = 1942.0 / 300.0
 CASE3_MATCH_HEIGHT_IN = 880.5 / 300.0
 Y_AXIS_LIMITS = (0.3, 1.7)
@@ -32,7 +28,22 @@ Y_AXIS_TICKS = np.arange(0.4, 1.8, 0.2)
 
 
 def numeric_series(frame: pd.DataFrame, column: str, default: float | None = None) -> pd.Series:
-    """Return a numeric dataframe column, or a default-valued series if absent."""
+    """Return a numeric dataframe column.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        Source frame.
+    column : str
+        Column to parse.
+    default : float or None, optional
+        Value used when ``column`` is absent.
+
+    Returns
+    -------
+    pandas.Series
+        Numeric series aligned to ``frame``.
+    """
 
     if column in frame.columns:
         return pd.to_numeric(frame[column], errors="coerce")
@@ -40,7 +51,20 @@ def numeric_series(frame: pd.DataFrame, column: str, default: float | None = Non
 
 
 def pareto_mask(x_values: np.ndarray, y_values: np.ndarray) -> np.ndarray:
-    """Return non-dominated membership for two minimized objectives."""
+    """Return non-dominated membership for two minimized objectives.
+
+    Parameters
+    ----------
+    x_values : numpy.ndarray
+        First minimized objective.
+    y_values : numpy.ndarray
+        Second minimized objective.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean mask indicating Pareto-front membership.
+    """
 
     values = np.column_stack([x_values, y_values]).astype(float)
     mask = np.ones(len(values), dtype=bool)
@@ -52,7 +76,18 @@ def pareto_mask(x_values: np.ndarray, y_values: np.ndarray) -> np.ndarray:
 
 
 def add_front_flags(points: pd.DataFrame) -> pd.DataFrame:
-    """Annotate each policy group with panel-front membership."""
+    """Annotate each policy group with panel-front membership.
+
+    Parameters
+    ----------
+    points : pandas.DataFrame
+        Plot points with ``policy``, ``x_value``, and ``rmse`` columns.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Copy of ``points`` with an ``is_front`` column.
+    """
 
     result = points.copy()
     result["is_front"] = False
@@ -68,7 +103,18 @@ def add_front_flags(points: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_study_points(study_points_csv: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load native B2B and cadenced study points from the v2 comparison CSV."""
+    """Load native B2B and cadenced study points from the v2 comparison CSV.
+
+    Parameters
+    ----------
+    study_points_csv : pathlib.Path
+        CSV exported by the Case 2 native study comparison.
+
+    Returns
+    -------
+    tuple[pandas.DataFrame, pandas.DataFrame]
+        B2B-native and cadenced-native point frames.
+    """
 
     raw = pd.read_csv(study_points_csv)
     b2b = raw[raw["study_label"].astype(str).str.contains("B2B", case=False, na=False)].copy()
@@ -107,7 +153,18 @@ def load_study_points(study_points_csv: Path) -> tuple[pd.DataFrame, pd.DataFram
 
 
 def load_cadenced_replay_on_b2b(overlay_points_csv: Path) -> pd.DataFrame:
-    """Load cadenced-front candidates replayed with B2B metrics."""
+    """Load cadenced-front candidates replayed with B2B metrics.
+
+    Parameters
+    ----------
+    overlay_points_csv : pathlib.Path
+        Overlay CSV containing cadenced-front candidates measured as B2B.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Cleaned replay point frame for the left panel.
+    """
 
     raw = pd.read_csv(overlay_points_csv)
     replay = raw[raw["series"].astype(str).str.contains("cadenced Pareto replayed B2B", na=False)].copy()
@@ -136,7 +193,18 @@ def load_cadenced_replay_on_b2b(overlay_points_csv: Path) -> pd.DataFrame:
 
 
 def load_b2b_replay_on_cadenced(replay_csv: Path) -> pd.DataFrame:
-    """Load B2B-front candidates replayed with cadenced runtime metrics."""
+    """Load B2B-front candidates replayed with cadenced runtime metrics.
+
+    Parameters
+    ----------
+    replay_csv : pathlib.Path
+        Replay results CSV for B2B-front candidates measured under cadencing.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Strict-feasible replay point frame for the right panel.
+    """
 
     raw = pd.read_csv(replay_csv)
     completed = raw["replay_status"].astype(str).eq("completed")
@@ -174,7 +242,18 @@ def load_b2b_replay_on_cadenced(replay_csv: Path) -> pd.DataFrame:
 
 
 def clean_points(points: pd.DataFrame) -> pd.DataFrame:
-    """Keep only finite, positive plot coordinates."""
+    """Keep only finite, positive plot coordinates.
+
+    Parameters
+    ----------
+    points : pandas.DataFrame
+        Candidate point frame.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Filtered copy with finite RMSE and positive x coordinates.
+    """
 
     result = points.copy()
     result["x_value"] = pd.to_numeric(result["x_value"], errors="coerce")
@@ -191,7 +270,23 @@ def draw_policy(
     linestyle: str,
     marker_size_scale: float,
 ) -> None:
-    """Draw one policy's point cloud and Pareto front."""
+    """Draw one policy's point cloud and Pareto front.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Target axes.
+    points : pandas.DataFrame
+        Point frame with ``policy`` and ``is_front`` columns.
+    policy : str
+        Policy label to draw.
+    color : str
+        Series color.
+    linestyle : str
+        Pareto-front line style.
+    marker_size_scale : float
+        Multiplier for marker areas.
+    """
 
     group = points[points["policy"] == policy].copy()
     if group.empty:
@@ -237,7 +332,22 @@ def summary_text(
     cadenced_csv: Path,
     b2b_replay_csv: Path,
 ) -> str:
-    """Build the summary text for the generated plot."""
+    """Build the summary text for the generated plot.
+
+    Parameters
+    ----------
+    plotted : pandas.DataFrame
+        Concatenated plotted points.
+    cadenced_csv : pathlib.Path
+        Native cadenced NAS log CSV.
+    b2b_replay_csv : pathlib.Path
+        B2B-on-cadenced replay CSV.
+
+    Returns
+    -------
+    str
+        Human-readable summary text.
+    """
 
     cadenced_raw = pd.read_csv(cadenced_csv)
     err = numeric_series(cadenced_raw, "error_code")
@@ -316,7 +426,42 @@ def render_figure(
     legend_marker_scale: float,
     axes_top: float,
 ) -> tuple[Path, Path, Path, Path]:
-    """Render the cross-runtime figure and write sidecar data."""
+    """Render the cross-runtime figure and write sidecar data.
+
+    Parameters
+    ----------
+    study_points_csv : pathlib.Path
+        Native study points CSV.
+    overlay_points_csv : pathlib.Path
+        Cadenced-front-on-B2B overlay CSV.
+    b2b_on_cadenced_replay_csv : pathlib.Path
+        B2B-front-on-cadenced replay CSV.
+    cadenced_log_csv : pathlib.Path
+        Native cadenced NAS log CSV used for filter accounting.
+    output_dir : pathlib.Path
+        Destination directory.
+    plot_name : str
+        Output filename stem.
+    left_x_max : float
+        Left-panel x-axis upper limit.
+    right_x_max : float
+        Right-panel x-axis upper limit.
+    b2b_display_label : str
+        Legend label for the B2B series.
+    legend_font_scale : float
+        Legend text multiplier.
+    marker_size_scale : float
+        Marker area multiplier.
+    legend_marker_scale : float
+        Legend marker multiplier.
+    axes_top : float
+        Top edge of the subplot area in figure coordinates.
+
+    Returns
+    -------
+    tuple[pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path]
+        PNG, PDF, plotted-points CSV, and summary paths.
+    """
 
     output_dir.mkdir(parents=True, exist_ok=True)
     b2b_points, cadenced_points = load_study_points(study_points_csv)
@@ -456,43 +601,37 @@ def render_figure(
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    """Build the CLI parser."""
+    """Build the CLI parser.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured parser.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--study-points-csv",
-        default=(
-            "models/crest_case_2_v2/comparisons/case2_1_t3_vs_case2_2_t3_study_pareto/"
-            "case2_study_pareto_side_by_side_plotted_points.csv"
-        ),
+        required=True,
         help="Case 2 native study points CSV.",
     )
     parser.add_argument(
         "--overlay-points-csv",
-        default=(
-            "models/crest_case_2_v2/comparisons/case2_1_b2b_vs_case2_2_cadenced_replay_b2b/"
-            "case2_cadenced_pareto_replay_b2b_overlay_points.csv"
-        ),
+        required=True,
         help="Cadenced-Pareto-on-B2B overlay points CSV.",
     )
     parser.add_argument(
         "--b2b-on-cadenced-replay-csv",
-        default=(
-            "models/crest_case_2_v2/replays/data/b2b_case2_1_t3_pareto_on_stm32_cadenced_case2_2_t3/"
-            "replay_results.csv"
-        ),
+        required=True,
         help="B2B-Pareto-on-cadenced replay results CSV.",
     )
     parser.add_argument(
         "--cadenced-log-csv",
-        default=(
-            "models/crest_case_2_v2/nas_runs/OxIOD_STM32_CADENCED_case2_2_t3/"
-            "log_NAS_OxIOD_STM32_CADENCED_case2_2_t3.csv"
-        ),
+        required=True,
         help="Native cadenced NAS log CSV, used for filter accounting.",
     )
-    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Output directory.")
-    parser.add_argument("--plot-name", default=DEFAULT_PLOT_NAME, help="Output filename stem.")
+    parser.add_argument("--output-dir", required=True, help="Output directory.")
+    parser.add_argument("--plot-name", required=True, help="Output filename stem.")
     parser.add_argument("--left-x-max", type=float, default=165.0, help="Left panel x-axis upper limit.")
     parser.add_argument("--right-x-max", type=float, default=186.5, help="Right panel x-axis upper limit.")
     parser.add_argument("--b2b-display-label", default="B2B", help="Display label for B2B/continuous series.")
@@ -504,7 +643,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the plotting CLI."""
+    """Run the plotting CLI.
+
+    Parameters
+    ----------
+    argv : Sequence[str] or None, optional
+        CLI arguments excluding the executable name.
+
+    Returns
+    -------
+    int
+        Process exit code.
+    """
 
     args = build_arg_parser().parse_args(argv)
     for path in render_figure(
