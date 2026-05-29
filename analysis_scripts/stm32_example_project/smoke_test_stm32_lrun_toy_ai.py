@@ -19,7 +19,7 @@ RUNNER = SCRIPT_DIR / "run_stm32_lrun_toy_ai_hil.py"
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Smoke-test the LRUN STM32 toy AI path.")
     parser.add_argument("--project-root", type=Path, default=SCRIPT_DIR / "stm32_lrun_toy_ai_project")
-    parser.add_argument("--config", type=Path, default=SCRIPT_DIR.parents[1] / "src" / "config" / "nas_config.yaml")
+    parser.add_argument("--config", type=Path, default=SCRIPT_DIR.parents[1] / "src" / "config" / "nas_config_stm32.yaml")
     parser.add_argument("--output-dir", type=Path, default=SCRIPT_DIR / "out" / "stm32_lrun_smoke")
     parser.add_argument("--stage-output-root", type=Path, default=Path("/tmp/tinyodom_stm32_lrun_smoke"))
     parser.add_argument("--phase", choices=["back_to_back", "cadenced"], default="cadenced")

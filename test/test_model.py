@@ -1920,13 +1920,13 @@ class LoadSettingsTests(unittest.TestCase):
     def test_shipped_configs_use_artifact_stem_and_export_variant(self) -> None:
         """All shipped configs should load with the Phase 5 artifact schema."""
         cases = [
-            ("nas_config.yaml", "odom_tcn", "approx_trained"),
+            ("nas_config_stm32.yaml", "odom_tcn", "approx_trained"),
             ("nas_config_ble.yaml", "odom_tcn", "approx_trained"),
             ("nas_config_portenta.yaml", "odom_tcn", "approx_trained"),
             ("nas_config_audio_stm32.yaml", "audio_dscnn", "untrained"),
             ("nas_config_audio_portenta.yaml", "audio_dscnn", "untrained"),
             ("nas_config_flops_rmse.yaml", "odom_tcn", "approx_trained"),
-            ("nas_config_case1_1_memory_proxy_rmse.yaml", "odom_tcn", "approx_trained"),
+            ("nas_config_memory_proxy.yaml", "odom_tcn", "approx_trained"),
         ]
         for filename, family, export_variant in cases:
             with self.subTest(filename=filename):
@@ -1941,29 +1941,26 @@ class LoadSettingsTests(unittest.TestCase):
                 self.assertEqual(settings.model.family, family)
                 self.assertEqual(selection["model_config"]["params"].export_variant, export_variant)
 
-    def test_shipped_configs_use_production_budgets_and_audio_default_search(self) -> None:
-        """Checked-in configs should use production budgets and default audio search."""
+    def test_shipped_configs_use_production_training_budgets(self) -> None:
+        """Checked-in example configs should use production training budgets."""
 
-        expected_budget = {
-            "nas_epochs": 55,
-            "model_epochs": 990,
-            "nas_trials": 150,
-            "nas_multiobjective_population_size": 50,
-            "max_total_trials": 300,
+        expected_budgets = {
+            "nas_config_stm32.yaml": 250,
+            "nas_config_ble.yaml": 150,
+            "nas_config_portenta.yaml": 150,
+            "nas_config_audio_stm32.yaml": 200,
+            "nas_config_audio_portenta.yaml": 200,
+            "nas_config_flops_rmse.yaml": 150,
+            "nas_config_memory_proxy.yaml": 150,
         }
-        for filename in (
-            "nas_config.yaml",
-            "nas_config_ble.yaml",
-            "nas_config_portenta.yaml",
-            "nas_config_audio_stm32.yaml",
-            "nas_config_audio_portenta.yaml",
-            "nas_config_flops_rmse.yaml",
-            "nas_config_case1_1_memory_proxy_rmse.yaml",
-        ):
+        for filename, expected_trials in expected_budgets.items():
             with self.subTest(filename=filename):
                 settings = load_config(config_path=ROOT_DIR / "src/config" / filename)
-                for key, value in expected_budget.items():
-                    self.assertEqual(settings.training[key], value)
+                self.assertEqual(settings.training["nas_epochs"], 55)
+                self.assertEqual(settings.training["model_epochs"], 990)
+                self.assertEqual(settings.training["nas_trials"], expected_trials)
+                self.assertEqual(settings.training["nas_multiobjective_population_size"], 50)
+                self.assertEqual(settings.training["max_total_trials"], 300)
                 if filename.startswith("nas_config_audio"):
                     self.assertEqual(settings.model.search, {})
 
@@ -1973,7 +1970,7 @@ class LoadSettingsTests(unittest.TestCase):
 
         self.assertIn("nas_config_audio_stm32.yaml", readme)
         self.assertIn("nas_config_flops_rmse.yaml", readme)
-        self.assertIn("nas_config_case1_1_memory_proxy_rmse.yaml", readme)
+        self.assertIn("nas_config_memory_proxy.yaml", readme)
         self.assertIn("artifact_stem", readme)
         self.assertIn("export_variant", readme)
         self.assertIn("compile_when_hil_disabled", readme)
@@ -1993,8 +1990,8 @@ class LoadSettingsTests(unittest.TestCase):
             "TinyOdomEx_UrbanSound8K_STM32_NUCLEO_N657X0_Q.keras",
         )
         self.assertEqual(settings.training.quantization.mode, "int8_ptq")
-        self.assertTrue(settings.training.quantization.search)
-        self.assertEqual(settings.training.quantization.choices, ["float", "int8_ptq"])
+        self.assertFalse(settings.training.quantization.search)
+        self.assertEqual(settings.training.quantization.choices, ["int8_ptq"])
 
     def test_audio_stm32_config_resolves_audio_components(self) -> None:
         """The audio STM32 config should resolve the audio component stack."""

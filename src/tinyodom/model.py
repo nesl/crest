@@ -38,7 +38,7 @@ from .microcontrollers import (
     get_device as get_microcontroller_device,
     resolve_device_options,
 )
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "nas_config.yaml"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "nas_config_stm32.yaml"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STM32_DEFAULT_PROJECT_ROOT = (
     REPO_ROOT
@@ -2232,7 +2232,7 @@ def load_config(
     ----------
     config_path : str | Path | None
         Optional override for the YAML location. Defaults to
-        ``src/config/nas_config.yaml``.
+        ``src/config/nas_config_stm32.yaml``.
     task_metric_names : set[str] | None, optional
         Task-owned metric names that may appear in score or prune configs. When
         omitted, generic NAS-policy validation may preserve metric names that

@@ -1,6 +1,6 @@
 # Static Memory Proxy
 
-Offline prototype for adding a second cheap proxy line beside FLOPs for Case 1 OdomTCN analysis. This does not modify NAS training, configs, export, flashing, or HIL. It reads logged trial CSVs, rebuilds each OdomTCN candidate from logged hyperparameters, and writes an augmented CSV with static memory proxy columns.
+Offline prototype for adding a second cheap proxy line beside FLOPs for OdomTCN analysis. This does not modify NAS training, configs, export, flashing, or HIL. It reads logged trial CSVs, rebuilds each OdomTCN candidate from logged hyperparameters, and writes an augmented CSV with static memory proxy columns.
 
 ## Proxy Definition
 
@@ -36,14 +36,14 @@ proxy_quantization_mode_source
 
 Use `--include-layer-details` to also write `proxy_layer_details_json`.
 
-## Run Case 1 STM32
+## Run
 
 From the repository root:
 
 ```bash
 python analysis_scripts/static_memory_proxy/compute_static_memory_proxy.py \
-  --config src/config/nas_config_case1_5_stm32_b2b_oxiod.yaml \
-  --trials-csv models/OxIOD_STM32_B2B_case1_5_t1/trials.csv \
+  --config src/config/nas_config_memory_proxy.yaml \
+  --trials-csv path/to/trials.csv \
   --output-csv analysis_scripts/static_memory_proxy/stm32_trials_with_memory_proxy.csv \
   --plot \
   --plot-dir analysis_scripts/static_memory_proxy

@@ -37,7 +37,7 @@ DEFAULT_HARNESS_PORT = "/dev/ttyACM1"
 DEFAULT_BAUD = 115200
 DEFAULT_LATENCY_BUDGET_MS = 200.0
 DEFAULT_OUTPUT = SCRIPT_DIR / "stm32_toy_ai_metrics.json"
-DEFAULT_CONFIG = REPO_ROOT / "src" / "config" / "nas_config.yaml"
+DEFAULT_CONFIG = REPO_ROOT / "src" / "config" / "nas_config_stm32.yaml"
 DEFAULT_STAGE_OUTPUT_ROOT = Path("/tmp/tinyodom_stm32_toy_generate")
 DEFAULT_HARNESS_FQBN = "arduino:mbed_nano:nano33ble"
 DEFAULT_HARNESS_AUTO_FLASH = "once"
@@ -261,7 +261,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "TinyODOM NAS configuration YAML used to generate and export the perturbed model. "
             f"Default: {DEFAULT_CONFIG}. "
-            "Examples: src/config/nas_config.yaml, configs/my_experiment.yaml"
+            "Examples: src/config/nas_config_stm32.yaml, configs/my_experiment.yaml"
         ),
     )
     parser.add_argument(

@@ -1,35 +1,34 @@
-# Hardware / device configuration
+# Portenta H7 CM7 OxIOD measured-energy NAS example.
+
 device:
   name: PORTENTA_H7
   hil: true
+  compile_when_hil_disabled: auto
+  runtime_mode: back_to_back
   serial_port: "/dev/ttyACM0"
-  measured_inference_runs: 10                # Number of on-device inference invokes averaged into one measured HIL attempt.
+  measured_inference_runs: 10
+  dut_ready_timeout_s: 12.0
+  serial_timeout_s: 12.0
+  harness_serial_port: "/dev/ttyACM1"
+  harness_fqbn: "arduino:mbed_nano:nano33ble"
+  harness_auto_flash: "once"
+  harness_ready_timeout_s: 5.0
+  harness_arm_timeout_s: 5.0
+  harness_active_timeout_s: 30.0
+  harness_done_timeout_s: 5.0
   portenta:
-    target_core: "cm7"      # Required for PORTENTA_H7. Choose: cm7 or cm4.
-    split: "75_25"          # Optional. Defaults: cm7->75_25, cm4->50_50.
-    security: "none"        # Optional. Default is none.
-  dut_ready_timeout_s: 14.5                    # Time to wait for DUT READY before sending START.
-  harness_serial_port: "/dev/ttyACM1"          # Serial port for the harness board (INA228 reader).
-  harness_fqbn: "arduino:mbed_nano:nano33ble"  # Arduino FQBN used to compile/upload the harness sketch.
-  harness_auto_flash: "once"                   # Harness flash policy: once, always, or never.
-  harness_arm_pin: 3                           # Active-low arm GPIO shared between DUT and harness.
-  harness_trigger_pin: 2                       # Trigger GPIO toggled HIGH/LOW around inference.
-  dut_arm_hold_ms: 600                         # DUT hold time after arm LOW before trigger HIGH.
-  harness_stable_low_ms: 500                   # Required D3 LOW + D2 LOW stability before harness arms.
-  harness_ready_timeout_s: 3.6                 # Time to wait for HARNESS READY after PING.
-  harness_arm_timeout_s: 0.0                   # Harness arm timeout in seconds (compiled into harness firmware; 0 disables).
-  harness_active_timeout_s: 12.0               # Max duration of the measurement window.
-  harness_done_timeout_s: 3.6                  # Time to wait for DONE after the window completes.
+    target_core: "cm7"
+    split: "75_25"
+    security: "none"
 
-# Explicit modular component selection
 dataset:
   name: oxiod
   params:
-    sampling_rate_hz: 100           # Hz, derived from dataset
-    window_size: 200                # matches TinyODOM paper
-    stride: 20                      # matches TinyODOM paper
+    sampling_rate_hz: 100
+    window_size: 200
+    stride: 20
     directory: "data/oxiod/"
-    calibration_windows: 10000      # windows to load for calibration-only jobs; set None for full split
+    calibration_windows: 10000
 
 task:
   name: odometry_regression
@@ -39,27 +38,22 @@ task:
 model:
   family: odom_tcn
   params:
-    # Odometry HIL/export uses this deterministic perturbed export model to
-    # approximate trained numeric behavior without requiring a checkpoint.
     export_variant: approx_trained
   search: {}
 
-# Training-time switches and limits
 training:
   nas_epochs: 55
   model_epochs: 990
   nas_trials: 150
-  nas_multiobjective_population_size: 50 # population size for multi-objective NAS, note: nas trials should be at least 3x this value
-  max_total_trials: 300  # safety cap for total attempts to offset pruned/failed runs
+  nas_multiobjective_population_size: 50
+  max_total_trials: 300
   quantization:
     mode: int8_ptq
-    search: false
-    choices: [int8_ptq]
+    search: true
+    choices: [float, int8_ptq]
   latency_proxy_max_flops: 30000000.0
   train: true
-  # Enable energy-aware scoring during NAS
   energy_aware: true
-  # Input mode for HIL sketches: uniform, oxiod_representative, or oxiod_real
   input_mode: "uniform"
 
 nas:
@@ -69,17 +63,16 @@ nas:
       objectives:
         - metric: rmse_total
           direction: minimize
-        - metric: latency_ms
+        - metric: energy_mj_per_inference
           direction: minimize
   prune:
     rules: []
 
-# Output directories and filenames
 outputs:
   models_dir: "models"
   candidate_dir: "odom_tcn"
-  artifact_stem: "TinyOdomEx_OxIOD"
-  log_file_name: "log_NAS_Oxiod_PORTENTA_H7_MO.csv"
+  artifact_stem: "TinyOdomEx_OxIOD_PORTENTA_M7"
+  log_file_name: "log_NAS_TinyOdomEx_OxIOD_PORTENTA_M7.csv"
 
 network:
   host: "127.0.0.1"
@@ -87,6 +80,5 @@ network:
   recv_timeout_sec: 720
   send_timeout_sec: 720
 
-# Runtime logging controls
 logging:
   level: "INFO"
