@@ -22,6 +22,9 @@ Related docs:
 - [`hil_server.py`](hil_server.py)
   Runs the ZeroMQ HIL server that materializes models, stages device-specific
   candidates, and returns compile/runtime metrics.
+- [`pareto_hil_replay.py`](pareto_hil_replay.py)
+  Replays already-logged Pareto-front NAS candidates through a target HIL
+  config and writes replay artifacts.
 
 ## Package Map
 
@@ -64,6 +67,9 @@ points above.
 - [`tinyodom/hil_runtime.py`](tinyodom/hil_runtime.py)
   Runtime-owned HIL request construction and metric collection helpers used by
   the HIL server and related tests.
+- [`tinyodom/pareto_replay.py`](tinyodom/pareto_replay.py)
+  Reusable Pareto replay selection, request reconstruction, resume, manifest,
+  and result-writing logic behind `pareto_hil_replay.py`.
 - [`tinyodom/devices.py`](tinyodom/devices.py)
   Shared device dataclasses and the `DeviceInterface` contract used by
   hardware backends.
@@ -248,6 +254,23 @@ Dynamic columns are added per trial outcome:
 
 The same information is also mirrored into `trial.user_attrs`, including the
 fully expanded `metric__*` and `hparam__*` keys.
+
+## Pareto HIL Replay
+
+`pareto_hil_replay.py` does not run NAS or retrain models. It reads a source
+NAS CSV/config, reconstructs the logged candidate payloads, selects the valid
+Pareto front, and reuses the same HIL server/backend request path that normal
+hardware scoring uses.
+
+Use `--dry-run` as a hardware-free preflight; it writes `manifest.json`,
+`replay_requests.jsonl`, and `replay_results.csv` without instantiating
+`HILServer`. For hardware execution, the command forwards reconstructed
+`family_hparams`, `runtime_metadata`, `quantization_mode`, optional preserved
+device options, and optional CLI model/checkpoint overrides to HIL.
+
+`--resume` skips payload keys already present in `replay_results.csv` with
+`completed` or `dry_run` status. Do not reuse a dry-run output directory for a
+hardware replay with `--resume` unless skipping those candidates is intentional.
 
 ## Extension Paths
 
