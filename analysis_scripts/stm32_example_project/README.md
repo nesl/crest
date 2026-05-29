@@ -271,7 +271,7 @@ Useful flags:
 
 ```bash
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --clean
-conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --config src/config/nas_config.yaml
+conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --config src/config/nas_config_stm32.yaml
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --dut-port /dev/ttyACM0 --harness-port /dev/ttyACM1
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --output analysis_scripts/stm32_example_project/last_metrics.json
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/run_stm32_toy_ai_hil.py --latency-budget-ms 200.0
@@ -532,7 +532,7 @@ Common commands:
 ```bash
 # Rebuild the default perturbed model and restage the generated network files:
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/generate_and_stage_stm32_toy_ai.py \
-  --config src/config/nas_config.yaml
+  --config src/config/nas_config_stm32.yaml
 
 # Stage a prebuilt TFLite model instead of rebuilding one:
 conda run -n tinyodomex python analysis_scripts/stm32_example_project/generate_and_stage_stm32_toy_ai.py \

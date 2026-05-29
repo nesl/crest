@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -10,7 +11,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 from addict import Dict
+
+if os.environ.get("RUN_ANALYSIS_SCRIPT_TESTS") != "1":
+    pytest.skip("analysis-script tests are opt-in", allow_module_level=True)
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"

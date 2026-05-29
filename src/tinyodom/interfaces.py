@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from .model_metrics import StaticMemoryEstimate, count_flops_keras, estimate_static_memory_keras
 from .pipeline_types import (
     DataSplit,
     DatasetBundle,
@@ -657,6 +658,41 @@ class ModelFamilyABC(ABC):
 
         return {}
 
+    def estimate_static_memory(
+        self,
+        model: tf.keras.Model,
+        ctx: ModelBuildContext,
+        config: Any,
+        *,
+        quantization_mode: str,
+    ) -> StaticMemoryEstimate:
+        """Estimate static tensor memory traffic for one built model.
+
+        Parameters
+        ----------
+        model : tensorflow.keras.Model
+            Built model to inspect.
+        ctx : ModelBuildContext
+            Normalized build-time context. The default implementation does not
+            need this value, but model families may use it for custom layers.
+        config : Any
+            Model-family configuration subtree. The default implementation does
+            not need this value.
+        quantization_mode : str
+            Deployment quantization mode used to choose scalar byte width.
+
+        Returns
+        -------
+        StaticMemoryEstimate
+            Static proxy estimate for batch size 1.
+        """
+
+        del ctx, config
+        return estimate_static_memory_keras(
+            model,
+            quantization_mode=quantization_mode,
+        )
+
     def count_flops(
         self,
         model: tf.keras.Model,
@@ -670,25 +706,29 @@ class ModelFamilyABC(ABC):
         model : tf.keras.Model
             Built model to profile.
         ctx : ModelBuildContext
-            Normalized build-time context.
+            Normalized build-time context containing the logical input shape.
         config : Any
-            Model-family configuration subtree.
+            Model-family configuration subtree. The default implementation does
+            not need this value.
 
         Returns
         -------
         int
-            Model FLOP count when implemented by a concrete family or later
-            shared utility.
+            Static graph FLOP proxy for a batch-size-1 forward pass.
 
         Raises
         ------
-        NotImplementedError
-            Raised by the Phase 1 default implementation because FLOP counting
-            has not yet been generalized into the abstraction layer.
+        ValueError
+            If ``ctx.input_shape`` is missing or empty.
         """
 
-        del model, ctx, config
-        raise NotImplementedError("FLOP counting is not implemented by the Phase 1 default.")
+        del config
+        if ctx.input_shape is None or len(ctx.input_shape) == 0:
+            raise ValueError("ModelFamilyABC requires a non-empty input shape to count FLOPs.")
+        return count_flops_keras(
+            model,
+            tuple(int(dim) for dim in ctx.input_shape),
+        )
 
     def supports_tflite(self) -> bool:
         """Return whether the family is intended to support TFLite export.

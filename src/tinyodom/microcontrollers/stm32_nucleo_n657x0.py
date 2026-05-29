@@ -3109,10 +3109,18 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                         if passthrough_value is not None:
                             merged_power_metrics[passthrough_field] = passthrough_value
                     merged_power_metrics.update(runtime_storage_metrics)
+                    result_latency_s = telemetry.latency_s
+                    try:
+                        harness_latency_s = float(merged_power_metrics.get("harness_latency_s", -1.0))
+                    except (TypeError, ValueError):
+                        harness_latency_s = -1.0
+                    phase_label = str(merged_power_metrics.get("phase", "")).strip().lower()
+                    if phase_label == "back_to_back" and harness_latency_s > 0.0:
+                        result_latency_s = harness_latency_s
                     return DeviceMetrics(
                         ram_bytes=compile_result.ram_bytes or -1,
                         flash_bytes=compile_result.flash_bytes or -1,
-                        latency_s=telemetry.latency_s,
+                        latency_s=result_latency_s,
                         arena_bytes=compile_result.arena_bytes or -1,
                         error_code=HIL_ERROR_OK,
                         power_metrics=merged_power_metrics,
@@ -3445,10 +3453,15 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         )
         merged_power_metrics["runtime_mode"] = "cadenced"
         merged_power_metrics.update(self._cadenced_power_metrics_from_phase_result(cadenced_result))
+        result_latency_s = (
+            cadenced_result.latency_s
+            if cadenced_result.latency_s >= 0.0
+            else base_result.latency_s
+        )
         return DeviceMetrics(
             ram_bytes=base_result.ram_bytes,
             flash_bytes=base_result.flash_bytes,
-            latency_s=base_result.latency_s,
+            latency_s=result_latency_s,
             arena_bytes=base_result.arena_bytes,
             error_code=base_result.error_code,
             power_metrics=merged_power_metrics,

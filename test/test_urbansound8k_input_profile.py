@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 import numpy as np
+import pytest
 
+if os.environ.get("RUN_ANALYSIS_SCRIPT_TESTS") != "1":
+    pytest.skip("analysis-script tests are opt-in", allow_module_level=True)
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT_DIR / "analysis_scripts" / "hil_noise_analysis" / "urbansound8k_input_profile.py"

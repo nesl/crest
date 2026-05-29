@@ -19,7 +19,7 @@ from tinyodom.builtin_components import ensure_builtin_components_registered
 from tinyodom.model import configured_quantization_mode, load_config, quantization_requires_calibration
 from tinyodom.runtime_bootstrap import bootstrap_pipeline
 
-DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "config" / "nas_config.yaml"
+DEFAULT_CONFIG_PATH = REPO_ROOT / "src" / "config" / "nas_config_stm32.yaml"
 PERTURBED_VARIANT_NAME = "approx_trained"
 
 

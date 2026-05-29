@@ -32,6 +32,7 @@ from tinyodom.model import (
     collect_bn_layers,
     collect_non_bn_bias_layers,
     count_flops,
+    evaluate_feasibility_rules,
     evaluate_score_config,
     iter_layers,
     load_config,
@@ -1683,38 +1684,45 @@ class LoadSettingsTests(unittest.TestCase):
             self.assertEqual(settings.training.quantization.choices, ["int8_ptq"])
 
     def test_load_settings_accepts_searchable_quantization_on_supported_board(self) -> None:
-        """Supported boards may opt into float/int8 PTQ quantization search."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_path = Path(tmpdir)
-            config_path = tmp_path / "config.yaml"
-            config_path.write_text(
-                "\n".join(
-                    [
-                        "device:",
-                        "  name: PORTENTA_H7",
-                        "  portenta:",
-                        "    target_core: cm7",
-                        "    split: 75_25",
-                        "    security: none",
-                        "training:",
-                        "  nas_trials: 5",
-                        "  quantization:",
-                        "    mode: int8_ptq",
-                        "    search: true",
-                        "    choices: [float, int8_ptq]",
-                        *self._score_lines(include_quantization=False),
-                        "outputs:",
-                        f"  models_dir: \"{tmp_path / 'models'}\"",
-                        f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
-                    ]
-                )
-            )
+        """Arduino-backed supported boards may search float and int8 PTQ exports."""
+        for device_lines in (
+            [
+                "  name: PORTENTA_H7",
+                "  portenta:",
+                "    target_core: cm7",
+                "    split: 75_25",
+                "    security: none",
+            ],
+            ["  name: ARDUINO_NANO_33_BLE_SENSE"],
+        ):
+            with self.subTest(device=device_lines[0]):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    tmp_path = Path(tmpdir)
+                    config_path = tmp_path / "config.yaml"
+                    config_path.write_text(
+                        "\n".join(
+                            [
+                                "device:",
+                                *device_lines,
+                                "training:",
+                                "  nas_trials: 5",
+                                "  quantization:",
+                                "    mode: int8_ptq",
+                                "    search: true",
+                                "    choices: [float, int8_ptq]",
+                                *self._score_lines(include_quantization=False),
+                                "outputs:",
+                                f"  models_dir: \"{tmp_path / 'models'}\"",
+                                f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
+                                "  artifact_stem: \"TinyOdomEx_Test\"",
+                            ]
+                        )
+                    )
 
-            settings = load_config(config_path=config_path)
+                    settings = load_config(config_path=config_path)
 
-            self.assertTrue(settings.training.quantization.search)
-            self.assertEqual(settings.training.quantization.choices, ["float", "int8_ptq"])
+                    self.assertTrue(settings.training.quantization.search)
+                    self.assertEqual(settings.training.quantization.choices, ["float", "int8_ptq"])
 
     def test_load_settings_rejects_invalid_quantization_configs(self) -> None:
         """Quantization must use the new mapping shape and supported choices."""
@@ -1733,12 +1741,6 @@ class LoadSettingsTests(unittest.TestCase):
                 "    mode: float",
                 "    search: false",
                 "    choices: [int8_ptq]",
-            ],
-            "unsupported_ble_float": [
-                "  quantization:",
-                "    mode: float",
-                "    search: false",
-                "    choices: [float]",
             ],
         }
         for label, quantization_lines in cases.items():
@@ -1918,12 +1920,13 @@ class LoadSettingsTests(unittest.TestCase):
     def test_shipped_configs_use_artifact_stem_and_export_variant(self) -> None:
         """All shipped configs should load with the Phase 5 artifact schema."""
         cases = [
-            ("nas_config.yaml", "odom_tcn", "approx_trained"),
+            ("nas_config_stm32.yaml", "odom_tcn", "approx_trained"),
             ("nas_config_ble.yaml", "odom_tcn", "approx_trained"),
             ("nas_config_portenta.yaml", "odom_tcn", "approx_trained"),
             ("nas_config_audio_stm32.yaml", "audio_dscnn", "untrained"),
             ("nas_config_audio_portenta.yaml", "audio_dscnn", "untrained"),
             ("nas_config_flops_rmse.yaml", "odom_tcn", "approx_trained"),
+            ("nas_config_memory_proxy.yaml", "odom_tcn", "approx_trained"),
         ]
         for filename, family, export_variant in cases:
             with self.subTest(filename=filename):
@@ -1938,28 +1941,26 @@ class LoadSettingsTests(unittest.TestCase):
                 self.assertEqual(settings.model.family, family)
                 self.assertEqual(selection["model_config"]["params"].export_variant, export_variant)
 
-    def test_shipped_configs_use_production_budgets_and_audio_default_search(self) -> None:
-        """Checked-in configs should use production budgets and default audio search."""
+    def test_shipped_configs_use_production_training_budgets(self) -> None:
+        """Checked-in example configs should use production training budgets."""
 
-        expected_budget = {
-            "nas_epochs": 55,
-            "model_epochs": 990,
-            "nas_trials": 150,
-            "nas_multiobjective_population_size": 50,
-            "max_total_trials": 300,
+        expected_budgets = {
+            "nas_config_stm32.yaml": 250,
+            "nas_config_ble.yaml": 150,
+            "nas_config_portenta.yaml": 150,
+            "nas_config_audio_stm32.yaml": 200,
+            "nas_config_audio_portenta.yaml": 200,
+            "nas_config_flops_rmse.yaml": 150,
+            "nas_config_memory_proxy.yaml": 150,
         }
-        for filename in (
-            "nas_config.yaml",
-            "nas_config_ble.yaml",
-            "nas_config_portenta.yaml",
-            "nas_config_audio_stm32.yaml",
-            "nas_config_audio_portenta.yaml",
-            "nas_config_flops_rmse.yaml",
-        ):
+        for filename, expected_trials in expected_budgets.items():
             with self.subTest(filename=filename):
                 settings = load_config(config_path=ROOT_DIR / "src/config" / filename)
-                for key, value in expected_budget.items():
-                    self.assertEqual(settings.training[key], value)
+                self.assertEqual(settings.training["nas_epochs"], 55)
+                self.assertEqual(settings.training["model_epochs"], 990)
+                self.assertEqual(settings.training["nas_trials"], expected_trials)
+                self.assertEqual(settings.training["nas_multiobjective_population_size"], 50)
+                self.assertEqual(settings.training["max_total_trials"], 300)
                 if filename.startswith("nas_config_audio"):
                     self.assertEqual(settings.model.search, {})
 
@@ -1969,6 +1970,7 @@ class LoadSettingsTests(unittest.TestCase):
 
         self.assertIn("nas_config_audio_stm32.yaml", readme)
         self.assertIn("nas_config_flops_rmse.yaml", readme)
+        self.assertIn("nas_config_memory_proxy.yaml", readme)
         self.assertIn("artifact_stem", readme)
         self.assertIn("export_variant", readme)
         self.assertIn("compile_when_hil_disabled", readme)
@@ -1988,8 +1990,8 @@ class LoadSettingsTests(unittest.TestCase):
             "TinyOdomEx_UrbanSound8K_STM32_NUCLEO_N657X0_Q.keras",
         )
         self.assertEqual(settings.training.quantization.mode, "int8_ptq")
-        self.assertTrue(settings.training.quantization.search)
-        self.assertEqual(settings.training.quantization.choices, ["float", "int8_ptq"])
+        self.assertFalse(settings.training.quantization.search)
+        self.assertEqual(settings.training.quantization.choices, ["int8_ptq"])
 
     def test_audio_stm32_config_resolves_audio_components(self) -> None:
         """The audio STM32 config should resolve the audio component stack."""
@@ -2771,8 +2773,17 @@ class LoadSettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.nas.prune.rules, [])
 
-    def test_load_settings_rejects_prune_rules_for_multiobjective_score(self) -> None:
-        # Invalid prune rules for multiobjective score should fail during config load so unsupported NAS settings never reach execution.
+    def test_load_settings_accepts_prune_rules_for_multiobjective_score(self) -> None:
+        """Multi-objective score configs should accept pre-fit feasibility gates.
+
+        Returns
+        -------
+        None
+            Asserts valid multi-objective prune rules pass task-aware
+            validation.
+        """
+        # Multi-objective prune rules are post-build gates, not Optuna pruning,
+        # so valid pre-fit metrics should pass task-aware validation.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2798,11 +2809,13 @@ class LoadSettingsTests(unittest.TestCase):
                         "          direction: minimize",
                         "  prune:",
                         "    rules:",
-                        "      - metric: latency_ms",
+                        "      - rule: latency_budget",
+                        "        metric: latency_ms",
                         "        condition: gt",
                         "        reference:",
                         "          type: metric",
                         "          metric: latency_budget_ms",
+                        "        reason: Latency exceeds deployment budget",
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
@@ -2811,8 +2824,14 @@ class LoadSettingsTests(unittest.TestCase):
                 )
             )
 
-            with self.assertRaisesRegex(ValueError, "only supported"):
-                load_config(config_path=cfg)
+            settings = load_config(
+                config_path=cfg,
+                task_metric_names={"rmse_total"},
+                training_only_task_metric_names={"rmse_total"},
+            )
+
+        self.assertEqual(settings.nas.prune.rules[0].rule, "latency_budget")
+        self.assertEqual(settings.nas.prune.rules[0].metric, "latency_ms")
 
     def test_load_settings_defers_prune_rules_that_depend_on_training_metrics_until_task_validation(self) -> None:
         """Task-dependent prune validation should run after the task contract is known."""
@@ -3329,6 +3348,62 @@ class LoadSettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.nas.prune.rules[0].metric, "custom_metric")
 
+    def test_validate_nas_policy_for_task_rejects_unknown_multiobjective_prune_metric(self) -> None:
+        """Task-aware validation should reject undeclared multi-objective gate metrics.
+
+        Returns
+        -------
+        None
+            Asserts generic load preserves the metric and task-aware validation
+            rejects it.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        "nas:",
+                        "  score:",
+                        "    type: multi-objective",
+                        "    params:",
+                        "      objectives:",
+                        "        - metric: flops",
+                        "          direction: minimize",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: custom_metric",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertEqual(settings.nas.prune.rules[0].metric, "custom_metric")
+        with self.assertRaisesRegex(ValueError, "unknown metric"):
+            validate_nas_policy_for_task(
+                settings,
+                task_metric_names={"different_metric"},
+                training_only_task_metric_names=set(),
+            )
+
     def test_load_settings_rejects_prune_rules_that_use_custom_training_only_task_metrics(self) -> None:
         """Prune rules may not directly read task metrics that need training."""
         # Custom training-only task metrics cannot appear in prune rules because those values are unavailable before fit() runs.
@@ -3377,6 +3452,112 @@ class LoadSettingsTests(unittest.TestCase):
                     training_only_task_metric_names={"custom_metric"},
                 )
 
+    def test_load_settings_rejects_multiobjective_prune_rules_with_training_only_metrics(self) -> None:
+        """Multi-objective prune rules may not read post-training task metrics.
+
+        Returns
+        -------
+        None
+            Asserts direct training-only task metrics are invalid in
+            multi-objective gates.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        "nas:",
+                        "  score:",
+                        "    type: multi-objective",
+                        "    params:",
+                        "      objectives:",
+                        "        - metric: flops",
+                        "          direction: minimize",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: custom_metric",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "training-only"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names={"custom_metric"},
+                )
+
+    def test_load_settings_rejects_multiobjective_prune_reference_with_training_only_metrics(self) -> None:
+        """Multi-objective prune references may not read post-training task metrics.
+
+        Returns
+        -------
+        None
+            Asserts reference metrics that need training are invalid in
+            multi-objective gates.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        "nas:",
+                        "  score:",
+                        "    type: multi-objective",
+                        "    params:",
+                        "      objectives:",
+                        "        - metric: flops",
+                        "          direction: minimize",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: flops",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: metric",
+                        "          metric: custom_metric",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "training-only"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names={"custom_metric"},
+                )
+
     def test_load_settings_rejects_prune_rules_that_depend_on_custom_training_only_task_metrics(self) -> None:
         """Prune rules may not depend indirectly on task metrics that need training."""
         # Derived prune metrics cannot close over training-only task signals because prune decisions happen before training.
@@ -3408,6 +3589,65 @@ class LoadSettingsTests(unittest.TestCase):
                         "        - type: weighted",
                         "          metric: flops",
                         "          weight: -1.0",
+                        "  prune:",
+                        "    rules:",
+                        "      - rule: custom_task_gate",
+                        "        metric: combined_metric",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 0.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "training-only"):
+                load_config(
+                    config_path=cfg,
+                    task_metric_names={"custom_metric"},
+                    training_only_task_metric_names={"custom_metric"},
+                )
+
+    def test_load_settings_rejects_multiobjective_prune_rules_with_training_dependent_derived_metrics(self) -> None:
+        """Multi-objective prune rules may not indirectly depend on training metrics.
+
+        Returns
+        -------
+        None
+            Asserts derived metrics that depend on training-only metrics are
+            invalid in multi-objective gates.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        "nas:",
+                        "  score:",
+                        "    type: multi-objective",
+                        "    metrics:",
+                        "      combined_metric:",
+                        "        type: add",
+                        "        metrics:",
+                        "          - custom_metric",
+                        "          - flops",
+                        "    params:",
+                        "      objectives:",
+                        "        - metric: flops",
+                        "          direction: minimize",
                         "  prune:",
                         "    rules:",
                         "      - rule: custom_task_gate",
@@ -3594,6 +3834,129 @@ class LoadSettingsTests(unittest.TestCase):
             settings = load_config(config_path=cfg)
 
         self.assertEqual(settings.nas.prune.rules[0].metric, "cadenced_error_code")
+
+    def test_load_settings_accepts_feasibility_rules(self) -> None:
+        """Valid pre-training feasibility rules should normalize from config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: flops",
+                        "          weight: -1.0",
+                        "  feasibility:",
+                        "    train_if_infeasible: true",
+                        "    rules:",
+                        "      - rule: latency_budget",
+                        "        metric: latency_ms",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: metric",
+                        "          metric: latency_budget_ms",
+                        "        reason: Latency exceeds budget",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+
+        self.assertTrue(settings.nas.feasibility.train_if_infeasible)
+        self.assertEqual(settings.nas.feasibility.rules[0].rule, "latency_budget")
+        self.assertEqual(settings.nas.feasibility.rules[0].reference.metric, "latency_budget_ms")
+
+    def test_validate_nas_policy_rejects_training_only_feasibility_metric(self) -> None:
+        """Feasibility rules must not depend on post-training task metrics."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(
+                "\n".join(
+                    [
+                        "device:",
+                        "  name: TEST_DEVICE",
+                        "training:",
+                        "  nas_trials: 10",
+                        "  quantization:",
+                        "    mode: int8_ptq",
+                        "    search: false",
+                        "    choices: [int8_ptq]",
+                        "nas:",
+                        "  score:",
+                        "    type: scoring-function",
+                        "    params:",
+                        "      terms:",
+                        "        - type: weighted",
+                        "          metric: flops",
+                        "          weight: -1.0",
+                        "  feasibility:",
+                        "    rules:",
+                        "      - rule: rmse_gate",
+                        "        metric: rmse_total",
+                        "        condition: gt",
+                        "        reference:",
+                        "          type: literal",
+                        "          value: 1.0",
+                        "outputs:",
+                        f"  models_dir: \"{tmp_path / 'models'}\"",
+                        f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
+                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                    ]
+                )
+            )
+
+            settings = load_config(config_path=cfg)
+            with self.assertRaisesRegex(ValueError, "training-only metric 'rmse_total'"):
+                validate_nas_policy_for_task(
+                    settings,
+                    task_metric_names={"rmse_total"},
+                    training_only_task_metric_names={"rmse_total"},
+                )
+
+    def test_evaluate_feasibility_rules_computes_signed_constraints(self) -> None:
+        """Feasibility rules should emit signed Optuna constraints in order."""
+        score_config = Dict(type="scoring-function", metrics=Dict(), params=Dict())
+        feasibility_config = Dict(
+            rules=[
+                Dict(rule="gt", metric="latency_ms", condition="gt", reference=Dict(type="literal", value=10.0), reason=""),
+                Dict(rule="gte", metric="latency_ms", condition="gte", reference=Dict(type="literal", value=12.0), reason=""),
+                Dict(rule="lt", metric="latency_ms", condition="lt", reference=Dict(type="literal", value=20.0), reason=""),
+                Dict(rule="lte", metric="latency_ms", condition="lte", reference=Dict(type="literal", value=12.0), reason=""),
+            ]
+        )
+
+        result = evaluate_feasibility_rules(
+            metrics={"latency_ms": 12.0},
+            hyperparams=Dict(flops=1),
+            score_config=score_config,
+            feasibility_config=feasibility_config,
+        )
+
+        self.assertFalse(result.feasible)
+        self.assertEqual(result.status, "infeasible")
+        self.assertGreater(result.constraints[0], 0.0)
+        self.assertGreater(result.constraints[1], 0.0)
+        self.assertGreater(result.constraints[2], 0.0)
+        self.assertGreater(result.constraints[3], 0.0)
+        self.assertEqual(result.first_violation["rule"], "gt")
 
     def test_load_settings_missing_file(self) -> None:
         """Nonexistent config paths should raise FileNotFoundError."""
@@ -3878,6 +4241,11 @@ class LogTrialTests(unittest.TestCase):
             "flash_bytes": 2000,
             "external_flash_bytes": 3000,
             "weight_storage_mode": "external_flash",
+            "weight_bytes": 4096,
+            "activation_bytes": 8192,
+            "memory_traffic_bytes": 12288,
+            "memory_proxy_dtype_bytes": 1,
+            "memory_proxy_warning_count": 4,
             "rmse_total": 0.3,
             "latency_ms": 10,
             "latency_budget_ms": -1,
@@ -3906,6 +4274,11 @@ class LogTrialTests(unittest.TestCase):
         """Return a representative hyperparameter payload for trial-log tests."""
         return {
             "flops": 1_000_000,
+            "weight_bytes": 4096,
+            "activation_bytes": 8192,
+            "memory_traffic_bytes": 12288,
+            "memory_proxy_dtype_bytes": 1,
+            "memory_proxy_warning_count": 4,
             "nb_filters": 32,
             "kernel_size": 3,
             "dilations": [1, 2, 4],
@@ -3991,6 +4364,23 @@ class LogTrialTests(unittest.TestCase):
                 rows[1][header_index["weight_storage_mode"]],
                 metrics["weight_storage_mode"],
             )
+            self.assertEqual(int(rows[1][header_index["weight_bytes"]]), metrics["weight_bytes"])
+            self.assertEqual(
+                int(rows[1][header_index["activation_bytes"]]),
+                metrics["activation_bytes"],
+            )
+            self.assertEqual(
+                int(rows[1][header_index["memory_traffic_bytes"]]),
+                metrics["memory_traffic_bytes"],
+            )
+            self.assertEqual(
+                int(rows[1][header_index["memory_proxy_dtype_bytes"]]),
+                metrics["memory_proxy_dtype_bytes"],
+            )
+            self.assertEqual(
+                int(rows[1][header_index["memory_proxy_warning_count"]]),
+                metrics["memory_proxy_warning_count"],
+            )
             self.assertEqual(
                 float(rows[1][header_index["latency_ms"]]), metrics["latency_ms"]
             )
@@ -4061,6 +4451,21 @@ class LogTrialTests(unittest.TestCase):
                 fake_trial.attrs["weight_storage_mode"],
                 metrics["weight_storage_mode"],
             )
+            self.assertEqual(fake_trial.attrs["weight_bytes"], metrics["weight_bytes"])
+            self.assertEqual(fake_trial.attrs["activation_bytes"], metrics["activation_bytes"])
+            self.assertEqual(
+                fake_trial.attrs["memory_traffic_bytes"],
+                metrics["memory_traffic_bytes"],
+            )
+            self.assertEqual(
+                fake_trial.attrs["memory_proxy_dtype_bytes"],
+                metrics["memory_proxy_dtype_bytes"],
+            )
+            self.assertEqual(
+                fake_trial.attrs["memory_proxy_warning_count"],
+                metrics["memory_proxy_warning_count"],
+            )
+            self.assertNotIn("hparam__memory_traffic_bytes", fake_trial.attrs)
             self.assertEqual(fake_trial.attrs["task_metrics"], trial_outcome.task_metrics)
             self.assertEqual(fake_trial.attrs["metric__rmse_vel_x"], 0.1)
             self.assertEqual(fake_trial.attrs["metric__rmse_vel_y"], 0.2)

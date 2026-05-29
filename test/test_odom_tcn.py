@@ -487,6 +487,34 @@ class OdomTCNFamilyTests(unittest.TestCase):
         self.assertIsInstance(flops, int)
         self.assertGreater(flops, 0)
 
+    def test_estimate_static_memory_returns_positive_tcn_proxy(self) -> None:
+        # The OdomTCN override should count real weights and infer custom TCN internal activation traffic.
+        hparams = {
+            "nb_filters": 8,
+            "kernel_size": 5,
+            "dropout_rate": 0.1,
+            "use_skip_connections": True,
+            "norm_flag": False,
+            "dilations": [1, 2, 4],
+        }
+        model = self.family.build_model(hparams, self.ctx, {})
+
+        estimate = self.family.estimate_static_memory(
+            model,
+            self.ctx,
+            {},
+            quantization_mode="int8_ptq",
+        )
+
+        self.assertEqual(estimate.dtype_bytes, 1)
+        self.assertGreater(estimate.weight_bytes, 0)
+        self.assertGreater(estimate.activation_bytes, 0)
+        self.assertEqual(
+            estimate.memory_traffic_bytes,
+            estimate.weight_bytes + estimate.activation_bytes,
+        )
+        self.assertGreater(estimate.warning_count, 0)
+
     def test_validate_hparams_rejects_missing_required_keys(self) -> None:
         # Hyperparameter validation should reject missing required keys before model construction starts.
         hparams = {

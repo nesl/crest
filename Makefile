@@ -4,6 +4,8 @@ PYTHON ?= python
 ENV ?= tinyodomex
 OXIOD_ZIP ?= OxIOD.zip
 URBANSOUND8K_ARGS ?=
+PYTHON_LIB_DIR := $(shell $(PYTHON) -c 'import sys; print(sys.prefix + "/lib")')
+TEST_ENV := LD_LIBRARY_PATH="$(PYTHON_LIB_DIR):$(LD_LIBRARY_PATH)"
 
 help:
 	@echo "Targets:"
@@ -25,13 +27,13 @@ install:
 	pip install -e . --no-deps
 
 test:
-	pytest test/
+	$(TEST_ENV) $(PYTHON) -m pytest test/
 
 integration-test:
-	RUN_INTEGRATION_TESTS=1 pytest test/integration/
+	$(TEST_ENV) RUN_INTEGRATION_TESTS=1 $(PYTHON) -m pytest test/integration/
 
 test-all:
-	RUN_INTEGRATION_TESTS=1 pytest test/
+	$(TEST_ENV) RUN_INTEGRATION_TESTS=1 $(PYTHON) -m pytest test/
 
 start-gpu:
 	$(PYTHON) src/nas_model_client.py $(ARGS)

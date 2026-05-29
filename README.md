@@ -25,7 +25,7 @@ For the source-level architecture and extension points, see
 
 1. **Training only**
    Use this when you want to run NAS/training without talking to hardware.
-   Start from `src/config/nas_config.yaml`, set `device.hil: false`, and read
+   Start from `src/config/nas_config_stm32.yaml`, set `device.hil: false`, and read
    [src/config/README.md](src/config/README.md) plus [src/README.md](src/README.md).
    For the UrbanSound8K audio DS-CNN path, start from
    [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
@@ -44,7 +44,7 @@ For the source-level architecture and extension points, see
 
 3. **STM32 HIL**
    Use this for the current STM32 N6 backend.
-   Start from [src/config/nas_config.yaml](src/config/nas_config.yaml), then
+   Start from [src/config/nas_config_stm32.yaml](src/config/nas_config_stm32.yaml), then
    use [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
    for the audio DS-CNN HIL path. Then
    read [src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md)
@@ -183,10 +183,10 @@ refreshes the repo-local STM32 vendor subsets.
 
 The shipped starting points are:
 
-- [src/config/nas_config.yaml](src/config/nas_config.yaml)
-  Default STM32-oriented config for the current `STM32_NUCLEO_N657X0_Q`
-  backend. This is the main starting point for STM32 runs and the general
-  example config for the repo.
+- [src/config/nas_config_stm32.yaml](src/config/nas_config_stm32.yaml)
+  STM32-oriented config for the current `STM32_NUCLEO_N657X0_Q`
+  backend. This is the main starting point for STM32 runs and the most
+  complete commented example config in the repo.
 - [src/config/nas_config_ble.yaml](src/config/nas_config_ble.yaml)
   BLE-focused starting point for `ARDUINO_NANO_33_BLE_SENSE`.
 - [src/config/nas_config_portenta.yaml](src/config/nas_config_portenta.yaml)

@@ -4,9 +4,27 @@ import os
 from pathlib import Path
 
 
+ANALYSIS_SCRIPT_TESTS = {
+    "test_analysis_scripts.py",
+    "test_audio_desktop_smoke.py",
+    "test_audio_portenta_hil_smoke.py",
+    "test_audio_stm32_hil_smoke.py",
+    "test_stedgeai_phase0_probe.py",
+    "test_stm32_build_wrapper.py",
+    "test_stm32_project_portability.py",
+    "test_stm32_runner_wrappers.py",
+    "test_stm32_template_ownership.py",
+    "test_urbansound8k_input_profile.py",
+}
+
+
 def pytest_ignore_collect(collection_path: Path, config) -> bool:
-    """Keep integration tests opt-in for the default `pytest test/` run."""
-    if os.environ.get("RUN_INTEGRATION_TESTS") == "1":
-        return False
+    """Keep non-default suites opt-in for the default `pytest test/` run."""
     path = Path(str(collection_path))
-    return "integration" in path.parts and path.name.startswith("test_")
+    if (
+        os.environ.get("RUN_INTEGRATION_TESTS") != "1"
+        and "integration" in path.parts
+        and path.name.startswith("test_")
+    ):
+        return True
+    return os.environ.get("RUN_ANALYSIS_SCRIPT_TESTS") != "1" and path.name in ANALYSIS_SCRIPT_TESTS

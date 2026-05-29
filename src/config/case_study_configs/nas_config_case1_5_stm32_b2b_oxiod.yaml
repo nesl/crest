@@ -3,8 +3,8 @@
 # Intended launch on the GPU host:
 #   CUDA_VISIBLE_DEVICES=1 TF_FORCE_GPU_ALLOW_GROWTH=true \
 #   python src/nas_model_client.py \
-#     --config src/config/nas_config_case1_5_stm32_b2b_oxiod.yaml \
-#     --study-name OxIOD_STM32_B2B_case1_5_t1
+#     --config src/config/case_study_configs/nas_config_case1_5_stm32_b2b_oxiod.yaml \
+#     --study-name OxIOD_STM32_B2B_case1_5
 
 device:
   name: STM32_NUCLEO_N657X0_Q
@@ -54,7 +54,7 @@ model:
 training:
   nas_epochs: 55
   model_epochs: 990
-  nas_trials: 150
+  nas_trials: 250
   nas_multiobjective_population_size: 50
   max_total_trials: 300
   quantization:

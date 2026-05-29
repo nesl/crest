@@ -280,7 +280,7 @@ Use this path only for boards built and flashed through `arduino-cli`.
 1. `src/tinyodom/microcontrollers/arduino_<board>.py`
 2. `src/tinyodom/microcontrollers/__init__.py`
 3. `setup_arduino.sh` when a new Arduino core package is required
-4. `src/config/nas_config.yaml` and/or board-specific configs
+4. `src/config/` example configs and any board-specific config variants
 5. Tests in `test/test_hardware.py` and `test/test_model.py`
 6. `src/tinyodom/model.py` only when you are changing shared request plumbing,
    which should be unusual for a normal Arduino board bring-up

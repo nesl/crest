@@ -52,6 +52,7 @@ from tinyodom.model import (
     configured_quantization_mode,
     build_trial_outcome,
     apply_cadenced_metric_defaults,
+    evaluate_feasibility_rules,
     evaluate_prune_rules,
     evaluate_score_config,
     get_score_config_directions,
@@ -65,6 +66,7 @@ from tinyodom.model import (
     score_config_uses_training_metrics,
     set_error_code,
 )
+from tinyodom.model_metrics import StaticMemoryEstimate
 from tinyodom.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
 from tinyodom.registry import dataset_registry, model_family_registry
 from tinyodom.runtime_bootstrap import bootstrap_pipeline
@@ -91,6 +93,8 @@ RUNTIME_ONLY_METRICS = frozenset(
         "harness_latency_ms",
     }
 )
+FEASIBILITY_POLICY_SIGNATURE_ATTR = "tinyodom_feasibility_policy_signature"
+FEASIBILITY_NOT_EVALUATED_CONSTRAINT = 1e12
 
 
 @dataclass(frozen=True)
@@ -149,7 +153,7 @@ class NASModelClient:
     ----------
     config_path : Path | str, optional
         Path to the NAS configuration YAML. Defaults to
-        ``src/config/nas_config.yaml`` via ``DEFAULT_CONFIG_PATH``. The
+        ``src/config/nas_config_stm32.yaml`` via ``DEFAULT_CONFIG_PATH``. The
         configuration
         controls data paths, device settings, NAS options (single vs
         multi-objective), training schedules, output directories, and network
@@ -559,6 +563,200 @@ class NASModelClient:
             return [str(obj.metric) for obj in self.config.nas.score.params.objectives]
         return ["score"]
 
+    def _feasibility_config(self) -> Dict:
+        """Return the normalized NAS feasibility config with defaults.
+
+        Returns
+        -------
+        addict.Dict
+            Feasibility policy exposing ``train_if_infeasible`` and ``rules``.
+        """
+
+        raw_config = getattr(self.config.nas, "feasibility", None)
+        feasibility_config = Dict(raw_config or {})
+        feasibility_config.train_if_infeasible = bool(
+            getattr(feasibility_config, "train_if_infeasible", False)
+        )
+        feasibility_config.rules = list(getattr(feasibility_config, "rules", []))
+        return feasibility_config
+
+    def _feasibility_enabled(self) -> bool:
+        """Return whether the active config has feasibility rules.
+
+        Returns
+        -------
+        bool
+            ``True`` when ``nas.feasibility.rules`` contains at least one rule.
+        """
+
+        return bool(self._feasibility_config().rules)
+
+    @staticmethod
+    def _normalize_feasibility_reference(reference: Any) -> dict[str, Any]:
+        """Return a signature-stable feasibility reference payload.
+
+        Parameters
+        ----------
+        reference : Any
+            Normalized rule reference from config.
+
+        Returns
+        -------
+        dict[str, Any]
+            JSON-friendly reference shape used in the study policy signature.
+        """
+
+        ref_type = str(getattr(reference, "type", "")).strip().lower()
+        if ref_type == "literal":
+            return {"type": "literal", "value": float(reference.value)}
+        return {"type": "metric", "metric": str(reference.metric)}
+
+    def _feasibility_policy_signature(self) -> dict[str, Any] | None:
+        """Build the study-level feasibility policy signature.
+
+        Returns
+        -------
+        dict[str, Any] | None
+            Ordered normalized policy signature, or ``None`` when feasibility
+            is disabled.
+        """
+
+        feasibility_config = self._feasibility_config()
+        if not feasibility_config.rules:
+            return None
+        return {
+            "train_if_infeasible": bool(feasibility_config.train_if_infeasible),
+            "rules": [
+                {
+                    "rule": str(rule_cfg.rule),
+                    "metric": str(rule_cfg.metric),
+                    "condition": str(rule_cfg.condition),
+                    "reference": self._normalize_feasibility_reference(rule_cfg.reference),
+                }
+                for rule_cfg in feasibility_config.rules
+            ],
+        }
+
+    def _feasibility_rule_count(self) -> int:
+        """Return the number of active feasibility constraints.
+
+        Returns
+        -------
+        int
+            Length of ``nas.feasibility.rules`` for the active config.
+        """
+
+        return len(self._feasibility_config().rules)
+
+    def _constraints_func(self, frozen_trial: optuna.trial.FrozenTrial) -> tuple[float, ...]:
+        """Return persisted feasibility constraints for Optuna samplers.
+
+        Parameters
+        ----------
+        frozen_trial : optuna.trial.FrozenTrial
+            Completed trial whose user attributes carry feasibility metadata.
+
+        Returns
+        -------
+        tuple[float, ...]
+            Signed constraints in policy order. Empty when feasibility is
+            disabled.
+
+        Notes
+        -----
+        The sampler callback must never re-evaluate the current config against
+        old trial metrics. It reads only persisted trial attributes; hard
+        failures and prune-rule exits use a positive persisted status-derived
+        sentinel so constrained samplers rank them infeasible.
+        """
+
+        if not self._feasibility_enabled():
+            return ()
+        raw_constraints = frozen_trial.user_attrs.get("feasibility_constraints")
+        if raw_constraints not in (None, ""):
+            return tuple(float(value) for value in raw_constraints)
+        status = str(frozen_trial.user_attrs.get("feasibility_status", "")).strip()
+        if status == "not_evaluated":
+            return tuple(FEASIBILITY_NOT_EVALUATED_CONSTRAINT for _ in range(self._feasibility_rule_count()))
+        return tuple(FEASIBILITY_NOT_EVALUATED_CONSTRAINT for _ in range(self._feasibility_rule_count()))
+
+    def _validate_or_store_feasibility_signature(self, study: optuna.Study) -> None:
+        """Validate persisted feasibility policy metadata for a study.
+
+        Parameters
+        ----------
+        study : optuna.Study
+            Study being created or resumed.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        RuntimeError
+            If the active config and persisted study policy are incompatible.
+        """
+
+        active_signature = self._feasibility_policy_signature()
+        stored_signature = getattr(study, "user_attrs", {}).get(FEASIBILITY_POLICY_SIGNATURE_ATTR)
+        has_trials = bool(study.trials)
+        if active_signature is None:
+            if stored_signature is not None:
+                raise RuntimeError(
+                    "Existing study has a feasibility policy signature, but the active config disables nas.feasibility."
+                )
+            return
+        if stored_signature is None:
+            if has_trials:
+                raise RuntimeError(
+                    "Active config enables nas.feasibility, but the existing study has no feasibility policy signature."
+                )
+            study.set_user_attr(FEASIBILITY_POLICY_SIGNATURE_ATTR, active_signature)
+        elif stored_signature != active_signature:
+            raise RuntimeError(
+                "Active nas.feasibility policy does not match the existing study feasibility signature."
+            )
+
+        for trial in study.trials:
+            if trial.state != TrialState.COMPLETE:
+                continue
+            status = str(trial.user_attrs.get("feasibility_status", "")).strip()
+            if status == "not_evaluated":
+                continue
+            constraints = trial.user_attrs.get("feasibility_constraints")
+            if status not in {"feasible", "infeasible"} or constraints in (None, ""):
+                raise RuntimeError(
+                    f"Completed trial {trial.number} lacks required feasibility attributes for the active policy."
+                )
+
+    def _build_sampler(self):
+        """Build an Optuna sampler matching the active score and constraints.
+
+        Returns
+        -------
+        optuna.samplers.BaseSampler
+            NSGA-II or TPE sampler with feasibility constraints enabled when
+            configured.
+        """
+
+        constraints_func = self._constraints_func if self._feasibility_enabled() else None
+        if self._score_is_multiobjective():
+            kwargs = {
+                "population_size": self.config.training.nas_multiobjective_population_size,
+                "seed": 42,
+            }
+            if constraints_func is not None:
+                kwargs["constraints_func"] = constraints_func
+            return optuna.samplers.NSGAIISampler(**kwargs)
+        kwargs = {
+            "n_startup_trials": 15,
+            "multivariate": True,
+        }
+        if constraints_func is not None:
+            kwargs["constraints_func"] = constraints_func
+        return optuna.samplers.TPESampler(**kwargs)
+
     def _hardware_limit_device_options(self) -> dict[str, str] | None:
         """Build board options required to resolve dynamic hardware limits.
 
@@ -689,6 +887,7 @@ class NASModelClient:
         self,
         flops: int,
         batch_size: int,
+        static_memory: StaticMemoryEstimate,
     ) -> Dict:
         """Build runtime-owned request metadata for HIL and scoring paths.
 
@@ -698,6 +897,8 @@ class NASModelClient:
             FLOP count for the built model.
         batch_size : int
             Runner-owned batch size.
+        static_memory : StaticMemoryEstimate
+            Offline static tensor-memory proxy for the built model.
 
         Returns
         -------
@@ -714,6 +915,11 @@ class NASModelClient:
                 "timesteps": timesteps,
                 "input_dim": input_dim,
                 "flops": int(flops),
+                "weight_bytes": int(static_memory.weight_bytes),
+                "activation_bytes": int(static_memory.activation_bytes),
+                "memory_traffic_bytes": int(static_memory.memory_traffic_bytes),
+                "memory_proxy_dtype_bytes": int(static_memory.dtype_bytes),
+                "memory_proxy_warning_count": int(static_memory.warning_count),
             }
         )
 
@@ -807,6 +1013,10 @@ class NASModelClient:
                 _add_reference(getattr(term, "reference", None))
 
         for rule_cfg in getattr(self.config.nas.prune, "rules", []):
+            _add_metric(str(rule_cfg.metric))
+            _add_reference(getattr(rule_cfg, "reference", None))
+
+        for rule_cfg in getattr(self._feasibility_config(), "rules", []):
             _add_metric(str(rule_cfg.metric))
             _add_reference(getattr(rule_cfg, "reference", None))
 
@@ -1020,6 +1230,72 @@ class NASModelClient:
             metrics["latency_ms"] = -1
             set_error_code(metrics, 1)
 
+    def _mark_feasibility_not_evaluated(self, metrics: dict[str, Any]) -> None:
+        """Attach metadata for a trial that ended before feasibility checks.
+
+        Parameters
+        ----------
+        metrics : dict[str, Any]
+            Trial metrics dictionary to mutate in place.
+
+        Returns
+        -------
+        None
+        """
+
+        metrics["feasible"] = False
+        metrics["feasibility_status"] = "not_evaluated"
+        metrics["feasibility_rule"] = ""
+        metrics["feasibility_reason"] = ""
+        metrics["feasibility_metric"] = ""
+        metrics["feasibility_value"] = ""
+        metrics["feasibility_reference"] = ""
+        metrics["feasibility_violation"] = ""
+        metrics["feasibility_constraints_json"] = ""
+
+    @staticmethod
+    def _apply_feasibility_evaluation(metrics: dict[str, Any], evaluation: Any) -> None:
+        """Persist resolved feasibility metadata into the trial metrics dict.
+
+        Parameters
+        ----------
+        metrics : dict[str, Any]
+            Trial metrics dictionary to mutate in place.
+        evaluation : FeasibilityEvaluation
+            Resolved feasibility outcome.
+
+        Returns
+        -------
+        None
+        """
+
+        metrics["feasible"] = bool(evaluation.feasible)
+        metrics["feasibility_status"] = str(evaluation.status)
+        metrics["feasibility_constraints"] = list(evaluation.constraints)
+        metrics["feasibility_constraints_json"] = json.dumps(list(evaluation.constraints))
+        violation = evaluation.first_violation or {}
+        metrics["feasibility_rule"] = violation.get("rule", "")
+        metrics["feasibility_reason"] = violation.get("reason", "")
+        metrics["feasibility_metric"] = violation.get("metric", "")
+        metrics["feasibility_value"] = violation.get("value", "")
+        metrics["feasibility_reference"] = violation.get("reference", "")
+        metrics["feasibility_violation"] = violation.get("violation", "")
+
+    def _direction_penalty_values(self) -> list[float]:
+        """Return objective penalties aligned with active Optuna directions.
+
+        Returns
+        -------
+        list[float]
+            ``1e12`` for minimized objectives and ``-1e12`` for maximized
+            objectives.
+        """
+
+        return [
+            -1e12 if direction == "maximize" else 1e12
+            for direction in self._study_directions()
+        ]
+
     @staticmethod
     def _sync_task_metrics(metrics: dict[str, Any], task_metrics: dict[str, Any]) -> None:
         """Write task-owned evaluation metrics back into the shared metrics dict.
@@ -1136,10 +1412,11 @@ class NASModelClient:
         This objective samples model hyperparameters (e.g., filters, kernel size,
         dilations) via Optuna, builds the corresponding TCN model to estimate
         FLOPs, queries a hardware-in-the-loop (HIL) server for resource/latency
-        metrics, and—when the candidate passes resource checks—trains and scores
-        the model on the OXIOD dataset. Trials are pruned on HIL errors or
-        resource violations. The returned objective is either a single score or
-        a multi-objective tuple depending on configuration.
+        metrics, and—when the candidate passes resource and configured
+        feasibility gates—trains and scores the model on the OXIOD dataset.
+        Trials are pruned on HIL errors or resource violations. The returned
+        objective is either a single score or a multi-objective tuple depending
+        on configuration.
 
         Parameters
         ----------
@@ -1175,15 +1452,17 @@ class NASModelClient:
         1. sample/build the model family hyperparameters
         2. request HIL metrics for the candidate
         3. apply hardware limit and arena checks
-        4. evaluate pre-training prune rules
+        4. evaluate post-build/pre-fit prune rules
         5. either train/evaluate the task or synthesize task-metric sentinels
         6. validate objective values and log the trial
 
         Single-objective runs prune by raising ``optuna.TrialPruned``.
-        Multi-objective runs instead return penalty tuples so the study can
-        keep its full objective shape. Sentinel conventions such as ``-1`` and
-        ``10000.0`` are used to preserve legacy logging/scoring expectations
-        when hardware or training metrics are unavailable.
+        Multi-objective HIL errors, resource failures, and feasibility gates
+        instead log ``pruned=True`` and return direction-aware penalty tuples
+        so Optuna records a complete trial with the configured objective shape.
+        Sentinel conventions such as ``-1`` and ``10000.0`` are used to
+        preserve legacy logging/scoring expectations when hardware or training
+        metrics are unavailable.
         """
         artifacts_dir = self._artifacts_dir()
         log_path = artifacts_dir / self.config.outputs.log_file_name
@@ -1217,9 +1496,16 @@ class NASModelClient:
             trial,
             allow_search=uses_quantized_deployment_path,
         )
+        static_memory = self.model_family.estimate_static_memory(
+            model,
+            self.model_build_context,
+            self.model_config,
+            quantization_mode=quantization_mode,
+        )
         runtime_metadata = self._build_runtime_metadata(
             flops,
             batch_size,
+            static_memory,
         )
         hyperparams = Dict({**family_hparams, **runtime_metadata})
 
@@ -1259,6 +1545,15 @@ class NASModelClient:
             metrics.setdefault("energy_aware", bool(self.config.training.energy_aware))
         else:
             metrics = self._synthesize_desktop_success_metrics()
+        metrics.update(
+            {
+                "weight_bytes": int(runtime_metadata.weight_bytes),
+                "activation_bytes": int(runtime_metadata.activation_bytes),
+                "memory_traffic_bytes": int(runtime_metadata.memory_traffic_bytes),
+                "memory_proxy_dtype_bytes": int(runtime_metadata.memory_proxy_dtype_bytes),
+                "memory_proxy_warning_count": int(runtime_metadata.memory_proxy_warning_count),
+            }
+        )
 
         needs_hardware_limits = (
             collect_compile_metrics
@@ -1321,13 +1616,11 @@ class NASModelClient:
             metrics.setdefault("latency_budget_ms", -1.0)
             metrics.setdefault("arena_bytes", -1)
             apply_cadenced_metric_defaults(metrics, metrics)
+            self._mark_feasibility_not_evaluated(metrics)
             directions = self._study_directions()
             if self._score_is_multiobjective():
                 objective_names = [str(obj.metric) for obj in self.config.nas.score.params.objectives]
-                objective_values = [
-                    -1e12 if direction == "maximize" else 1e12
-                    for direction in directions
-                ]
+                objective_values = self._direction_penalty_values()
                 trial_outcome = TrialOutcome(
                     score=None,
                     objective_names=objective_names,
@@ -1418,10 +1711,71 @@ class NASModelClient:
             hyperparams=Dict(hyperparams),
             score_config=self.config.nas.score,
             prune_config=self.config.nas.prune,
+            task_nonnegative_metric_names=task_nonnegative_metric_names,
         )
         if prune_hit is not None:
             prune_rule, prune_reason = prune_hit
             return _fail_with_penalty(prune_reason, prune_rule=prune_rule)
+
+        feasibility_config = self._feasibility_config()
+        feasibility_evaluation = None
+        if feasibility_config.rules:
+            feasibility_evaluation = evaluate_feasibility_rules(
+                metrics=metrics,
+                hyperparams=Dict(hyperparams),
+                score_config=self.config.nas.score,
+                feasibility_config=feasibility_config,
+                task_nonnegative_metric_names=task_nonnegative_metric_names,
+            )
+            self._apply_feasibility_evaluation(metrics, feasibility_evaluation)
+            if (
+                not feasibility_evaluation.feasible
+                and not bool(feasibility_config.train_if_infeasible)
+            ):
+                directions = self._study_directions()
+                if self._score_is_multiobjective():
+                    objective_names = [str(obj.metric) for obj in self.config.nas.score.params.objectives]
+                    objective_values = self._direction_penalty_values()
+                    trial_outcome = TrialOutcome(
+                        score=None,
+                        objective_names=objective_names,
+                        objective_values=objective_values,
+                        objective_directions=directions,
+                        task_metrics={},
+                        hyperparams=dict(hyperparams),
+                        artifact_summary=None,
+                        quantization_mode=quantization_mode,
+                    )
+                    log_trial(
+                        trial_outcome=trial_outcome,
+                        metrics=metrics,
+                        trial=trial,
+                        log_file_name=str(log_path),
+                        study_name=self.study_name,
+                    )
+                    return tuple(objective_values)
+
+                trial_outcome = TrialOutcome(
+                    score=penalty_acc,
+                    objective_names=["score"],
+                    objective_values=[penalty_acc],
+                    objective_directions=["maximize"],
+                    task_metrics={},
+                    hyperparams=dict(hyperparams),
+                    artifact_summary=None,
+                    quantization_mode=quantization_mode,
+                )
+                log_trial(
+                    trial_outcome=trial_outcome,
+                    metrics=metrics,
+                    trial=trial,
+                    log_file_name=str(log_path),
+                    study_name=self.study_name,
+                )
+                return penalty_acc
+        else:
+            metrics.setdefault("feasible", True)
+            metrics.setdefault("feasibility_status", "not_evaluated")
 
         try:
             if not self.config.training.train:
@@ -1595,10 +1949,7 @@ class NASModelClient:
                     "train=False is incompatible with score configs that require training-only metrics."
                 )
             if self._score_is_multiobjective():
-                sampler = optuna.samplers.NSGAIISampler(
-                    population_size=self.config.training.nas_multiobjective_population_size,
-                    seed=42,
-                )
+                sampler = self._build_sampler()
                 single_trial_study = optuna.create_study(
                     directions=self._study_directions(),
                     storage=storage_uri,
@@ -1607,10 +1958,7 @@ class NASModelClient:
                     load_if_exists=True,
                 )
             else:
-                sampler = optuna.samplers.TPESampler(
-                    n_startup_trials=15,
-                    multivariate=True,
-                )
+                sampler = self._build_sampler()
                 single_trial_study = optuna.create_study(
                     direction="maximize",
                     storage=storage_uri,
@@ -1618,6 +1966,7 @@ class NASModelClient:
                     sampler=sampler,
                     load_if_exists=True,
                 )
+            self._validate_or_store_feasibility_signature(single_trial_study)
             single_trial_study.set_metric_names(self._study_metric_names())
             try:
                 single_trial_study.optimize(self.objective, n_trials=trials)
@@ -1668,8 +2017,7 @@ class NASModelClient:
         study_name: str,
         storage: str = "sqlite:///optuna.db",
     ) -> optuna.Study:
-        """
-        Run NAS with production settings, honoring configuration flags.
+        """Run NAS with production settings, honoring configuration flags.
 
         Parameters
         ----------
@@ -1680,11 +2028,12 @@ class NASModelClient:
         
         Notes
         -----
-        The pipeline targets `config.training.nas_trials` completed trials and will
-        retry pruned/failed attempts until that target is met or
-        `config.training.max_total_trials` is reached.
+        The pipeline targets ``config.training.nas_trials`` feasible completed
+        trials and retries pruned, failed, and infeasible attempts until that
+        target is met or ``config.training.max_total_trials`` is reached.
 
-        Failed and pruned trials still consume the total-attempt budget.
+        Failed, pruned, and infeasible trials still consume the total-attempt
+        budget.
 
         Returns
         -------
@@ -1696,9 +2045,7 @@ class NASModelClient:
         max_total_trials = self.config.training.max_total_trials
 
         if self._score_is_multiobjective():
-            sampler = optuna.samplers.NSGAIISampler(
-                        population_size=self.config.training.nas_multiobjective_population_size,
-                        seed=42)
+            sampler = self._build_sampler()
             study = optuna.create_study(
                     directions=self._study_directions(),
                     storage=storage,
@@ -1708,10 +2055,7 @@ class NASModelClient:
                 )
         else:
             # Set up the Optuna study with TPE sampler and persistent storage.
-            sampler = optuna.samplers.TPESampler(
-                n_startup_trials=15,  # slightly more exploration than default before narrowing in
-                multivariate=True,
-            )
+            sampler = self._build_sampler()
             study = optuna.create_study(
                 direction="maximize",
                 storage=storage,
@@ -1719,58 +2063,99 @@ class NASModelClient:
                 sampler=sampler,
                 load_if_exists=True,  # resume if the study already exists
             )
+        self._validate_or_store_feasibility_signature(study)
         study.set_metric_names(self._study_metric_names())
         # Make sure we never shrink the total budget when resuming an existing study.
         max_total_trials = max(max_total_trials, len(study.trials))
 
         def _trial_counts():
-            """Count completed, pruned, and failed Optuna trials.
+            """Count complete/pruned/failed trials plus feasibility outcomes.
 
             Returns
             -------
-            tuple[int, int, int]
-                Counts for complete, pruned, and failed trials in that order.
+            tuple[int, int, int, int, int]
+                Counts for complete, feasible complete, infeasible complete,
+                pruned, and failed trials in that order.
             """
             completed = sum(1 for t in study.trials if t.state == TrialState.COMPLETE)
+            if self._feasibility_enabled():
+                feasible = sum(
+                    1
+                    for t in study.trials
+                    if (
+                        t.state == TrialState.COMPLETE
+                        and str(getattr(t, "user_attrs", {}).get("feasibility_status", "")).strip()
+                        == "feasible"
+                    )
+                )
+                infeasible = sum(
+                    1
+                    for t in study.trials
+                    if (
+                        t.state == TrialState.COMPLETE
+                        and str(getattr(t, "user_attrs", {}).get("feasibility_status", "")).strip()
+                        == "infeasible"
+                    )
+                )
+            else:
+                feasible = completed
+                infeasible = 0
             pruned = sum(1 for t in study.trials if t.state == TrialState.PRUNED)
             failed = sum(1 for t in study.trials if t.state == TrialState.FAIL)
-            return completed, pruned, failed
+            return completed, feasible, infeasible, pruned, failed
 
         round_idx = 0
+        stop_reason = "unknown"
         try:
             while True:
-                completed, pruned, failed = _trial_counts()
+                completed, feasible, infeasible, pruned, failed = _trial_counts()
                 total = len(study.trials)
+                feasible_fraction = (feasible / completed) if completed else 0.0
                 print(
-                    f"[NAS] Progress: {completed} completed, {pruned} pruned, "
-                    f"{failed} failed ({total} attempted)."
+                    f"[NAS] Progress: {feasible} feasible, {infeasible} infeasible, "
+                    f"{completed} completed, {pruned} pruned, {failed} failed "
+                    f"({total} attempted, feasible_fraction={feasible_fraction:.3f})."
                 )
 
-                if completed >= target_completions:
-                    print(f"[NAS] Reached target of {target_completions} completed trials.")
+                if feasible >= target_completions:
+                    stop_reason = "target_feasible_completions"
+                    print(f"[NAS] Reached target of {target_completions} feasible completed trials.")
                     break
 
-                remaining_needed = target_completions - completed
+                remaining_needed = target_completions - feasible
                 remaining_budget = max_total_trials - total
                 if remaining_budget <= 0:
+                    stop_reason = "max_total_trials"
                     print(
-                        f"[NAS] Stopping with {completed}/{target_completions} completed trials "
+                        f"[NAS] Stopping with {feasible}/{target_completions} feasible completed trials "
                         f"after hitting max_total_trials={max_total_trials}."
                     )
                     break
 
                 round_idx += 1
-                next_batch = min(remaining_needed, remaining_budget)
+                if self._score_is_multiobjective():
+                    population_size = int(self.config.training.nas_multiobjective_population_size)
+                    next_batch = min(max(remaining_needed, population_size), remaining_budget)
+                else:
+                    next_batch = min(remaining_needed, remaining_budget)
                 print(f"[NAS] Launching round {round_idx} for {next_batch} additional trial(s).")
                 study.optimize(self.objective, n_trials=next_batch)
         except Exception as exc:
-            completed, pruned, failed = _trial_counts()
+            completed, feasible, infeasible, pruned, failed = _trial_counts()
             print(
                 f"[NAS] Aborting after {len(study.trials)} trials "
-                f"({completed} completed, {pruned} pruned, {failed} failed) because of an error: {exc}"
+                f"({feasible} feasible, {infeasible} infeasible, {completed} completed, "
+                f"{pruned} pruned, {failed} failed) because of an error: {exc}"
             )
             raise
         complete_trials = [t for t in study.trials if t.state == TrialState.COMPLETE]
+        completed, feasible, infeasible, pruned, failed = _trial_counts()
+        feasible_fraction = (feasible / completed) if completed else 0.0
+        print(
+            f"[NAS] Finished by {stop_reason}: {feasible} feasible, {infeasible} infeasible, "
+            f"{completed} completed, {pruned} pruned, {failed} failed, "
+            f"feasible_fraction={feasible_fraction:.3f}."
+        )
         if not complete_trials:
             print("[NAS] No completed trials recorded; skipping best-trial reporting.")
             return study
@@ -1826,7 +2211,11 @@ class NASModelClient:
 
         if self._score_is_multiobjective():
             # Multi-objective: keep this as a “scoring + analysis” run.
-            pareto_trials = study.best_trials
+            pareto_trials = [
+                trial
+                for trial in study.best_trials
+                if (not self._feasibility_enabled()) or bool(trial.user_attrs.get("feasible"))
+            ]
             pareto_ids = [t.number for t in pareto_trials]
             pareto_df = trials_df[trials_df["number"].isin(pareto_ids)]
             pareto_csv = Path(self.config.outputs.models_dir) / f"{study_name}_pareto.csv"
@@ -1835,7 +2224,8 @@ class NASModelClient:
             print(f"[run_scoring_nas] Pareto front size: {len(pareto_trials)}")
             return
         
-        print(f"[run_scoring_nas] Best value: {study.best_value}")
+        best_trial = self._best_trial_for_finalization(study)
+        print(f"[run_scoring_nas] Best feasible value: {best_trial.value}")
         # 2) Retrain the best architecture for the long schedule with early stopping.
         history_path = artifacts_dir / "train_history.json"
         history = self.train_best_trial(
@@ -1963,7 +2353,49 @@ class NASModelClient:
         """
 
         study = optuna.load_study(study_name=study_name, storage=study_storage)
-        return _family_trial_params(study.best_trial.params)
+        selected = self._best_trial_for_finalization(study)
+        return _family_trial_params(selected.params)
+
+    def _best_trial_for_finalization(self, study: optuna.Study) -> Any:
+        """Return the best completed trial allowed for final artifacts.
+
+        Parameters
+        ----------
+        study : optuna.Study
+            Study containing completed NAS trials.
+
+        Returns
+        -------
+        Any
+            Best scalar trial for final training/evaluation metadata.
+
+        Raises
+        ------
+        RuntimeError
+            If feasibility is enabled and the study has no feasible completed
+            trial, or if no completed trial exists at all.
+        """
+
+        if self._feasibility_enabled():
+            feasible_trials = [
+                trial
+                for trial in study.get_trials(deepcopy=False, states=(TrialState.COMPLETE,))
+                if (
+                    str(trial.user_attrs.get("feasibility_status", "")).strip() == "feasible"
+                    and not bool(trial.user_attrs.get("pruned"))
+                )
+            ]
+            if not feasible_trials:
+                raise RuntimeError(
+                    "NAS completed without any feasible completed trials; "
+                    "increase training.max_total_trials, relax nas.feasibility, "
+                    "or inspect the feasibility CSV columns."
+                )
+            return max(feasible_trials, key=lambda trial: float(trial.value))
+        try:
+            return study.best_trial
+        except ValueError as exc:
+            raise RuntimeError("NAS completed without any completed trials.") from exc
 
     def _train_with_decoded_hparams(
         self,
@@ -2118,7 +2550,8 @@ class NASModelClient:
         best_quantization_mode = None
         if study_storage and study_name:
             study = optuna.load_study(study_name=study_name, storage=study_storage)
-            raw_best_params = dict(study.best_trial.params)
+            selected_trial = self._best_trial_for_finalization(study)
+            raw_best_params = dict(selected_trial.params)
             best_params = _family_trial_params(raw_best_params)
             best_quantization_mode = raw_best_params.get("quantization_mode")
         resolved_quantization_mode = (
@@ -2953,7 +3386,8 @@ class NASModelClient:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
 
         study = optuna.load_study(study_name=study_name, storage=study_storage)
-        raw_best_params = dict(study.best_trial.params)
+        selected_trial = self._best_trial_for_finalization(study)
+        raw_best_params = dict(selected_trial.params)
         best_params = _family_trial_params(raw_best_params)
         quantization_mode = raw_best_params.get(
             "quantization_mode",

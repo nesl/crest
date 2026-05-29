@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, sentinel, patch
 
+import tensorflow as tf
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
@@ -336,10 +338,30 @@ class InterfaceDefaultsTests(unittest.TestCase):
                 checkpoint_path=missing_checkpoint,
             )
 
-    def test_default_count_flops_raises_not_implemented(self) -> None:
-        # The abstract default should raise NotImplementedError until a concrete model family supplies a FLOP counter.
-        with self.assertRaises(NotImplementedError):
-            self.model_family.count_flops(sentinel.model, self.ctx, {})
+    def test_default_count_flops_uses_generic_keras_estimator(self) -> None:
+        # The default model-family FLOP hook should use the shared generic Keras profiler when an input shape is available.
+        model = tf.keras.Sequential(
+            [
+                tf.keras.layers.Input(shape=(1,)),
+                tf.keras.layers.Dense(1),
+            ]
+        )
+
+        flops = self.model_family.count_flops(model, self.ctx, {})
+
+        self.assertIsInstance(flops, int)
+        self.assertGreater(flops, 0)
+
+    def test_default_count_flops_rejects_missing_input_shape(self) -> None:
+        # Generic FLOP estimation needs a logical input shape so it can build the batch-size-1 signature.
+        ctx = ModelBuildContext(
+            input_shape=None,
+            input_dtype="float32",
+            target_spec=self.target_spec,
+        )
+
+        with self.assertRaisesRegex(ValueError, "input shape"):
+            self.model_family.count_flops(sentinel.model, ctx, {})
 
 
 class PurityTests(unittest.TestCase):
@@ -355,6 +377,7 @@ class PurityTests(unittest.TestCase):
         }
         module_paths = [
             SRC_DIR / "tinyodom" / "interfaces.py",
+            SRC_DIR / "tinyodom" / "model_metrics.py",
             SRC_DIR / "tinyodom" / "pipeline_types.py",
             SRC_DIR / "tinyodom" / "registry.py",
         ]

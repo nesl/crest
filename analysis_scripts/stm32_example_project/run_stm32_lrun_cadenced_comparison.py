@@ -57,7 +57,7 @@ def _run_case(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare LRUN back-to-back and cadenced runs.")
     parser.add_argument("--project-root", type=Path, default=SCRIPT_DIR / "stm32_lrun_toy_ai_project")
-    parser.add_argument("--config", type=Path, default=SCRIPT_DIR.parents[1] / "src" / "config" / "nas_config.yaml")
+    parser.add_argument("--config", type=Path, default=SCRIPT_DIR.parents[1] / "src" / "config" / "nas_config_stm32.yaml")
     parser.add_argument("--output-dir", type=Path, default=SCRIPT_DIR / "out" / "stm32_lrun_cadenced_comparison")
     parser.add_argument("--attempts", type=int, default=3)
     parser.add_argument("--weight-storage-mode", choices=["embedded", "external_flash"], default="external_flash")

@@ -37,6 +37,7 @@ from tinyodom.hardware import (
     TFLiteSubprocessError,
 )  # noqa: E402
 from tinyodom.model import ScoreConfigEvaluationError, TrialOutcome  # noqa: E402
+from tinyodom.model_metrics import StaticMemoryEstimate  # noqa: E402
 from tinyodom.pipeline_types import (
     DataSplit,
     DatasetBundle,
@@ -163,6 +164,15 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
         build_model=MagicMock(return_value=fake_built_model),
         load_model=MagicMock(return_value=fake_loaded_model),
         count_flops=MagicMock(return_value=1234),
+        estimate_static_memory=MagicMock(
+            return_value=StaticMemoryEstimate(
+                weight_bytes=12,
+                activation_bytes=34,
+                memory_traffic_bytes=46,
+                dtype_bytes=4,
+                warning_count=0,
+            )
+        ),
         supports_tflite=MagicMock(return_value=True),
         default_seed_trial=MagicMock(
             return_value={
@@ -635,6 +645,14 @@ class ObjectiveTests(unittest.TestCase):
             self.client.model_build_context,
             self.client.model_config,
         )
+        self.client.model_family.estimate_static_memory.assert_called_once_with(
+            self.client.model_family.build_model.return_value,
+            self.client.model_build_context,
+            self.client.model_config,
+            quantization_mode="float",
+        )
+        logged_hparams = self.mock_log.call_args.kwargs["trial_outcome"].hyperparams
+        self.assertEqual(logged_hparams["memory_traffic_bytes"], 46)
         self.client.task.build_fit_plan.assert_called_once_with(
             self.client.dataset_bundle,
             self.client.task_config,
@@ -797,6 +815,94 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "rule_0")
         self.assertIn("Configured prune metric unavailable", self.mock_log.call_args.kwargs["prune_reason"])
 
+    def test_objective_infeasible_skips_training_and_logs_constraints(self) -> None:
+        """Feasibility violations should complete with penalties when training is disabled."""
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 25.0,
+            "latency_budget_ms": 20.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client.config.nas.feasibility = Dict(
+            train_if_infeasible=False,
+            rules=[
+                Dict(
+                    rule="latency_budget",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds cadence budget",
+                )
+            ],
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        result = self.client.objective(trial)
+
+        self.assertEqual(result, -100.0)
+        self.client.task.build_fit_plan.assert_not_called()
+        logged_metrics = self.mock_log.call_args.kwargs["metrics"]
+        self.assertFalse(logged_metrics["feasible"])
+        self.assertEqual(logged_metrics["feasibility_status"], "infeasible")
+        self.assertEqual(logged_metrics["feasibility_rule"], "latency_budget")
+        self.assertEqual(logged_metrics["feasibility_constraints"], [5.0])
+        self.assertEqual(json.loads(logged_metrics["feasibility_constraints_json"]), [5.0])
+        self.assertFalse(self.mock_log.call_args.kwargs.get("pruned", False))
+
+    def test_objective_train_if_infeasible_trains_with_real_objectives(self) -> None:
+        """Infeasible trials may still train while remaining constrained."""
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 25.0,
+            "latency_budget_ms": 20.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="latency_ms", direction="minimize"),
+                    Dict(metric="rmse_total", direction="minimize"),
+                ]
+            ),
+        )
+        self.client.config.nas.feasibility = Dict(
+            train_if_infeasible=True,
+            rules=[
+                Dict(
+                    rule="latency_budget",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds cadence budget",
+                )
+            ],
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+
+        result = self.client.objective(DummyTrial())
+
+        self.assertEqual(result, (25.0, 0.3))
+        self.client.task.build_fit_plan.assert_called_once()
+        logged_metrics = self.mock_log.call_args.kwargs["metrics"]
+        self.assertFalse(logged_metrics["feasible"])
+        self.assertEqual(logged_metrics["feasibility_status"], "infeasible")
+        self.assertEqual(logged_metrics["feasibility_constraints"], [5.0])
+
     def test_objective_uses_negative_one_rmse_sentinels_for_failed_trials(self) -> None:
         # Failed trials should log stable RMSE sentinels so CSV summaries can distinguish a failure from missing training output.
         metrics = {
@@ -898,6 +1004,8 @@ class ObjectiveTests(unittest.TestCase):
         self.assertNotIn("model_variant", sent_payload)
         self.assertNotIn("cpu_clock_mhz", sent_payload["family_hparams"])
         self.assertEqual(sent_payload["runtime_metadata"]["flops"], 1234)
+        self.assertEqual(sent_payload["runtime_metadata"]["memory_traffic_bytes"], 46)
+        self.assertEqual(sent_payload["runtime_metadata"]["memory_proxy_dtype_bytes"], 4)
         self.assertEqual(trial.params["cpu_clock_mhz_index"], 0)
 
     def test_objective_omits_device_overrides_when_clock_options_are_null(self) -> None:
@@ -1016,6 +1124,264 @@ class ObjectiveTests(unittest.TestCase):
 
         self.assertEqual(result, (10.0, 512.0))
         self.mock_log.assert_called_once()
+
+    def test_objective_multiobjective_rule_hit_returns_penalty_tuple(self) -> None:
+        """Multi-objective prune-rule hits should log and return signed penalties.
+
+        Returns
+        -------
+        None
+            Asserts that post-HIL gates skip fit/evaluation and return
+            direction-aware penalties.
+        """
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 25.0,
+            "latency_budget_ms": 20.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="latency_ms", direction="minimize"),
+                    Dict(metric="rmse_total", direction="maximize"),
+                ]
+            ),
+        )
+        self.client.config.nas.prune = Dict(
+            rules=[
+                Dict(
+                    rule="deadline_miss_limit",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds deployment budget",
+                )
+            ]
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+        trial = DummyTrial()
+
+        result = self.client.objective(trial)
+
+        self.assertEqual(result, (1e12, -1e12))
+        self.client.model_family.build_model.assert_called_once()
+        self.client.task.compile_model.assert_called_once()
+        self.client.model_family.count_flops.assert_called_once()
+        self.client._hil_request.assert_called_once()
+        self.client.task.build_fit_plan.assert_not_called()
+        self.client.model_family.build_model.return_value.fit.assert_not_called()
+        self.client._evaluate_model_with_backend.assert_not_called()
+        self.mock_log.assert_called_once()
+        self.assertTrue(self.mock_log.call_args.kwargs["pruned"])
+        self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "deadline_miss_limit")
+        self.assertEqual(
+            self.mock_log.call_args.kwargs["prune_reason"],
+            "Latency exceeds deployment budget",
+        )
+
+    def test_objective_multiobjective_rule_reference_unavailable_reason(self) -> None:
+        """Unavailable prune reference metrics should be named in the reason.
+
+        Returns
+        -------
+        None
+            Asserts reference-metric unavailability is distinct from rule
+            metric unavailability.
+        """
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 25.0,
+            "latency_budget_ms": -1.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(objectives=[Dict(metric="latency_ms", direction="minimize")]),
+        )
+        self.client.config.nas.prune = Dict(
+            rules=[
+                Dict(
+                    rule="latency_reference",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds deployment budget",
+                )
+            ]
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+
+        result = self.client.objective(DummyTrial())
+
+        self.assertEqual(result, (1e12,))
+        self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "latency_reference")
+        self.assertEqual(
+            self.mock_log.call_args.kwargs["prune_reason"],
+            "Configured prune reference metric unavailable: latency_budget_ms",
+        )
+
+    def test_objective_multiobjective_custom_nonnegative_sentinel_fails_closed(self) -> None:
+        """Task-owned nonnegative prune metrics should treat -1 as unavailable.
+
+        Returns
+        -------
+        None
+            Asserts task nonnegative sentinel handling is applied before fit.
+        """
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+            "custom_feasibility": -1.0,
+        }
+        self.client.metric_contract = TaskMetricContract(
+            available_metric_names={"custom_feasibility", "rmse_total"},
+            training_only_metric_names={"rmse_total"},
+            nonnegative_metric_names={"custom_feasibility", "rmse_total"},
+            primary_metric_names={"rmse_total"},
+        )
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(objectives=[Dict(metric="latency_ms", direction="minimize")]),
+        )
+        self.client.config.nas.prune = Dict(
+            rules=[
+                Dict(
+                    rule="custom_prefit_gate",
+                    metric="custom_feasibility",
+                    condition="gt",
+                    reference=Dict(type="literal", value=0.0),
+                    reason="Custom feasibility failed",
+                )
+            ]
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+
+        result = self.client.objective(DummyTrial())
+
+        self.assertEqual(result, (1e12,))
+        self.client.task.build_fit_plan.assert_not_called()
+        self.assertEqual(self.mock_log.call_args.kwargs["prune_rule"], "custom_prefit_gate")
+        self.assertEqual(
+            self.mock_log.call_args.kwargs["prune_reason"],
+            "Configured prune metric unavailable: custom_feasibility",
+        )
+
+    def test_objective_multiobjective_rule_miss_trains_and_evaluates(self) -> None:
+        """Non-matching multi-objective rules should continue through validation.
+
+        Returns
+        -------
+        None
+            Asserts rule misses continue into fit plus TFLite and Keras
+            validation.
+        """
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 10.0,
+            "latency_budget_ms": 20.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(
+                objectives=[
+                    Dict(metric="latency_ms", direction="minimize"),
+                    Dict(metric="rmse_total", direction="minimize"),
+                ]
+            ),
+        )
+        self.client.config.nas.prune = Dict(
+            rules=[
+                Dict(
+                    rule="latency_budget",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds deployment budget",
+                )
+            ]
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+
+        result = self.client.objective(DummyTrial())
+
+        self.assertEqual(result, (10.0, 0.3))
+        self.client.task.build_fit_plan.assert_called_once()
+        self.assertEqual(self.client._evaluate_model_with_backend.call_count, 2)
+        self.assertFalse(self.mock_log.call_args.kwargs.get("pruned", False))
+
+    def test_objective_multiobjective_gated_optuna_trial_is_complete(self) -> None:
+        """Optuna should record gated multi-objective trials as COMPLETE.
+
+        Returns
+        -------
+        None
+            Asserts a gated multi-objective objective return is not an Optuna
+            PRUNED trial.
+        """
+        metrics = {
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": 25.0,
+            "latency_budget_ms": 20.0,
+            "energy_mj_per_inference": -1.0,
+            "avg_power_mw": -1.0,
+            "avg_current_ma": -1.0,
+            "bus_voltage_v": -1.0,
+        }
+        self.client.config.nas.score = Dict(
+            type="multi-objective",
+            metrics=Dict(),
+            params=Dict(objectives=[Dict(metric="latency_ms", direction="minimize")]),
+        )
+        self.client.config.nas.prune = Dict(
+            rules=[
+                Dict(
+                    rule="latency_budget",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds deployment budget",
+                )
+            ]
+        )
+        self.client._hil_request = MagicMock(return_value=metrics)
+        study = optuna.create_study(directions=["minimize"])
+
+        study.optimize(self.client.objective, n_trials=1)
+
+        self.assertEqual(len(study.trials), 1)
+        self.assertEqual(study.trials[0].state, TrialState.COMPLETE)
+        self.assertEqual(study.trials[0].values, [1e12])
 
     def test_objective_train_false_uses_generic_metric_sentinels(self) -> None:
         # Train-disabled trials should still emit generic metric sentinels so downstream logs keep a stable shape.
@@ -1263,6 +1629,32 @@ class ObjectiveTests(unittest.TestCase):
         self.client.task.build_fit_plan.assert_not_called()
         self.assertNotIn("quantization_mode", trial.params)
 
+    def test_feasibility_metrics_participate_in_hil_dependency_classification(self) -> None:
+        """Runtime-only feasibility metrics should force runtime dependency validation."""
+        self.client.config.nas.score = Dict(
+            type="scoring-function",
+            metrics=Dict(),
+            params=Dict(terms=[Dict(type="weighted", metric="flops", weight=-1.0)]),
+        )
+        self.client.config.nas.feasibility = Dict(
+            train_if_infeasible=False,
+            rules=[
+                Dict(
+                    rule="latency_budget",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds cadence budget",
+                )
+            ],
+        )
+
+        dependencies = self.client._classify_nas_metric_dependencies()
+
+        self.assertIn("latency_ms", dependencies.metrics)
+        self.assertIn("latency_budget_ms", dependencies.metrics)
+        self.assertIn("latency_ms", dependencies.runtime_only)
+
 
 class SmokeTestTests(unittest.TestCase):
     """Ensure the convenience smoke_test helper toggles config safely."""
@@ -1488,9 +1880,13 @@ class RunNASTests(unittest.TestCase):
             self.best_value = None
             self.enqueue_calls = []
             self.metric_names_calls = []
+            self.user_attrs = {}
 
         def set_metric_names(self, metric_names):
             self.metric_names_calls.append(list(metric_names))
+
+        def set_user_attr(self, key, value):
+            self.user_attrs[key] = value
 
         def optimize(self, func, n_trials):
             self.optimize_calls.append(n_trials)
@@ -1555,6 +1951,116 @@ class RunNASTests(unittest.TestCase):
         self.assertEqual(mock_create.call_args.kwargs["directions"], ["minimize", "minimize"])
         self.assertEqual(dummy.metric_names_calls, [["rmse_total", "latency_ms"]])
         self.assertEqual(dummy.optimize_calls, [1])
+
+    def test_run_nas_wires_constraints_sampler_when_feasibility_enabled(self) -> None:
+        """Both sampler families should receive the persisted constraints hook."""
+        client = _build_test_client()
+        client.config.training.nas_trials = 1
+        client.config.training.max_total_trials = 1
+        client.config.nas.feasibility = Dict(
+            train_if_infeasible=False,
+            rules=[
+                Dict(
+                    rule="latency_budget",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds cadence budget",
+                )
+            ],
+        )
+        dummy = self.DummyStudy([TrialState.COMPLETE])
+        client.objective = MagicMock()
+        sentinel_sampler = object()
+
+        with patch("nas_model_client.optuna.samplers.TPESampler", return_value=sentinel_sampler) as mock_tpe:
+            with patch("nas_model_client.optuna.create_study", return_value=dummy):
+                client.run_nas(study_name="demo", storage="sqlite:///dummy.db")
+
+        constraints_func = mock_tpe.call_args.kwargs["constraints_func"]
+        self.assertIs(constraints_func.__self__, client)
+        self.assertIs(constraints_func.__func__, client._constraints_func.__func__)
+        self.assertEqual(
+            dummy.user_attrs["tinyodom_feasibility_policy_signature"]["rules"][0]["rule"],
+            "latency_budget",
+        )
+
+    def test_run_nas_does_not_count_not_evaluated_complete_trials_as_infeasible(self) -> None:
+        """Hard-pruned COMPLETE penalty trials should stay separate from infeasible trials."""
+        client = _build_test_client()
+        client.config.training.nas_trials = 1
+        client.config.training.max_total_trials = 1
+        client.config.nas.feasibility = Dict(
+            train_if_infeasible=False,
+            rules=[
+                Dict(
+                    rule="latency_budget",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds cadence budget",
+                )
+            ],
+        )
+        trial = SimpleNamespace(
+            state=TrialState.COMPLETE,
+            user_attrs={"feasible": False, "feasibility_status": "not_evaluated"},
+        )
+
+        class DummyStudy:
+            """Study double with one hard-pruned complete penalty trial."""
+
+            def __init__(self) -> None:
+                self.trials = [trial]
+                self.user_attrs = {
+                    "tinyodom_feasibility_policy_signature": client._feasibility_policy_signature()
+                }
+                self.metric_names_calls = []
+
+            def set_metric_names(self, metric_names):
+                """Record metric names like an Optuna study."""
+                self.metric_names_calls.append(list(metric_names))
+
+        dummy = DummyStudy()
+
+        with patch("nas_model_client.optuna.create_study", return_value=dummy):
+            with patch("builtins.print") as mock_print:
+                client.run_nas(study_name="demo", storage="sqlite:///dummy.db")
+
+        final_line = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+        self.assertIn("0 feasible, 0 infeasible, 1 completed", final_line)
+
+    def test_run_nas_rejects_mismatched_feasibility_signature_on_resume(self) -> None:
+        """Resume should fail when stored feasibility policy differs."""
+        client = _build_test_client()
+        client.config.nas.feasibility = Dict(
+            train_if_infeasible=False,
+            rules=[
+                Dict(
+                    rule="latency_budget",
+                    metric="latency_ms",
+                    condition="gt",
+                    reference=Dict(type="metric", metric="latency_budget_ms"),
+                    reason="Latency exceeds cadence budget",
+                )
+            ],
+        )
+        dummy = self.DummyStudy([TrialState.COMPLETE])
+        dummy.user_attrs["tinyodom_feasibility_policy_signature"] = {
+            "train_if_infeasible": False,
+            "rules": [
+                {
+                    "rule": "other",
+                    "metric": "latency_ms",
+                    "condition": "gt",
+                    "reference": {"type": "metric", "metric": "latency_budget_ms"},
+                }
+            ],
+        }
+
+        with patch("nas_model_client.optuna.create_study", return_value=dummy):
+            with self.assertRaisesRegex(RuntimeError, "does not match"):
+                client.run_nas(study_name="demo", storage="sqlite:///dummy.db")
 
     def test_run_nas_honors_max_total_trials_cap(self) -> None:
         """Stop retrying when the global trial-attempt cap is reached.
@@ -1911,6 +2417,7 @@ class FoldRotationReportingTests(unittest.TestCase):
             study = SimpleNamespace(
                 trials=[object()],
                 best_value=0.75,
+                best_trial=SimpleNamespace(value=0.75, params={}),
                 trials_dataframe=MagicMock(return_value=trials_df),
             )
 
@@ -1943,6 +2450,46 @@ class FoldRotationReportingTests(unittest.TestCase):
                 write_summary.call_args.kwargs["fold_rotation_artifacts"]["summary_path"],
                 "fold_rotation/fold_rotation_summary.json",
             )
+
+    def test_run_scoring_nas_requires_feasible_trial_before_final_training(self) -> None:
+        """Single-objective closeout should not retrain infeasible penalty trials."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            client.config.nas.feasibility = Dict(
+                train_if_infeasible=False,
+                rules=[
+                    Dict(
+                        rule="latency_budget",
+                        metric="latency_ms",
+                        condition="gt",
+                        reference=Dict(type="metric", metric="latency_budget_ms"),
+                        reason="Latency exceeds cadence budget",
+                    )
+                ],
+            )
+            trials_df = MagicMock()
+            infeasible_trial = SimpleNamespace(
+                state=TrialState.COMPLETE,
+                value=-100.0,
+                params={"nb_filters": 2},
+                user_attrs={"feasible": False, "feasibility_status": "infeasible"},
+            )
+            study = SimpleNamespace(
+                trials=[infeasible_trial],
+                trials_dataframe=MagicMock(return_value=trials_df),
+                get_trials=MagicMock(return_value=[infeasible_trial]),
+            )
+
+            with patch.object(client, "run_nas", return_value=study), patch.object(
+                client, "train_best_trial"
+            ) as train_best:
+                with self.assertRaisesRegex(RuntimeError, "without any feasible completed trials"):
+                    client.run_scoring_nas(study_name="demo")
+
+            train_best.assert_not_called()
+            trials_df.to_csv.assert_called_once()
 
     def test_run_fold_rotation_uses_per_fold_context_without_export(self) -> None:
         """Fold reporting should write success artifacts for requested folds."""

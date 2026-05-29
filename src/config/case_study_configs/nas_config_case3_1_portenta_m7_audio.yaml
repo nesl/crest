@@ -1,16 +1,26 @@
-# STM32 N657 UrbanSound8K DS-CNN measured-energy NAS example.
+# Case 3.1: Portenta H7 CM7 UrbanSound8K DS-CNN scalar-score NAS.
+#
+# This is the Portenta M7 counterpart to the STM32 Case 3.2 scalar-score run.
+# It measures classifier inference over cached log-mel tensors only. It does
+# not include microphone capture, feature extraction, logging, or communications
+# energy in the NAS score.
+#
+# Intended launch on the GPU host:
+#   CUDA_VISIBLE_DEVICES=1 TF_FORCE_GPU_ALLOW_GROWTH=true \
+#   python src/nas_model_client.py \
+#     --config src/config/case_study_configs/nas_config_case3_1_portenta_m7_audio.yaml \
+#     --study-name UrbanSound8K_DSCNN_PORTENTA_M7_AUDIO_case3_1
 
 device:
-  name: STM32_NUCLEO_N657X0_Q
+  name: PORTENTA_H7
   hil: true
   compile_when_hil_disabled: auto
-  runtime_mode: cadenced
+  runtime_mode: back_to_back
   latency_budget_ms: 2000.0
   serial_port: "/dev/ttyACM0"
   measured_inference_runs: 10
   dut_ready_timeout_s: 12.0
   serial_timeout_s: 12.0
-  cpu_clock_mhz_options: null
   harness_serial_port: "/dev/ttyACM1"
   harness_fqbn: "arduino:mbed_nano:nano33ble"
   harness_auto_flash: "once"
@@ -18,13 +28,10 @@ device:
   harness_arm_timeout_s: 5.0
   harness_active_timeout_s: 30.0
   harness_done_timeout_s: 5.0
-  stm32:
-    project_root: "sketches/stm32/tinyodom_stm32_lrun"
-    appli_flash_address: "0x70100000"
-    wake_margin_us: 5000
-    min_sleep_us: 5000
-    weight_storage_mode: "external_flash"
-    weights_memory_pool: "analysis_scripts/stm32_example_project/nucleo_mypool.json"
+  portenta:
+    target_core: "cm7"
+    split: "75_25"
+    security: "none"
 
 dataset:
   name: urbansound8k_mel
@@ -46,13 +53,12 @@ model:
   family: audio_dscnn
   params:
     export_variant: untrained
-  search: {}
+  search: {}  # Empty search uses AudioDSCNNFamily.AUDIO_DSCNN_SEARCH_CHOICES.
 
 training:
   nas_epochs: 55
   model_epochs: 990
   nas_trials: 200
-  nas_multiobjective_population_size: 50
   max_total_trials: 300
   quantization:
     mode: int8_ptq
@@ -119,20 +125,13 @@ nas:
         reference:
           type: metric
           metric: max_flash_bytes
-        reason: "Internal flash usage exceeds target capacity"
-      - rule: external_flash_capacity
-        metric: external_flash_bytes
-        condition: gt
-        reference:
-          type: literal
-          value: 67108864
-        reason: "External flash weight storage exceeds target capacity"
+        reason: "Flash usage exceeds target capacity"
 
 outputs:
   models_dir: "models"
   candidate_dir: "audio_dscnn"
-  artifact_stem: "TinyOdomEx_UrbanSound8K"
-  log_file_name: "log_NAS_TinyOdomEx_UrbanSound8K_STM32.csv"
+  artifact_stem: "UrbanSound8K_DSCNN_PORTENTA_M7_AUDIO_case3_1"
+  log_file_name: "log_NAS_UrbanSound8K_DSCNN_PORTENTA_M7_AUDIO_case3_1.csv"
 
 network:
   host: "127.0.0.1"

@@ -27,10 +27,8 @@ from addict import Dict
 from tcn import TCN
 from tensorflow.keras import Input, Model
 from tensorflow.keras.layers import Dense, Flatten, MaxPooling1D, Reshape
-from tensorflow.python.framework.convert_to_constants import (
-    convert_variables_to_constants_v2,
-)
 
+from .model_metrics import count_flops_keras
 from .hardware import (
     HIL_controller,
     describe_error_code,
@@ -40,7 +38,7 @@ from .microcontrollers import (
     get_device as get_microcontroller_device,
     resolve_device_options,
 )
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "nas_config.yaml"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "nas_config_stm32.yaml"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STM32_DEFAULT_PROJECT_ROOT = (
     REPO_ROOT
@@ -65,12 +63,13 @@ VALID_COMPILE_WHEN_HIL_DISABLED = {"auto", "true", "false"}
 BOARD_QUANTIZATION_CAPABILITIES = {
     "STM32_NUCLEO_N657X0_Q": {"float", "int8_ptq"},
     "PORTENTA_H7": {"float", "int8_ptq"},
-    "ARDUINO_NANO_33_BLE_SENSE": {"int8_ptq"},
+    "ARDUINO_NANO_33_BLE_SENSE": {"float", "int8_ptq"},
 }
 VALID_DERIVED_METRIC_TYPES = {"add", "energy-budget-from-power"}
 VALID_TERM_TYPES = {"weighted", "normalized-weighted", "boundary", "target"}
 VALID_OBJECTIVE_DIRECTIONS = {"maximize", "minimize"}
 VALID_PRUNE_CONDITIONS = {"gt", "gte", "lt", "lte"}
+FEASIBILITY_EQUALITY_EPSILON = 1e-12
 NONNEGATIVE_METRICS = {
     "ram_bytes",
     "flash_bytes",
@@ -78,6 +77,11 @@ NONNEGATIVE_METRICS = {
     "max_flash_bytes",
     "external_flash_bytes",
     "flops",
+    "weight_bytes",
+    "activation_bytes",
+    "memory_traffic_bytes",
+    "memory_proxy_dtype_bytes",
+    "memory_proxy_warning_count",
     "latency_ms",
     "energy_mj_per_inference",
     "avg_power_mw",
@@ -102,6 +106,11 @@ INFRASTRUCTURE_SCORE_METRICS = {
     "max_flash_bytes",
     "external_flash_bytes",
     "flops",
+    "weight_bytes",
+    "activation_bytes",
+    "memory_traffic_bytes",
+    "memory_proxy_dtype_bytes",
+    "memory_proxy_warning_count",
     "latency_ms",
     "energy_mj_per_inference",
     "avg_power_mw",
@@ -179,6 +188,11 @@ TRIAL_LOG_STABLE_COLUMNS = (
     "external_flash_bytes",
     "weight_storage_mode",
     "flops",
+    "weight_bytes",
+    "activation_bytes",
+    "memory_traffic_bytes",
+    "memory_proxy_dtype_bytes",
+    "memory_proxy_warning_count",
     "latency_ms",
     "latency_budget_ms",
     "energy_mj_per_inference",
@@ -197,6 +211,15 @@ TRIAL_LOG_STABLE_COLUMNS = (
     "pruned",
     "prune_reason",
     "prune_rule",
+    "feasible",
+    "feasibility_status",
+    "feasibility_rule",
+    "feasibility_reason",
+    "feasibility_metric",
+    "feasibility_value",
+    "feasibility_reference",
+    "feasibility_violation",
+    "feasibility_constraints_json",
     *CADENCED_CSV_FIELDS,
 )
 
@@ -308,6 +331,29 @@ class TrialOutcome:
     hyperparams: dict[str, Any]
     artifact_summary: dict[str, Any] | None = None
     quantization_mode: str = "int8_ptq"
+
+
+@dataclass(frozen=True)
+class FeasibilityEvaluation:
+    """Resolved feasibility policy outcome for one pre-training trial.
+
+    Parameters
+    ----------
+    feasible : bool
+        Whether every configured feasibility constraint is satisfied.
+    status : str
+        Stable status label: ``"feasible"``, ``"infeasible"``, or
+        ``"not_evaluated"``.
+    constraints : list[float]
+        Signed Optuna constraint values in configuration order.
+    first_violation : dict[str, Any] | None
+        Metadata for the first violating rule in configuration order.
+    """
+
+    feasible: bool
+    status: str
+    constraints: list[float]
+    first_violation: dict[str, Any] | None = None
 
 
 class ScoreConfigEvaluationError(ValueError):
@@ -1664,7 +1710,8 @@ def _validate_prune_config(
     Raises
     ------
     ValueError
-        If any prune rule is invalid or incompatible with the score mode.
+        If any prune rule is invalid or references metrics that are unavailable
+        before task training.
     """
     prune_config = Dict(prune_input or {})
     raw_rules = prune_config.get("rules", [])
@@ -1672,9 +1719,6 @@ def _validate_prune_config(
         raw_rules = []
     if not isinstance(raw_rules, list):
         raise ValueError("nas.prune.rules must be a list when provided.")
-    if is_multiobjective_score_config(score_config) and len(raw_rules) > 0:
-        raise ValueError("nas.prune.rules is only supported when nas.score.type is scoring-function.")
-
     allowed_metric_names = allowed_base_metric_names | set(getattr(score_config, "metrics", Dict()).keys())
     normalized_rules = []
     for idx, raw_rule in enumerate(raw_rules):
@@ -1718,6 +1762,142 @@ def _validate_prune_config(
         normalized_rules.append(rule_cfg)
     prune_config.rules = normalized_rules
     return prune_config
+
+
+def _validate_feasibility_config(
+    feasibility_input: Any,
+    score_config: Dict,
+    allowed_base_metric_names: set[str],
+    training_only_metric_names: set[str],
+    *,
+    allow_unknown_metric_names: bool = False,
+) -> Dict:
+    """Validate and normalize NAS feasibility constraints.
+
+    Parameters
+    ----------
+    feasibility_input : object
+        Raw ``nas.feasibility`` configuration.
+    score_config : addict.Dict
+        Normalized ``nas.score`` configuration.
+    allowed_base_metric_names : set[str]
+        Infrastructure and task-owned metric names that are valid for the
+        current validation context.
+    training_only_metric_names : set[str]
+        Task-owned metric names that are only available after training.
+    allow_unknown_metric_names : bool, optional
+        Whether generic config loading should defer unknown task metric checks.
+
+    Returns
+    -------
+    addict.Dict
+        Normalized feasibility configuration with ``train_if_infeasible`` and
+        ``rules`` fields.
+
+    Raises
+    ------
+    ValueError
+        If any feasibility rule is invalid or references metrics unavailable
+        before task training.
+    """
+
+    feasibility_config = Dict(feasibility_input or {})
+    raw_train_if_infeasible = feasibility_config.get("train_if_infeasible", False)
+    if not isinstance(raw_train_if_infeasible, bool):
+        raise ValueError("nas.feasibility.train_if_infeasible must be a boolean.")
+    feasibility_config.train_if_infeasible = bool(raw_train_if_infeasible)
+    feasibility_config.rules = _validate_prefit_rule_config(
+        raw_rules=feasibility_config.get("rules", []),
+        rule_path="nas.feasibility.rules",
+        score_config=score_config,
+        allowed_base_metric_names=allowed_base_metric_names,
+        training_only_metric_names=training_only_metric_names,
+        allow_unknown_metric_names=allow_unknown_metric_names,
+    )
+    return feasibility_config
+
+
+def _validate_prefit_rule_config(
+    *,
+    raw_rules: Any,
+    rule_path: str,
+    score_config: Dict,
+    allowed_base_metric_names: set[str],
+    training_only_metric_names: set[str],
+    allow_unknown_metric_names: bool = False,
+) -> list[Dict]:
+    """Validate and normalize a list of pre-training NAS rules.
+
+    Parameters
+    ----------
+    raw_rules : Any
+        Raw rule list from ``nas.prune.rules`` or ``nas.feasibility.rules``.
+    rule_path : str
+        Human-readable config path used in error messages.
+    score_config : addict.Dict
+        Normalized ``nas.score`` configuration.
+    allowed_base_metric_names : set[str]
+        Infrastructure and task-owned metric names allowed by the active task.
+    training_only_metric_names : set[str]
+        Task metric names unavailable before training.
+    allow_unknown_metric_names : bool, optional
+        Whether generic config loading should defer unknown task metric checks.
+
+    Returns
+    -------
+    list[addict.Dict]
+        Normalized rule entries preserving configuration order.
+
+    Raises
+    ------
+    ValueError
+        If rules are malformed or reference metrics unavailable pre-training.
+    """
+
+    if raw_rules is None:
+        raw_rules = []
+    if not isinstance(raw_rules, list):
+        raise ValueError(f"{rule_path} must be a list when provided.")
+    allowed_metric_names = allowed_base_metric_names | set(getattr(score_config, "metrics", Dict()).keys())
+    normalized_rules = []
+    for idx, raw_rule in enumerate(raw_rules):
+        rule_cfg = Dict(raw_rule)
+        metric_name = str(rule_cfg.get("metric", "")).strip()
+        condition = str(rule_cfg.get("condition", "")).strip().lower()
+        if metric_name not in allowed_metric_names and not allow_unknown_metric_names:
+            raise ValueError(f"{rule_path}[{idx}] references unknown metric '{metric_name}'.")
+        if condition not in VALID_PRUNE_CONDITIONS:
+            raise ValueError(
+                f"{rule_path}[{idx}].condition must be one of: {sorted(VALID_PRUNE_CONDITIONS)}."
+            )
+        if _metric_depends_on_training(
+            metric_name,
+            getattr(score_config, "metrics", Dict()),
+            training_only_metric_names,
+        ):
+            raise ValueError(f"{rule_path}[{idx}] may not use training-only metric '{metric_name}'.")
+        reference = _validate_typed_reference(
+            rule_cfg.get("reference"),
+            allowed_metric_names,
+            f"{rule_path}[{idx}]",
+            allow_unknown_metric_names=allow_unknown_metric_names,
+        )
+        if reference.type == "metric" and _metric_depends_on_training(
+            str(reference.metric),
+            getattr(score_config, "metrics", Dict()),
+            training_only_metric_names,
+        ):
+            raise ValueError(
+                f"{rule_path}[{idx}] may not reference training-only metric '{reference.metric}'."
+            )
+        rule_cfg.metric = metric_name
+        rule_cfg.condition = condition
+        rule_cfg.reference = reference
+        rule_cfg.reason = str(rule_cfg.get("reason", "")).strip()
+        raw_rule_id = str(rule_cfg.get("rule", "")).strip()
+        rule_cfg.rule = raw_rule_id if raw_rule_id else f"rule_{idx}"
+        normalized_rules.append(rule_cfg)
+    return normalized_rules
 
 
 def _validate_nas_config(
@@ -1771,8 +1951,16 @@ def _validate_nas_config(
         effective_training_only_metric_names,
         allow_unknown_metric_names=allow_unknown_metric_names,
     )
+    feasibility_config = _validate_feasibility_config(
+        nas_config.get("feasibility", {}),
+        score_config,
+        allowed_base_metric_names,
+        effective_training_only_metric_names,
+        allow_unknown_metric_names=allow_unknown_metric_names,
+    )
     nas_config.score = score_config
     nas_config.prune = prune_config
+    nas_config.feasibility = feasibility_config
     return nas_config
 
 
@@ -1813,8 +2001,9 @@ def evaluate_prune_rules(
     hyperparams: Dict,
     score_config: Dict,
     prune_config: Dict,
+    task_nonnegative_metric_names: set[str] | None = None,
 ) -> tuple[str, str] | None:
-    """Evaluate pre-training prune rules against the current trial context.
+    """Evaluate post-build feasibility rules against the current trial context.
 
     Parameters
     ----------
@@ -1826,6 +2015,9 @@ def evaluate_prune_rules(
         Normalized score configuration that owns the derived metric registry.
     prune_config : addict.Dict
         Normalized prune configuration.
+    task_nonnegative_metric_names : set[str] | None, optional
+        Task-declared metric names that must not use negative unavailable
+        sentinels.
 
     Returns
     -------
@@ -1835,19 +2027,40 @@ def evaluate_prune_rules(
 
     Notes
     -----
-    Rules are evaluated in configuration order. If a configured metric or
-    reference is unavailable at prune time, that unavailability is itself
-    treated as a prune outcome for the current rule.
+    Rules are evaluated in configuration order after model build/compile, FLOP
+    counting, and HIL/compile metrics are available, but before task fitting or
+    validation evaluation. If a configured metric or reference is unavailable
+    at gate time, that unavailability is itself treated as a prune outcome for
+    the current rule.
     """
     context = dict(metrics)
     context["flops"] = hyperparams["flops"]
 
     for rule_cfg in getattr(prune_config, "rules", []):
         try:
-            metric_value = _resolve_metric_value(rule_cfg.metric, context, score_config)
-            reference_value = _typed_reference_value(rule_cfg.reference, context, score_config)
+            metric_value = _resolve_metric_value(
+                rule_cfg.metric,
+                context,
+                score_config,
+                task_nonnegative_metric_names,
+            )
         except ValueError:
             return rule_cfg.rule, f"Configured prune metric unavailable: {rule_cfg.metric}"
+
+        try:
+            reference_value = _typed_reference_value(
+                rule_cfg.reference,
+                context,
+                score_config,
+                task_nonnegative_metric_names,
+            )
+        except ValueError:
+            if rule_cfg.reference.type == "metric":
+                return (
+                    rule_cfg.rule,
+                    f"Configured prune reference metric unavailable: {rule_cfg.reference.metric}",
+                )
+            return rule_cfg.rule, "Configured prune reference unavailable"
 
         condition_matched = {
             "gt": metric_value > reference_value,
@@ -1864,6 +2077,147 @@ def evaluate_prune_rules(
     return None
 
 
+def _signed_feasibility_constraint(
+    *,
+    condition: str,
+    metric_value: float,
+    reference_value: float,
+) -> float:
+    """Return an Optuna-compatible signed constraint value.
+
+    Parameters
+    ----------
+    condition : str
+        Feasibility condition from the rule config.
+    metric_value : float
+        Resolved metric value for the current trial.
+    reference_value : float
+        Resolved numeric reference value for the current trial.
+
+    Returns
+    -------
+    float
+        Signed constraint where values ``<= 0`` are feasible and values ``> 0``
+        are infeasible.
+
+    Notes
+    -----
+    Inclusive ``gte``/``lte`` rules treat equality as a violation because the
+    rule text says the forbidden region includes equality. A tiny positive
+    value preserves that distinction without changing ordinary violation
+    magnitudes.
+    """
+
+    if condition in {"gt", "gte"}:
+        signed = metric_value - reference_value
+    elif condition in {"lt", "lte"}:
+        signed = reference_value - metric_value
+    else:
+        raise ValueError(f"Unsupported feasibility condition '{condition}'.")
+    if condition in {"gte", "lte"} and signed == 0.0:
+        return FEASIBILITY_EQUALITY_EPSILON
+    return float(signed)
+
+
+def evaluate_feasibility_rules(
+    metrics: dict[str, Any],
+    hyperparams: Dict,
+    score_config: Dict,
+    feasibility_config: Dict,
+    task_nonnegative_metric_names: set[str] | None = None,
+) -> FeasibilityEvaluation:
+    """Evaluate NAS feasibility rules against the current pre-training context.
+
+    Parameters
+    ----------
+    metrics : dict[str, Any]
+        Runtime and compile metrics available before task training.
+    hyperparams : addict.Dict
+        Trial hyperparameters, including ``flops``.
+    score_config : addict.Dict
+        Normalized score configuration that owns derived metric definitions.
+    feasibility_config : addict.Dict
+        Normalized ``nas.feasibility`` policy.
+    task_nonnegative_metric_names : set[str] | None, optional
+        Task-declared metric names that must not use negative unavailable
+        sentinels.
+
+    Returns
+    -------
+    FeasibilityEvaluation
+        Signed constraints plus first-violation metadata.
+
+    Notes
+    -----
+    Feasibility is intentionally separate from pruning: every rule contributes
+    a signed Optuna constraint value, and the first positive value in
+    configuration order is the CSV/user-attribute summary.
+    """
+
+    context = dict(metrics)
+    context["flops"] = hyperparams["flops"]
+    constraints: list[float] = []
+    first_violation: dict[str, Any] | None = None
+
+    for rule_cfg in getattr(feasibility_config, "rules", []):
+        try:
+            metric_value = _resolve_metric_value(
+                rule_cfg.metric,
+                context,
+                score_config,
+                task_nonnegative_metric_names,
+            )
+        except ValueError:
+            metric_value = 1e12
+            reference_value = 0.0
+            violation = 1e12
+        else:
+            try:
+                reference_value = _typed_reference_value(
+                    rule_cfg.reference,
+                    context,
+                    score_config,
+                    task_nonnegative_metric_names,
+                )
+            except ValueError:
+                reference_value = 0.0
+                violation = 1e12
+            else:
+                violation = _signed_feasibility_constraint(
+                    condition=str(rule_cfg.condition),
+                    metric_value=float(metric_value),
+                    reference_value=float(reference_value),
+                )
+
+        constraints.append(float(violation))
+        if violation > 0.0 and first_violation is None:
+            reason = (
+                rule_cfg.reason
+                or f"Feasibility rule '{rule_cfg.rule}' matched: {rule_cfg.metric} {rule_cfg.condition} {reference_value}"
+            )
+            first_violation = {
+                "rule": str(rule_cfg.rule),
+                "reason": reason,
+                "metric": str(rule_cfg.metric),
+                "value": float(metric_value),
+                "reference": float(reference_value),
+                "violation": float(violation),
+            }
+
+    if first_violation is None:
+        return FeasibilityEvaluation(
+            feasible=True,
+            status="feasible",
+            constraints=constraints,
+        )
+    return FeasibilityEvaluation(
+        feasible=False,
+        status="infeasible",
+        constraints=constraints,
+        first_violation=first_violation,
+    )
+
+
 def load_config(
     config_path: str | Path | None = None,
     *,
@@ -1878,10 +2232,11 @@ def load_config(
     ----------
     config_path : str | Path | None
         Optional override for the YAML location. Defaults to
-        ``src/config/nas_config.yaml``.
+        ``src/config/nas_config_stm32.yaml``.
     task_metric_names : set[str] | None, optional
         Task-owned metric names that may appear in score or prune configs. When
-        omitted, only generic NAS-policy validation runs during config load.
+        omitted, generic NAS-policy validation may preserve metric names that
+        are unknown until a task contract is available.
     training_only_task_metric_names : set[str] | None, optional
         Task-owned metric names that are only available after training. When
         omitted, task-aware validation treats no task metrics as training-only.
@@ -1906,10 +2261,11 @@ def load_config(
     -----
     Besides parsing YAML, this helper normalizes derived artifact paths,
     validates board/runtime policy, and injects harness defaults. It always
-    performs the generic NAS score/prune validation pass. When
-    ``task_metric_names`` are supplied, it additionally validates the NAS
-    policy against that concrete task contract instead of deferring task-owned
-    metric checks to the later bootstrap step.
+    performs the generic NAS score/prune validation pass, preserving potential
+    task-owned metric names when no task context exists. When
+    ``task_metric_names`` are supplied, it rejects truly unknown metrics and
+    validates the NAS policy against that concrete task contract instead of
+    deferring task-owned metric checks to the later bootstrap step.
     """
     cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
@@ -2233,32 +2589,14 @@ def count_flops(model, input_shape):
     Returns
     -------
     int
-        Total floating point operations for a single forward pass with batch size 1.
+        Static graph FLOP proxy for a single forward pass with batch size 1.
 
     Notes
     -----
-    The estimate freezes the TensorFlow graph with a batch size of 1 and then
-    delegates to the TensorFlow v1 profiler. It is useful for relative NAS
-    comparisons, but it still depends on TensorFlow profiler support for the
-    active ops.
+    Compatibility wrapper around :func:`tinyodom.model_metrics.count_flops_keras`.
     """
-    concrete = tf.function(model).get_concrete_function(
-        tf.TensorSpec([1, *input_shape], tf.float32)
-    )
-    frozen = convert_variables_to_constants_v2(concrete)
-    graph_def = frozen.graph.as_graph_def()
 
-    with tf.Graph().as_default() as graph:
-        tf.compat.v1.import_graph_def(graph_def, name="")
-        options = (
-            tf.compat.v1.profiler.ProfileOptionBuilder(
-                tf.compat.v1.profiler.ProfileOptionBuilder.float_operation()
-            )
-            .with_empty_output()
-            .build()
-        )
-        flops = tf.compat.v1.profiler.profile(graph, options=options)
-    return flops.total_float_ops
+    return count_flops_keras(model, tuple(int(dim) for dim in input_shape))
 
 
 def require_logical_input_shape(input_shape: Any) -> tuple[int, int]:
@@ -2372,6 +2710,20 @@ def _trial_log_row_mapping(
         "external_flash_bytes": metrics.get("external_flash_bytes", -1),
         "weight_storage_mode": metrics.get("weight_storage_mode", "embedded"),
         "flops": trial_outcome.hyperparams["flops"],
+        "weight_bytes": metrics.get("weight_bytes", trial_outcome.hyperparams.get("weight_bytes", -1)),
+        "activation_bytes": metrics.get("activation_bytes", trial_outcome.hyperparams.get("activation_bytes", -1)),
+        "memory_traffic_bytes": metrics.get(
+            "memory_traffic_bytes",
+            trial_outcome.hyperparams.get("memory_traffic_bytes", -1),
+        ),
+        "memory_proxy_dtype_bytes": metrics.get(
+            "memory_proxy_dtype_bytes",
+            trial_outcome.hyperparams.get("memory_proxy_dtype_bytes", -1),
+        ),
+        "memory_proxy_warning_count": metrics.get(
+            "memory_proxy_warning_count",
+            trial_outcome.hyperparams.get("memory_proxy_warning_count", -1),
+        ),
         "latency_ms": metrics["latency_ms"],
         "latency_budget_ms": metrics.get("latency_budget_ms", -1.0),
         "energy_mj_per_inference": metrics["energy_mj_per_inference"],
@@ -2390,13 +2742,32 @@ def _trial_log_row_mapping(
         "pruned": pruned,
         "prune_reason": prune_reason,
         "prune_rule": prune_rule,
+        "feasible": metrics.get("feasible", not pruned),
+        "feasibility_status": metrics.get(
+            "feasibility_status",
+            "not_evaluated" if pruned else "feasible",
+        ),
+        "feasibility_rule": metrics.get("feasibility_rule", ""),
+        "feasibility_reason": metrics.get("feasibility_reason", ""),
+        "feasibility_metric": metrics.get("feasibility_metric", ""),
+        "feasibility_value": metrics.get("feasibility_value", ""),
+        "feasibility_reference": metrics.get("feasibility_reference", ""),
+        "feasibility_violation": metrics.get("feasibility_violation", ""),
+        "feasibility_constraints_json": metrics.get("feasibility_constraints_json", ""),
     }
     for field_name in CADENCED_CSV_FIELDS:
         mapping[field_name] = metrics.get(field_name)
     for metric_name, value in trial_outcome.task_metrics.items():
         mapping[f"metric__{metric_name}"] = value
     for hyperparam_name, value in trial_outcome.hyperparams.items():
-        if hyperparam_name == "flops":
+        if hyperparam_name in {
+            "flops",
+            "weight_bytes",
+            "activation_bytes",
+            "memory_traffic_bytes",
+            "memory_proxy_dtype_bytes",
+            "memory_proxy_warning_count",
+        }:
             continue
         mapping[f"hparam__{hyperparam_name}"] = value
     return mapping
@@ -2609,6 +2980,29 @@ def log_trial(
     trial.set_user_attr("hil_error_code", metrics["error_code"])
     trial.set_user_attr("arena_bytes", metrics["arena_bytes"])
     trial.set_user_attr("flops", trial_outcome.hyperparams["flops"])
+    trial.set_user_attr("weight_bytes", metrics.get("weight_bytes", trial_outcome.hyperparams.get("weight_bytes", -1)))
+    trial.set_user_attr(
+        "activation_bytes",
+        metrics.get("activation_bytes", trial_outcome.hyperparams.get("activation_bytes", -1)),
+    )
+    trial.set_user_attr(
+        "memory_traffic_bytes",
+        metrics.get("memory_traffic_bytes", trial_outcome.hyperparams.get("memory_traffic_bytes", -1)),
+    )
+    trial.set_user_attr(
+        "memory_proxy_dtype_bytes",
+        metrics.get(
+            "memory_proxy_dtype_bytes",
+            trial_outcome.hyperparams.get("memory_proxy_dtype_bytes", -1),
+        ),
+    )
+    trial.set_user_attr(
+        "memory_proxy_warning_count",
+        metrics.get(
+            "memory_proxy_warning_count",
+            trial_outcome.hyperparams.get("memory_proxy_warning_count", -1),
+        ),
+    )
     trial.set_user_attr("error_code", metrics["error_code"])
     trial.set_user_attr(
         "score_type",
@@ -2622,13 +3016,34 @@ def log_trial(
     trial.set_user_attr("pruned", pruned)
     trial.set_user_attr("prune_reason", prune_reason)
     trial.set_user_attr("prune_rule", prune_rule)
+    trial.set_user_attr("feasible", metrics.get("feasible", not pruned))
+    trial.set_user_attr(
+        "feasibility_status",
+        metrics.get("feasibility_status", "not_evaluated" if pruned else "feasible"),
+    )
+    trial.set_user_attr("feasibility_rule", metrics.get("feasibility_rule", ""))
+    trial.set_user_attr("feasibility_reason", metrics.get("feasibility_reason", ""))
+    trial.set_user_attr("feasibility_metric", metrics.get("feasibility_metric", ""))
+    trial.set_user_attr("feasibility_value", metrics.get("feasibility_value", ""))
+    trial.set_user_attr("feasibility_reference", metrics.get("feasibility_reference", ""))
+    trial.set_user_attr("feasibility_violation", metrics.get("feasibility_violation", ""))
+    trial.set_user_attr("feasibility_constraints_json", metrics.get("feasibility_constraints_json", ""))
+    if "feasibility_constraints" in metrics:
+        trial.set_user_attr("feasibility_constraints", metrics["feasibility_constraints"])
     trial.set_user_attr("task_metrics", dict(trial_outcome.task_metrics))
     trial.set_user_attr("hyperparameters", dict(trial_outcome.hyperparams))
     trial.set_user_attr("artifact_summary", trial_outcome.artifact_summary)
     for metric_name, value in trial_outcome.task_metrics.items():
         trial.set_user_attr(f"metric__{metric_name}", value)
     for hyperparam_name, value in trial_outcome.hyperparams.items():
-        if hyperparam_name == "flops":
+        if hyperparam_name in {
+            "flops",
+            "weight_bytes",
+            "activation_bytes",
+            "memory_traffic_bytes",
+            "memory_proxy_dtype_bytes",
+            "memory_proxy_warning_count",
+        }:
             continue
         trial.set_user_attr(f"hparam__{hyperparam_name}", value)
     for field_name in CADENCED_ALL_FIELDS:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,11 @@ from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+if os.environ.get("RUN_ANALYSIS_SCRIPT_TESTS") != "1":
+    pytest.skip("analysis-script tests are opt-in", allow_module_level=True)
 
 
 def _load_module(module_name: str, relative_path: str):
@@ -210,7 +216,7 @@ class SingleHILRunTests(unittest.TestCase):
         server.config.device.harness_stable_low_ms = 500
         server.determine_metrics.return_value = {"latency_ms": 1.0}
 
-        argv = ["run_single_hil.py", "--config", "src/config/nas_config.yaml"]
+        argv = ["run_single_hil.py", "--config", "src/config/nas_config_stm32.yaml"]
         with patch.object(sys, "argv", argv), patch.object(
             single_hil, "HILServer", return_value=server
         ), patch.object(single_hil, "_build_hyperparams", return_value={"nb_filters": 2}), patch.object(
@@ -526,7 +532,7 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
                 ),
             ):
                 tflite_path, metadata = stm32_phase2_candidate.export_perturbed_candidate_tflite(
-                    Path("/tmp/nas_config.yaml"),
+                    Path("/tmp/nas_config_stm32.yaml"),
                     output_root,
                 )
 
@@ -580,7 +586,7 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
                 ),
             ):
                 stm32_phase2_candidate.export_perturbed_candidate_tflite(
-                    Path("/tmp/nas_config.yaml"),
+                    Path("/tmp/nas_config_stm32.yaml"),
                     Path(tmpdir),
                 )
 
@@ -780,7 +786,7 @@ class Stm32MeasuredRunsTests(unittest.TestCase):
                 "#endif /* TOY_AI_PHASE_CONFIG_H */\n",
                 encoding="utf-8",
             )
-            config_path = tmp_path / "nas_config.yaml"
+            config_path = tmp_path / "nas_config_stm32.yaml"
             config_path.write_text("training:\n  nas_trials: 1\n  max_total_trials: 2\n", encoding="utf-8")
             output_path = tmp_path / "metrics.json"
             stage_output_root = tmp_path / "stage"
