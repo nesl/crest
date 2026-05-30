@@ -381,3 +381,6 @@ plan_model_family_boundary_gaps_breaking_update.md
 plan_task_and_runtime_orchestration_gaps_breaking_update.md
 
 notes_and_papers/
+analysis_scripts/paper_plots/README_local_only.md
+analysis_scripts/compare_pareto_front_calcs/README_local_only.md
+analysis_scripts/compare_pareto_front_calcs/crest_eval_claims_compute.py

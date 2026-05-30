@@ -54,6 +54,9 @@ Use `--help` to inspect the required inputs for each script:
 python -B analysis_scripts/paper_plots/plot_case3_audio_selection_tradeoff.py --help
 ```
 
+For non-plot Pareto-front comparison calculations, see
+`analysis_scripts/compare_pareto_front_calcs/`.
+
 ## Examples
 
 The examples below use placeholder paths so they can be adapted to released
@@ -114,13 +117,6 @@ python -B analysis_scripts/paper_plots/plot_case3_audio_transfer.py \
   --transfer-v2-stem case3_cross_board_transfer_compact \
   --transfer-points-stem case3_cross_board_transfer_points
 ```
-
-## Local Reproduction Notes
-
-The file `README_local_only.md` contains local paper-13 commands that reference
-the repository's current internal directory layout. It is useful while preparing
-the paper branch, but the commands there are not intended to be stable public
-API for released artifacts.
 
 ## Development Checks
 

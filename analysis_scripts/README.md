@@ -91,6 +91,18 @@ target core exposes a DWT cycle counter, the DUT can now report:
   - Produces attempt CSV, aggregates JSON, and latency-vs-ticks scatter PNG.
   - See `analysis_scripts/clock_tick_latency/README.md`.
 
+- `compare_pareto_front_calcs/`
+  - Compares two CSV-derived Pareto fronts with explicit quality/cost columns,
+    matching rules, feasibility filters, and reduction denominators.
+  - Writes reproducibility artifacts such as `manifest.json`, front CSVs,
+    match rows, and summaries.
+  - See `analysis_scripts/compare_pareto_front_calcs/README.md`.
+
+- `paper_plots/`
+  - Generates publication figures and sidecar plotted-point or summary files
+    from explicit input CSVs and replay directories.
+  - See `analysis_scripts/paper_plots/README.md`.
+
 - `audio_desktop_smoke/`
   - Runs a hardware-free UrbanSound8K audio DS-CNN training smoke pass over
     cached log-mel feature tensors.
