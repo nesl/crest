@@ -98,6 +98,10 @@ tools/arduino-cli.yaml
 analysis_scripts/hil_noise_analysis/op_transition_probe_output/op_transition_probe_summary.txt
 analysis_scripts/hil_noise_analysis/op_transition_probe_output_bias_cmp/op_transition_probe_summary.txt
 analysis_scripts/portenta_baseline_load/.staged_sketch/
+analysis_scripts/micro_workload_energy_probe/.staged_sketch/
+analysis_scripts/micro_workload_energy_probe/.staged_stm32/
+analysis_scripts/micro_workload_energy_probe/results
+analysis_scripts/micro_workload_energy_probe/*_logs/
 
 # STM32CubeIDE STM32N6 example project
 analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/.settings/
