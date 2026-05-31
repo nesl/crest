@@ -1,4 +1,5 @@
 import math
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
@@ -21,6 +22,8 @@ from pydometer import Pedometer
 from tqdm import tqdm
 
 from . import geometry
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -191,7 +194,7 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
             if folder_budget is not None and folder_windows >= folder_budget:
                 break
             if(verbose==True):
-                print('Processing for (file and ground truth): '+folder+line)
+                logger.info("Processing for (file and ground truth): %s%s", folder, line)
             cur_train = pd.read_csv(dataset_folder+folder+line,header=None)
             cur_train.columns = default_channels
             acc_x = cur_train['Lin_Acc_X'].to_numpy() + cur_train['Grav_X'].to_numpy()

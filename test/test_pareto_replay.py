@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -665,18 +666,24 @@ def test_result_csv_header_expands_for_heterogeneous_metrics(tmp_path: Path) -> 
     assert rows[1]["target__b"] == "2"
 
 
-def test_dry_run_writes_manifest_requests_and_results_without_server(tmp_path: Path) -> None:
+def test_dry_run_writes_manifest_requests_and_results_without_server(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Check dry-run artifacts and hardware-free server avoidance.
 
     Parameters
     ----------
     tmp_path : pathlib.Path
         Pytest temporary directory.
+    caplog : pytest.LogCaptureFixture
+        Pytest log capture fixture used to verify replay summary logging.
 
     Returns
     -------
     None
-        The test passes when dry-run output is complete without server creation.
+        The test passes when dry-run output and summary logs are complete
+        without server creation.
     """
 
     source_dir, _, _ = write_source_run(tmp_path, [base_row()])
@@ -700,10 +707,16 @@ def test_dry_run_writes_manifest_requests_and_results_without_server(tmp_path: P
 
         raise AssertionError(f"Unexpected HIL server construction for {config_path}")
 
-    assert pareto_replay.run_replay(args, server_factory=forbidden_factory) == 0
+    with caplog.at_level(logging.INFO, logger="tinyodom.pareto_replay"):
+        assert pareto_replay.run_replay(args, server_factory=forbidden_factory) == 0
     manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
     requests = read_request_records(output_dir)
     results = read_results(output_dir)
+    log_messages = [record.getMessage() for record in caplog.records if record.name == "tinyodom.pareto_replay"]
+    assert "Source rows: 1" in log_messages
+    assert "Selected Pareto rows: 1" in log_messages
+    assert "Scheduled replay candidates: 1" in log_messages
+    assert f"Wrote replay outputs: {output_dir}" in log_messages
     assert manifest["entrypoint"] == "src/pareto_hil_replay.py"
     assert manifest["scheduled_candidates"] == 1
     assert manifest["args"] == {

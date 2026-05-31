@@ -30,15 +30,29 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _REPO_ARDUINO_CLI = _PROJECT_ROOT / "tools" / "bin" / "arduino-cli"
 ARDUINO_CLI_BIN = os.environ.get("ARDUINO_CLI_BIN")
 ARDUINO_CLI_CONFIG = str(_PROJECT_ROOT / "tools" / "arduino-cli.yaml")
+logger = logging.getLogger(__name__)
 if not ARDUINO_CLI_BIN:
     if _REPO_ARDUINO_CLI.exists():
         ARDUINO_CLI_BIN = str(_REPO_ARDUINO_CLI)
     else:
         # Fallback to PATH lookup so developer installations still work.
         ARDUINO_CLI_BIN = shutil.which("arduino-cli") or "arduino-cli"
-print(f"Using Arduino CLI at: {ARDUINO_CLI_BIN}")
+_ARDUINO_CLI_PATH_LOGGED = False
 
-logger = logging.getLogger(__name__)
+
+def _log_arduino_cli_path() -> None:
+    """Log the resolved Arduino CLI path once when tooling is first used.
+
+    Returns
+    -------
+    None
+        Emits one debug log record per process.
+    """
+
+    global _ARDUINO_CLI_PATH_LOGGED
+    if not _ARDUINO_CLI_PATH_LOGGED:
+        logger.debug("Using Arduino CLI at: %s", ARDUINO_CLI_BIN)
+        _ARDUINO_CLI_PATH_LOGGED = True
 
 _HARNESS_SKETCH_DIR = _PROJECT_ROOT / "sketches" / "harness"
 _SHARED_COMMON_DIR = _PROJECT_ROOT / "sketches" / "common"
@@ -613,6 +627,7 @@ def compile_sketch(
     CompileResult
         Parsed compile results including RAM/flash usage and overflow status.
     """
+    _log_arduino_cli_path()
     build_dir = _resolve_build_dir(
         sketch_path,
         fqbn,
@@ -758,6 +773,7 @@ def upload_sketch(
     UploadResult
         Upload success flag and captured output.
     """
+    _log_arduino_cli_path()
     upload_cmd = [
         ARDUINO_CLI_BIN,
         "--config-file",

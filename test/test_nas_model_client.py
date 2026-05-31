@@ -311,10 +311,13 @@ class HILRequestTests(unittest.TestCase):
     """Validate the ZeroMQ request/response helper."""
 
     def test_hil_request_success(self) -> None:
-        """A successful round-trip should return the parsed metrics dict.
+        """A successful round-trip should log debug I/O and return metrics.
 
-        Instead of booting a real server we just drive the mock socket and
-        assert that the client sends/receives JSON exactly once.
+        Returns
+        -------
+        None
+            The test passes when the mock socket is used once and request/
+            response diagnostics are emitted as debug log records.
         """
         # A successful HIL round trip should deserialize cleanly into the NAS client's metrics payload.
         client = _build_test_client()
@@ -322,22 +325,35 @@ class HILRequestTests(unittest.TestCase):
         client.socket.recv_json.return_value = metrics
 
         payload = {"family_hparams": {"nb_filters": 4}, "runtime_metadata": {"flops": 1, "timesteps": 16, "input_dim": 3}}
-        result = client._hil_request(payload)
+        with self.assertLogs("nas_model_client", level="DEBUG") as captured:
+            result = client._hil_request(payload)
 
         client.socket.send_json.assert_called_once_with(payload)
         client.socket.recv_json.assert_called_once()
         self.assertEqual(result, metrics)
+        joined_logs = "\n".join(captured.output)
+        self.assertIn("[REQ] Sending payload", joined_logs)
+        self.assertIn("[REQ] Received metrics", joined_logs)
 
     def test_hil_request_timeout_raises(self) -> None:
-        """Timeouts surfaced by pyzmq should be wrapped in a RuntimeError."""
+        """Timeouts surfaced by pyzmq should be logged and wrapped.
+
+        Returns
+        -------
+        None
+            The test passes when a socket timeout logs a warning before the
+            production RuntimeError is raised.
+        """
         # Socket timeouts should surface as errors so stalled HIL servers do not look like valid trial failures.
         client = _build_test_client()
         client.socket.recv_json.side_effect = zmq.error.Again()
 
-        with self.assertRaises(RuntimeError):
-            client._hil_request({"family_hparams": {"nb_filters": 8}, "runtime_metadata": {"flops": 1, "timesteps": 16, "input_dim": 3}})
+        with self.assertLogs("nas_model_client", level="WARNING") as captured:
+            with self.assertRaises(RuntimeError):
+                client._hil_request({"family_hparams": {"nb_filters": 8}, "runtime_metadata": {"flops": 1, "timesteps": 16, "input_dim": 3}})
 
         client.socket.send_json.assert_called_once()
+        self.assertIn("Timed out waiting for metrics", "\n".join(captured.output))
 
     def test_hil_request_opens_socket_lazily(self) -> None:
         """The HIL socket should connect only when a HIL request is sent."""
@@ -1986,7 +2002,14 @@ class RunNASTests(unittest.TestCase):
         )
 
     def test_run_nas_does_not_count_not_evaluated_complete_trials_as_infeasible(self) -> None:
-        """Hard-pruned COMPLETE penalty trials should stay separate from infeasible trials."""
+        """Hard-pruned COMPLETE penalty trials should log separately.
+
+        Returns
+        -------
+        None
+            The test passes when not-evaluated complete trials remain out of
+            the infeasible count and the summary is emitted through logging.
+        """
         client = _build_test_client()
         client.config.training.nas_trials = 1
         client.config.training.max_total_trials = 1
@@ -2024,10 +2047,10 @@ class RunNASTests(unittest.TestCase):
         dummy = DummyStudy()
 
         with patch("nas_model_client.optuna.create_study", return_value=dummy):
-            with patch("builtins.print") as mock_print:
+            with self.assertLogs("nas_model_client", level="INFO") as captured:
                 client.run_nas(study_name="demo", storage="sqlite:///dummy.db")
 
-        final_line = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+        final_line = "\n".join(captured.output)
         self.assertIn("0 feasible, 0 infeasible, 1 completed", final_line)
 
     def test_run_nas_rejects_mismatched_feasibility_signature_on_resume(self) -> None:

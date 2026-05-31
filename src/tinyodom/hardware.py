@@ -222,7 +222,7 @@ XXD_BIN = _probe_xxd()
 if XXD_BIN and not _xxd_supports_custom_names(XXD_BIN):
     XXD_BIN = None
 if not XXD_BIN:
-    print("xxd not found on PATH or doesn't support names; convert_to_cpp_model will use Python fallback.")
+    logger.warning("xxd not found on PATH or doesn't support names; convert_to_cpp_model will use Python fallback.")
 
 # -----------------------------------------------------------------------------
 # Conversion helpers

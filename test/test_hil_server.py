@@ -867,7 +867,14 @@ class StartLoopTests(HILServerTestCase):
     """Validate the ZeroMQ REP loop implemented in `start`."""
 
     def test_start_binds_and_serves_single_request(self) -> None:
-        """The server should bind, process one payload, and send a reply."""
+        """The server should bind, log, process one payload, and reply.
+
+        Returns
+        -------
+        None
+            The test passes when the REP loop emits request-loop diagnostics
+            while preserving the existing request and cleanup behavior.
+        """
         # The REP loop should bind, process one payload, and reply before cleanup so the happy path stays observable in tests.
         server = self.build_server()
         payload = self.request_payload(
@@ -880,7 +887,8 @@ class StartLoopTests(HILServerTestCase):
         server.determine_metrics = MagicMock(return_value=metrics)
         self.socket.recv_json.side_effect = [payload, KeyboardInterrupt()]
 
-        server.start()
+        with self.assertLogs("hil_server", level="DEBUG") as captured:
+            server.start()
 
         # Verify socket binding, message processing, and cleanup.
         endpoint = f"tcp://{self.config.network.host}:{self.config.network.port}"
@@ -894,6 +902,10 @@ class StartLoopTests(HILServerTestCase):
         self.socket.send_json.assert_called_once_with(metrics)
         self.socket.close.assert_called_once_with(linger=0)
         self.context.term.assert_called_once()
+        joined_logs = "\n".join(captured.output)
+        self.assertIn("Listening for hyperparameters", joined_logs)
+        self.assertIn("Received payload", joined_logs)
+        self.assertIn("Sending metrics", joined_logs)
 
     def test_start_normalizes_structured_payload(self) -> None:
         # Structured network payloads should normalize into the same call signature used by simpler requests.
@@ -936,6 +948,14 @@ class StartLoopTests(HILServerTestCase):
         )
 
     def test_start_returns_request_error_for_malformed_payload(self) -> None:
+        """Malformed request payloads should log an error and return metrics.
+
+        Returns
+        -------
+        None
+            The test passes when malformed input is converted into structured
+            failure metrics and the request boundary logs the validation error.
+        """
         # Malformed network payloads should come back as structured request errors instead of exploding the server loop.
         server = self.build_server()
         payload = {
@@ -945,13 +965,15 @@ class StartLoopTests(HILServerTestCase):
         }
         self.socket.recv_json.side_effect = [payload, KeyboardInterrupt()]
 
-        server.start()
+        with self.assertLogs("hil_server", level="ERROR") as captured:
+            server.start()
 
         self.socket.send_json.assert_called_once()
         metrics = self.socket.send_json.call_args.args[0]
         self.assertEqual(metrics["error_code"], hil_server_module.HIL_MASTER_FATAL)
         self.assertEqual(metrics["backend_error_kind"], "request")
         self.assertIn("family_hparams", metrics["backend_error_detail"])
+        self.assertIn("Invalid HIL request payload", "\n".join(captured.output))
 
     def test_start_interrupt_cleans_up_resources(self) -> None:
         """If recv_json immediately raises, we should still close the socket."""

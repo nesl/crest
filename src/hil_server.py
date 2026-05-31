@@ -953,12 +953,12 @@ class HILServer:
         """
         endpoint = f"tcp://{self.config.network.host}:{self.config.network.port}"
         self.socket.bind(endpoint)
-        print(f"[HIL REP] Listening for hyperparameters on {endpoint}")
+        logger.info("[HIL REP] Listening for hyperparameters on %s", endpoint)
 
         try:
             while True:
                 payload = self.socket.recv_json()
-                print(f"[HIL REP] Received payload: {payload}")
+                logger.debug("[HIL REP] Received payload: %s", payload)
                 try:
                     family_hparams, runtime_metadata, quantization_mode, device_options_overrides = self._normalize_request_payload(payload)
                     metrics = self.determine_metrics(
@@ -974,7 +974,7 @@ class HILServer:
                         error_detail=str(exc),
                     )
 
-                print(f"[HIL REP] Sending metrics: {metrics}")
+                logger.debug("[HIL REP] Sending metrics: %s", metrics)
                 self.socket.send_json(metrics)
                 if metrics.get("error_code") == HIL_MASTER_DEVICE_NOT_FOUND:
                     logger.error(
@@ -982,7 +982,7 @@ class HILServer:
                     )
                     break
         except KeyboardInterrupt:
-            print("\n[HIL REP] Shutting down HIL REP server.")
+            logger.info("[HIL REP] Shutting down HIL REP server.")
         finally:
             self.socket.close(linger=0)
             self.context.term()
@@ -1231,7 +1231,7 @@ class HILServer:
             elif runtime_device.requires_candidate_model():
                 self.active_sketch_path = None
 
-            print("Starting metric collection")
+            logger.info("Starting metric collection")
             try:
                 request_metrics_args = build_collect_metrics_request(
                     config=self.config,
@@ -1285,13 +1285,16 @@ class HILServer:
         if self.config.device.hil:
             metrics["latency_budget_ms"] = latency_budget_ms
 
-        print(
+        logger.debug(
             "[HIL REP] Runtime clock details: "
-            f"requested_cpu_clock_mhz={requested_cpu_clock_mhz}, "
-            f"effective_cpu_clock_mhz={merged_device_options.get('cpu_clock_mhz', -1)}, "
-            f"reported_clock_hz={metrics.get('clock_hz', -1.0)}"
+            "requested_cpu_clock_mhz=%s, "
+            "effective_cpu_clock_mhz=%s, "
+            "reported_clock_hz=%s",
+            requested_cpu_clock_mhz,
+            merged_device_options.get("cpu_clock_mhz", -1),
+            metrics.get("clock_hz", -1.0),
         )
-        print("Metric collection complete")
+        logger.info("Metric collection complete")
         return metrics
 
     def _sync_sketch_variant(self) -> Path:

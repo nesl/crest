@@ -64,6 +64,7 @@ from tinyodom.hardware import (  # noqa: E402
 )
 from tinyodom import hil_protocol  # noqa: E402
 from tinyodom.devices import ArduinoDevice, CandidatePrepareRequest  # noqa: E402
+import tinyodom.microcontrollers.arduino_base as arduino_base_module  # noqa: E402
 from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
     ARDUINO_CLI_BIN,
     ARDUINO_CLI_CONFIG,
@@ -984,6 +985,14 @@ class ArduinoCommandOptionTests(unittest.TestCase):
         self.assertNotEqual(cm7_build_dir, cm4_build_dir)
 
     def test_compile_sketch_includes_board_options(self):
+        """Sketch compilation should log CLI path and forward board options.
+
+        Returns
+        -------
+        None
+            The test passes when the compile command includes board options and
+            the Arduino CLI path diagnostic is emitted through logging.
+        """
         # Sketch compilation should forward board options so generated binaries match the selected board layout.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "odom_tcn"
@@ -997,18 +1006,25 @@ class ArduinoCommandOptionTests(unittest.TestCase):
                 "tinyodom.microcontrollers.arduino_base.subprocess.run",
                 return_value=compile_result,
             ) as mock_run:
-                result = compile_sketch(
-                    sketch_path=sketch_dir,
-                    fqbn="arduino:mbed_portenta:envie_m7",
-                    board_options={
-                        "target_core": "cm7",
-                        "split": "75_25",
-                        "security": "none",
-                    },
-                )
+                previous_logged = arduino_base_module._ARDUINO_CLI_PATH_LOGGED
+                arduino_base_module._ARDUINO_CLI_PATH_LOGGED = False
+                try:
+                    with self.assertLogs("tinyodom.microcontrollers.arduino_base", level="DEBUG") as captured:
+                        result = compile_sketch(
+                            sketch_path=sketch_dir,
+                            fqbn="arduino:mbed_portenta:envie_m7",
+                            board_options={
+                                "target_core": "cm7",
+                                "split": "75_25",
+                                "security": "none",
+                            },
+                        )
+                finally:
+                    arduino_base_module._ARDUINO_CLI_PATH_LOGGED = previous_logged
 
         self.assertTrue(result.success)
         command = mock_run.call_args.args[0]
+        self.assertIn("Using Arduino CLI at:", "\n".join(captured.output))
         self.assertIn("--board-options", command)
         board_index = command.index("--board-options")
         self.assertEqual(

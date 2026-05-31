@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import math
 import os
 import time
@@ -12,6 +13,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SUCCESS_ERROR_CODE = 1
@@ -1564,8 +1567,8 @@ def run_replay(
             )
         writer.append(row)
 
-    print(f"Source rows: {total_rows}")
-    print(f"Selected Pareto rows: {selected_rows}")
-    print(f"Scheduled replay candidates: {len(candidates)}")
-    print(f"Wrote replay outputs: {output_dir}")
+    logger.info("Source rows: %s", total_rows)
+    logger.info("Selected Pareto rows: %s", selected_rows)
+    logger.info("Scheduled replay candidates: %s", len(candidates))
+    logger.info("Wrote replay outputs: %s", output_dir)
     return 0

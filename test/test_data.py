@@ -109,13 +109,15 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
             return pd.DataFrame(data)
         raise FileNotFoundError(path)
 
-    def call_loader(self, max_windows=None):
+    def call_loader(self, max_windows=None, verbose=False):
         """Invoke ``import_oxiod_dataset`` with the shared test configuration.
 
         Parameters
         ----------
         max_windows : int | None, optional
             Optional cap forwarded to the loader under test.
+        verbose : bool, optional
+            Whether to enable progress logging in the loader.
 
         Returns
         -------
@@ -131,7 +133,7 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
             sampling_rate=100,
             window_size=self.window_size,
             stride=self.stride,
-            verbose=False,
+            verbose=verbose,
             useMagnetometer=False,
             useStepCounter=False,
             max_windows=max_windows,
@@ -153,6 +155,21 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
         self.assertEqual(subset.size_of_each, [self.expected_windows, self.expected_windows])
         self.assertEqual(subset.disp.shape[0], total_expected)
         self.assertEqual(subset.x_vel.shape[0], total_expected)
+
+    def test_verbose_loader_logs_processing_message(self):
+        """Verbose split loading should emit processing progress as logs.
+
+        Returns
+        -------
+        None
+            The test passes when verbose mode preserves the processing message
+            through the module logger while returning the normal split data.
+        """
+        with self.assertLogs("tinyodom.data", level="INFO") as captured:
+            subset = self.call_loader(max_windows=1, verbose=True)
+
+        self.assertEqual(subset.inputs.shape[0], 1)
+        self.assertIn("Processing for (file and ground truth): mock/imu.csv", "\n".join(captured.output))
 
 
 class PrepareOxIODTests(unittest.TestCase):
