@@ -74,7 +74,6 @@ def _build_lrun_project_tree(root: Path) -> Path:
     Path
         The same ``root`` path after the required template files exist.
     """
-
     # Create just enough of the canonical tree for template parsing, compile
     # staging, and manifest tests without copying a real Cube workspace.
     _write_text(root / "FSBL" / "Inc" / "stm32_extmem_conf.h", "#define EXTMEM_LRUN_SOURCE_SIZE 0x00020000\n")
@@ -187,7 +186,6 @@ def _make_prepare_request(
     CandidatePrepareRequest
         Typed request object accepted by ``prepare_candidate(...)``.
     """
-
     calibration_split = type("CalibrationSplit", (), {"inputs": calibration_inputs})()
     return CandidatePrepareRequest(
         config=config,
@@ -635,6 +633,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
     def test_evaluate_back_to_back_runtime_mode_skips_second_phase(self) -> None:
         # Back-to-back STM32 runs should skip the cadenced second phase entirely.
+        """Validate evaluate back to back runtime mode skips second phase."""
         device = STM32NucleoN657X0QDevice(
             serial_port="/dev/ttyACM0",
             device_options={"runtime_mode": "back_to_back"},
@@ -664,6 +663,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
     def test_evaluate_cadenced_runtime_mode_merges_second_pass_metrics(self) -> None:
         # Cadenced STM32 runs should merge second-pass telemetry into the first-pass result instead of overwriting it.
+        """Validate evaluate cadenced runtime mode merges second pass metrics."""
         device = STM32NucleoN657X0QDevice(
             serial_port="/dev/ttyACM0",
             device_options={"runtime_mode": "cadenced", "latency_budget_ms": 200.0},
@@ -732,6 +732,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
     def test_evaluate_cadenced_runtime_mode_reports_back_to_back_when_second_phase_never_runs(self) -> None:
         # If cadenced phase two never starts, report back-to-back mode so partial telemetry does not masquerade as a full cadenced run.
+        """Validate evaluate cadenced runtime mode reports back to back when second phase never runs."""
         device = STM32NucleoN657X0QDevice(
             serial_port="/dev/ttyACM0",
             device_options={"runtime_mode": "cadenced", "latency_budget_ms": 200.0},
@@ -765,6 +766,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
     def test_cadenced_energy_window_uses_stable_sentinel_when_energy_is_unavailable(self) -> None:
         # Cadenced energy windows should emit a stable sentinel when energy is unavailable so CSV rows keep the same schema.
+        """Validate cadenced energy window uses stable sentinel when energy is unavailable."""
         device = STM32NucleoN657X0QDevice(
             serial_port="/dev/ttyACM0",
             device_options={"runtime_mode": "cadenced", "latency_budget_ms": 200.0},
@@ -943,6 +945,19 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                 model_path: Path,
                 **kwargs,
             ) -> None:
+                """Create fake generated STM32 source output.
+
+                Parameters
+                ----------
+                workspace_dir : Path
+                    Directory used for workspace artifacts.
+                output_dir : Path
+                    Directory used for output artifacts.
+                model_path : Path
+                    Path to the model used by the helper.
+                **kwargs : dict[str, object]
+                    Keyword arguments forwarded to the helper.
+                """
                 del kwargs
                 output_dir.mkdir(parents=True, exist_ok=True)
                 workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -969,6 +984,15 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                 side_effect=_fake_generate,
             ):
                 def _write_tflite(*, output_name, **kwargs):
+                    """Write tflite.
+
+                    Parameters
+                    ----------
+                    output_name : object
+                        Destination path where the fake exporter writes the TFLite payload.
+                    **kwargs : dict[str, object]
+                        Keyword arguments forwarded to the helper.
+                    """
                     del kwargs
                     Path(output_name).write_bytes(b"tflite")
 
@@ -1156,6 +1180,15 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             fake_training_data = type("TrainingData", (), {"inputs": [[[0.0] * 6] * 4]})()
 
             def _write_tflite(*, output_name, **kwargs):
+                """Write tflite.
+
+                Parameters
+                ----------
+                output_name : object
+                    Destination path where the fake exporter writes the TFLite payload.
+                **kwargs : dict[str, object]
+                    Keyword arguments forwarded to the helper.
+                """
                 del kwargs
                 Path(output_name).write_bytes(b"tflite")
 
@@ -1318,7 +1351,6 @@ class STM32HelperTests(unittest.TestCase):
                 subprocess.CompletedProcess
                     Successful fake process result.
                 """
-
                 captured_env.update(kwargs.get("env") or {})
                 return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -1492,6 +1524,8 @@ class STM32HelperTests(unittest.TestCase):
             trace: list[str] = []
 
             class _TracingMonitor(_FakeSerialMonitor):
+                """Tests covering tracing monitor behavior."""
+
                 def __init__(self, port: str, baud: int, label: str) -> None:
                     """Record DUT monitor creation for ordering assertions.
 
@@ -1885,6 +1919,22 @@ class STM32HelperTests(unittest.TestCase):
             device = STM32NucleoN657X0QDevice(device_options={"project_root": str(staged_root)})
 
             def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                """Build a fake STM32 project artifact.
+
+                Parameters
+                ----------
+                project_root : Path
+                    Root directory for project artifacts.
+                jobs : int
+                    Parallel job count received by the fake build step.
+                clean : bool
+                    Whether the fake build was requested as a clean build.
+
+                Returns
+                -------
+                object
+                    Build result returned by the fake STM32 build step.
+                """
                 del jobs, clean
                 debug_dir = project_root / "Debug"
                 if project_root.name == "AppS":
@@ -1896,11 +1946,35 @@ class STM32HelperTests(unittest.TestCase):
                 return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
 
             def _fake_size(elf_path: Path):
+                """Return fake STM32 size data.
+
+                Parameters
+                ----------
+                elf_path : Path
+                    Path to the ELF used by the helper.
+
+                Returns
+                -------
+                object
+                    Size result returned by the fake size parser.
+                """
                 if "AppS" in elf_path.name:
                     return stm32_cube_clt.SizeResult(elf_flash_bytes=120000, ram_bytes=64000, raw_output="app")
                 return stm32_cube_clt.SizeResult(elf_flash_bytes=32000, ram_bytes=12000, raw_output="boot")
 
             def _fake_sign(**kwargs):
+                """Write and report a fake signed binary.
+
+                Parameters
+                ----------
+                **kwargs : dict[str, object]
+                    Keyword arguments forwarded to the helper.
+
+                Returns
+                -------
+                object
+                    Signed-binary result returned by the fake signing step.
+                """
                 output_bin = Path(kwargs["output_bin"])
                 output_bin.parent.mkdir(parents=True, exist_ok=True)
                 output_bin.write_bytes(b"x" * 130321)
@@ -1964,6 +2038,22 @@ class STM32HelperTests(unittest.TestCase):
             device = STM32NucleoN657X0QDevice(device_options={"project_root": str(staged_root)})
 
             def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                """Build a fake STM32 project artifact.
+
+                Parameters
+                ----------
+                project_root : Path
+                    Root directory for project artifacts.
+                jobs : int
+                    Parallel job count received by the fake build step.
+                clean : bool
+                    Whether the fake build was requested as a clean build.
+
+                Returns
+                -------
+                object
+                    Build result returned by the fake STM32 build step.
+                """
                 del jobs, clean
                 debug_dir = project_root / "Debug"
                 if project_root.name == "AppS":
@@ -1975,11 +2065,35 @@ class STM32HelperTests(unittest.TestCase):
                 return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
 
             def _fake_size(elf_path: Path):
+                """Return fake STM32 size data.
+
+                Parameters
+                ----------
+                elf_path : Path
+                    Path to the ELF used by the helper.
+
+                Returns
+                -------
+                object
+                    Size result returned by the fake size parser.
+                """
                 if "AppS" in elf_path.name:
                     return stm32_cube_clt.SizeResult(elf_flash_bytes=120000, ram_bytes=64000, raw_output="app")
                 return stm32_cube_clt.SizeResult(elf_flash_bytes=32000, ram_bytes=12000, raw_output="boot")
 
             def _fake_sign(**kwargs):
+                """Write and report a fake signed binary.
+
+                Parameters
+                ----------
+                **kwargs : dict[str, object]
+                    Keyword arguments forwarded to the helper.
+
+                Returns
+                -------
+                object
+                    Signed-binary result returned by the fake signing step.
+                """
                 output_bin = Path(kwargs["output_bin"])
                 output_bin.parent.mkdir(parents=True, exist_ok=True)
                 output_bin.write_bytes(b"x" * 130321)
@@ -2071,6 +2185,22 @@ class STM32HelperTests(unittest.TestCase):
             device = STM32NucleoN657X0QDevice(device_options={"project_root": str(staged_root)})
 
             def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                """Build a fake STM32 project artifact.
+
+                Parameters
+                ----------
+                project_root : Path
+                    Root directory for project artifacts.
+                jobs : int
+                    Parallel job count received by the fake build step.
+                clean : bool
+                    Whether the fake build was requested as a clean build.
+
+                Returns
+                -------
+                object
+                    Build result returned by the fake STM32 build step.
+                """
                 del jobs, clean
                 debug_dir = project_root / "Debug"
                 if project_root.name == "AppS":
@@ -2082,11 +2212,35 @@ class STM32HelperTests(unittest.TestCase):
                 return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
 
             def _fake_size(elf_path: Path):
+                """Return fake STM32 size data.
+
+                Parameters
+                ----------
+                elf_path : Path
+                    Path to the ELF used by the helper.
+
+                Returns
+                -------
+                object
+                    Size result returned by the fake size parser.
+                """
                 if "AppS" in elf_path.name:
                     return stm32_cube_clt.SizeResult(elf_flash_bytes=120000, ram_bytes=64000, raw_output="app")
                 return stm32_cube_clt.SizeResult(elf_flash_bytes=32000, ram_bytes=12000, raw_output="boot")
 
             def _fake_sign(**kwargs):
+                """Write and report a fake signed binary.
+
+                Parameters
+                ----------
+                **kwargs : dict[str, object]
+                    Keyword arguments forwarded to the helper.
+
+                Returns
+                -------
+                object
+                    Signed-binary result returned by the fake signing step.
+                """
                 output_bin = Path(kwargs["output_bin"])
                 output_bin.parent.mkdir(parents=True, exist_ok=True)
                 output_bin.write_bytes(b"x" * 130321)
@@ -2118,6 +2272,22 @@ class STM32HelperTests(unittest.TestCase):
             build_calls: list[tuple[str, bool]] = []
 
             def _second_build(*, project_root: Path, jobs: int, clean: bool):
+                """Exercise second build behavior.
+
+                Parameters
+                ----------
+                project_root : Path
+                    Root directory for project artifacts.
+                jobs : int
+                    Parallel job count received by the second fake build step.
+                clean : bool
+                    Whether the second fake build was requested as clean.
+
+                Returns
+                -------
+                object
+                    Build result returned by the second fake build step.
+                """
                 del jobs
                 build_calls.append((project_root.name, clean))
                 elf_path = project_root / "Debug" / "Template_LRUN_FSBL.elf"
@@ -2158,6 +2328,22 @@ class STM32HelperTests(unittest.TestCase):
             )
 
             def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                """Build a fake STM32 project artifact.
+
+                Parameters
+                ----------
+                project_root : Path
+                    Root directory for project artifacts.
+                jobs : int
+                    Parallel job count received by the fake build step.
+                clean : bool
+                    Whether the fake build was requested as a clean build.
+
+                Returns
+                -------
+                object
+                    Build result returned by the fake STM32 build step.
+                """
                 del jobs, clean
                 debug_dir = project_root / "Debug"
                 if project_root.name == "AppS":
@@ -2169,11 +2355,35 @@ class STM32HelperTests(unittest.TestCase):
                 return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
 
             def _fake_size(elf_path: Path):
+                """Return fake STM32 size data.
+
+                Parameters
+                ----------
+                elf_path : Path
+                    Path to the ELF used by the helper.
+
+                Returns
+                -------
+                object
+                    Size result returned by the fake size parser.
+                """
                 if "AppS" in elf_path.name:
                     return stm32_cube_clt.SizeResult(elf_flash_bytes=256, ram_bytes=64000, raw_output="app")
                 return stm32_cube_clt.SizeResult(elf_flash_bytes=32000, ram_bytes=12000, raw_output="boot")
 
             def _fake_sign(**kwargs):
+                """Write and report a fake signed binary.
+
+                Parameters
+                ----------
+                **kwargs : dict[str, object]
+                    Keyword arguments forwarded to the helper.
+
+                Returns
+                -------
+                object
+                    Signed-binary result returned by the fake signing step.
+                """
                 output_bin = Path(kwargs["output_bin"])
                 output_bin.parent.mkdir(parents=True, exist_ok=True)
                 output_bin.write_bytes(b"x" * 128)
@@ -2207,6 +2417,22 @@ class STM32HelperTests(unittest.TestCase):
             device = STM32NucleoN657X0QDevice(device_options={"project_root": str(staged_root)})
 
             def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                """Build a fake STM32 project artifact.
+
+                Parameters
+                ----------
+                project_root : Path
+                    Root directory for project artifacts.
+                jobs : int
+                    Parallel job count received by the fake build step.
+                clean : bool
+                    Whether the fake build was requested as a clean build.
+
+                Returns
+                -------
+                object
+                    Build result returned by the fake STM32 build step.
+                """
                 del jobs, clean
                 debug_dir = project_root / "Debug"
                 if project_root.name == "AppS":
@@ -2218,11 +2444,35 @@ class STM32HelperTests(unittest.TestCase):
                 return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
 
             def _fake_size(elf_path: Path):
+                """Return fake STM32 size data.
+
+                Parameters
+                ----------
+                elf_path : Path
+                    Path to the ELF used by the helper.
+
+                Returns
+                -------
+                object
+                    Size result returned by the fake size parser.
+                """
                 if "AppS" in elf_path.name:
                     return stm32_cube_clt.SizeResult(elf_flash_bytes=120000, ram_bytes=64000, raw_output="app")
                 return stm32_cube_clt.SizeResult(elf_flash_bytes=32000, ram_bytes=12000, raw_output="boot")
 
             def _fake_sign(**kwargs):
+                """Write and report a fake signed binary.
+
+                Parameters
+                ----------
+                **kwargs : dict[str, object]
+                    Keyword arguments forwarded to the helper.
+
+                Returns
+                -------
+                object
+                    Signed-binary result returned by the fake signing step.
+                """
                 output_bin = Path(kwargs["output_bin"])
                 output_bin.parent.mkdir(parents=True, exist_ok=True)
                 output_bin.write_bytes(b"x" * (device.spec.max_flash_bytes + 1))
@@ -2257,6 +2507,22 @@ class STM32HelperTests(unittest.TestCase):
             device = STM32NucleoN657X0QDevice(device_options={"project_root": str(staged_root)})
 
             def _fake_build(*, project_root: Path, jobs: int, clean: bool):
+                """Build a fake STM32 project artifact.
+
+                Parameters
+                ----------
+                project_root : Path
+                    Root directory for project artifacts.
+                jobs : int
+                    Parallel job count received by the fake build step.
+                clean : bool
+                    Whether the fake build was requested as a clean build.
+
+                Returns
+                -------
+                object
+                    Build result returned by the fake STM32 build step.
+                """
                 del jobs, clean
                 debug_dir = project_root / "Debug"
                 if project_root.name == "AppS":
@@ -2268,6 +2534,18 @@ class STM32HelperTests(unittest.TestCase):
                 return stm32_cube_clt.BuildResult(log="build ok", debug_dir=debug_dir, elf_path=elf_path)
 
             def _fake_size(elf_path: Path):
+                """Return fake STM32 size data.
+
+                Parameters
+                ----------
+                elf_path : Path
+                    Path to the ELF used by the helper.
+
+                Returns
+                -------
+                object
+                    Size result returned by the fake size parser.
+                """
                 if "AppS" in elf_path.name:
                     return stm32_cube_clt.SizeResult(elf_flash_bytes=4096, ram_bytes=64000, raw_output="app")
                 return stm32_cube_clt.SizeResult(
@@ -2277,6 +2555,18 @@ class STM32HelperTests(unittest.TestCase):
                 )
 
             def _fake_sign(**kwargs):
+                """Write and report a fake signed binary.
+
+                Parameters
+                ----------
+                **kwargs : dict[str, object]
+                    Keyword arguments forwarded to the helper.
+
+                Returns
+                -------
+                object
+                    Signed-binary result returned by the fake signing step.
+                """
                 output_bin = Path(kwargs["output_bin"])
                 output_bin.parent.mkdir(parents=True, exist_ok=True)
                 output_bin.write_bytes(b"x" * 4096)
@@ -2719,6 +3009,20 @@ class STM32HelperTests(unittest.TestCase):
             observed: dict[str, float] = {}
 
             def _runtime_session(*args, **kwargs):
+                """Create a fake runtime session.
+
+                Parameters
+                ----------
+                *args : tuple[object, ...]
+                    Arguments supplied when opening the fake runtime session.
+                **kwargs : dict[str, object]
+                    Keyword arguments forwarded to the helper.
+
+                Returns
+                -------
+                object
+                    Runtime session test double returned by the factory.
+                """
                 del args
                 observed["boot_timeout_s"] = kwargs["boot_timeout_s"]
                 return telemetry

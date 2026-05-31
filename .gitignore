@@ -92,96 +92,14 @@ tools/arduino-cli.yaml
 *.log
 *.keras
 *.json
-!analysis_scripts/stm32_example_project/nucleo_mypool.json
+!src/config/stm32_nucleo_mypool.json
 
 # Probe summaries
-analysis_scripts/hil_noise_analysis/op_transition_probe_output/op_transition_probe_summary.txt
-analysis_scripts/hil_noise_analysis/op_transition_probe_output_bias_cmp/op_transition_probe_summary.txt
-analysis_scripts/portenta_baseline_load/.staged_sketch/
-
-# STM32CubeIDE STM32N6 example project
-analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/.settings/
-analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Release/
-analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/*
-!analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/makefile
-!analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/sources.mk
-!analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/objects.mk
-!analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/objects.list
-!analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/stedgeai.mk
-!analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/Src/
-analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/Src/*
-!analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/Src/subdir.mk
-!analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/Startup/
-analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/Startup/*
-!analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/Debug/Startup/subdir.mk
-analysis_scripts/stm32_example_project/stm32_blink_example_project/FSBL/**/st-link_gdbserver_log.txt
-
-
-analysis_scripts/stm32_example_project/*/FSBL/.settings/
-analysis_scripts/stm32_example_project/*/FSBL/Release/
-analysis_scripts/stm32_example_project/*/FSBL/Debug/*
-!analysis_scripts/stm32_example_project/*/FSBL/Debug/makefile
-!analysis_scripts/stm32_example_project/*/FSBL/Debug/sources.mk
-!analysis_scripts/stm32_example_project/*/FSBL/Debug/objects.mk
-!analysis_scripts/stm32_example_project/*/FSBL/Debug/objects.list
-!analysis_scripts/stm32_example_project/*/FSBL/Debug/stedgeai.mk
-!analysis_scripts/stm32_example_project/*/FSBL/Debug/Src/
-analysis_scripts/stm32_example_project/*/FSBL/Debug/Src/*
-!analysis_scripts/stm32_example_project/*/FSBL/Debug/Src/subdir.mk
-!analysis_scripts/stm32_example_project/*/FSBL/Debug/Startup/
-analysis_scripts/stm32_example_project/*/FSBL/Debug/Startup/*
-!analysis_scripts/stm32_example_project/*/FSBL/Debug/Startup/subdir.mk
-analysis_scripts/stm32_example_project/*/FSBL/**/st-link_gdbserver_log.txt
-
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/.settings/
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Release/
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/*
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/makefile
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/sources.mk
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/objects.mk
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/objects.list
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Src/
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Src/*
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Src/subdir.mk
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Startup/
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Startup/*
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Startup/subdir.mk
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/*
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/STM32N6xx_HAL_Driver/
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/STM32N6xx_HAL_Driver/*
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/STM32N6xx_HAL_Driver/subdir.mk
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/*
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/*
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/subdir.mk
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/SAL/
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/NOR_SFDP/
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/Boot/
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/SAL/*
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/NOR_SFDP/*
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/Boot/*
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/SAL/subdir.mk
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/NOR_SFDP/subdir.mk
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/Debug/Drivers/Middleware/ExtMem/Boot/subdir.mk
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/Boot/**/st-link_gdbserver_log.txt
-
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/.settings/
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/Release/
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/Debug/*
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/Debug/makefile
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/Debug/sources.mk
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/Debug/objects.mk
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/Debug/objects.list
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/Debug/stedgeai.mk
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/Debug/Src/
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/Debug/Src/*
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/Debug/Src/subdir.mk
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/Debug/Startup/
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/Debug/Startup/*
-!analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/Debug/Startup/subdir.mk
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/STM32CubeIDE/AppS/**/st-link_gdbserver_log.txt
+analysis_scripts/micro_workload_energy_probe/.staged_sketch/
+analysis_scripts/micro_workload_energy_probe/.staged_stm32/
+analysis_scripts/micro_workload_energy_probe/results
+analysis_scripts/micro_workload_energy_probe/*_logs/
+analysis_scripts/cs3_audio_sensitivity/results/
 
 # Canonical STM32 FSBL template
 sketches/stm32/tinyodom_tcn_stm32/FSBL/.settings/
@@ -221,10 +139,6 @@ sketches/stm32/tinyodom_tcn_stm32/FSBL/Src/stm32n6xx_nucleo_xspi.c
 sketches/stm32/tinyodom_tcn_stm32/FSBL/Src/mx25um51245g.c
 sketches/stm32/tinyodom_tcn_stm32/FSBL/Src/system_stm32n6xx_fsbl.c
 sketches/stm32/tinyodom_tcn_stm32/FSBL/Drivers/
-analysis_scripts/stm32_example_project/*/FSBL/Drivers/
-analysis_scripts/stm32_example_project/*/FSBL/Src/mx25um51245g.c
-analysis_scripts/stm32_example_project/*/FSBL/Src/stm32n6xx_hal_rtc.c
-analysis_scripts/stm32_example_project/*/FSBL/Src/stm32n6xx_hal_rtc_ex.c
 
 # Canonical STM32 LRUN template
 sketches/stm32/tinyodom_stm32_lrun/STM32CubeIDE/Boot/.settings/
@@ -282,10 +196,6 @@ sketches/stm32/tinyodom_stm32_lrun/Appli/Src/network*.c
 sketches/stm32/tinyodom_stm32_lrun/Appli/Inc/tinyodom_dut_phase_config.h
 sketches/stm32/tinyodom_stm32_lrun/Appli/network_generate_report.*
 sketches/stm32/tinyodom_stm32_lrun/Appli/network_c_info.json
-analysis_scripts/stm32_example_project/*/FSBL/Src/stm32n6xx_hal_uart.c
-analysis_scripts/stm32_example_project/*/FSBL/Src/stm32n6xx_hal_uart_ex.c
-analysis_scripts/stm32_example_project/*/FSBL/Src/stm32n6xx_hal_xspi.c
-analysis_scripts/stm32_example_project/*/FSBL/Src/stm32n6xx_nucleo_xspi.c
 
 # Canonical STM32 LRUN workspace is materialized by setup_stm32.sh.
 # Ignore the vendor workspace by default and keep only the repo-owned overlay.
@@ -293,6 +203,10 @@ sketches/stm32/tinyodom_stm32_lrun/**
 !sketches/stm32/tinyodom_stm32_lrun/
 !sketches/stm32/tinyodom_stm32_lrun/README.md
 !sketches/stm32/tinyodom_stm32_lrun/lrun_ownership_manifest.tsv
+!sketches/stm32/tinyodom_stm32_lrun/LICENSE.md
+!sketches/stm32/tinyodom_stm32_lrun/LICENSE.CMSIS.txt
+!sketches/stm32/tinyodom_stm32_lrun/LICENSE.STM32N6xx_HAL_Driver.md
+!sketches/stm32/tinyodom_stm32_lrun/LICENSE.STM32_ExtMem_Manager.md
 !sketches/stm32/tinyodom_stm32_lrun/Appli/
 !sketches/stm32/tinyodom_stm32_lrun/Appli/Inc/
 !sketches/stm32/tinyodom_stm32_lrun/Appli/Inc/mx25um51245g_conf.h
@@ -345,13 +259,6 @@ sketches/stm32/tinyodom_stm32_lrun/**
 sketches/stm32/tinyodom_tcn_stm32/FSBL/Inc/network*.h
 sketches/stm32/tinyodom_tcn_stm32/FSBL/Src/network*.c
 sketches/stm32/tinyodom_tcn_stm32/FSBL/Inc/tinyodom_dut_phase_config.h
-analysis_scripts/stm32_example_project/stm32_toy_ai_project/FSBL/Inc/network*.h
-analysis_scripts/stm32_example_project/stm32_toy_ai_project/FSBL/Src/network*.c
-analysis_scripts/stm32_example_project/stm32_cadenced_toy_ai_project/FSBL/Inc/network*.h
-analysis_scripts/stm32_example_project/stm32_cadenced_toy_ai_project/FSBL/Src/network*.c
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/Appli/Inc/network*.h
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/Appli/Src/network*.c
-analysis_scripts/stm32_example_project/stm32_lrun_toy_ai_project/Appli/Inc/toy_ai_phase_config.h
 
 memory_stm.md
 
@@ -361,15 +268,9 @@ stm_implementation_plan.md
 stm32_phase0_cpu_first_findings.md
 stedgeai_stm32n6_reference.md
 phase0_cm55_handoff.md
-analysis_scripts/stm32_example_project/IDE_SETUP_CHECKLIST.md
 addict.py
 
-# STM32 sweep archives
-analysis_scripts/stm32_example_project/results/*
 readme_update_plan.md
-analysis_scripts/stm32_example_project/smoke_test_stm32_backend_phase2.py
-analysis_scripts/stm32_example_project/smoke_test_stm32_backend_phase3.py
-analysis_scripts/stm32_example_project/smoke_test_stm32_backend_phase4.py
 todo.md
 stm_memory_notes.md
 model_design.md
@@ -381,3 +282,9 @@ plan_model_family_boundary_gaps_breaking_update.md
 plan_task_and_runtime_orchestration_gaps_breaking_update.md
 
 notes_and_papers/
+analysis_scripts/paper_plots/README_local_only.md
+analysis_scripts/compare_pareto_front_calcs/README_local_only.md
+analysis_scripts/compare_pareto_front_calcs/crest_eval_claims_compute.py
+
+
+stm_docs/

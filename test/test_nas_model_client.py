@@ -62,6 +62,16 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     target specs, metric contracts, model-family hooks, and output-path shape.
     It intentionally skips real dataset loading, real ZMQ sockets, and real
     filesystem/network side effects beyond temporary artifact directories.
+
+    Parameters
+    ----------
+    base_dir : Path | None
+        Base directory used to assemble temporary test files.
+
+    Returns
+    -------
+    NASModelClient
+        Constructed test client.
     """
     client = NASModelClient.__new__(NASModelClient)
     base_dir = Path(tempfile.mkdtemp()) if base_dir is None else Path(base_dir)
@@ -284,26 +294,73 @@ class DummyTrial:
     """Trivial Optuna Trial substitute that records suggestions and reports."""
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self.report_calls = []
         self.params = {}
         self.user_attrs = {}
 
     def suggest_int(self, name, low, high):
+        """Run suggest int.
+
+        Parameters
+        ----------
+        name : object
+            Parameter name requested by the fake sampler.
+        low : object
+            Lower bound used by the fake sampler.
+        high : object
+            Upper bound used by the fake sampler.
+
+        Returns
+        -------
+        object
+            Selected integer value from the fake sampler.
+        """
         value = low
         self.params[name] = value
         return value
 
     def suggest_categorical(self, name, choices):
+        """Run suggest categorical.
+
+        Parameters
+        ----------
+        name : object
+            Parameter name requested by the fake sampler.
+        choices : object
+            Candidate values available to the fake sampler.
+
+        Returns
+        -------
+        object
+            Selected categorical value from the fake sampler.
+        """
         value = choices[0]
         self.params[name] = value
         return value
 
     def report(self, value, step):
-        """Record one Optuna-style intermediate report call."""
+        """Record one Optuna-style intermediate report call.
+
+        Parameters
+        ----------
+        value : object
+            Value recorded by the test double.
+        step : object
+            Step index recorded by the fake trial.
+        """
         self.report_calls.append((value, step))
 
     def set_user_attr(self, key, value):
-        """Record one Optuna-style user attribute update."""
+        """Record one Optuna-style user attribute update.
+
+        Parameters
+        ----------
+        key : object
+            Dictionary key recorded by the test double.
+        value : object
+            Value recorded by the test double.
+        """
         self.user_attrs[key] = value
 
 
@@ -311,10 +368,13 @@ class HILRequestTests(unittest.TestCase):
     """Validate the ZeroMQ request/response helper."""
 
     def test_hil_request_success(self) -> None:
-        """A successful round-trip should return the parsed metrics dict.
+        """A successful round-trip should log debug I/O and return metrics.
 
-        Instead of booting a real server we just drive the mock socket and
-        assert that the client sends/receives JSON exactly once.
+        Returns
+        -------
+        None
+            The test passes when the mock socket is used once and request/
+            response diagnostics are emitted as debug log records.
         """
         # A successful HIL round trip should deserialize cleanly into the NAS client's metrics payload.
         client = _build_test_client()
@@ -322,22 +382,35 @@ class HILRequestTests(unittest.TestCase):
         client.socket.recv_json.return_value = metrics
 
         payload = {"family_hparams": {"nb_filters": 4}, "runtime_metadata": {"flops": 1, "timesteps": 16, "input_dim": 3}}
-        result = client._hil_request(payload)
+        with self.assertLogs("nas_model_client", level="DEBUG") as captured:
+            result = client._hil_request(payload)
 
         client.socket.send_json.assert_called_once_with(payload)
         client.socket.recv_json.assert_called_once()
         self.assertEqual(result, metrics)
+        joined_logs = "\n".join(captured.output)
+        self.assertIn("[REQ] Sending payload", joined_logs)
+        self.assertIn("[REQ] Received metrics", joined_logs)
 
     def test_hil_request_timeout_raises(self) -> None:
-        """Timeouts surfaced by pyzmq should be wrapped in a RuntimeError."""
+        """Timeouts surfaced by pyzmq should be logged and wrapped.
+
+        Returns
+        -------
+        None
+            The test passes when a socket timeout logs a warning before the
+            production RuntimeError is raised.
+        """
         # Socket timeouts should surface as errors so stalled HIL servers do not look like valid trial failures.
         client = _build_test_client()
         client.socket.recv_json.side_effect = zmq.error.Again()
 
-        with self.assertRaises(RuntimeError):
-            client._hil_request({"family_hparams": {"nb_filters": 8}, "runtime_metadata": {"flops": 1, "timesteps": 16, "input_dim": 3}})
+        with self.assertLogs("nas_model_client", level="WARNING") as captured:
+            with self.assertRaises(RuntimeError):
+                client._hil_request({"family_hparams": {"nb_filters": 8}, "runtime_metadata": {"flops": 1, "timesteps": 16, "input_dim": 3}})
 
         client.socket.send_json.assert_called_once()
+        self.assertIn("Timed out waiting for metrics", "\n".join(captured.output))
 
     def test_hil_request_opens_socket_lazily(self) -> None:
         """The HIL socket should connect only when a HIL request is sent."""
@@ -365,6 +438,7 @@ class InitializationTests(unittest.TestCase):
 
     def test_resolve_component_selection_requires_explicit_component_blocks(self) -> None:
         # The breaking contract rejects configs that omit dataset/task/model blocks instead of inventing defaults.
+        """Validate resolve component selection requires explicit component blocks."""
         client = _build_test_client()
         delattr(client.config, "dataset")
 
@@ -373,6 +447,7 @@ class InitializationTests(unittest.TestCase):
 
     def test_resolve_component_selection_requires_dataset_params(self) -> None:
         # The breaking contract requires dataset params instead of falling back to the legacy top-level data block.
+        """Validate resolve component selection requires dataset params."""
         client = _build_test_client()
         client.config.dataset = SimpleNamespace(name="custom_dataset")
 
@@ -381,6 +456,7 @@ class InitializationTests(unittest.TestCase):
 
     def test_resolve_component_selection_honors_explicit_component_blocks(self) -> None:
         # Explicit component blocks should be the only supported path and should come back as native mappings.
+        """Validate resolve component selection honors explicit component blocks."""
         client = _build_test_client()
         client.config.dataset = SimpleNamespace(name="custom_dataset", params=Dict(root="custom"))
         client.config.task = SimpleNamespace(name="custom_task", params=Dict(alpha=3))
@@ -404,6 +480,7 @@ class InitializationTests(unittest.TestCase):
 
     def test_resolve_component_selection_accepts_null_optional_task_and_search_blocks(self) -> None:
         # Optional task params and model search blocks should treat explicit null the same as omission.
+        """Validate resolve component selection accepts null optional task and search blocks."""
         client = _build_test_client()
         client.config.dataset = SimpleNamespace(name="custom_dataset", params=Dict(root="custom"))
         client.config.task = SimpleNamespace(name="custom_task", params=None)
@@ -441,6 +518,7 @@ class InitializationTests(unittest.TestCase):
 
     def test_init_reuses_preliminary_bundle_when_dataset_selection_matches(self) -> None:
         # Initialization should reuse a matching preliminary bundle so repeated setup does not reload the same dataset.
+        """Validate init reuses preliminary bundle when dataset selection matches."""
         base = Path(tempfile.mkdtemp())
         config = SimpleNamespace(
             network=SimpleNamespace(host="localhost", port=5555, recv_timeout_sec=5, send_timeout_sec=5),
@@ -529,6 +607,7 @@ class ObjectiveTests(unittest.TestCase):
     """Exercise Optuna objective branches with lightweight stubs."""
 
     def setUp(self) -> None:
+        """Prepare test fixtures."""
         self.client = _build_test_client()
 
         self.hw_specs_patcher = patch("nas_model_client.return_hardware_specs", return_value=(2048, 4096))
@@ -538,6 +617,7 @@ class ObjectiveTests(unittest.TestCase):
         self.mock_log = self.log_patcher.start()
 
     def tearDown(self) -> None:
+        """Clean up test fixtures."""
         patch.stopall()
 
     def test_objective_prunes_on_flash_overflow(self) -> None:
@@ -592,6 +672,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_rejects_invalid_model_build_context_input_shapes(self) -> None:
         # Invalid model-build input shapes should fail before the NAS client tries to train or evaluate a broken graph.
+        """Validate objective rejects invalid model build context input shapes."""
         self.client._hil_request = MagicMock()
 
         for invalid_shape in (None, (None, 3), ("abc", 3), (0, 3), (16, False)):
@@ -743,6 +824,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_prunes_before_training_on_config_rule(self) -> None:
         # Config-level prune rules should short-circuit the trial before fit() so obviously bad candidates do not waste training time.
+        """Validate objective prunes before training on config rule."""
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -782,6 +864,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_prunes_when_rule_metric_is_unavailable(self) -> None:
         # Unavailable prune metrics should fail closed and prune the trial instead of letting half-populated hardware results continue.
+        """Validate objective prunes when rule metric is unavailable."""
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -905,6 +988,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_uses_negative_one_rmse_sentinels_for_failed_trials(self) -> None:
         # Failed trials should log stable RMSE sentinels so CSV summaries can distinguish a failure from missing training output.
+        """Validate objective uses negative one rmse sentinels for failed trials."""
         metrics = {
             "error_code": HIL_MASTER_RAM_OVERFLOW,
             "ram_bytes": -1,
@@ -929,6 +1013,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_does_not_swallow_generic_training_value_errors(self) -> None:
         # Unexpected training ValueErrors should still escape so genuine code bugs are not hidden behind prune logic.
+        """Validate objective does not swallow generic training value errors."""
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -952,6 +1037,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_converts_score_config_errors_into_prune_penalties(self) -> None:
         # Score-config evaluation errors should convert into prune penalties so search continues without masking the misconfiguration.
+        """Validate objective converts score config errors into prune penalties."""
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -982,6 +1068,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_samples_cpu_clock_into_device_overrides(self) -> None:
         # Sampled CPU-clock choices should flow into device overrides so each trial evaluates the exact hardware point it sampled.
+        """Validate objective samples cpu clock into device overrides."""
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -1010,6 +1097,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_omits_device_overrides_when_clock_options_are_null(self) -> None:
         # Null clock-option lists should avoid creating spurious overrides so default board clocks stay in control.
+        """Validate objective omits device overrides when clock options are null."""
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -1385,6 +1473,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_train_false_uses_generic_metric_sentinels(self) -> None:
         # Train-disabled trials should still emit generic metric sentinels so downstream logs keep a stable shape.
+        """Validate objective train false uses generic metric sentinels."""
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -1423,6 +1512,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_portenta_forwards_device_options_to_hardware_specs(self) -> None:
         # Portenta trials should forward resolved board options when requesting hardware limits.
+        """Validate objective Portenta forwards device options to hardware specs."""
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -1449,6 +1539,7 @@ class ObjectiveTests(unittest.TestCase):
 
     def test_objective_portenta_requires_target_core_for_hardware_limits(self) -> None:
         # Portenta hardware-limit resolution should require an explicit target core instead of guessing one.
+        """Validate objective Portenta requires target core for hardware limits."""
         metrics = {
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -1669,15 +1760,32 @@ class SmokeTestTests(unittest.TestCase):
             """Simple Optuna study substitute that tracks optimize invocations."""
 
             def __init__(self):
+                """Initialize the instance."""
                 self.best_trial = SimpleNamespace(value=1.0, params={}, user_attrs={})
                 self.optimize_calls = []
                 self.metric_names_calls = []
                 self.trials = []
 
             def set_metric_names(self, metric_names):
+                """Set metric names.
+
+                Parameters
+                ----------
+                metric_names : object
+                    Metric names reported by the fake study.
+                """
                 self.metric_names_calls.append(list(metric_names))
 
             def optimize(self, func, n_trials):
+                """Run optimize.
+
+                Parameters
+                ----------
+                func : object
+                    Objective callback invoked by the fake study.
+                n_trials : object
+                    Number of fake trials to execute.
+                """
                 self.optimize_calls.append((func, n_trials))
 
         fake_study = DummyStudy()
@@ -1711,6 +1819,7 @@ class SmokeTestTests(unittest.TestCase):
             """Simple Optuna study substitute for multi-objective runs."""
 
             def __init__(self):
+                """Initialize the instance."""
                 trial = SimpleNamespace(
                     state=TrialState.COMPLETE,
                     number=0,
@@ -1724,9 +1833,25 @@ class SmokeTestTests(unittest.TestCase):
                 self.metric_names_calls = []
 
             def set_metric_names(self, metric_names):
+                """Set metric names.
+
+                Parameters
+                ----------
+                metric_names : object
+                    Metric names reported by the fake study.
+                """
                 self.metric_names_calls.append(list(metric_names))
 
             def optimize(self, func, n_trials):
+                """Run optimize.
+
+                Parameters
+                ----------
+                func : object
+                    Objective callback invoked by the fake study.
+                n_trials : object
+                    Number of fake trials to execute.
+                """
                 self.optimize_calls.append((func, n_trials))
 
         fake_study = DummyStudy()
@@ -1742,20 +1867,40 @@ class SmokeTestTests(unittest.TestCase):
 
     def test_smoke_test_uses_loaded_scalar_config(self) -> None:
         # Scalar smoke tests should preserve the loaded scalar study direction.
+        """Validate smoke test uses loaded scalar config."""
         client = _build_test_client()
         client.objective = MagicMock(return_value=0.1)
 
         class DummyStudy:
+            """Dummy Optuna study used by NAS client tests."""
+
             def __init__(self):
+                """Initialize the instance."""
                 self.best_trial = SimpleNamespace(value=1.0, params={}, user_attrs={})
                 self.optimize_calls = []
                 self.metric_names_calls = []
                 self.trials = []
 
             def set_metric_names(self, metric_names):
+                """Set metric names.
+
+                Parameters
+                ----------
+                metric_names : object
+                    Metric names reported by the fake study.
+                """
                 self.metric_names_calls.append(list(metric_names))
 
             def optimize(self, func, n_trials):
+                """Run optimize.
+
+                Parameters
+                ----------
+                func : object
+                    Objective callback invoked by the fake study.
+                n_trials : object
+                    Number of fake trials to execute.
+                """
                 self.optimize_calls.append((func, n_trials))
 
         fake_study = DummyStudy()
@@ -1768,26 +1913,58 @@ class SmokeTestTests(unittest.TestCase):
 
     def test_smoke_test_defaults_to_loaded_hil_setting(self) -> None:
         # Smoke tests should inherit the loaded HIL flag so validation exercises the same execution mode the real run will use.
+        """Validate smoke test defaults to loaded hil setting."""
         client = _build_test_client()
         observed_hil_values = []
 
         def _objective(_trial):
+            """Evaluate the dummy objective.
+
+            Parameters
+            ----------
+            _trial : object
+                Trial object supplied by the test harness.
+
+            Returns
+            -------
+            object
+                Objective value returned by the dummy study.
+            """
             observed_hil_values.append(client.config.device.hil)
             return 0.1
 
         client.objective = MagicMock(side_effect=_objective)
 
         class DummyStudy:
+            """Dummy Optuna study used by NAS client tests."""
+
             def __init__(self):
+                """Initialize the instance."""
                 self.best_trial = SimpleNamespace(value=1.0, params={}, user_attrs={})
                 self.optimize_calls = []
                 self.metric_names_calls = []
                 self.trials = []
 
             def set_metric_names(self, metric_names):
+                """Set metric names.
+
+                Parameters
+                ----------
+                metric_names : object
+                    Metric names reported by the fake study.
+                """
                 self.metric_names_calls.append(list(metric_names))
 
             def optimize(self, func, n_trials):
+                """Run optimize.
+
+                Parameters
+                ----------
+                func : object
+                    Objective callback invoked by the fake study.
+                n_trials : object
+                    Number of fake trials to execute.
+                """
                 self.optimize_calls.append((func, n_trials))
                 func(SimpleNamespace())
 
@@ -1799,6 +1976,7 @@ class SmokeTestTests(unittest.TestCase):
 
     def test_smoke_test_rejects_derived_rmse_usage_when_training_disabled(self) -> None:
         # Derived RMSE metrics should be rejected when training is disabled because no training pass can produce them.
+        """Validate smoke test rejects derived rmse usage when training disabled."""
         client = _build_test_client()
         client.config.nas.score = Dict(
             type="scoring-function",
@@ -1823,18 +2001,31 @@ class SmokeTestTests(unittest.TestCase):
 
     def test_smoke_test_preserves_existing_db_and_log_before_validation(self) -> None:
         # Smoke-test validation should not clobber an existing DB or log before the run is known to be valid.
+        """Validate smoke test preserves existing db and log before validation."""
         client = _build_test_client()
         client.objective = MagicMock(return_value=0.1)
         study_name = "stale_smoke"
         client.study_name = study_name
 
         class DummyStudy:
+            """Dummy Optuna study used by NAS client tests."""
+
             def __init__(self):
+                """Initialize the instance."""
                 self.best_trial = SimpleNamespace(value=1.0, params={}, user_attrs={})
                 self.optimize_calls = []
                 self.trials = []
 
             def optimize(self, func, n_trials):
+                """Run optimize.
+
+                Parameters
+                ----------
+                func : object
+                    Objective callback invoked by the fake study.
+                n_trials : object
+                    Number of fake trials to execute.
+                """
                 self.optimize_calls.append((func, n_trials))
 
         fake_study = DummyStudy()
@@ -1856,6 +2047,7 @@ class SmokeTestTests(unittest.TestCase):
 
     def test_copy_run_config_skips_same_file(self) -> None:
         # Copying the run config should no-op when the source file already lives in the artifacts directory.
+        """Validate copy run config skips same file."""
         client = _build_test_client()
         artifacts_dir = client._artifacts_dir()
         cfg_path = artifacts_dir / "config.yaml"
@@ -1869,10 +2061,19 @@ class SmokeTestTests(unittest.TestCase):
 
 
 class RunNASTests(unittest.TestCase):
-    """run_nas should continue until completed trials meet the target."""
+    """Run_nas should continue until completed trials meet the target."""
 
     class DummyStudy:
+        """Dummy Optuna study used by NAS client tests."""
+
         def __init__(self, states):
+            """Initialize the instance.
+
+            Parameters
+            ----------
+            states : object
+                Trial states requested from the fake study.
+            """
             self.states_queue = list(states)
             self.trials = []
             self.optimize_calls = []
@@ -1883,12 +2084,37 @@ class RunNASTests(unittest.TestCase):
             self.user_attrs = {}
 
         def set_metric_names(self, metric_names):
+            """Set metric names.
+
+            Parameters
+            ----------
+            metric_names : object
+                Metric names reported by the fake study.
+            """
             self.metric_names_calls.append(list(metric_names))
 
         def set_user_attr(self, key, value):
+            """Set user attr.
+
+            Parameters
+            ----------
+            key : object
+                Dictionary key recorded by the test double.
+            value : object
+                Value recorded by the test double.
+            """
             self.user_attrs[key] = value
 
         def optimize(self, func, n_trials):
+            """Run optimize.
+
+            Parameters
+            ----------
+            func : object
+                Objective callback invoked by the fake study.
+            n_trials : object
+                Number of fake trials to execute.
+            """
             self.optimize_calls.append(n_trials)
             for _ in range(n_trials):
                 state = self.states_queue.pop(0) if self.states_queue else TrialState.FAIL
@@ -1900,6 +2126,13 @@ class RunNASTests(unittest.TestCase):
                 self.best_value = self.best_trial.value
 
         def enqueue_trial(self, params):
+            """Run enqueue trial.
+
+            Parameters
+            ----------
+            params : object
+                Parameter dictionary recorded by the fake trial.
+            """
             self.enqueue_calls.append(params)
 
     def test_run_nas_retries_until_completed_target(self) -> None:
@@ -1909,7 +2142,6 @@ class RunNASTests(unittest.TestCase):
         seed trial; fresh NAS runs should begin with sampler-generated
         candidates.
         """
-
         client = _build_test_client()
         client.config.training.nas_trials = 2
         client.config.training.max_total_trials = 5
@@ -1986,7 +2218,14 @@ class RunNASTests(unittest.TestCase):
         )
 
     def test_run_nas_does_not_count_not_evaluated_complete_trials_as_infeasible(self) -> None:
-        """Hard-pruned COMPLETE penalty trials should stay separate from infeasible trials."""
+        """Hard-pruned COMPLETE penalty trials should log separately.
+
+        Returns
+        -------
+        None
+            The test passes when not-evaluated complete trials remain out of
+            the infeasible count and the summary is emitted through logging.
+        """
         client = _build_test_client()
         client.config.training.nas_trials = 1
         client.config.training.max_total_trials = 1
@@ -2011,6 +2250,7 @@ class RunNASTests(unittest.TestCase):
             """Study double with one hard-pruned complete penalty trial."""
 
             def __init__(self) -> None:
+                """Initialize the instance."""
                 self.trials = [trial]
                 self.user_attrs = {
                     "tinyodom_feasibility_policy_signature": client._feasibility_policy_signature()
@@ -2018,16 +2258,22 @@ class RunNASTests(unittest.TestCase):
                 self.metric_names_calls = []
 
             def set_metric_names(self, metric_names):
-                """Record metric names like an Optuna study."""
+                """Record metric names like an Optuna study.
+
+                Parameters
+                ----------
+                metric_names : object
+                    Metric names reported by the fake study.
+                """
                 self.metric_names_calls.append(list(metric_names))
 
         dummy = DummyStudy()
 
         with patch("nas_model_client.optuna.create_study", return_value=dummy):
-            with patch("builtins.print") as mock_print:
+            with self.assertLogs("nas_model_client", level="INFO") as captured:
                 client.run_nas(study_name="demo", storage="sqlite:///dummy.db")
 
-        final_line = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+        final_line = "\n".join(captured.output)
         self.assertIn("0 feasible, 0 infeasible, 1 completed", final_line)
 
     def test_run_nas_rejects_mismatched_feasibility_signature_on_resume(self) -> None:
@@ -2068,7 +2314,6 @@ class RunNASTests(unittest.TestCase):
         Failed and pruned attempts should consume the cap without adding a
         model-family seed trial to the study.
         """
-
         client = _build_test_client()
         client.config.training.nas_trials = 2
         client.config.training.max_total_trials = 3
@@ -2090,7 +2335,6 @@ class TrainBestTrialTests(unittest.TestCase):
 
     def test_train_best_trial_uses_task_fit_plan_with_override_task_settings(self) -> None:
         """Best-trial retraining should ignore runtime-only trial params."""
-
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2174,6 +2418,7 @@ class PlotTrainingHistoryTests(unittest.TestCase):
 
     def test_plot_training_history_writes_pngs(self) -> None:
         # Training-history plots should materialize PNG artifacts so the run bundle is self-contained.
+        """Validate plot training history writes pngs."""
         import matplotlib.pyplot as plt
 
         plt.switch_backend("Agg")
@@ -2202,6 +2447,7 @@ class EvaluateCheckpointTests(unittest.TestCase):
 
     def test_evaluate_checkpoint_writes_metrics(self) -> None:
         # Checkpoint evaluation should persist its metrics file so post-train analysis can run offline.
+        """Validate evaluate checkpoint writes metrics."""
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2235,6 +2481,7 @@ class EvaluateCheckpointTests(unittest.TestCase):
 
     def test_evaluate_checkpoint_preserves_task_defined_metric_names(self) -> None:
         # Checkpoint evaluation should preserve task-defined metric names instead of flattening them into generic labels.
+        """Validate evaluate checkpoint preserves task defined metric names."""
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2260,7 +2507,6 @@ class EvaluateCheckpointTests(unittest.TestCase):
 
     def test_evaluate_checkpoint_keeps_quantization_out_of_hparams(self) -> None:
         """Checkpoint metrics should report quantization separately from hparams."""
-
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2284,7 +2530,7 @@ class EvaluateCheckpointTests(unittest.TestCase):
             self.assertEqual(metrics["quantization_mode"], "int8_ptq")
 
     def test_evaluate_checkpoint_tflite_logs_keras_accuracy(self) -> None:
-        """TFLite checkpoint evaluation should persist paired Keras accuracy."""
+        """Checkpoint TFLite evaluation should persist paired Keras accuracy."""
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2320,7 +2566,7 @@ class EvaluateCheckpointTests(unittest.TestCase):
             self.assertIn("keras_accuracy", csv_text)
 
     def test_evaluate_checkpoint_tflite_failure_propagates_without_metrics(self) -> None:
-        """TFLite checkpoint worker failures should not write success metrics."""
+        """Checkpoint TFLite worker failures should not write success metrics."""
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2351,6 +2597,7 @@ class EvaluateCheckpointTests(unittest.TestCase):
 
     def test_evaluate_checkpoint_exports_tflite_when_requested(self) -> None:
         # Checkpoint evaluation should export TFLite when requested so downstream deployment steps do not need a second conversion pass.
+        """Validate evaluate checkpoint exports tflite when requested."""
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2388,6 +2635,7 @@ class EvaluateCheckpointTests(unittest.TestCase):
 
     def test_evaluate_checkpoint_rejects_tflite_when_family_does_not_support_it(self) -> None:
         # TFLite export should fail fast when the active model family opts out of export support.
+        """Validate evaluate checkpoint rejects tflite when family does not support it."""
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2407,7 +2655,6 @@ class FoldRotationReportingTests(unittest.TestCase):
 
     def test_run_scoring_nas_runs_fixed_final_before_fold_rotation(self) -> None:
         """Scoring orchestration should preserve fixed export before reports."""
-
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2453,7 +2700,6 @@ class FoldRotationReportingTests(unittest.TestCase):
 
     def test_run_scoring_nas_requires_feasible_trial_before_final_training(self) -> None:
         """Single-objective closeout should not retrain infeasible penalty trials."""
-
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2493,7 +2739,6 @@ class FoldRotationReportingTests(unittest.TestCase):
 
     def test_run_fold_rotation_uses_per_fold_context_without_export(self) -> None:
         """Fold reporting should write success artifacts for requested folds."""
-
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2517,7 +2762,6 @@ class FoldRotationReportingTests(unittest.TestCase):
                 types.SimpleNamespace
                     Fake bootstrapped pipeline for the fold.
                 """
-
                 fold = int(fold_cache_dir.name.split("_")[1])
                 task = MagicMock()
                 task.generate_closeout_artifacts.return_value = {"fold": fold}
@@ -2570,7 +2814,6 @@ class FoldRotationReportingTests(unittest.TestCase):
 
     def test_run_fold_rotation_writes_partial_manifest_on_failure(self) -> None:
         """Fold reporting should fail fast and persist completed folds."""
-
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2621,6 +2864,7 @@ class TrajectoryMetricsTests(unittest.TestCase):
 
     def test_trajectory_metrics_and_plots_zero_error(self) -> None:
         # Perfect trajectories should evaluate to zero error and still emit the expected plots.
+        """Validate trajectory metrics and plots zero error."""
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2637,7 +2881,21 @@ class TrajectoryMetricsTests(unittest.TestCase):
             )
 
             class FakeModel:
+                """Fake model used by artifact and prediction tests."""
+
                 def predict(self, _inputs):
+                    """Run predict.
+
+                    Parameters
+                    ----------
+                    _inputs : object
+                        Input tensor batch passed to the fake model.
+
+                    Returns
+                    -------
+                    object
+                        Predictions emitted by the fake model.
+                    """
                     return [vx, vy]
 
             client.model_family.load_model.return_value = FakeModel()
@@ -2660,6 +2918,7 @@ class TrajectoryMetricsTests(unittest.TestCase):
 
     def test_trajectory_metrics_and_plots_requires_odometry_metadata(self) -> None:
         # Trajectory analysis should fail fast when the evaluation metadata is missing the odometry fields it depends on.
+        """Validate trajectory metrics and plots requires odometry metadata."""
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2683,6 +2942,7 @@ class TrajectoryMetricsTests(unittest.TestCase):
 
     def test_require_trajectory_split_requires_velocity_targets(self) -> None:
         # Trajectory split views should require velocity targets so the plotted channels remain meaningful.
+        """Validate require trajectory split requires velocity targets."""
         cases = (
             {"class_id": np.array([0, 1], dtype=np.int32)},
             {"velx": None, "vely": np.zeros((2, 1), dtype=np.float32)},
@@ -2706,6 +2966,7 @@ class SummaryBundleTests(unittest.TestCase):
 
     def test_write_summary_bundle_persists_expected_fields(self) -> None:
         # Summary bundles should persist the expected metadata fields so later reporting code can read one stable artifact format.
+        """Validate write summary bundle persists expected fields."""
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
@@ -2716,7 +2977,10 @@ class SummaryBundleTests(unittest.TestCase):
             closeout_artifacts = {"ate_mean": 0.1}
 
             class DummyStudy:
+                """Dummy Optuna study used by NAS client tests."""
+
                 def __init__(self):
+                    """Initialize the instance."""
                     self.best_trial = SimpleNamespace(
                         params={"nb_filters": 8, "quantization_mode": "int8_ptq", "cpu_clock_mhz_index": 1}
                     )

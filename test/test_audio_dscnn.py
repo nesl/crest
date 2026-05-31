@@ -31,12 +31,23 @@ class DummyTrial:
 
     def __init__(self) -> None:
         """Initialize the recorded choices and deterministic return values."""
-
         self.choices: dict[str, tuple[object, ...]] = {}
 
     def suggest_categorical(self, name, choices):
-        """Record one categorical suggestion and return its last choice."""
+        """Record one categorical suggestion and return its last choice.
 
+        Parameters
+        ----------
+        name : object
+            Parameter name requested by the fake sampler.
+        choices : object
+            Candidate values available to the fake sampler.
+
+        Returns
+        -------
+        object
+            Selected categorical value from the fake sampler.
+        """
         self.choices[name] = tuple(choices)
         return tuple(choices)[-1]
 
@@ -54,7 +65,6 @@ def make_target_spec(**metadata_overrides) -> TargetSpec:
     TargetSpec
         Classification target spec expected by ``AudioDSCNNFamily``.
     """
-
     metadata = {"num_classes": 10, "label_encoding": "class_index", "from_logits": True}
     metadata.update(metadata_overrides)
     return TargetSpec(
@@ -85,7 +95,6 @@ def make_context(
     ModelBuildContext
         Build context used by model-family tests.
     """
-
     return ModelBuildContext(
         input_shape=input_shape,
         input_dtype="float32",
@@ -106,7 +115,6 @@ def make_hparams(**overrides) -> dict[str, object]:
     dict[str, object]
         Complete audio DS-CNN hyperparameter dictionary.
     """
-
     hparams = dict(DEFAULT_AUDIO_DSCNN_SEED)
     hparams.update(overrides)
     return hparams
@@ -120,7 +128,6 @@ def architecture_candidate_count() -> int:
     int
         Product of every model-family categorical choice count.
     """
-
     return math.prod(len(choices) for choices in AUDIO_DSCNN_SEARCH_CHOICES.values())
 
 
@@ -129,19 +136,16 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def setUp(self) -> None:
         """Create the family and a valid model-build context."""
-
         self.family = AudioDSCNNFamily()
         self.ctx = make_context()
         self.config = Dict(family="audio_dscnn", params=Dict(), search=Dict())
 
     def tearDown(self) -> None:
         """Clear TensorFlow graph state after each test."""
-
         tf.keras.backend.clear_session()
 
     def test_family_constants_seed_and_search_size(self) -> None:
         """The family should expose the explicit DW/PW surface and seed."""
-
         self.assertEqual(self.family.name, "audio_dscnn")
         self.assertEqual(AUDIO_DSCNN_SEARCH_CHOICES["base_channels"], (4, 8, 12, 16, 20, 24, 32))
         self.assertEqual(AUDIO_DSCNN_SEARCH_CHOICES["num_blocks"], (2, 3, 4, 5, 6))
@@ -175,7 +179,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_sample_hparams_uses_override_order_for_new_fields(self) -> None:
         """Sampling should preserve override order and normalize float choices."""
-
         trial = DummyTrial()
         config = Dict(
             family="audio_dscnn",
@@ -204,7 +207,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_empty_search_uses_family_default_choices(self) -> None:
         """An empty search block should use the full family default surface."""
-
         trial = DummyTrial()
         config = Dict(family="audio_dscnn", params=Dict(), search=Dict())
 
@@ -215,7 +217,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_validate_config_rejects_invalid_sections_and_legacy_keys(self) -> None:
         """Config validation should fail on unsupported params and search values."""
-
         valid = Dict(
             family="audio_dscnn",
             params=Dict(export_variant="trained_debug"),
@@ -244,7 +245,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_validate_hparams_rejects_key_and_value_errors(self) -> None:
         """Hyperparameter validation should reject missing, extra, and bad values."""
-
         self.family.validate_hparams(make_hparams(dropout_rate=0), self.ctx, self.config)
 
         invalid_cases = [
@@ -266,7 +266,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_validate_hparams_rejects_invalid_build_context(self) -> None:
         """Context validation should reject unsupported input and target contracts."""
-
         invalid_target_specs = [
             TargetSpec("regression", ["class_logits"], [(10,)], make_target_spec().metadata),
             TargetSpec("classification", ["other"], [(10,)], make_target_spec().metadata),
@@ -295,7 +294,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_decode_trial_hparams_normalizes_storage_edge_cases(self) -> None:
         """Persisted trial decoding should normalize bool and float edge cases."""
-
         raw = make_hparams(norm_flag=0, channel_growth=2, pointwise_scale=1, dropout_rate=0)
         decoded = self.family.decode_trial_hparams(raw, self.ctx, self.config)
 
@@ -317,7 +315,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_resolve_stride_schedule_outputs(self) -> None:
         """Stride schedules should resolve deterministically for variable depth."""
-
         self.assertEqual(resolve_stride_schedule("light", 2), ((1, 1), (2, 2)))
         self.assertEqual(resolve_stride_schedule("light", 5), ((1, 1), (2, 2), (1, 1), (1, 1), (1, 1)))
         self.assertEqual(resolve_stride_schedule("balanced", 2), ((2, 2), (1, 1)))
@@ -330,7 +327,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_build_model_uses_audio_input_and_logits_output(self) -> None:
         """Model construction should produce one named linear logits output."""
-
         model = self.family.build_model(make_hparams(), self.ctx, self.config)
 
         self.assertEqual(model.input_shape, (None, 201, 64))
@@ -340,7 +336,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_depthwise_pointwise_layer_names_types_norm_and_bias(self) -> None:
         """Each block should materialize the explicit DW/PW layer sequence."""
-
         normalized = self.family.build_model(
             make_hparams(num_blocks=2, norm_flag=True, dropout_rate=0.1),
             self.ctx,
@@ -390,7 +385,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_relu6_applies_to_blocks_and_dense_hidden(self) -> None:
         """The relu6 option should use ReLU layers capped at six."""
-
         model = self.family.build_model(
             make_hparams(num_blocks=2, activation="relu6", dense_units=16),
             self.ctx,
@@ -412,7 +406,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_filter_formula_depth_multiplier_and_stride(self) -> None:
         """Pointwise filters, depth multiplier, and strides should follow hparams."""
-
         model = self.family.build_model(
             make_hparams(
                 base_channels=12,
@@ -446,7 +439,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_global_pooling_selection(self) -> None:
         """Average and max pooling choices should select matching layers."""
-
         avg_model = self.family.build_model(make_hparams(global_pool_type="avg"), self.ctx, self.config)
         max_model = self.family.build_model(make_hparams(global_pool_type="max"), self.ctx, self.config)
 
@@ -455,7 +447,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_count_flops_returns_positive_for_small_seed_and_max_shape(self) -> None:
         """Small, seed, and maximum explicit DS-CNN shapes should have FLOPs."""
-
         ctx = make_context(input_shape=(16, 8))
         hparam_cases = [
             make_hparams(num_blocks=2, base_channels=4, dense_units=0, dropout_rate=0.0),
@@ -485,7 +476,6 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
     def test_base_export_materialization_contract(self) -> None:
         """Base export materialization should remain the audio export contract."""
-
         hparams = make_hparams(num_blocks=2, dense_units=0, dropout_rate=0.0)
         untrained = self.family.materialize_export_model(
             hparams,

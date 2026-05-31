@@ -41,7 +41,6 @@ class OdometryRegressionTask(TaskABC):
             Patience used by the task-owned early stopping callback. The value
             is normalized to ``int`` during initialization.
         """
-
         self.checkpoint_path = Path(checkpoint_path)
         self.early_stopping_patience = int(early_stopping_patience)
 
@@ -54,7 +53,6 @@ class OdometryRegressionTask(TaskABC):
         str
             Stable task identifier.
         """
-
         return "odometry_regression"
 
     def build_target_spec(
@@ -78,7 +76,6 @@ class OdometryRegressionTask(TaskABC):
             output heads ``["velx", "vely"]``, and metadata carrying the
             bundle input shape.
         """
-
         del task_config
         return TargetSpec(
             task_type="regression",
@@ -107,7 +104,6 @@ class OdometryRegressionTask(TaskABC):
             Metric declaration for the current odometry task, with
             ``rmse_total`` exposed as the primary metric.
         """
-
         del target_spec, task_config
         return TaskMetricContract(
             available_metric_names={"rmse_vel_x", "rmse_vel_y", "rmse_total"},
@@ -140,7 +136,6 @@ class OdometryRegressionTask(TaskABC):
             losses for ``velx`` and ``vely`` and an ``Adam`` optimizer.
             ``task_config`` and ``target_spec`` are not currently consulted.
         """
-
         del task_config, target_spec
         model.compile(loss={"velx": "mse", "vely": "mse"}, optimizer=Adam())
 
@@ -165,7 +160,6 @@ class OdometryRegressionTask(TaskABC):
             Ordered ``[velx, vely]`` target payload matching the current model
             head order.
         """
-
         if val_targets is None:
             return [train_targets["velx"], train_targets["vely"]]
         return [
@@ -213,7 +207,6 @@ class OdometryRegressionTask(TaskABC):
             If ``mode`` is invalid or the dataset bundle does not contain a
             validation split when one is required.
         """
-
         del task_config, target_spec
         if mode not in {"search", "final"}:
             raise ValueError("OdometryRegressionTask build_fit_plan mode must be 'search' or 'final'.")
@@ -301,7 +294,6 @@ class OdometryRegressionTask(TaskABC):
         list[tuple[str, str]]
             Ordered training/validation loss-key pairs for each velocity head.
         """
-
         del target_spec
         return [("velx_loss", "val_velx_loss"), ("vely_loss", "val_vely_loss")]
 
@@ -334,8 +326,12 @@ class OdometryRegressionTask(TaskABC):
         dict[str, Any]
             Trajectory metrics and written plot paths for the built-in
             odometry task.
-        """
 
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         del task_config, target_spec
         test_split = dataset_bundle.test
         if test_split is None:
@@ -400,8 +396,24 @@ class OdometryRegressionTask(TaskABC):
             start_x: float,
             start_y: float,
         ) -> tuple[np.ndarray, np.ndarray]:
-            """Integrate one trajectory from velocity samples."""
+            """Integrate one trajectory from velocity samples.
 
+            Parameters
+            ----------
+            vx : np.ndarray
+                Velocity samples along the x-axis.
+            vy : np.ndarray
+                Velocity samples along the y-axis.
+            start_x : float
+                Initial x position for trajectory integration.
+            start_y : float
+                Initial y position for trajectory integration.
+
+            Returns
+            -------
+            tuple[np.ndarray, np.ndarray]
+                Integrated x and y position traces.
+            """
             xs: list[float] = []
             ys: list[float] = []
             x = float(start_x)
@@ -513,7 +525,6 @@ class OdometryRegressionTask(TaskABC):
             and computes ``rmse_total`` as the sum of the two per-head RMSE
             values.
         """
-
         predictions = model.predict(split.inputs)
         return self.evaluate_predictions(predictions, split, task_config, target_spec)
 
@@ -543,7 +554,6 @@ class OdometryRegressionTask(TaskABC):
         EvaluationResult
             Flat RMSE metrics and raw predictions.
         """
-
         del task_config, target_spec
         # Preserve the legacy output-index contract from the current TinyODOM
         # model: predictions[0] is velx and predictions[1] is vely.

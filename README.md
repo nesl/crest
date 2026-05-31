@@ -28,17 +28,16 @@ For the source-level architecture and extension points, see
    Start from `src/config/nas_config_stm32.yaml`, set `device.hil: false`, and read
    [src/config/README.md](src/config/README.md) plus [src/README.md](src/README.md).
    For the UrbanSound8K audio DS-CNN path, start from
-   [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
-   and use the audio desktop analysis runner for a quick hardware-free check.
+   [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml).
 
 2. **Arduino HIL**
    Use this for Arduino CLI-backed DUTs and harness-backed measurement flows.
    Start from [src/config/nas_config_ble.yaml](src/config/nas_config_ble.yaml)
    for Nano 33 BLE or
    [src/config/nas_config_portenta.yaml](src/config/nas_config_portenta.yaml)
-   for Portenta H7. For the audio DS-CNN smoke path, use
-   [src/config/nas_config_audio_portenta.yaml](src/config/nas_config_audio_portenta.yaml)
-   with the Portenta audio HIL analysis runner. Then read
+   for Portenta H7. For the audio DS-CNN path, use
+   [src/config/nas_config_audio_portenta.yaml](src/config/nas_config_audio_portenta.yaml).
+   Then read
    [src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md)
    and [sketches/README.md](sketches/README.md).
 
@@ -98,7 +97,7 @@ needed by the repo.
 ## Dataset Preparation
 
 For UrbanSound8K audio experiments, prepare the cached log-mel tensors before
-running audio training or HIL smoke commands:
+running audio training or HIL commands:
 
 ```bash
 make prepare-audio-dataset
@@ -193,10 +192,9 @@ The shipped starting points are:
   Portenta H7-focused starting point.
 - [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
   UrbanSound8K audio DS-CNN starting point for desktop training and STM32 N657
-  smoke/HIL work.
+  HIL work.
 - [src/config/nas_config_audio_portenta.yaml](src/config/nas_config_audio_portenta.yaml)
-  UrbanSound8K audio DS-CNN starting point for Arduino-backed Portenta H7 and
-  BLE compile/preflight smoke work.
+  UrbanSound8K audio DS-CNN starting point for Arduino-backed Portenta H7 work.
 
 The highest-signal fields for a first pass are:
 
@@ -298,5 +296,5 @@ Artifacts are written under the configured `outputs.models_dir` and
   `PATH` before rerunning `make stm32-setup`.
 - If OxIOD preparation fails, confirm the zip exists and that the repo still
   contains the tracked split templates under `data/oxiod/<activity>/`.
-- If audio smoke commands fail while loading data, run `make prepare-audio-dataset`
+- If audio runs fail while loading data, run `make prepare-audio-dataset`
   and confirm the UrbanSound8K cache path in the selected config exists.

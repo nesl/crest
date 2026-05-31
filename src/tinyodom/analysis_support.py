@@ -29,8 +29,14 @@ HIL_RUNTIME_METADATA_KEYS = ("flops", "batch_size", "timesteps", "input_dim")
 
 
 def _build_odometry_target_spec() -> TargetSpec:
-    """Return the fixed TinyODOM regression target contract."""
+    """Return the fixed TinyODOM regression target contract.
 
+    Returns
+    -------
+    TargetSpec
+        Two-output velocity regression contract used by the legacy odometry
+        model family.
+    """
     return TargetSpec(
         task_type="regression",
         output_names=["velx", "vely"],
@@ -65,7 +71,6 @@ def build_fixed_tinyodom_hyperparams(
         Fixed family parameters plus runtime metadata fields required by the
         HIL request boundary.
     """
-
     resolved_window_size = int(window_size)
     resolved_input_dim = int(input_dim)
     resolved_nb_filters = (
@@ -113,7 +118,6 @@ def split_hil_request_hyperparams(
         ``(family_hparams, runtime_metadata)`` ready for
         ``HILServer.determine_metrics(...)``.
     """
-
     family_hparams = Dict()
     runtime_metadata = Dict()
     for key, value in dict(hyperparams).items():
@@ -138,13 +142,27 @@ def derive_latency_budget_ms(dataset_config: Any) -> float:
     float
         Positive finite logical per-batch cadence in milliseconds.
     """
-
     return resolve_batch_period_ms(dataset_config)
 
 
 def require_calibration_inputs(calibration_inputs: np.ndarray | None) -> np.ndarray:
-    """Require representative calibration inputs for export-oriented scripts."""
+    """Require representative calibration inputs for export-oriented scripts.
 
+    Parameters
+    ----------
+    calibration_inputs : np.ndarray | None
+        Representative input samples used for export calibration.
+
+    Returns
+    -------
+    np.ndarray
+        Calibration samples guaranteed to be present.
+
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if calibration_inputs is None:
         raise ValueError(
             "This analysis workflow requires representative calibration inputs, "
@@ -178,7 +196,6 @@ def resolve_task_contract(
     tuple[Any, Any, TargetSpec]
         ``(task, task_config, target_spec)`` for the active config.
     """
-
     ensure_builtin_components_registered()
     selection = resolve_component_selection(config)
     task = instantiate_task_component(
@@ -194,8 +211,20 @@ def resolve_task_contract(
 
 
 def build_model_context(bundle: DatasetBundle, target_spec: TargetSpec) -> ModelBuildContext:
-    """Build the normalized model-family context for one ad hoc dataset bundle."""
+    """Build the normalized model-family context for one ad hoc dataset bundle.
 
+    Parameters
+    ----------
+    bundle : DatasetBundle
+        Dataset bundle containing calibration data and metadata.
+    target_spec : TargetSpec
+        Task output contract associated with the dataset bundle.
+
+    Returns
+    -------
+    ModelBuildContext
+        Model-family build context assembled from dataset and task contracts.
+    """
     return ModelBuildContext(
         input_shape=bundle.input_shape,
         input_dtype=bundle.input_dtype,
@@ -206,8 +235,18 @@ def build_model_context(bundle: DatasetBundle, target_spec: TargetSpec) -> Model
 
 
 def resolve_model_family_contract(config: Any) -> tuple[Any, Any]:
-    """Resolve the active model-family component and validated local config."""
+    """Resolve the active model-family component and validated local config.
 
+    Parameters
+    ----------
+    config : Any
+        Loaded TinyODOM configuration object or mapping.
+
+    Returns
+    -------
+    tuple[Any, Any]
+        Instantiated model-family component and its validated local config.
+    """
     ensure_builtin_components_registered()
     selection = resolve_component_selection(config)
     model_family = model_family_registry.get(selection["model_family_name"])()

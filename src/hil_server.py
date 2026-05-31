@@ -1,4 +1,4 @@
-"""ZeroMQ REP server entry point for TinyODOM HIL metric requests.
+"""Describe zeroMQ REP server entry point for TinyODOM HIL metric requests.
 
 This module owns the host-side HIL server surface, including import-time
 TensorFlow/absl logging suppression, exported sketch-variant name constants,
@@ -74,8 +74,7 @@ PERTURBED_VARIANT_NAME = APPROX_TRAINED_VARIANT_NAME
 
 
 def _configure_logging(level_name: str) -> None:
-    """
-    Configure root logging for the HIL server process.
+    """Configure root logging for the HIL server process.
 
     Parameters
     ----------
@@ -182,8 +181,7 @@ class HILServer:
         config_path: Path = DEFAULT_CONFIG_PATH,
         config: Dict | None = None,
     ) -> None:
-        """
-        Initialize the HIL server state and modular pipeline components.
+        """Initialize the HIL server state and modular pipeline components.
 
         Parameters
         ----------
@@ -251,7 +249,6 @@ class HILServer:
         Any
             Resolved configuration value or ``default``.
         """
-
         return cfg_get(container, key, default)
 
     def _ensure_pipeline_bootstrapped(self) -> None:
@@ -264,7 +261,6 @@ class HILServer:
             When ``dataset_bundle`` has already been injected, that bundle is
             validated and reused instead of reloading the dataset.
         """
-
         if self._pipeline_bootstrapped:
             return
         pipeline = bootstrap_pipeline(
@@ -300,7 +296,6 @@ class HILServer:
         dict[str, Any]
             Resolved component names and local configuration subtrees.
         """
-
         return resolve_component_selection(config)
 
     def _instantiate_task(
@@ -322,7 +317,6 @@ class HILServer:
         Any
             Instantiated task component.
         """
-
         return instantiate_task_component(
             task_name,
             self.config,
@@ -348,7 +342,6 @@ class HILServer:
         tuple[Any, DatasetBundle]
             Instantiated dataset and its loaded normalized bundle.
         """
-
         dataset_cls = dataset_registry.get(dataset_name)
         dataset = dataset_cls()
         dataset.validate_config(dataset_config)
@@ -374,7 +367,6 @@ class HILServer:
         ModelBuildContext
             Normalized build context for model-family operations.
         """
-
         return ModelBuildContext(
             input_shape=bundle.input_shape,
             input_dtype=bundle.input_dtype,
@@ -404,7 +396,6 @@ class HILServer:
         -------
         None
         """
-
         model_family_cls = model_family_registry.get(selection["model_family_name"])
         task = self._instantiate_task(selection["task_name"], selection["task_config"])
         model_family = model_family_cls()
@@ -437,7 +428,6 @@ class HILServer:
         tuple[int, int]
             Resolved runtime dimensions for the active dataset/model context.
         """
-
         return self._resolve_runtime_dimensions()
 
     def get_calibration_inputs(self) -> np.ndarray | None:
@@ -449,7 +439,6 @@ class HILServer:
             Calibration inputs for export-capable backends, or ``None`` when
             the active dataset does not expose calibration data.
         """
-
         calibration_split = self._ensure_calibration_split()
         if calibration_split is None:
             return None
@@ -479,7 +468,6 @@ class HILServer:
         ValueError
             If the field is missing or not a valid integer.
         """
-
         if field_name not in runtime_metadata:
             raise ValueError(f"HIL request hyperparams must include '{field_name}'.")
         raw_value = runtime_metadata[field_name]
@@ -506,7 +494,6 @@ class HILServer:
         Dict
             Normalized runtime metadata with validated integer values.
         """
-
         normalized = Dict(dict(runtime_metadata))
         normalized.flops = cls._parse_required_runtime_int(runtime_metadata, "flops")
         normalized.timesteps = cls._parse_required_runtime_int(runtime_metadata, "timesteps")
@@ -539,7 +526,6 @@ class HILServer:
         ValueError
             If the bootstrapped model context is unavailable or mismatched.
         """
-
         self._ensure_pipeline_bootstrapped()
         input_shape = None if self.model_build_context is None else self.model_build_context.input_shape
         expected_timesteps, expected_input_dim = require_logical_input_shape(input_shape)
@@ -568,7 +554,6 @@ class HILServer:
         ValueError
             If the field cannot be resolved to a finite positive number.
         """
-
         self._ensure_pipeline_bootstrapped()
         metadata = {} if self.dataset_bundle is None else dict(self.dataset_bundle.metadata)
         raw_value = metadata.get(key, self._cfg_get(self.dataset_config, key, None))
@@ -595,7 +580,6 @@ class HILServer:
             Cached calibration split, or ``None`` when the dataset does not
             expose calibration data.
         """
-
         self._ensure_pipeline_bootstrapped()
         if not self._calibration_split_resolved:
             self.calibration_split = self.dataset.make_calibration_data(
@@ -618,7 +602,6 @@ class HILServer:
         ValueError
             If the active dataset does not provide calibration data.
         """
-
         calibration_split = self._ensure_calibration_split()
         if calibration_split is None:
             raise ValueError(
@@ -640,7 +623,6 @@ class HILServer:
             If the required dimensions cannot be derived from dataset metadata
             or model build context.
         """
-
         self._ensure_pipeline_bootstrapped()
         metadata = {} if self.dataset_bundle is None else dict(self.dataset_bundle.metadata)
         input_shape = None if self.model_build_context is None else self.model_build_context.input_shape
@@ -682,7 +664,6 @@ class HILServer:
         Any
             Validated model instance ready for export preparation.
         """
-
         self._ensure_pipeline_bootstrapped()
         model = self.model_family.materialize_export_model(
             family_hparams,
@@ -725,7 +706,6 @@ class HILServer:
         CandidatePrepareRequest
             Typed backend preparation request.
         """
-
         return CandidatePrepareRequest(
             config=self.config,
             model=model,
@@ -757,7 +737,6 @@ class HILServer:
         ValueError
             If no usable variant is available.
         """
-
         if model_variant is not None:
             if not isinstance(model_variant, str) or not model_variant.strip():
                 raise ValueError("model_variant must be a non-empty string when provided.")
@@ -790,7 +769,6 @@ class HILServer:
             trained variants, or ``None`` for variants that do not require a
             checkpoint.
         """
-
         if checkpoint_path is not None:
             return checkpoint_path
         if model_variant.strip().lower().startswith("trained"):
@@ -818,7 +796,6 @@ class HILServer:
             handling must not bootstrap the dataset just to build failure
             metrics.
         """
-
         metadata = {} if self.dataset_bundle is None else dict(self.dataset_bundle.metadata)
         return resolve_batch_period_ms(
             self.dataset_config,
@@ -827,7 +804,13 @@ class HILServer:
         )
 
     def _configured_runtime_mode(self) -> str:
-        """Return the normalized configured runtime mode."""
+        """Return the normalized configured runtime mode.
+
+        Returns
+        -------
+        str
+            Lower-case runtime mode requested by the device configuration.
+        """
         return str(getattr(self.config.device, "runtime_mode", "back_to_back")).strip().lower()
 
     def _run_arduino_cadenced_second_pass(
@@ -940,8 +923,7 @@ class HILServer:
         return base_metrics
 
     def start(self) -> None:
-        """
-        Start the ZeroMQ REP loop that evaluates incoming hyperparameters.
+        """Start the ZeroMQ REP loop that evaluates incoming hyperparameters.
 
         The server blocks waiting for JSON messages, runs
         :meth:`determine_metrics`, and responds with a metrics dictionary for
@@ -953,12 +935,12 @@ class HILServer:
         """
         endpoint = f"tcp://{self.config.network.host}:{self.config.network.port}"
         self.socket.bind(endpoint)
-        print(f"[HIL REP] Listening for hyperparameters on {endpoint}")
+        logger.info("[HIL REP] Listening for hyperparameters on %s", endpoint)
 
         try:
             while True:
                 payload = self.socket.recv_json()
-                print(f"[HIL REP] Received payload: {payload}")
+                logger.debug("[HIL REP] Received payload: %s", payload)
                 try:
                     family_hparams, runtime_metadata, quantization_mode, device_options_overrides = self._normalize_request_payload(payload)
                     metrics = self.determine_metrics(
@@ -974,7 +956,7 @@ class HILServer:
                         error_detail=str(exc),
                     )
 
-                print(f"[HIL REP] Sending metrics: {metrics}")
+                logger.debug("[HIL REP] Sending metrics: %s", metrics)
                 self.socket.send_json(metrics)
                 if metrics.get("error_code") == HIL_MASTER_DEVICE_NOT_FOUND:
                     logger.error(
@@ -982,7 +964,7 @@ class HILServer:
                     )
                     break
         except KeyboardInterrupt:
-            print("\n[HIL REP] Shutting down HIL REP server.")
+            logger.info("[HIL REP] Shutting down HIL REP server.")
         finally:
             self.socket.close(linger=0)
             self.context.term()
@@ -1001,6 +983,11 @@ class HILServer:
         tuple[Dict, Dict, str, dict | None]
             Family hyperparameters, runtime metadata, deployment quantization
             mode, and optional device option overrides.
+
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
         """
         if not isinstance(payload, Mapping):
             raise ValueError("HIL request payload must be a JSON object.")
@@ -1030,7 +1017,21 @@ class HILServer:
         error_kind: str,
         error_detail: str,
     ) -> dict:
-        """Build failure metrics for malformed or invalid client requests."""
+        """Build failure metrics for malformed or invalid client requests.
+
+        Parameters
+        ----------
+        error_kind : str
+            Error category reported by the HIL server.
+        error_detail : str
+            Detailed error text reported by the HIL server.
+
+        Returns
+        -------
+        dict
+            Failure metrics payload that can be returned before request
+            execution starts.
+        """
         try:
             latency_budget_ms = self._effective_latency_budget_ms()
         except ValueError:
@@ -1054,8 +1055,7 @@ class HILServer:
         checkpoint_path: Path | str | None = None,
         model_variant: str | None = None,
     ) -> dict:
-        """
-        Build/select a model variant, compile/export it, and collect HIL metrics.
+        """Build/select a model variant, compile/export it, and collect HIL metrics.
 
         Parameters
         ----------
@@ -1231,7 +1231,7 @@ class HILServer:
             elif runtime_device.requires_candidate_model():
                 self.active_sketch_path = None
 
-            print("Starting metric collection")
+            logger.info("Starting metric collection")
             try:
                 request_metrics_args = build_collect_metrics_request(
                     config=self.config,
@@ -1285,18 +1285,20 @@ class HILServer:
         if self.config.device.hil:
             metrics["latency_budget_ms"] = latency_budget_ms
 
-        print(
+        logger.debug(
             "[HIL REP] Runtime clock details: "
-            f"requested_cpu_clock_mhz={requested_cpu_clock_mhz}, "
-            f"effective_cpu_clock_mhz={merged_device_options.get('cpu_clock_mhz', -1)}, "
-            f"reported_clock_hz={metrics.get('clock_hz', -1.0)}"
+            "requested_cpu_clock_mhz=%s, "
+            "effective_cpu_clock_mhz=%s, "
+            "reported_clock_hz=%s",
+            requested_cpu_clock_mhz,
+            merged_device_options.get("cpu_clock_mhz", -1),
+            metrics.get("clock_hz", -1.0),
         )
-        print("Metric collection complete")
+        logger.info("Metric collection complete")
         return metrics
 
     def _sync_sketch_variant(self) -> Path:
-        """
-        Copy the selected Arduino sketch variant into the active build directory.
+        """Copy the selected Arduino sketch variant into the active build directory.
 
         Selection depends on ``device.name``, optional Portenta
         ``device.portenta.target_core``, ``training.energy_aware``, and
@@ -1324,8 +1326,7 @@ class HILServer:
         )
 
     def set_input_mode(self, input_mode: str, *, runtime_phase: str = "back_to_back") -> Path:
-        """
-        Set the input mode and resynchronize the active Arduino sketch variant.
+        """Set the input mode and resynchronize the active Arduino sketch variant.
 
         Parameters
         ----------
@@ -1340,7 +1341,6 @@ class HILServer:
         -------
         Path
             Path to the active synchronized sketch file.
-
         """
         runtime_device = get_microcontroller_device(
             self._normalized_device_name(),

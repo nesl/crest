@@ -33,6 +33,10 @@ declare -a LRUN_OVERLAY_PATHS=(
   "STM32CubeIDE/AppS/STM32N657XX_LRUN.ld"
   "STM32CubeIDE/Boot/Debug"
   "STM32CubeIDE/AppS/Debug"
+  "LICENSE.md"
+  "LICENSE.CMSIS.txt"
+  "LICENSE.STM32N6xx_HAL_Driver.md"
+  "LICENSE.STM32_ExtMem_Manager.md"
   "lrun_ownership_manifest.tsv"
   "README.md"
 )

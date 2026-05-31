@@ -38,7 +38,6 @@ def _require_positive_integer(value: Any, *, field_name: str) -> int:
     ValueError
         If the value is boolean, non-integer, or non-positive.
     """
-
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{field_name} must be a positive integer.")
     if value <= 0:
@@ -64,7 +63,6 @@ def _as_logits_array(predictions: Any) -> np.ndarray:
     ValueError
         If predictions are not a single 2D output.
     """
-
     if isinstance(predictions, (list, tuple)):
         if len(predictions) != 1:
             raise ValueError("SoundClassificationTask expects one logits prediction output.")
@@ -90,7 +88,6 @@ def _sparse_cross_entropy_from_logits(logits: np.ndarray, labels: np.ndarray) ->
     float
         Mean cross-entropy loss.
     """
-
     if logits.shape[0] == 0:
         return 0.0
     max_logits = np.max(logits, axis=1, keepdims=True)
@@ -124,7 +121,6 @@ def _classification_artifacts(
     dict[str, Any]
         JSON-safe confusion matrix and per-class metrics.
     """
-
     confusion = np.zeros((num_classes, num_classes), dtype=np.int64)
     for truth, predicted in zip(labels, predicted_ids):
         confusion[int(truth), int(predicted)] += 1
@@ -181,7 +177,6 @@ def _extract_single_output_shape(model: Any) -> tuple[Any, ...]:
     ValueError
         If the model exposes zero or multiple outputs.
     """
-
     output_shape = getattr(model, "output_shape", None)
     if isinstance(output_shape, list):
         if len(output_shape) != 1:
@@ -205,7 +200,6 @@ def _has_probability_final_layer(model: Any) -> bool:
     bool
         ``True`` when the final layer structurally applies softmax.
     """
-
     layers = list(getattr(model, "layers", []) or [])
     if not layers:
         return False
@@ -234,7 +228,6 @@ class SoundClassificationTask(TaskABC):
         early_stopping_patience : int, optional
             Positive integer early-stopping patience.
         """
-
         self.checkpoint_path = Path(checkpoint_path)
         self.early_stopping_patience = _require_positive_integer(
             early_stopping_patience,
@@ -250,7 +243,6 @@ class SoundClassificationTask(TaskABC):
         str
             Stable task identifier.
         """
-
         return "sound_classification"
 
     def validate_config(self, task_config: Any) -> None:
@@ -266,7 +258,6 @@ class SoundClassificationTask(TaskABC):
         None
             Raises when optional patience config is invalid.
         """
-
         getter = getattr(task_config, "get", None)
         raw_patience = getter("early_stopping_patience", None) if callable(getter) else getattr(task_config, "early_stopping_patience", None)
         if raw_patience is not None:
@@ -290,8 +281,12 @@ class SoundClassificationTask(TaskABC):
         -------
         TargetSpec
             Single-output logits classification contract.
-        """
 
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         del task_config
         class_names = list(CLASS_NAMES)
         num_classes = len(class_names)
@@ -332,7 +327,6 @@ class SoundClassificationTask(TaskABC):
         TaskMetricContract
             Metric declaration for loss, accuracy, and macro-F1.
         """
-
         del target_spec, task_config
         metric_names = {"loss", "accuracy", "macro_f1"}
         return TaskMetricContract(
@@ -364,7 +358,6 @@ class SoundClassificationTask(TaskABC):
         None
             Mutates ``model`` by applying optimizer, loss, and metrics.
         """
-
         del task_config, target_spec
         model.compile(
             optimizer=Adam(learning_rate=0.001),
@@ -400,8 +393,12 @@ class SoundClassificationTask(TaskABC):
         -------
         FitPlan
             Fit kwargs and task-owned callbacks.
-        """
 
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         del task_config, target_spec
         if mode not in {"search", "final"}:
             raise ValueError("SoundClassificationTask build_fit_plan mode must be 'search' or 'final'.")
@@ -467,8 +464,12 @@ class SoundClassificationTask(TaskABC):
         -------
         None
             Raises when output shape or final activation is incompatible.
-        """
 
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         output_shape = _extract_single_output_shape(model)
         num_classes = int(target_spec.metadata["num_classes"])
         if len(output_shape) != 2 or output_shape[0] is not None or int(output_shape[-1]) != num_classes:
@@ -504,7 +505,6 @@ class SoundClassificationTask(TaskABC):
         EvaluationResult
             JSON-safe metrics, artifacts, and predicted class IDs.
         """
-
         predictions = model.predict(split.inputs)
         return self.evaluate_predictions(predictions, split, task_config, target_spec)
 
@@ -532,8 +532,12 @@ class SoundClassificationTask(TaskABC):
         -------
         EvaluationResult
             JSON-safe metrics, artifacts, and predicted class IDs.
-        """
 
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         del task_config
         labels = np.asarray(split.targets, dtype=np.int64).reshape(-1)
         logits = _as_logits_array(predictions)
@@ -595,7 +599,6 @@ class SoundClassificationTask(TaskABC):
             JSON-safe artifact summary, or an empty dict when no test split
             exists.
         """
-
         if dataset_bundle.test is None:
             return {}
         output_dir.mkdir(parents=True, exist_ok=True)

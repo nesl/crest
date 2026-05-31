@@ -1,4 +1,7 @@
+"""Document data utilities."""
+
 import math
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
@@ -21,6 +24,8 @@ from pydometer import Pedometer
 from tqdm import tqdm
 
 from . import geometry
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -58,6 +63,7 @@ class OxIODSplitData:
         Concatenated unwindowed IMU samples preserved for compatibility with
         legacy downstream code.
     """
+
     inputs: np.ndarray
     disp: np.ndarray
     heading: np.ndarray
@@ -77,8 +83,7 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
                          sub_folders = ['handbag/','handheld/','pocket/','running/','slow_walking/','trolley/'],
                          sampling_rate = 100, window_size = 200, stride = 10, verbose=True,
                          max_windows: Optional[int] = None):
-    """
-    Load and window OxIOD IMU/ground-truth sequences according to split files.
+    """Load and window OxIOD IMU/ground-truth sequences according to split files.
 
     Parameters
     ----------
@@ -146,12 +151,12 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
         type_file = 'Test.txt'
     else:
         raise ValueError("type_flag must be 1, 2, 3, or 4")
-    
+
     if(useMagnetometer):
         channel_count = 9
     else:
         channel_count = 6
-    
+
     X_orig = np.empty([0,channel_count])
     x0_list = []
     y0_list = []
@@ -164,10 +169,10 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
     y_vel = np.empty([0])
     head_s = np.empty([0])
     head_c = np.empty([0])
-    
+
     if(useStepCounter):
         loc_3D_mat = np.empty([0,window_size])
-       
+
     total_windows = 0
     budget_reached = False
     remaining_folders = len(sub_folders)
@@ -191,7 +196,7 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
             if folder_budget is not None and folder_windows >= folder_budget:
                 break
             if(verbose==True):
-                print('Processing for (file and ground truth): '+folder+line)
+                logger.info("Processing for (file and ground truth): %s%s", folder, line)
             cur_train = pd.read_csv(dataset_folder+folder+line,header=None)
             cur_train.columns = default_channels
             acc_x = cur_train['Lin_Acc_X'].to_numpy() + cur_train['Grav_X'].to_numpy()
@@ -200,39 +205,39 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
             gyr_x = cur_train['Gyro_X'].to_numpy().reshape((acc_x.shape[0],1))
             gyr_y = cur_train['Gyro_Y'].to_numpy().reshape((acc_x.shape[0],1))
             gyr_z = cur_train['Gyro_Z'].to_numpy().reshape((acc_x.shape[0],1))
-            
+
             if(useMagnetometer):
                 mag_x = cur_train['Mag_X'].to_numpy().reshape((acc_x.shape[0],1))
                 mag_y = cur_train['Mag_Y'].to_numpy().reshape((acc_x.shape[0],1))
                 mag_z = cur_train['Mag_Z'].to_numpy().reshape((acc_x.shape[0],1)) 
-                
+
             if(useStepCounter):
                 df = pd.DataFrame({'gx': acc_x, 'gy': acc_y, 'gz': acc_z})
                 p = Pedometer(data=df, sr=sampling_rate)
                 step_count, step_locations = p.get_steps()
                 loc = np.zeros(cur_train.shape[0])
                 loc[step_locations] = 1
-           
+
             acc_x = acc_x.reshape((acc_x.shape[0],1))
             acc_y = acc_y.reshape((acc_y.shape[0],1))
             acc_z = acc_z.reshape((acc_z.shape[0],1))
-           
+
             if(useMagnetometer):
                 cur_train = np.concatenate((acc_x,acc_y,acc_z,gyr_x,gyr_y,gyr_z,mag_x,mag_y,mag_z),axis=1)
             else:
                 cur_train = np.concatenate((acc_x,acc_y,acc_z,gyr_x,gyr_y,gyr_z),axis=1)
-                                           
+
             cur_GT = pd.read_csv(dataset_folder+folder+line.replace('imu','vi'),header=None)
             cur_GT.columns = default_GT_channels
             cur_GT.drop(list(set(default_GT_channels) - set(wanted_GT_channels)), axis=1,inplace=True)
             cur_GT = cur_GT.to_numpy()
-   
+
             windows = SlidingWindow(size=window_size, stride=stride)
             cur_train_3D = windows.fit_transform(cur_train[:,0])
             for i in range(1,cur_train.shape[1]):
                 X_windows = windows.fit_transform(cur_train[:,i])
                 cur_train_3D = np.dstack((cur_train_3D,X_windows))
-            
+
             if(useStepCounter):   
                 loc_3D = windows.fit_transform(loc)
 
@@ -240,17 +245,17 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
             for i in range(1,cur_GT.shape[1]):
                 X_windows = windows.fit_transform(cur_GT[:,i])
                 cur_GT_3D = np.dstack((cur_GT_3D,X_windows))  
-           
+
             vx = np.zeros((cur_GT_3D.shape[0]))
             vy = np.zeros((cur_GT_3D.shape[0]))
-            
+
             heading_s = np.zeros((cur_GT_3D.shape[0]))
             heading_c = np.zeros((cur_GT_3D.shape[0]))
             for i in range(cur_GT_3D.shape[0]):
                 s,c = abs_heading_sin_cos(cur_GT_3D[i,-1,0],cur_GT_3D[i,-1,1],cur_GT_3D[i,0,0],cur_GT_3D[i,0,1])
                 heading_s[i] = s
                 heading_c[i] = c            
-           
+
             displacement_GT_abs = np.zeros(cur_GT_3D.shape[0])
             heading_GT = np.zeros((cur_GT_3D.shape[0]))
             prev = 0
@@ -263,7 +268,7 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
                 theta = abs_heading(cur_GT_3D[i,-1,0],cur_GT_3D[i,-1,1],cur_GT_3D[i,0,0],cur_GT_3D[i,0,1])
                 if theta<180:
                     theta = theta + 180
-       
+
                 heading_GT[i] = theta - prev
                 if(heading_GT[i]>100 or heading_GT[i]<-100):
                     theta2 = theta
@@ -274,7 +279,7 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
                         prev2 =  prev + 360
                     heading_GT[i] = theta2 - prev2
                 prev = theta
-            
+
             if max_windows is not None:
                 global_remaining = max_windows - total_windows
                 folder_remaining = folder_budget - folder_windows if folder_budget is not None else global_remaining
@@ -351,10 +356,10 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
                 if budget_reached:
                     break
         remaining_folders -= 1
-           
+
     if(useStepCounter):
         X = np.concatenate((X,loc_3D_mat.reshape(loc_3D_mat.shape[0],loc_3D_mat.shape[1],1)),axis=2)
-    
+
     # returns 1. training set from IMU 2. ground truth displacements 3. ground truth heading rates 4. ground truth position
     # 5. list of initial x positions 6. list of initial y positions 7. size of each file in windowed form
     # 8. ground truth x velocity 9. ground truth y velocity 10. heading rate in terms of sin 11. heading rate in terms of cos
@@ -443,6 +448,11 @@ def abs_heading_sin_cos(cur_x, cur_y, prev_x, prev_y, eps=1e-4):
 
     >>> abs_heading_sin_cos(0.0, 0.0, 0.0, 0.0)
     (0.0, 0.0)
+
+    Raises
+    ------
+    Exception
+        If existing validation or execution checks fail.
     """
     dely = cur_y - prev_y
     delx = cur_x - prev_x
@@ -590,7 +600,6 @@ def Cal_TE(Gvx, Gvy, Pvx, Pvy, sampling_rate=100, window_size=200, stride=10, le
         Per-sample Euclidean errors collected for the one-minute prefix branch.
         This list stays empty in the short-trajectory fallback branch.
     """
-
     if length is None:
         length = len(Gvx)
 
@@ -644,7 +653,6 @@ def Cal_len_meters(Gvx, Gvy, length=None):
         Total path length in meters, computed as the sum of Euclidean
         distances between consecutive ground-truth samples.
     """
-
     if length is None:
         length = len(Gvx)
 

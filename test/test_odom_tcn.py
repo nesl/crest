@@ -45,7 +45,6 @@ def _make_legacy_split(
         Legacy split object with the fields the adapter layer expects from the
         old data loader contract.
     """
-
     # Mirror the legacy loader's field layout closely so adapter tests verify
     # translation logic rather than a custom synthetic shape.
     inputs = np.arange(num_windows * window_size * channels, dtype=np.float32).reshape(
@@ -71,6 +70,7 @@ class OxIODDatasetTests(unittest.TestCase):
     """Validate the Phase 2 OxIOD dataset adapter."""
 
     def setUp(self) -> None:
+        """Prepare test fixtures."""
         self.dataset = OxIODDataset()
         self.config = Dict(
             directory="data/oxiod/",
@@ -81,6 +81,7 @@ class OxIODDatasetTests(unittest.TestCase):
 
     def test_load_maps_legacy_splits_into_dataset_bundle(self) -> None:
         # The OxIOD dataset adapter should map the legacy split loader output into the new DatasetBundle shape.
+        """Validate load maps legacy splits into dataset bundle."""
         train_split = _make_legacy_split()
         val_split = _make_legacy_split()
         test_split = _make_legacy_split()
@@ -102,6 +103,7 @@ class OxIODDatasetTests(unittest.TestCase):
 
     def test_train_and_validation_calls_preserve_legacy_loader_kwargs(self) -> None:
         # The adapter should forward the legacy loader kwargs unchanged into each split load.
+        """Validate train and validation calls preserve legacy loader kwargs."""
         train_split = _make_legacy_split()
         val_split = _make_legacy_split()
         test_split = _make_legacy_split()
@@ -131,6 +133,7 @@ class OxIODDatasetTests(unittest.TestCase):
 
     def test_missing_calibration_windows_keeps_bundle_calibration_empty(self) -> None:
         # Missing calibration windows should leave the bundle calibration split empty instead of fabricating one.
+        """Validate missing calibration windows keeps bundle calibration empty."""
         with patch(
             "tinyodom.datasets.oxiod.import_oxiod_dataset",
             side_effect=[_make_legacy_split(), _make_legacy_split(), _make_legacy_split()],
@@ -142,6 +145,7 @@ class OxIODDatasetTests(unittest.TestCase):
 
     def test_configured_calibration_windows_loads_capped_calibration_split(self) -> None:
         # Configured calibration windows should load the capped calibration split from the adapter.
+        """Validate configured calibration windows loads capped calibration split."""
         config = Dict(
             directory="data/oxiod/",
             sampling_rate_hz=100,
@@ -170,6 +174,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
     """Validate the Phase 2 odometry regression task adapter."""
 
     def setUp(self) -> None:
+        """Prepare test fixtures."""
         self.tempdir = tempfile.TemporaryDirectory()
         self.task = OdometryRegressionTask(
             checkpoint_path=Path(self.tempdir.name) / "best.keras",
@@ -197,11 +202,13 @@ class OdometryRegressionTaskTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        """Clean up test fixtures."""
         self.tempdir.cleanup()
         tf.keras.backend.clear_session()
 
     def test_build_target_spec_returns_two_head_regression_contract(self) -> None:
         # The odometry task should expose the expected two-head regression target contract.
+        """Validate build target spec returns two head regression contract."""
         target_spec = self.task.build_target_spec(self.bundle, {})
 
         self.assertEqual(target_spec.task_type, "regression")
@@ -210,6 +217,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
 
     def test_metric_contract_returns_expected_rmse_names(self) -> None:
         # The odometry task's metric contract should keep the expected RMSE metric names.
+        """Validate metric contract returns expected rmse names."""
         contract = self.task.metric_contract(self.target_spec, {})
 
         self.assertEqual(contract.available_metric_names, {"rmse_vel_x", "rmse_vel_y", "rmse_total"})
@@ -219,6 +227,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
 
     def test_compile_model_uses_adam_and_legacy_loss_map(self) -> None:
         # Task compilation should preserve the legacy Adam optimizer and loss mapping.
+        """Validate compile model uses adam and legacy loss map."""
         model = MagicMock()
 
         self.task.compile_model(model, {}, self.target_spec)
@@ -230,6 +239,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
 
     def test_build_fit_plan_builds_expected_wiring_and_callbacks(self) -> None:
         # The fit-plan helper should wire datasets, callbacks, and checkpointing the way the task expects.
+        """Validate build fit plan builds expected wiring and callbacks."""
         fit_plan = self.task.build_fit_plan(
             self.bundle,
             {},
@@ -249,6 +259,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
 
     def test_build_fit_plan_requires_validation_split_when_not_combining(self) -> None:
         # The fit-plan helper should reject attempts to train without a validation split.
+        """Validate build fit plan requires validation split when not combining."""
         bundle = DatasetBundle(train=self.train_split, val=None)
 
         with self.assertRaisesRegex(ValueError, "requires a validation split"):
@@ -262,6 +273,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
 
     def test_build_fit_plan_combines_train_and_val_for_final_mode(self) -> None:
         # Final-fit plans should merge train and validation data and switch monitoring to training loss.
+        """Validate build fit plan combines train and val for final mode."""
         fit_plan = self.task.build_fit_plan(
             self.bundle,
             {},
@@ -278,6 +290,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
 
     def test_history_component_keys_return_velocity_loss_pairs(self) -> None:
         # Odometry closeout plots should be driven by task-owned history-key declarations.
+        """Validate history component keys return velocity loss pairs."""
         self.assertEqual(
             self.task.history_component_keys(self.target_spec),
             [("velx_loss", "val_velx_loss"), ("vely_loss", "val_vely_loss")],
@@ -285,6 +298,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
 
     def test_generate_closeout_artifacts_restores_odometry_trajectory_outputs(self) -> None:
         # The built-in odometry task should still emit trajectory metrics and plots during closeout.
+        """Validate generate closeout artifacts restores odometry trajectory outputs."""
         length = 4
         vx = np.full((length, 1), 0.5, dtype=np.float32)
         vy = np.full((length, 1), 0.5, dtype=np.float32)
@@ -306,7 +320,21 @@ class OdometryRegressionTaskTests(unittest.TestCase):
         )
 
         class FakeModel:
+            """Fake model used by artifact and prediction tests."""
+
             def predict(self, _inputs):
+                """Run predict.
+
+                Parameters
+                ----------
+                _inputs : object
+                    Input tensor batch passed to the fake model.
+
+                Returns
+                -------
+                object
+                    Predictions emitted by the fake model.
+                """
                 return [vx, vy]
 
         artifacts = self.task.generate_closeout_artifacts(
@@ -324,6 +352,7 @@ class OdometryRegressionTaskTests(unittest.TestCase):
 
     def test_evaluate_uses_legacy_prediction_ordering(self) -> None:
         # Task evaluation should preserve the legacy prediction ordering used by downstream odometry metrics.
+        """Validate evaluate uses legacy prediction ordering."""
         model = MagicMock()
         predictions = [
             np.array([1.0, 2.0, 3.0], dtype=np.float32),
@@ -344,6 +373,27 @@ class _DummyTrial:
     """Small Optuna-like trial stub for model-family tests."""
 
     def suggest_int(self, name, low, high):
+        """Run suggest int.
+
+        Parameters
+        ----------
+        name : object
+            Parameter name requested by the fake sampler.
+        low : object
+            Lower bound used by the fake sampler.
+        high : object
+            Upper bound used by the fake sampler.
+
+        Returns
+        -------
+        object
+            Selected integer value from the fake sampler.
+
+        Raises
+        ------
+        AssertionError
+            If existing validation or execution checks fail.
+        """
         if name == "nb_filters":
             assert (low, high) == (2, 63)
             return 8
@@ -356,6 +406,25 @@ class _DummyTrial:
         raise AssertionError(f"Unexpected suggest_int call: {name}, {low}, {high}")
 
     def suggest_categorical(self, name, choices):
+        """Run suggest categorical.
+
+        Parameters
+        ----------
+        name : object
+            Parameter name requested by the fake sampler.
+        choices : object
+            Candidate values available to the fake sampler.
+
+        Returns
+        -------
+        object
+            Selected categorical value from the fake sampler.
+
+        Raises
+        ------
+        AssertionError
+            If existing validation or execution checks fail.
+        """
         if name == "dropout_rate":
             return choices[1]
         if name == "use_skip_connections":
@@ -369,6 +438,7 @@ class OdomTCNFamilyTests(unittest.TestCase):
     """Validate the Phase 2 Odom TCN model family adapter."""
 
     def setUp(self) -> None:
+        """Prepare test fixtures."""
         self.family = OdomTCNFamily()
         self.ctx = ModelBuildContext(
             input_shape=(20, 6),
@@ -381,10 +451,12 @@ class OdomTCNFamilyTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        """Clean up test fixtures."""
         tf.keras.backend.clear_session()
 
     def test_sample_hparams_matches_legacy_search_surface(self) -> None:
         # The model family should keep exposing the legacy hyperparameter search surface.
+        """Validate sample hparams matches legacy search surface."""
         hparams = self.family.sample_hparams(_DummyTrial(), self.ctx, {})
 
         self.assertEqual(
@@ -395,12 +467,14 @@ class OdomTCNFamilyTests(unittest.TestCase):
 
     def test_dilation_candidates_preserve_legacy_search_surface(self) -> None:
         # The family-owned dilation table should preserve the original TinyODOM search surface exactly.
+        """Validate dilation candidates preserve legacy search surface."""
         self.assertEqual(len(DILATION_CANDIDATES), 465)
         self.assertEqual(DILATION_CANDIDATES[0], [1, 2, 4])
         self.assertEqual(DILATION_CANDIDATES[107], [1, 4, 8, 64])
 
     def test_build_model_passes_plain_hparams_into_local_builder(self) -> None:
         # Model construction should use the family-owned builder with plain hyperparameters.
+        """Validate build model passes plain hparams into local builder."""
         hparams = {
             "nb_filters": 8,
             "kernel_size": 5,
@@ -424,6 +498,7 @@ class OdomTCNFamilyTests(unittest.TestCase):
 
     def test_build_model_preserves_legacy_output_names(self) -> None:
         # Model construction should preserve the legacy output names expected by the original TinyOdom heads.
+        """Validate build model preserves legacy output names."""
         hparams = {
             "nb_filters": 8,
             "kernel_size": 5,
@@ -439,10 +514,12 @@ class OdomTCNFamilyTests(unittest.TestCase):
 
     def test_custom_objects_returns_tcn_mapping(self) -> None:
         # The TCN family should keep returning the expected custom-objects mapping.
+        """Validate custom objects returns tcn mapping."""
         self.assertIn("TCN", self.family.custom_objects())
 
     def test_decode_trial_hparams_expands_dilations_index(self) -> None:
         # Persisted trial params should be decoded by the family rather than by NAS orchestration.
+        """Validate decode trial hparams expands dilations index."""
         decoded = self.family.decode_trial_hparams(
             {
                 "nb_filters": 8,
@@ -461,6 +538,7 @@ class OdomTCNFamilyTests(unittest.TestCase):
 
     def test_default_seed_trial_matches_raw_trial_surface(self) -> None:
         # The family should own the default persisted trial seed for new studies.
+        """Validate default seed trial matches raw trial surface."""
         seed = self.family.default_seed_trial(self.ctx, {})
 
         self.assertIsNotNone(seed)
@@ -472,6 +550,7 @@ class OdomTCNFamilyTests(unittest.TestCase):
 
     def test_count_flops_returns_positive_estimate(self) -> None:
         # The family should expose a working FLOP counter through the model-family contract.
+        """Validate count flops returns positive estimate."""
         hparams = {
             "nb_filters": 8,
             "kernel_size": 5,
@@ -489,6 +568,7 @@ class OdomTCNFamilyTests(unittest.TestCase):
 
     def test_estimate_static_memory_returns_positive_tcn_proxy(self) -> None:
         # The OdomTCN override should count real weights and infer custom TCN internal activation traffic.
+        """Validate estimate static memory returns positive tcn proxy."""
         hparams = {
             "nb_filters": 8,
             "kernel_size": 5,
@@ -517,6 +597,7 @@ class OdomTCNFamilyTests(unittest.TestCase):
 
     def test_validate_hparams_rejects_missing_required_keys(self) -> None:
         # Hyperparameter validation should reject missing required keys before model construction starts.
+        """Validate validate hparams rejects missing required keys."""
         hparams = {
             "nb_filters": 8,
             "kernel_size": 5,

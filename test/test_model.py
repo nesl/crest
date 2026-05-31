@@ -56,6 +56,7 @@ class CountFlopsTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         # Prevent TF from accumulating graphs between tests.
+        """Clean up test fixtures."""
         tf.keras.backend.clear_session()
 
     def test_deeper_model_has_more_flops(self) -> None:
@@ -91,6 +92,7 @@ class ModelVariantHelperTests(unittest.TestCase):
     """Validate model-variant helper utilities used by HILServer."""
 
     def tearDown(self) -> None:
+        """Clean up test fixtures."""
         tf.keras.backend.clear_session()
 
     def _build_perturbation_test_model(self) -> tf.keras.Model:
@@ -103,7 +105,6 @@ class ModelVariantHelperTests(unittest.TestCase):
             layers so perturbation helpers can prove they touch the right
             tensors.
         """
-
         # Choose layers that cover both BatchNorm tensors and ordinary bias
         # tensors because the perturbation helper updates those groups
         # differently.
@@ -130,7 +131,6 @@ class ModelVariantHelperTests(unittest.TestCase):
         dict[str, numpy.ndarray]
             Copies of the tensors keyed by ``layer_name.attribute``.
         """
-
         snapshot: dict[str, np.ndarray] = {}
         for layer in collect_bn_layers(model):
             for attr in ("gamma", "beta", "moving_mean", "moving_variance"):
@@ -145,6 +145,7 @@ class ModelVariantHelperTests(unittest.TestCase):
 
     def test_iter_layers_flattens_without_duplicates(self) -> None:
         # Layer iteration should flatten nested and shared graphs without yielding duplicates so traversal helpers only touch each layer once.
+        """Validate iter layers flattens without duplicates."""
         inputs = tf.keras.Input(shape=(8,))
         shared_dense = tf.keras.layers.Dense(8, activation="relu", name="shared_dense")
         x = shared_dense(inputs)
@@ -164,6 +165,7 @@ class ModelVariantHelperTests(unittest.TestCase):
 
     def test_collect_bn_layers_returns_only_batchnorm(self) -> None:
         # BatchNorm collection should only return normalization layers so perturbation helpers do not rewrite unrelated weights.
+        """Validate collect bn layers returns only batchnorm."""
         inputs = tf.keras.Input(shape=(8,))
         x = tf.keras.layers.Dense(8, use_bias=True, name="dense1")(inputs)
         x = tf.keras.layers.BatchNormalization(name="bn1")(x)
@@ -179,6 +181,7 @@ class ModelVariantHelperTests(unittest.TestCase):
 
     def test_collect_non_bn_bias_layers_excludes_bn(self) -> None:
         # Bias-layer collection should skip BatchNorm offsets so combined perturbations do not double-count normalization parameters.
+        """Validate collect non bn bias layers excludes bn."""
         inputs = tf.keras.Input(shape=(16, 4))
         x = tf.keras.layers.Conv1D(8, kernel_size=3, use_bias=True, name="conv_bias")(inputs)
         x = tf.keras.layers.BatchNormalization(name="bn")(x)
@@ -196,6 +199,7 @@ class ModelVariantHelperTests(unittest.TestCase):
 
     def test_apply_combined_perturbation_returns_expected_counts(self) -> None:
         # Combined perturbations should report how many BatchNorm and bias tensors were touched so export instrumentation can validate the rewrite.
+        """Validate apply combined perturbation returns expected counts."""
         model = self._build_perturbation_test_model()
         bn_touched, bias_touched = apply_combined_perturbation(model, seed=1337)
         self.assertEqual(bn_touched, 2)
@@ -203,6 +207,7 @@ class ModelVariantHelperTests(unittest.TestCase):
 
     def test_apply_combined_perturbation_is_deterministic_for_seed(self) -> None:
         # Seeded perturbations should be reproducible so approximate-export runs can be compared across executions.
+        """Validate apply combined perturbation is deterministic for seed."""
         seed = 2026
         model_a = self._build_perturbation_test_model()
         model_b = self._build_perturbation_test_model()
@@ -219,6 +224,7 @@ class ModelVariantHelperTests(unittest.TestCase):
 
     def test_validate_loaded_model_input_shape_accepts_matching_shape(self) -> None:
         # Loaded-model shape validation should accept the exact hyperparameter shape the checkpoint was trained for.
+        """Validate validate loaded model input shape accepts matching shape."""
         inputs = tf.keras.Input(shape=(20, 6))
         outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
         model = tf.keras.Model(inputs, outputs)
@@ -227,6 +233,7 @@ class ModelVariantHelperTests(unittest.TestCase):
 
     def test_validate_loaded_model_input_shape_rejects_mismatch(self) -> None:
         # Loaded-model shape validation should reject incompatible signatures before a mismatched checkpoint reaches inference.
+        """Validate validate loaded model input shape rejects mismatch."""
         inputs = tf.keras.Input(shape=(20, 6))
         outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
         model = tf.keras.Model(inputs, outputs)
@@ -242,6 +249,7 @@ class ModelVariantHelperTests(unittest.TestCase):
 
     def test_validate_loaded_model_input_shape_rejects_multi_input_model(self) -> None:
         # Loaded-model shape validation should reject incompatible signatures before a mismatched checkpoint reaches inference.
+        """Validate validate loaded model input shape rejects multi input model."""
         input_a = tf.keras.Input(shape=(20, 6), name="input_a")
         input_b = tf.keras.Input(shape=(20, 6), name="input_b")
         outputs = tf.keras.layers.Add(name="sum")([input_a, input_b])
@@ -253,6 +261,7 @@ class ModelVariantHelperTests(unittest.TestCase):
 
     def test_validate_model_input_shape_accepts_matching_shape(self) -> None:
         # Freshly built models should accept the expected logical input shape before export and scoring continue.
+        """Validate validate model input shape accepts matching shape."""
         inputs = tf.keras.Input(shape=(20, 6))
         outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
         model = tf.keras.Model(inputs, outputs)
@@ -261,6 +270,7 @@ class ModelVariantHelperTests(unittest.TestCase):
 
     def test_validate_model_input_shape_rejects_missing_expected_shape(self) -> None:
         # Model-shape validation should fail fast when the caller cannot provide a usable logical input shape.
+        """Validate validate model input shape rejects missing expected shape."""
         inputs = tf.keras.Input(shape=(20, 6))
         outputs = tf.keras.layers.Dense(4, name="dense")(inputs)
         model = tf.keras.Model(inputs, outputs)
@@ -273,6 +283,7 @@ class OdomTCNFamilyExportTests(unittest.TestCase):
     """Validate TinyODOM-family export materialization behavior."""
 
     def setUp(self) -> None:
+        """Prepare test fixtures."""
         self.family = OdomTCNFamily()
         self.ctx = ModelBuildContext(
             input_shape=(32, 6),
@@ -286,10 +297,12 @@ class OdomTCNFamilyExportTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        """Clean up test fixtures."""
         tf.keras.backend.clear_session()
 
     def test_materialize_export_model_perturbs_approx_trained_variants(self) -> None:
         # Approx-trained exports should apply the deterministic perturbation pass before materialization so the approximate variant differs from the pristine build.
+        """Validate materialize export model perturbs approx trained variants."""
         fake_model = object()
         model_config = Dict()
 
@@ -311,6 +324,7 @@ class OdomTCNFamilyExportTests(unittest.TestCase):
 
     def test_materialize_export_model_trained_variant_delegates_to_loader(self) -> None:
         # Trained exports should delegate to the checkpoint loader so the materialized model reflects saved weights instead of a fresh build.
+        """Validate materialize export model trained variant delegates to loader."""
         with tempfile.TemporaryDirectory() as tmpdir:
             checkpoint_path = Path(tmpdir) / "trained.keras"
             checkpoint_path.write_text("placeholder", encoding="utf-8")
@@ -338,6 +352,20 @@ class CollectMetricsTests(unittest.TestCase):
 
         def fake_controller(run_hil: bool, **kwargs):
             # Simulate a proxy flow that only reports flash usage.
+            """Return fake controller metrics for the HIL request.
+
+            Parameters
+            ----------
+            run_hil : bool
+                HIL execution function replaced by the test double.
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL controller.
+            """
             self.assertFalse(run_hil)
             self.assertEqual(kwargs["chosen_device"], "ARDUINO_NANO_33_BLE_SENSE")
             return (None, 4096, None, 2048, 0, None)
@@ -366,10 +394,24 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["latency_budget_ms"], -1)
 
     def test_hil_metrics_report_latency_budget(self) -> None:
-        """HIL runs should normalize latency using the provided budget."""
+        """HIL metrics should normalize latency using the provided budget."""
         # HIL latency should be normalized against the provided budget so the metrics payload carries both the observation and its target.
 
         def fake_controller(run_hil: bool, **kwargs):
+            """Return fake controller metrics for the HIL request.
+
+            Parameters
+            ----------
+            run_hil : bool
+                HIL execution function replaced by the test double.
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL controller.
+            """
             self.assertTrue(run_hil)
             self.assertEqual(kwargs["serial_port"], "ttyACM0")
             return (1024, 8192, 25.0, 4096, 0, None)
@@ -398,6 +440,20 @@ class CollectMetricsTests(unittest.TestCase):
         # Direct-serial HIL requests should forward timeout and measured-run settings unchanged to the controller.
 
         def fake_controller(run_hil: bool, **kwargs):
+            """Return fake controller metrics for the HIL request.
+
+            Parameters
+            ----------
+            run_hil : bool
+                HIL execution function replaced by the test double.
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL controller.
+            """
             self.assertTrue(run_hil)
             self.assertEqual(kwargs["serial_timeout_s"], 9.5)
             self.assertEqual(kwargs["measured_inference_runs"], 7)
@@ -423,10 +479,24 @@ class CollectMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["error_code"], 0)
 
     def test_collect_metrics_preserves_backend_error_fields(self) -> None:
-        """STM backend detail fields should survive normalization into final metrics."""
+        """STM backend detail fields should survive final metric normalization."""
         # Backend-specific error fields should survive metric normalization so callers can surface the exact hardware-side failure.
 
         def fake_controller(run_hil: bool, **kwargs):
+            """Return fake controller metrics for the HIL request.
+
+            Parameters
+            ----------
+            run_hil : bool
+                HIL execution function replaced by the test double.
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL controller.
+            """
             del kwargs
             self.assertTrue(run_hil)
             return (
@@ -468,6 +538,20 @@ class CollectMetricsTests(unittest.TestCase):
         # Cadenced backend extras should survive normalization so scorers and logs can distinguish single-pass and cadenced runs.
 
         def fake_controller(run_hil: bool, **kwargs):
+            """Return fake controller metrics for the HIL request.
+
+            Parameters
+            ----------
+            run_hil : bool
+                HIL execution function replaced by the test double.
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL controller.
+            """
             del kwargs
             self.assertTrue(run_hil)
             return (
@@ -519,6 +603,20 @@ class CollectMetricsTests(unittest.TestCase):
         # Back-to-back mode should still emit cadenced sentinel fields so downstream logs and scorers keep a stable schema.
 
         def fake_controller(run_hil: bool, **kwargs):
+            """Return fake controller metrics for the HIL request.
+
+            Parameters
+            ----------
+            run_hil : bool
+                HIL execution function replaced by the test double.
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL controller.
+            """
             del kwargs
             self.assertTrue(run_hil)
             return (1024, 8192, 0.025, 4096, 0, {"runtime_mode": "back_to_back"})
@@ -558,6 +656,20 @@ class CollectMetricsTests(unittest.TestCase):
         for raw_runtime_mode, expected_runtime_mode in cases:
             with self.subTest(raw_runtime_mode=raw_runtime_mode):
                 def fake_controller(run_hil: bool, **kwargs):
+                    """Return fake controller metrics for the HIL request.
+
+                    Parameters
+                    ----------
+                    run_hil : bool
+                        HIL execution function replaced by the test double.
+                    **kwargs : dict[str, object]
+                        Keyword arguments forwarded to the helper.
+
+                    Returns
+                    -------
+                    object
+                        Metrics returned by the fake HIL controller.
+                    """
                     del kwargs
                     self.assertTrue(run_hil)
                     return (1024, 8192, 0.025, 4096, 0, {"runtime_mode": raw_runtime_mode})
@@ -580,7 +692,7 @@ class CollectMetricsTests(unittest.TestCase):
                 self.assertEqual(metrics["runtime_mode"], expected_runtime_mode)
 
     def test_energy_aware_harness_fields_forwarded_to_controller(self) -> None:
-        """Energy-aware requests should forward harness settings to HIL_controller."""
+        """Energy-aware requests should forward harness settings to HIL controller."""
         # Energy-aware requests should forward the full harness contract so the controller measures the same timing window the config requested.
 
         harness = HarnessConfig(
@@ -598,6 +710,20 @@ class CollectMetricsTests(unittest.TestCase):
         )
 
         def fake_controller(run_hil: bool, **kwargs):
+            """Return fake controller metrics for the HIL request.
+
+            Parameters
+            ----------
+            run_hil : bool
+                HIL execution function replaced by the test double.
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL controller.
+            """
             self.assertTrue(run_hil)
             self.assertEqual(kwargs["harness_serial_port"], "ttyACM1")
             self.assertEqual(kwargs["harness_fqbn"], "arduino:mbed_nano:nano33ble")
@@ -634,6 +760,7 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_energy_aware_without_harness_raises(self) -> None:
         # Energy-aware HIL requests should fail immediately when the harness configuration is missing, because there is no safe fallback path.
+        """Validate energy aware without harness raises."""
         request = CollectMetricsRequest(
             hil_enabled=True,
             energy_aware=True,
@@ -653,7 +780,22 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_collect_metrics_forwards_device_options(self) -> None:
         # Resolved device options should flow through collect_metrics so backend-specific board settings survive request normalization.
+        """Validate collect metrics forwards device options."""
         def fake_controller(run_hil: bool, **kwargs):
+            """Return fake controller metrics for the HIL request.
+
+            Parameters
+            ----------
+            run_hil : bool
+                HIL execution function replaced by the test double.
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL controller.
+            """
             self.assertFalse(run_hil)
             self.assertEqual(kwargs["device_options"]["target_core"], "cm7")
             self.assertEqual(kwargs["device_options"]["split"], "75_25")
@@ -679,6 +821,7 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_collect_metrics_portenta_cm4_runtime_requires_harness(self) -> None:
         # Portenta CM4 runtime mode depends on the harness channel because the DUT cannot report that path directly.
+        """Validate collect metrics Portenta CM4 runtime requires harness."""
         request = CollectMetricsRequest(
             hil_enabled=True,
             energy_aware=False,
@@ -702,6 +845,7 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_collect_metrics_portenta_cm4_non_energy_forwards_harness(self) -> None:
         # Portenta CM4 runtime requests should still forward harness settings even when energy measurement itself is disabled.
+        """Validate collect metrics Portenta CM4 non-energy forwards harness."""
         harness = HarnessConfig(
             harness_serial_port="ttyACM1",
             harness_fqbn="arduino:mbed_nano:nano33ble",
@@ -717,6 +861,20 @@ class CollectMetricsTests(unittest.TestCase):
         )
 
         def fake_controller(run_hil: bool, **kwargs):
+            """Return fake controller metrics for the HIL request.
+
+            Parameters
+            ----------
+            run_hil : bool
+                HIL execution function replaced by the test double.
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL controller.
+            """
             self.assertTrue(run_hil)
             self.assertEqual(kwargs["harness_serial_port"], "ttyACM1")
             self.assertEqual(kwargs["harness_done_timeout_s"], 3.6)
@@ -743,6 +901,7 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_metric_unavailable_treats_negative_cadenced_sentinel_as_missing(self) -> None:
         # Cadenced sentinel values must be treated as unavailable so failed measurements do not look like real wins during scoring.
+        """Validate metric unavailable treats negative cadenced sentinel as missing."""
         self.assertTrue(_metric_unavailable("cadenced_energy_mj_per_trial", -1.0))
         self.assertFalse(_metric_unavailable("cadenced_energy_mj_per_trial", 0.0))
         self.assertTrue(_metric_unavailable("cadenced_rtc_sleep_ms", -1.0))
@@ -801,6 +960,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
 
     def test_non_energy_aware_sets_harness_none(self) -> None:
         # Non-energy-aware requests should leave harness wiring unset so plain latency runs do not stage extra harness state.
+        """Validate non-energy aware sets harness none."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
@@ -819,6 +979,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
 
     def test_request_uses_configured_measured_inference_runs(self) -> None:
         # Request construction should honor the configured measured-run count so runtime measurements use the intended averaging window.
+        """Validate request uses configured measured inference runs."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -838,6 +999,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
 
     def test_explicit_window_size_and_input_dim_override_legacy_fallbacks(self) -> None:
         # Explicit request dimensions should win over legacy dataset-derived defaults so migrated configs do not silently change shape.
+        """Validate explicit window size and input dim override legacy fallbacks."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
@@ -858,6 +1020,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
 
     def test_build_request_accepts_plain_dict_config_and_runtime_metadata(self) -> None:
         # Request construction should accept plain dict payloads, not just addict.Dict wrappers.
+        """Validate build request accepts plain dict config and runtime metadata."""
         config = {
             "training": {"energy_aware": False, "latency_proxy_max_flops": 20_000_000},
             "device": {"hil": True, "name": "ARDUINO_NANO_33_BLE_SENSE", "serial_port": "ttyACM0"},
@@ -874,6 +1037,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
 
     def test_build_request_raises_value_error_for_missing_runtime_input_dim(self) -> None:
         # Missing runtime input_dim should surface as ValueError instead of leaking AttributeError.
+        """Validate build request raises value error for missing runtime input dim."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
@@ -887,6 +1051,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
 
     def test_build_request_defaults_stm_serial_timeout(self) -> None:
         # STM32 requests should fall back to the backend minimum serial timeout so short configs cannot under-budget board bring-up.
+        """Validate build request defaults stm serial timeout."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -910,6 +1075,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
 
     def test_build_request_scales_stm_serial_timeout_for_cadenced_runs(self) -> None:
         # Cadenced STM32 runs need a longer serial timeout so the second-pass window does not look like a board hang.
+        """Validate build request scales stm serial timeout for cadenced runs."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -937,6 +1103,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
 
     def test_build_request_preserves_larger_stm_serial_timeout(self) -> None:
         # Explicit STM32 serial timeouts should win when they already exceed the backend minimum, so caller tuning is not silently reduced.
+        """Validate build request preserves larger stm serial timeout."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -962,6 +1129,8 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
 
 
 class Stm32TimeoutHelperTests(unittest.TestCase):
+    """Tests covering STM32 timeout helper behavior."""
+
     _DEFAULT_DIRPATH = Path("odom_tcn")
 
     def _build_request(
@@ -975,7 +1144,30 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         hil_enabled: bool | None = None,
         energy_aware: bool | None = None,
     ) -> CollectMetricsRequest:
-        """Build a request for STM32 timeout-specific request tests."""
+        """Build a request for STM32 timeout-specific request tests.
+
+        Parameters
+        ----------
+        config : Dict
+            Configuration object used by the helper.
+        runtime_metadata : Dict
+            Runtime metadata included in the HIL request.
+        latency_budget_ms : float
+            Latency budget in milliseconds for the HIL evaluation.
+        dirpath : Path | None
+            Directory path created by the temporary-directory helper.
+        device_options : dict | None | object
+            Device option overrides used for the HIL run.
+        hil_enabled : bool | None
+            HIL-enabled flag included in the request under test.
+        energy_aware : bool | None
+            Energy-aware flag included in the request under test.
+
+        Returns
+        -------
+        CollectMetricsRequest
+            Constructed request.
+        """
         resolved_options = (
             resolve_device_options(str(config.device.name), config.device)
             if device_options is ...
@@ -993,6 +1185,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
 
     def test_minimum_stm32_serial_timeout_is_30s_for_back_to_back(self) -> None:
         # Back-to-back STM32 runs should never budget less than the backend bring-up minimum for serial timeouts.
+        """Validate minimum stm32 serial timeout is 30s for back to back."""
         self.assertEqual(
             _minimum_stm32_serial_timeout_s(
                 runtime_mode="back_to_back",
@@ -1004,6 +1197,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
 
     def test_minimum_stm32_serial_timeout_scales_for_cadenced(self) -> None:
         # Cadenced STM32 runs should scale their serial timeout with window duration and measured-run count.
+        """Validate minimum stm32 serial timeout scales for cadenced."""
         self.assertEqual(
             _minimum_stm32_serial_timeout_s(
                 runtime_mode="cadenced",
@@ -1015,6 +1209,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
 
     def test_energy_aware_populates_harness(self) -> None:
         # Energy-aware request building should materialize a full HarnessConfig so the controller sees the deployment wiring explicitly.
+        """Validate energy aware populates harness."""
         config = Dict(
             training=Dict(energy_aware=True, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -1047,6 +1242,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
 
     def test_missing_dut_ready_timeout_uses_default(self) -> None:
         # Missing DUT-ready timeouts should fall back to the documented default so configs do not need to restate the common case.
+        """Validate missing dut ready timeout uses default."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
@@ -1061,6 +1257,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
 
     def test_energy_aware_missing_harness_serial_port_raises(self) -> None:
         # Energy-aware configs must provide a harness serial port because the measurement path cannot recover that wiring later.
+        """Validate energy aware missing harness serial port raises."""
         config = Dict(
             training=Dict(energy_aware=True, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="ARDUINO_NANO_33_BLE_SENSE", serial_port="ttyACM0"),
@@ -1074,6 +1271,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
 
     def test_portenta_cm4_runtime_missing_harness_serial_port_raises(self) -> None:
         # Portenta CM4 runtime mode must have a harness serial port because the CM4 path relies on harness-mediated execution.
+        """Validate Portenta CM4 runtime missing harness serial port raises."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -1096,6 +1294,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
 
     def test_resolve_device_options_validates_portenta_target_core(self) -> None:
         # Portenta device-option resolution should require an explicit target core so the build never guesses between CM4 and CM7.
+        """Validate resolve device options validates Portenta target core."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=True, name="PORTENTA_H7", serial_port="ttyACM0", portenta=Dict()),
@@ -1107,6 +1306,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
 
     def test_portenta_options_are_forwarded(self) -> None:
         # Portenta runtime options should survive request construction so downstream hardware helpers see the selected split and security mode.
+        """Validate Portenta options are forwarded."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -1128,6 +1328,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
 
     def test_portenta_cm4_runtime_populates_harness_even_without_energy_aware(self) -> None:
         # Portenta CM4 runtime mode should still materialize the harness path even when energy accounting is off.
+        """Validate Portenta CM4 runtime populates harness even without energy aware."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -1163,6 +1364,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
 
     def test_device_name_is_normalized_before_request_build(self) -> None:
         # Request construction should normalize device names before looking up backend-specific defaults.
+        """Validate device name is normalized before request build."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(
@@ -1182,6 +1384,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
 
     def test_proxy_mode_allows_missing_serial_port(self) -> None:
         # Proxy-mode requests should allow the serial port to stay unset because no hardware round trip is expected.
+        """Validate proxy mode allows missing serial port."""
         config = Dict(
             training=Dict(energy_aware=False, latency_proxy_max_flops=20_000_000),
             device=Dict(hil=False, name="ARDUINO_NANO_33_BLE_SENSE"),
@@ -1373,7 +1576,7 @@ class ScoreEvaluationHelperTests(unittest.TestCase):
     """Ensure score evaluation stays aligned with the supported NAS path."""
 
     def test_evaluate_score_config_uses_effective_energy_flag_from_metrics(self) -> None:
-        """STM Phase 1 should score on latency when energy was disabled upstream."""
+        """STM Phase 1 should score on latency when upstream energy is disabled."""
         # Scoring should trust the effective energy flag reported by metrics so STM32 phase-one proxy runs do not pretend energy was measured.
         score_config = Dict(
             type="scoring-function",
@@ -1583,7 +1786,18 @@ class LoadSettingsTests(unittest.TestCase):
 
     @staticmethod
     def _score_lines(include_quantization: bool = True) -> list[str]:
-        """Return the minimal scoring-function YAML block shared by loader tests."""
+        """Return the minimal scoring-function YAML block shared by loader tests.
+
+        Parameters
+        ----------
+        include_quantization : bool
+            Whether quantization metadata should be included.
+
+        Returns
+        -------
+        list[str]
+            Rendered score lines for the provided summary.
+        """
         lines = []
         if include_quantization:
             lines.extend(
@@ -1943,7 +2157,6 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_shipped_configs_use_production_training_budgets(self) -> None:
         """Checked-in example configs should use production training budgets."""
-
         expected_budgets = {
             "nas_config_stm32.yaml": 250,
             "nas_config_ble.yaml": 150,
@@ -2234,6 +2447,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_defaults_measured_inference_runs(self) -> None:
         # Omitted measured inference runs should fall back to the documented loader defaults.
+        """Validate load settings defaults measured inference runs."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2263,6 +2477,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_defaults_runtime_mode_and_latency_budget_override(self) -> None:
         # Omitted runtime mode and latency budget override should fall back to the documented loader defaults.
+        """Validate load settings defaults runtime mode and latency budget override."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2364,6 +2579,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_accepts_runtime_mode_and_latency_budget_override(self) -> None:
         # Runtime mode and latency budget override should remain a supported config shape.
+        """Validate load settings accepts runtime mode and latency budget override."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2392,6 +2608,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_invalid_measured_inference_runs(self) -> None:
         # Invalid invalid measured inference runs should fail during config load so unsupported NAS settings never reach execution.
+        """Validate load settings rejects invalid measured inference runs."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2417,6 +2634,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_legacy_stm_runtime_mode_path(self) -> None:
         # Invalid legacy STM32 runtime mode path should fail during config load so unsupported NAS settings never reach execution.
+        """Validate load settings rejects legacy stm runtime mode path."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2447,6 +2665,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_cadenced_portenta_non_uniform_input(self) -> None:
         # Invalid cadenced Portenta non uniform input should fail during config load so unsupported NAS settings never reach execution.
+        """Validate load settings rejects cadenced Portenta non uniform input."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2657,6 +2876,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_legacy_top_level_score(self) -> None:
         # Invalid legacy top level score should fail during config load so unsupported NAS settings never reach execution.
+        """Validate load settings rejects legacy top level score."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2691,6 +2911,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_accepts_scalar_prune_rules(self) -> None:
         # Scalar prune rules should remain a supported config shape.
+        """Validate load settings accepts scalar prune rules."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -2737,6 +2958,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_accepts_empty_scalar_prune_rules(self) -> None:
         # Empty scalar prune rules should remain a supported config shape.
+        """Validate load settings accepts empty scalar prune rules."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -3060,7 +3282,6 @@ class LoadSettingsTests(unittest.TestCase):
             Asserts `accuracy` and `macro_f1` are sufficient task metrics for
             a classification score config.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -3673,6 +3894,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_accepts_cadenced_sleep_metric_in_score_terms(self) -> None:
         # Cadenced sleep metric in score terms should remain a supported config shape.
+        """Validate load settings accepts cadenced sleep metric in score terms."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -3709,6 +3931,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_accepts_cadenced_deadline_metric_in_prune_rules(self) -> None:
         # Cadenced deadline metric in prune rules should remain a supported config shape.
+        """Validate load settings accepts cadenced deadline metric in prune rules."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -3754,6 +3977,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_accepts_cadenced_error_code_in_score_terms(self) -> None:
         # Cadenced error code in score terms should remain a supported config shape.
+        """Validate load settings accepts cadenced error code in score terms."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -3792,6 +4016,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_accepts_cadenced_error_code_in_prune_rules(self) -> None:
         # Cadenced error code in prune rules should remain a supported config shape.
+        """Validate load settings accepts cadenced error code in prune rules."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -3966,6 +4191,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_does_not_apply_backend_specific_harness_validation(self) -> None:
         # Config loading should stay backend-agnostic and leave harness compatibility checks to the runtime-specific layers.
+        """Validate load settings does not apply backend specific harness validation."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -4044,6 +4270,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_accepts_null_cpu_clock_options(self) -> None:
         # Null CPU-clock option lists should preserve the board default instead of inventing a search space.
+        """Validate load settings accepts null cpu clock options."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -4074,6 +4301,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_boolean_cpu_clock_options(self) -> None:
         # Invalid boolean CPU clock options should fail during config load so unsupported NAS settings never reach execution.
+        """Validate load settings rejects boolean cpu clock options."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -4103,6 +4331,7 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_load_settings_rejects_unsupported_stm_cpu_clock_options(self) -> None:
         # Invalid unsupported STM32 CPU clock options should fail during config load so unsupported NAS settings never reach execution.
+        """Validate load settings rejects unsupported stm cpu clock options."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             cfg = tmp_path / "config.yaml"
@@ -4136,6 +4365,7 @@ class ScoreConfigTrainingDependencyTests(unittest.TestCase):
 
     def test_score_config_uses_training_metrics_detects_multilevel_derived_dependency(self) -> None:
         # Derived score terms should count as training-dependent even when the training-only metric is hidden behind another derived metric.
+        """Validate score config uses training metrics detects multilevel derived dependency."""
         score_config = Dict(
             type="scoring-function",
             metrics=Dict(
@@ -4154,6 +4384,7 @@ class ScoreConfigTrainingDependencyTests(unittest.TestCase):
 
     def test_score_config_uses_training_metrics_detects_typed_reference_dependency(self) -> None:
         # Reference metrics should also mark the score config as training-dependent when they ultimately read a training-only value.
+        """Validate score config uses training metrics detects typed reference dependency."""
         score_config = Dict(
             type="scoring-function",
             metrics=Dict(
@@ -4183,6 +4414,7 @@ class ScoreConfigTrainingDependencyTests(unittest.TestCase):
 
     def test_score_config_uses_training_metrics_returns_false_for_non_training_metrics(self) -> None:
         # Pure deployment metrics should not mark the score config as training-dependent.
+        """Validate score config uses training metrics returns false for non training metrics."""
         score_config = Dict(
             type="scoring-function",
             metrics=Dict(
@@ -4200,6 +4432,7 @@ class ScoreConfigTrainingDependencyTests(unittest.TestCase):
 
     def test_score_config_uses_training_metrics_keeps_default_odometry_behavior(self) -> None:
         # Default odometry objectives should still count as training-dependent because they rely on RMSE outputs from fit().
+        """Validate score config uses training metrics keeps default odometry behavior."""
         score_config = Dict(
             type="multi-objective",
             metrics=Dict(),
@@ -4216,11 +4449,21 @@ class FakeTrial:
         self.attrs = {}
 
     def set_user_attr(self, key, value):
-        """Persist one user attribute exactly as Optuna would expose it."""
+        """Persist one user attribute exactly as Optuna would expose it.
+
+        Parameters
+        ----------
+        key : object
+            Dictionary key recorded by the test double.
+        value : object
+            Value recorded by the test double.
+        """
         self.attrs[key] = value
 
 
 class LogTrialTests(unittest.TestCase):
+    """Tests covering log trial behavior."""
+
     HEADER = [
         *TRIAL_LOG_STABLE_COLUMNS,
         "metric__rmse_total",
@@ -4235,7 +4478,13 @@ class LogTrialTests(unittest.TestCase):
     ]
 
     def _sample_metrics(self):
-        """Return a representative metric payload for trial-log tests."""
+        """Return a representative metric payload for trial-log tests.
+
+        Returns
+        -------
+        object
+            Representative metrics dictionary for a logged trial.
+        """
         return {
             "ram_bytes": 1000,
             "flash_bytes": 2000,
@@ -4271,7 +4520,13 @@ class LogTrialTests(unittest.TestCase):
         }
 
     def _sample_hyperparams(self):
-        """Return a representative hyperparameter payload for trial-log tests."""
+        """Return a representative hyperparameter payload for trial-log tests.
+
+        Returns
+        -------
+        object
+            Representative hyperparameter dictionary for a logged trial.
+        """
         return {
             "flops": 1_000_000,
             "weight_bytes": 4096,
@@ -4298,7 +4553,30 @@ class LogTrialTests(unittest.TestCase):
         task_metrics: dict[str, object] | None = None,
         hyperparams: dict[str, object] | None = None,
     ) -> TrialOutcome:
-        """Build a representative ``TrialOutcome`` for CSV logging tests."""
+        """Build a representative ``TrialOutcome`` for CSV logging tests.
+
+        Parameters
+        ----------
+        score : float | None
+            Optimization score recorded in the fake trial summary.
+        objective_names : list[str] | None
+            Objective names stored in the fake trial summary.
+        objective_values : list[float] | None
+            Objective values stored in the fake trial summary.
+        objective_directions : list[str] | None
+            Objective directions stored in the fake trial summary.
+        artifact_summary : dict[str, object] | None
+            Artifact summary included in the sample outcome.
+        task_metrics : dict[str, object] | None
+            Task metrics included in the sample outcome.
+        hyperparams : dict[str, object] | None
+            Hyperparameters included in the sample outcome.
+
+        Returns
+        -------
+        TrialOutcome
+            Representative trial outcome used by logging tests.
+        """
         if objective_names is None:
             objective_names = ["score"]
         if objective_values is None:
@@ -4325,6 +4603,7 @@ class LogTrialTests(unittest.TestCase):
 
     def test_log_trial_writes_header_and_row(self):
         # The first trial log entry should write both the stable header and a fully populated row so post-run CSV tools can parse the file immediately.
+        """Validate log trial writes header and row."""
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             fake_trial = FakeTrial()
@@ -4491,6 +4770,7 @@ class LogTrialTests(unittest.TestCase):
 
     def test_log_trial_appends_without_duplicate_header(self):
         # Appending later trials should preserve a single CSV header so repeated runs stay spreadsheet-friendly.
+        """Validate log trial appends without duplicate header."""
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             metrics = self._sample_metrics()
@@ -4535,6 +4815,7 @@ class LogTrialTests(unittest.TestCase):
 
     def test_log_trial_expands_dynamic_header_and_backfills_prior_rows(self):
         # CSV logging should backfill older rows when new dynamic columns appear so one run does not corrupt the whole trial history.
+        """Validate log trial expands dynamic header and backfills prior rows."""
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             metrics = self._sample_metrics()
@@ -4582,6 +4863,7 @@ class LogTrialTests(unittest.TestCase):
 
     def test_log_trial_marks_single_objective_multiobjective_runs_correctly(self):
         # Single-objective multi-objective runs should still mark their score type correctly so downstream dashboards do not misclassify them.
+        """Validate log trial marks single objective multiobjective runs correctly."""
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "log.csv"
             fake_trial = FakeTrial()

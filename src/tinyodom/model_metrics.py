@@ -25,6 +25,19 @@ class StaticMemoryEstimate:
         Deployment dtype width in bytes.
     warning_count : int
         Count of layer estimates that required an inferred or incomplete shape.
+
+    Attributes
+    ----------
+    weight_bytes : int
+        Unique model weight bytes under the selected deployment dtype.
+    activation_bytes : int
+        Sum of per-layer input and output activation bytes for batch size 1.
+    memory_traffic_bytes : int
+        Sum of per-layer input activation, weight, and output activation bytes.
+    dtype_bytes : int
+        Deployment dtype width in bytes.
+    warning_count : int
+        Count of layer estimates that required an inferred or incomplete shape.
     """
 
     weight_bytes: int
@@ -52,7 +65,6 @@ def dtype_bytes_for_quantization(quantization_mode: str) -> int:
     ValueError
         If the mode is not supported by the static proxy.
     """
-
     normalized = str(quantization_mode).strip().lower()
     if normalized in {"float", "float32"}:
         return 4
@@ -76,7 +88,6 @@ def tensor_shape_elements(shape_like: Any) -> int | None:
     int | None
         Element count, or ``None`` when a non-batch dimension is unknown.
     """
-
     if shape_like is None:
         return None
     if isinstance(shape_like, (list, tuple)) and shape_like and not all(
@@ -125,7 +136,6 @@ def layer_tensor_elements(layer: tf.keras.layers.Layer, attr_name: str) -> int |
     int | None
         Element count when Keras exposes a concrete symbolic shape.
     """
-
     try:
         return tensor_shape_elements(getattr(layer, attr_name))
     except (AttributeError, RuntimeError, ValueError):
@@ -154,7 +164,6 @@ def unique_weight_bytes(
     int
         Unique weight bytes for this layer.
     """
-
     total = 0
     for weight in getattr(layer, "weights", []) or []:
         key = id(weight)
@@ -186,7 +195,6 @@ def estimate_static_memory_keras(
     StaticMemoryEstimate
         Static tensor traffic proxy for batch size 1.
     """
-
     dtype_bytes = dtype_bytes_for_quantization(quantization_mode)
     seen_weights: set[int] = set()
     weight_bytes = 0
@@ -249,7 +257,6 @@ def count_flops_keras(model: tf.keras.Model, input_shape: tuple[int, ...]) -> in
     This is a static graph proxy. It is useful for relative NAS comparisons,
     but it is not predicted latency or measured energy.
     """
-
     concrete = tf.function(model).get_concrete_function(
         tf.TensorSpec([1, *input_shape], tf.float32)
     )

@@ -99,7 +99,6 @@ class TFLiteSubprocessError(RuntimeError):
         -------
         None
         """
-
         self.model_path = Path(model_path)
         self.return_code = return_code
         self.timeout = bool(timeout)
@@ -121,7 +120,6 @@ def _tflite_subprocess_env() -> dict[str, str]:
         Environment mapping with the repository ``src`` directory prepended to
         ``PYTHONPATH`` and GPU visibility disabled for TensorFlow imports.
     """
-
     env = dict(os.environ)
     env["CUDA_VISIBLE_DEVICES"] = "-1"
     src_root = str(Path(__file__).resolve().parents[1])
@@ -148,7 +146,6 @@ def _stderr_tail(stderr: object, *, max_chars: int = 4000) -> str:
     str
         Normalized stderr tail.
     """
-
     if stderr is None:
         return ""
     if isinstance(stderr, bytes):
@@ -222,7 +219,7 @@ XXD_BIN = _probe_xxd()
 if XXD_BIN and not _xxd_supports_custom_names(XXD_BIN):
     XXD_BIN = None
 if not XXD_BIN:
-    print("xxd not found on PATH or doesn't support names; convert_to_cpp_model will use Python fallback.")
+    logger.warning("xxd not found on PATH or doesn't support names; convert_to_cpp_model will use Python fallback.")
 
 # -----------------------------------------------------------------------------
 # Conversion helpers
@@ -233,8 +230,7 @@ def convert_to_tflite_model(
     quantization_mode: str = "float",
     output_name: Union[str, Path] = "g_model.tflite",
 ) -> None:
-    """
-    Export a Keras model to a TensorFlow Lite flatbuffer.
+    """Export a Keras model to a TensorFlow Lite flatbuffer.
 
     Parameters
     ----------
@@ -259,6 +255,11 @@ def convert_to_tflite_model(
     The representative dataset is capped at an evenly sampled subset of the
     provided calibration data. Input and output dtypes stay ``float32`` unless
     ``int8_ptq`` is selected.
+
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
     """
     output_path = Path(output_name)
     normalized_mode = str(quantization_mode).strip().lower()
@@ -319,7 +320,6 @@ def _representative_calibration_samples(data: np.ndarray) -> np.ndarray:
         larger than the cap, examples are selected evenly across the split
         instead of taking one contiguous prefix.
     """
-
     if len(data) <= MAX_REPRESENTATIVE_EXAMPLES:
         return data
     indices = np.linspace(
@@ -346,7 +346,6 @@ def _quantize_tflite_tensor(value: np.ndarray, tensor_detail: dict[str, object])
     numpy.ndarray
         Tensor cast or quantized to the interpreter input dtype.
     """
-
     dtype = tensor_detail["dtype"]
     if dtype in (np.float32, np.float64):
         return value.astype(dtype)
@@ -373,7 +372,6 @@ def _dequantize_tflite_tensor(value: np.ndarray, tensor_detail: dict[str, object
     numpy.ndarray
         Float32 output tensor.
     """
-
     dtype = tensor_detail["dtype"]
     if dtype in (np.float32, np.float64):
         return np.asarray(value, dtype=np.float32)
@@ -398,7 +396,6 @@ def _ordered_tflite_output_details(interpreter: tf.lite.Interpreter) -> list[dic
         models exported with a single TFLite signature. Falls back to the
         interpreter's default order when signature metadata is unavailable.
     """
-
     output_details = interpreter.get_output_details()
     signature_list = interpreter.get_signature_list()
     if len(signature_list) != 1:
@@ -438,8 +435,12 @@ def predict_tflite_model(
         Float32 predictions normalized to the task-facing Keras shape. Single
         output models return one array; multi-output models return an ordered
         list of arrays.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     data = np.asarray(inputs, dtype=np.float32)
     if data.ndim < 1:
         raise ValueError("TFLite evaluation inputs must include a sample dimension.")
@@ -502,7 +503,6 @@ def predict_tflite_model_subprocess(
         If the worker times out, exits nonzero, or does not write the expected
         output contract.
     """
-
     model_path = Path(tflite_path)
     data = np.asarray(inputs, dtype=np.float32)
     command: list[str] = []
@@ -581,8 +581,8 @@ def convert_to_cpp_model(
     source_name: str = "model.cc",
     header_name: str = "model.h",
 ) -> Tuple[Path, Path]:
-    """
-    Materialize a `.tflite` flatbuffer as C sources for TensorFlow Lite Micro.
+    """Materialize a `.tflite` flatbuffer as C sources for TensorFlow Lite Micro.
+
     Uses XXD when available, otherwise falls back to a Python implementation.
 
     Parameters
@@ -631,8 +631,8 @@ def _convert_to_cpp_model_python(
     source_name: str = "model.cc",
     header_name: str = "model.h",
 ) -> Tuple[Path, Path]:
-    """
-    Materialize a `.tflite` flatbuffer as C sources for TensorFlow Lite Micro.
+    """Materialize a `.tflite` flatbuffer as C sources for TensorFlow Lite Micro.
+
     Acts as a fallback when `xxd -i` is missing or the host version does not
     implement the `-n` flag (macOS 14). This guarantees the build tooling works
     on any developer machine but comes with two tradeoffs: conversion speed is
@@ -656,6 +656,11 @@ def _convert_to_cpp_model_python(
     -------
     Tuple[pathlib.Path, pathlib.Path]
         Absolute paths to the generated `model.cc` and `model.h` files.
+
+    Raises
+    ------
+    FileNotFoundError
+        If existing validation or execution checks fail.
     """
     tflite_path = Path(tflite_path)
     if not tflite_path.exists():
@@ -708,8 +713,7 @@ def _convert_to_cpp_model_xxd(
     source_name: str = "model.cc",
     header_name: str = "model.h",
 ) -> Tuple[Path, Path]:
-    """
-    Generate C sources by delegating to the `xxd -i` command-line tool.
+    """Generate C sources by delegating to the `xxd -i` command-line tool.
 
     Parameters
     ----------
@@ -728,6 +732,11 @@ def _convert_to_cpp_model_xxd(
     -------
     Tuple[pathlib.Path, pathlib.Path]
         Absolute paths to the generated source and header files.
+
+    Raises
+    ------
+    FileNotFoundError
+        If existing validation or execution checks fail.
     """
     # Use a temporary file so the raw `xxd` output can be normalized to the
     # TensorFlow Lite Micro style expected by downstream sources.
@@ -777,8 +786,7 @@ def return_hardware_specs(
     device_name: str,
     device_options: Optional[Dict[str, str]] = None,
 ) -> Tuple[int, int]:
-    """
-    Retrieve RAM and flash limits for a supported device.
+    """Retrieve RAM and flash limits for a supported device.
 
     Parameters
     ----------
@@ -798,6 +806,11 @@ def return_hardware_specs(
     ``device_name`` is normalized to uppercase before lookup. Dynamic boards
     such as Portenta H7 resolve limits through their backend wrapper when
     ``device_options`` are provided.
+
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
     """
     normalized_name = str(device_name).strip().upper()
     if normalized_name == "PORTENTA_H7" and not device_options:
@@ -826,8 +839,7 @@ def get_model_memory_usage(
     dtype_bytes: Optional[float] = None,
     quantized: bool = False,
 ):
-    """
-    Estimate the memory usage of a Keras model in bytes.
+    """Estimate the memory usage of a Keras model in bytes.
 
     Parameters
     ----------
@@ -907,8 +919,7 @@ def arena_size_candidates(
     device_name: str,
     device_options: Optional[Dict[str, str]] = None,
 ) -> np.ndarray:
-    """
-    Return the tensor-arena sweep (in kilobytes) for a device.
+    """Return the tensor-arena sweep (in kilobytes) for a device.
 
     Parameters
     ----------
@@ -921,6 +932,11 @@ def arena_size_candidates(
     -------
     numpy.ndarray
         Candidate arena sizes expressed in KiB.
+
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
     """
     normalized_name = str(device_name).strip().upper()
     if normalized_name == "PORTENTA_H7" and not device_options:
@@ -1051,8 +1067,8 @@ def HIL_spec(
     compile_only: bool = False,
     device: Optional[DeviceInterface] = None,
 ) -> Tuple[int, int, float, int, int, Optional[Dict[str, Optional[float]]]]:
-    """
-    Compile, deploy, and optionally profile TinyODOM on the target hardware.
+    """Compile, deploy, and optionally profile TinyODOM on the target hardware.
+
     When ``compile_only`` is True the function stops after compilation so the
     caller can reuse the RAM/flash measurements without requiring a physical
     board. This keeps the objective function agnostic to whether HIL is
@@ -1092,6 +1108,15 @@ def HIL_spec(
     Tuple[int, int, float, int, int, Optional[Dict[str, Optional[float]]]]
         Tuple of (RAM bytes, flash bytes, latency seconds, arena bytes, error flag,
         optional power telemetry parsed from the serial log).
+
+    Raises
+    ------
+    FileNotFoundError
+        If existing validation or execution checks fail.
+    ValueError
+        If existing validation or execution checks fail.
+    IndexError
+        If existing validation or execution checks fail.
     """
     # Retry hints are a side channel from one attempt back to
     # ``HIL_controller`` so stale advice must be cleared before every run.
@@ -1211,8 +1236,8 @@ def HIL_controller(
     int,
     Optional[Dict[str, Optional[float]]],
 ]:
-    """
-    Search for the smallest arena size that compiles and runs successfully.
+    """Search for the smallest arena size that compiles and runs successfully.
+
     ``run_hil`` toggles whether uploads/latency capture occur; when False the
     controller enters compile-only mode so offline Optuna trials can still rely
     on compiler-derived RAM/flash numbers for scoring.

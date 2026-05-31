@@ -1,4 +1,4 @@
-"""OxIOD dataset adapter built on top of the legacy split loader.
+"""Describe oxIOD dataset adapter built on top of the legacy split loader.
 
 This module wraps :func:`import_oxiod_dataset`, normalizes the returned legacy
 splits into :class:`DatasetBundle`, and optionally loads a capped calibration
@@ -40,7 +40,6 @@ def _cfg_get(config: Any, key: str, default: Any = None) -> Any:
     Any
         Retrieved configuration value or ``default``.
     """
-
     getter = getattr(config, "get", None)
     if callable(getter):
         return getter(key, default)
@@ -65,7 +64,6 @@ class OxIODDataset(DatasetABC):
         str
             Stable dataset identifier.
         """
-
         return "oxiod"
 
     def validate_config(self, dataset_config: Any) -> None:
@@ -88,7 +86,6 @@ class OxIODDataset(DatasetABC):
         ValueError
             If a required field is missing or numerically invalid.
         """
-
         required_keys = ("directory", "sampling_rate_hz", "window_size", "stride")
         missing = [key for key in required_keys if _cfg_get(dataset_config, key) in (None, "")]
         if missing:
@@ -127,7 +124,6 @@ class OxIODDataset(DatasetABC):
             ``sampling_rate_hz``, ``window_size``, ``stride``, and
             ``input_dim``.
         """
-
         self.validate_config(dataset_config)
         directory = str(_cfg_get(dataset_config, "directory"))
         sampling_rate_hz = int(_cfg_get(dataset_config, "sampling_rate_hz"))
@@ -213,7 +209,6 @@ class OxIODDataset(DatasetABC):
             representative-data behavior. When no cap is configured, the
             fallback intentionally returns ``bundle.train``.
         """
-
         calibration_windows = _cfg_get(dataset_config, "calibration_windows", None)
         if calibration_windows is None:
             return bundle.train
@@ -234,7 +229,6 @@ class OxIODDataset(DatasetABC):
             metadata retaining legacy trajectory and evaluation fields for
             later phases.
         """
-
         return DataSplit(
             inputs=legacy_split.inputs,
             targets={"velx": legacy_split.x_vel, "vely": legacy_split.y_vel},

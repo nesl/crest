@@ -124,6 +124,15 @@ class STM32RuntimeTelemetry:
         Complete DUT serial log captured for the session.
     power_metrics : dict[str, Any]
         Parsed telemetry fields and optional backend detail keys.
+
+    Attributes
+    ----------
+    latency_s : float
+        Selected canonical latency in seconds.
+    serial_log : list[str]
+        Complete DUT serial log captured for the session.
+    power_metrics : dict[str, Any]
+        Parsed telemetry fields and optional backend detail keys.
     """
 
     latency_s: float
@@ -166,11 +175,27 @@ class SerialMonitor:
         self._thread.start()
 
     def __enter__(self) -> "SerialMonitor":
-        """Return ``self`` for context-manager use."""
+        """Return ``self`` for context-manager use.
+
+        Returns
+        -------
+        "SerialMonitor"
+            Active monitor instance.
+        """
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:
-        """Close the serial session when leaving a context-manager block."""
+        """Close the serial session when leaving a context-manager block.
+
+        Parameters
+        ----------
+        exc_type : object
+            Exception type received from the context manager protocol.
+        exc : object
+            Exception instance received from the context manager protocol.
+        traceback : object
+            Traceback object received from the context manager protocol.
+        """
         del exc_type, exc, traceback
         self.close()
 

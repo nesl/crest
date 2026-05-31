@@ -20,8 +20,11 @@ ARDUINO_CLI_AVAILABLE = _cli_exists()
     "Arduino CLI and tinyodom sketch are required for compile-only validation.",
 )
 class HILCompileOnlyTests(TinyModelMixin, unittest.TestCase):
+    """Tests covering HIL compile only behavior."""
+
     def test_hil_spec_compile_only_runs_cli(self):
         # Runs the compile-only flow to ensure Arduino CLI integration keeps returning resource metrics.
+        """Validate hil spec compile only runs cli."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_copy = Path(tmpdir) / "odom_tcn"
             shutil.copytree(SKETCH_SOURCE_DIR, sketch_copy)
@@ -39,6 +42,7 @@ class HILCompileOnlyTests(TinyModelMixin, unittest.TestCase):
 
     def test_compile_only_pipeline_reports_usage(self):
         # Uses the TinyModel mixin to refresh the sketch artifacts and capture CLI metrics.
+        """Validate compile only pipeline reports usage."""
         model = self.model
         calibration = self.train_x
 
@@ -77,6 +81,7 @@ class HILCompileOnlyTests(TinyModelMixin, unittest.TestCase):
 
     def test_compile_only_detects_ram_overflow(self):
         # Request a gigantic arena via HIL_spec so the CLI trips the RAM limit.
+        """Validate compile only detects ram overflow."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_copy = Path(tmpdir) / "odom_tcn"
             shutil.copytree(SKETCH_SOURCE_DIR, sketch_copy)

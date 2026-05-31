@@ -110,6 +110,15 @@ class NASMetricDependencies:
         Metrics that require the compile-only HIL backend path.
     runtime_only : frozenset[str]
         Metrics that require real on-device runtime measurement.
+
+    Attributes
+    ----------
+    metrics : frozenset[str]
+        Metric names emitted by the study.
+    compile_derived : frozenset[str]
+        Metrics derived from compile-time artifacts.
+    runtime_only : frozenset[str]
+        Metrics populated only after runtime execution.
     """
 
     metrics: frozenset[str]
@@ -131,7 +140,6 @@ def _family_trial_params(params: Mapping[str, Any]) -> dict[str, Any]:
     dict[str, Any]
         Parameters safe to pass to ``ModelFamilyABC.decode_trial_hparams``.
     """
-
     return {key: value for key, value in params.items() if key not in RUNNER_OWNED_TRIAL_PARAM_KEYS}
 
 
@@ -196,6 +204,7 @@ class NASModelClient:
     >>> client = NASModelClient()
     >>> client.run_scoring_nas(study_name="tinyodom_nas_study")
     """
+
     def __init__(self, config_path: Path=DEFAULT_CONFIG_PATH):
         """Initialize NAS state, datasets, and the HIL client socket.
 
@@ -247,7 +256,6 @@ class NASModelClient:
         None
             The client state is populated from the supplied bootstrap result.
         """
-
         self.dataset = pipeline.dataset
         self.dataset_name = pipeline.selection["dataset_name"]
         self.task = pipeline.task
@@ -393,9 +401,9 @@ class NASModelClient:
         dataset = dataset_cls()
         dataset.validate_config(dataset_config)
         bundle = dataset.load(dataset_config)
-        print("Imported Training Data")
-        print("Imported Validation Data")
-        print("Imported Test Data")
+        logger.info("Imported Training Data")
+        logger.info("Imported Validation Data")
+        logger.info("Imported Test Data")
         return dataset, bundle
 
     def _coerce_loaded_dataset_bundle(
@@ -571,7 +579,6 @@ class NASModelClient:
         addict.Dict
             Feasibility policy exposing ``train_if_infeasible`` and ``rules``.
         """
-
         raw_config = getattr(self.config.nas, "feasibility", None)
         feasibility_config = Dict(raw_config or {})
         feasibility_config.train_if_infeasible = bool(
@@ -588,7 +595,6 @@ class NASModelClient:
         bool
             ``True`` when ``nas.feasibility.rules`` contains at least one rule.
         """
-
         return bool(self._feasibility_config().rules)
 
     @staticmethod
@@ -605,7 +611,6 @@ class NASModelClient:
         dict[str, Any]
             JSON-friendly reference shape used in the study policy signature.
         """
-
         ref_type = str(getattr(reference, "type", "")).strip().lower()
         if ref_type == "literal":
             return {"type": "literal", "value": float(reference.value)}
@@ -620,7 +625,6 @@ class NASModelClient:
             Ordered normalized policy signature, or ``None`` when feasibility
             is disabled.
         """
-
         feasibility_config = self._feasibility_config()
         if not feasibility_config.rules:
             return None
@@ -645,7 +649,6 @@ class NASModelClient:
         int
             Length of ``nas.feasibility.rules`` for the active config.
         """
-
         return len(self._feasibility_config().rules)
 
     def _constraints_func(self, frozen_trial: optuna.trial.FrozenTrial) -> tuple[float, ...]:
@@ -669,7 +672,6 @@ class NASModelClient:
         failures and prune-rule exits use a positive persisted status-derived
         sentinel so constrained samplers rank them infeasible.
         """
-
         if not self._feasibility_enabled():
             return ()
         raw_constraints = frozen_trial.user_attrs.get("feasibility_constraints")
@@ -697,7 +699,6 @@ class NASModelClient:
         RuntimeError
             If the active config and persisted study policy are incompatible.
         """
-
         active_signature = self._feasibility_policy_signature()
         stored_signature = getattr(study, "user_attrs", {}).get(FEASIBILITY_POLICY_SIGNATURE_ATTR)
         has_trials = bool(study.trials)
@@ -739,7 +740,6 @@ class NASModelClient:
             NSGA-II or TPE sampler with feasibility constraints enabled when
             configured.
         """
-
         constraints_func = self._constraints_func if self._feasibility_enabled() else None
         if self._score_is_multiobjective():
             kwargs = {
@@ -832,7 +832,6 @@ class NASModelClient:
         connection retries when ``device.hil`` and compile proxy collection are
         disabled.
         """
-
         if self.socket is not None:
             return
         self.context = zmq.Context.instance()
@@ -841,7 +840,7 @@ class NASModelClient:
         self.socket.SNDTIMEO = self.config.network.send_timeout_sec * 1000
         endpoint = f"tcp://{self.config.network.host}:{self.config.network.port}"
         self.socket.connect(endpoint)
-        print(f"[REQ] Connected to HIL server at {endpoint}")
+        logger.info("[REQ] Connected to HIL server at %s", endpoint)
 
     def _hil_request(self, payload):
         """Send a HIL request payload to the HIL server and receive metrics.
@@ -863,16 +862,24 @@ class NASModelClient:
         RuntimeError
             If the HIL server times out or cannot be reached.
         """
-        print(f"[REQ] Sending payload to {self.config.network.host}:{self.config.network.port}: {payload}")
+        logger.debug(
+            "[REQ] Sending payload to %s:%s: %s",
+            self.config.network.host,
+            self.config.network.port,
+            payload,
+        )
 
         try:
             self._ensure_hil_socket()
             self.socket.send_json(payload)
             metrics = self.socket.recv_json()
-            print(f"[REQ] Received metrics: {metrics}")
+            logger.debug("[REQ] Received metrics: %s", metrics)
             return metrics
         except zmq.error.Again as ex:
-            print(f"[REQ] Timed out waiting for metrics after {self.config.network.recv_timeout_sec} seconds")
+            logger.warning(
+                "[REQ] Timed out waiting for metrics after %s seconds",
+                self.config.network.recv_timeout_sec,
+            )
             # TODO: This is probably bad and should be handled more gracefully.
             raise RuntimeError("Timeout waiting for metrics from HIL server") from ex
         except zmq.error.ZMQError as ex:
@@ -944,7 +951,6 @@ class NASModelClient:
         str
             Selected deployment quantization mode.
         """
-
         quantization = self.config.training.quantization
         if allow_search and bool(getattr(quantization, "search", False)):
             choices = list(getattr(quantization, "choices", []))
@@ -966,7 +972,6 @@ class NASModelClient:
             ``True`` when the metric cannot be produced by desktop or
             compile-only execution.
         """
-
         return metric_name in RUNTIME_ONLY_METRICS or metric_name.startswith("cadenced_")
 
     def _classify_nas_metric_dependencies(self) -> NASMetricDependencies:
@@ -978,18 +983,33 @@ class NASModelClient:
             Active dependencies grouped by local, compile-derived, and
             runtime-only availability.
         """
-
         score_config = self.config.nas.score
         score_metrics = getattr(score_config, "metrics", Dict())
         visited: set[str] = set()
 
         def _add_reference(reference: Any, stack: tuple[str, ...] = ()) -> None:
-            """Add a typed metric reference to the active dependency set."""
+            """Add a typed metric reference to the active dependency set.
+
+            Parameters
+            ----------
+            reference : Any
+                Reference metric name looked up in the Optuna stack.
+            stack : tuple[str, ...]
+                Call stack used to infer the current Optuna trial context.
+            """
             if reference is not None and getattr(reference, "type", None) == "metric":
                 _add_metric(str(reference.metric), stack)
 
         def _add_metric(metric_name: str, stack: tuple[str, ...] = ()) -> None:
-            """Add one metric and recursively add derived dependencies."""
+            """Add one metric and recursively add derived dependencies.
+
+            Parameters
+            ----------
+            metric_name : str
+                Metric name looked up in the Optuna stack.
+            stack : tuple[str, ...]
+                Call stack used to infer the current Optuna trial context.
+            """
             if metric_name in stack:
                 return
             visited.add(metric_name)
@@ -1050,7 +1070,6 @@ class NASModelClient:
             If a non-HIL policy references runtime-only metrics, or explicitly
             disables compile while depending on compile-derived metrics.
         """
-
         if bool(self.config.device.hil):
             return True
 
@@ -1087,7 +1106,6 @@ class NASModelClient:
             Positive latency budget in milliseconds, or ``-1.0`` when no
             dataset/device cadence contract is available.
         """
-
         try:
             return float(
                 resolve_batch_period_ms(
@@ -1108,7 +1126,6 @@ class NASModelClient:
             Metrics dictionary with logging-required keys populated using
             desktop-safe values and unavailable sentinels.
         """
-
         metrics: dict[str, Any] = {
             "ram_bytes": -1,
             "flash_bytes": -1,
@@ -1153,7 +1170,6 @@ class NASModelClient:
         pathlib.Path
             Path to the written TFLite flatbuffer.
         """
-
         output_path = self._artifacts_dir() / f"{self.study_name}_{split_name}_eval.tflite"
         representative_split = None
         if quantization_requires_calibration(quantization_mode):
@@ -1194,8 +1210,12 @@ class NASModelClient:
         -------
         EvaluationResult
             Task-owned evaluation result.
-        """
 
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         if evaluation_backend == "keras":
             return self.task.evaluate(model, split, self.task_config, self.target_spec)
         if evaluation_backend != "tflite":
@@ -1242,7 +1262,6 @@ class NASModelClient:
         -------
         None
         """
-
         metrics["feasible"] = False
         metrics["feasibility_status"] = "not_evaluated"
         metrics["feasibility_rule"] = ""
@@ -1268,7 +1287,6 @@ class NASModelClient:
         -------
         None
         """
-
         metrics["feasible"] = bool(evaluation.feasible)
         metrics["feasibility_status"] = str(evaluation.status)
         metrics["feasibility_constraints"] = list(evaluation.constraints)
@@ -1290,7 +1308,6 @@ class NASModelClient:
             ``1e12`` for minimized objectives and ``-1e12`` for maximized
             objectives.
         """
-
         return [
             -1e12 if direction == "maximize" else 1e12
             for direction in self._study_directions()
@@ -1342,7 +1359,6 @@ class NASModelClient:
         ValueError
             If the value cannot be resolved or is not positive and finite.
         """
-
         raw_value = None
         if split is not None:
             raw_value = split.metadata.get(key)
@@ -1379,7 +1395,6 @@ class NASModelClient:
             If the active test split does not expose the odometry metadata
             required by the trajectory helper.
         """
-
         split = self.dataset_bundle.test
         if split is None:
             raise ValueError("Trajectory reporting requires a held-out test split.")
@@ -1596,7 +1611,14 @@ class NASModelClient:
             )
 
         def _report_if_supported(value: float) -> None:
-            """Optuna trial.report is unsupported for multi-objective studies."""
+            """Optuna trial.report is unsupported for multi-objective studies.
+
+            Parameters
+            ----------
+            value : float
+                Scalar objective value to report to Optuna when reporting is
+                supported.
+            """
             if not self._score_is_multiobjective():
                 trial.report(value, step=0)
 
@@ -1604,7 +1626,26 @@ class NASModelClient:
             prune_reason: str,
             prune_rule: str = "",
         ):
-            """Helper to prune with a penalty score and log the failure."""
+            """Return a helper to prune with a penalty score and log the failure.
+
+            Parameters
+            ----------
+            prune_reason : str
+                Reason text attached to the pruning decision.
+            prune_rule : str
+                Rule name attached to the pruning decision.
+
+            Returns
+            -------
+            object
+                Penalty score or multi-objective penalty tuple used to record
+                the failed trial.
+
+            Raises
+            ------
+            TrialPruned
+                If existing validation or execution checks fail.
+            """
             # Normalize missing metrics, build a loggable TrialOutcome, and
             # then diverge between scalar Optuna pruning and multi-objective
             # penalty returns.
@@ -1912,7 +1953,7 @@ class NASModelClient:
             loaded YAML setting is used as-is.
         trials : int, optional
             Number of trials to run in the smoke test (default is 5).
-        epochs : int, optional 
+        epochs : int, optional
             Number of epochs to train during the smoke test (default is 5).
         study_name : str, optional
             Name of the Optuna study (default is "smoke_test_study").
@@ -1927,6 +1968,13 @@ class NASModelClient:
         Smoke tests reuse the same per-study SQLite storage and trial log when
         the caller passes the same ``study_name``. Re-running the smoke test
         therefore appends more trials instead of deleting prior results.
+
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        Exception
+            If existing validation or execution checks fail.
         """
         self.study_name = study_name
         artifacts_dir = self._artifacts_dir()
@@ -1975,10 +2023,13 @@ class NASModelClient:
                 pruned = sum(1 for t in single_trial_study.trials if t.state == TrialState.PRUNED)
                 failed = sum(1 for t in single_trial_study.trials if t.state == TrialState.FAIL)
                 total = len(single_trial_study.trials)
-                print(
-                    f"[SMOKE] Aborting after {total} trials: "
-                    f"{completed} completed, {pruned} pruned, {failed} failed. "
-                    f"Error: {exc}"
+                logger.exception(
+                    "[SMOKE] Aborting after %s trials: %s completed, %s pruned, %s failed. Error: %s",
+                    total,
+                    completed,
+                    pruned,
+                    failed,
+                    exc,
                 )
                 raise
         finally:
@@ -1988,29 +2039,29 @@ class NASModelClient:
 
         complete_trials = [t for t in single_trial_study.trials if t.state == TrialState.COMPLETE]
         if not complete_trials:
-            print("[SMOKE] No completed trials to report.")
+            logger.warning("[SMOKE] No completed trials to report.")
             return
 
         if self._score_is_multiobjective():
             pareto = single_trial_study.best_trials
-            print(f"Pareto front ({len(pareto)} trial(s)):")
+            logger.info("Pareto front (%s trial(s)):", len(pareto))
             for trial in pareto:
-                print(f"  Trial {trial.number} values: {trial.values}")
-                print("  Params:")
+                logger.info("  Trial %s values: %s", trial.number, trial.values)
+                logger.info("  Params:")
                 for name, value in trial.params.items():
-                    print(f"    {name}: {value}")
-                print("  Runtime metrics (user attrs):")
+                    logger.info("    %s: %s", name, value)
+                logger.info("  Runtime metrics (user attrs):")
                 for key in ("ram_bytes", "flash_bytes", "latency_ms", "hil_error_code", "arena_bytes", "task_metrics"):
-                    print(f"    {key}: {trial.user_attrs.get(key)}")
+                    logger.info("    %s: %s", key, trial.user_attrs.get(key))
         else:
             best_trial = single_trial_study.best_trial
-            print(f"Single-trial value: {best_trial.value}")
-            print("Best params:")
+            logger.info("Single-trial value: %s", best_trial.value)
+            logger.info("Best params:")
             for name, value in best_trial.params.items():
-                print(f"  {name}: {value}")
-            print("Runtime metrics (user attrs):")
+                logger.info("  %s: %s", name, value)
+            logger.info("Runtime metrics (user attrs):")
             for key in ("ram_bytes", "flash_bytes", "latency_ms", "hil_error_code", "arena_bytes", "task_metrics"):
-                print(f"  {key}: {best_trial.user_attrs.get(key)}")
+                logger.info("  %s: %s", key, best_trial.user_attrs.get(key))
 
     def run_nas(
         self,
@@ -2025,7 +2076,7 @@ class NASModelClient:
             Name to register the Optuna study under.
         storage : str, optional
             Optuna storage URI (defaults to a local SQLite DB).
-        
+
         Notes
         -----
         The pipeline targets ``config.training.nas_trials`` feasible completed
@@ -2039,6 +2090,11 @@ class NASModelClient:
         -------
         optuna.Study
             Completed study for downstream inspection/evaluation.
+
+        Raises
+        ------
+        Exception
+            If existing validation or execution checks fail.
         """
         self.study_name = study_name
         target_completions = self.config.training.nas_trials
@@ -2111,24 +2167,32 @@ class NASModelClient:
                 completed, feasible, infeasible, pruned, failed = _trial_counts()
                 total = len(study.trials)
                 feasible_fraction = (feasible / completed) if completed else 0.0
-                print(
-                    f"[NAS] Progress: {feasible} feasible, {infeasible} infeasible, "
-                    f"{completed} completed, {pruned} pruned, {failed} failed "
-                    f"({total} attempted, feasible_fraction={feasible_fraction:.3f})."
+                logger.info(
+                    "[NAS] Progress: %s feasible, %s infeasible, %s completed, %s pruned, %s failed "
+                    "(%s attempted, feasible_fraction=%.3f).",
+                    feasible,
+                    infeasible,
+                    completed,
+                    pruned,
+                    failed,
+                    total,
+                    feasible_fraction,
                 )
 
                 if feasible >= target_completions:
                     stop_reason = "target_feasible_completions"
-                    print(f"[NAS] Reached target of {target_completions} feasible completed trials.")
+                    logger.info("[NAS] Reached target of %s feasible completed trials.", target_completions)
                     break
 
                 remaining_needed = target_completions - feasible
                 remaining_budget = max_total_trials - total
                 if remaining_budget <= 0:
                     stop_reason = "max_total_trials"
-                    print(
-                        f"[NAS] Stopping with {feasible}/{target_completions} feasible completed trials "
-                        f"after hitting max_total_trials={max_total_trials}."
+                    logger.warning(
+                        "[NAS] Stopping with %s/%s feasible completed trials after hitting max_total_trials=%s.",
+                        feasible,
+                        target_completions,
+                        max_total_trials,
                     )
                     break
 
@@ -2138,26 +2202,38 @@ class NASModelClient:
                     next_batch = min(max(remaining_needed, population_size), remaining_budget)
                 else:
                     next_batch = min(remaining_needed, remaining_budget)
-                print(f"[NAS] Launching round {round_idx} for {next_batch} additional trial(s).")
+                logger.info("[NAS] Launching round %s for %s additional trial(s).", round_idx, next_batch)
                 study.optimize(self.objective, n_trials=next_batch)
         except Exception as exc:
             completed, feasible, infeasible, pruned, failed = _trial_counts()
-            print(
-                f"[NAS] Aborting after {len(study.trials)} trials "
-                f"({feasible} feasible, {infeasible} infeasible, {completed} completed, "
-                f"{pruned} pruned, {failed} failed) because of an error: {exc}"
+            logger.exception(
+                "[NAS] Aborting after %s trials (%s feasible, %s infeasible, %s completed, "
+                "%s pruned, %s failed) because of an error: %s",
+                len(study.trials),
+                feasible,
+                infeasible,
+                completed,
+                pruned,
+                failed,
+                exc,
             )
             raise
         complete_trials = [t for t in study.trials if t.state == TrialState.COMPLETE]
         completed, feasible, infeasible, pruned, failed = _trial_counts()
         feasible_fraction = (feasible / completed) if completed else 0.0
-        print(
-            f"[NAS] Finished by {stop_reason}: {feasible} feasible, {infeasible} infeasible, "
-            f"{completed} completed, {pruned} pruned, {failed} failed, "
-            f"feasible_fraction={feasible_fraction:.3f}."
+        logger.info(
+            "[NAS] Finished by %s: %s feasible, %s infeasible, %s completed, %s pruned, %s failed, "
+            "feasible_fraction=%.3f.",
+            stop_reason,
+            feasible,
+            infeasible,
+            completed,
+            pruned,
+            failed,
+            feasible_fraction,
         )
         if not complete_trials:
-            print("[NAS] No completed trials recorded; skipping best-trial reporting.")
+            logger.warning("[NAS] No completed trials recorded; skipping best-trial reporting.")
             return study
         return study
 
@@ -2191,7 +2267,7 @@ class NASModelClient:
             Writes artifacts to disk. In multi-objective mode, also writes a
             Pareto-front CSV and returns without final model training.
         """
-        print("[run_scoring_nas] Starting full NAS workflow")
+        logger.info("[run_scoring_nas] Starting full NAS workflow")
 
         # Ensure all downstream paths use the caller-provided study_name
         self.study_name = study_name
@@ -2201,13 +2277,13 @@ class NASModelClient:
 
         # 1) Run NAS with configured HIL/train settings.
         study = self.run_nas(study_name=study_name, storage=storage_uri)
-        print(f"[run_scoring_nas] Completed NAS study with {len(study.trials)} total trials")
-        
+        logger.info("[run_scoring_nas] Completed NAS study with %s total trials", len(study.trials))
+
         # Persist raw Optuna trial history so convergence plots can be rebuilt later.
         trials_df = study.trials_dataframe()
         trials_csv = artifacts_dir / "trials.csv"
         trials_df.to_csv(trials_csv, index=False)
-        print(f"[run_scoring_nas] Saved trials dataframe to {trials_csv}")
+        logger.info("[run_scoring_nas] Saved trials dataframe to %s", trials_csv)
 
         if self._score_is_multiobjective():
             # Multi-objective: keep this as a “scoring + analysis” run.
@@ -2220,12 +2296,12 @@ class NASModelClient:
             pareto_df = trials_df[trials_df["number"].isin(pareto_ids)]
             pareto_csv = Path(self.config.outputs.models_dir) / f"{study_name}_pareto.csv"
             pareto_df.to_csv(pareto_csv, index=False)
-            print(f"[run_scoring_nas] Saved Pareto front to {pareto_csv}")
-            print(f"[run_scoring_nas] Pareto front size: {len(pareto_trials)}")
+            logger.info("[run_scoring_nas] Saved Pareto front to %s", pareto_csv)
+            logger.info("[run_scoring_nas] Pareto front size: %s", len(pareto_trials))
             return
-        
+
         best_trial = self._best_trial_for_finalization(study)
-        print(f"[run_scoring_nas] Best feasible value: {best_trial.value}")
+        logger.info("[run_scoring_nas] Best feasible value: %s", best_trial.value)
         # 2) Retrain the best architecture for the long schedule with early stopping.
         history_path = artifacts_dir / "train_history.json"
         history = self.train_best_trial(
@@ -2330,10 +2406,10 @@ class NASModelClient:
         source_cfg = cfg_path.resolve()
         dest_cfg = (target_dir / cfg_path.name).resolve()
         if dest_cfg == source_cfg:
-            print(f"[CONFIG] Run config already in artifacts dir: {dest_cfg}")
+            logger.info("[CONFIG] Run config already in artifacts dir: %s", dest_cfg)
             return dest_cfg
         shutil.copy2(source_cfg, dest_cfg)
-        print(f"[CONFIG] Copied run config to {dest_cfg}")
+        logger.info("[CONFIG] Copied run config to %s", dest_cfg)
         return dest_cfg
 
     def _best_trial_params(self, study_storage: str, study_name: str) -> dict[str, Any]:
@@ -2351,7 +2427,6 @@ class NASModelClient:
         dict[str, Any]
             Best-trial parameters suitable for model-family decoding.
         """
-
         study = optuna.load_study(study_name=study_name, storage=study_storage)
         selected = self._best_trial_for_finalization(study)
         return _family_trial_params(selected.params)
@@ -2375,7 +2450,6 @@ class NASModelClient:
             If feasibility is enabled and the study has no feasible completed
             trial, or if no completed trial exists at all.
         """
-
         if self._feasibility_enabled():
             feasible_trials = [
                 trial
@@ -2441,7 +2515,6 @@ class NASModelClient:
         dict
             JSON-friendly training history.
         """
-
         history_path = Path(history_path)
         history_path.parent.mkdir(parents=True, exist_ok=True)
         ckpt_path = Path(checkpoint_path)
@@ -2477,8 +2550,8 @@ class NASModelClient:
         history_dict = {k: [float(v) for v in values] for k, values in history.history.items()}
         with open(history_path, "w") as f:
             json.dump(history_dict, f, indent=2)
-        print(f"[FINAL TRAIN] Saved history to {history_path}")
-        print(f"[FINAL TRAIN] Best checkpoint stored at {ckpt_path}")
+        logger.info("[FINAL TRAIN] Saved history to %s", history_path)
+        logger.info("[FINAL TRAIN] Best checkpoint stored at %s", ckpt_path)
         return history_dict
 
     def _evaluate_checkpoint_with_context(
@@ -2536,8 +2609,12 @@ class NASModelClient:
         -------
         dict
             JSON-friendly metrics dictionary.
-        """
 
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         ckpt_path = Path(checkpoint_path)
         metrics_path = Path(metrics_path)
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2643,7 +2720,7 @@ class NASModelClient:
             writer = csv.writer(f)
             writer.writerow(list(metrics.keys()))
             writer.writerow(list(metrics.values()))
-        print(f"[EVAL] Saved test metrics to {metrics_path} and {csv_path}")
+        logger.info("[EVAL] Saved test metrics to %s and %s", metrics_path, csv_path)
         return metrics
 
     def train_best_trial(
@@ -2655,8 +2732,7 @@ class NASModelClient:
         checkpoint_path: Path | None = None,
         history_path: Path | None = None,
     ) -> dict:
-        """
-        Rebuild, retrain, and checkpoint the best Optuna trial with a longer schedule.
+        """Rebuild, retrain, and checkpoint the best Optuna trial with a longer schedule.
 
         Parameters
         ----------
@@ -2720,8 +2796,7 @@ class NASModelClient:
         output_dir: Path | None = None,
         study_name: str | None = None,
     ) -> dict:
-        """
-        Plot loss/validation loss curves (and per-output losses if present) to PNGs.
+        """Plot loss/validation loss curves (and per-output losses if present) to PNGs.
 
         Parameters
         ----------
@@ -2739,6 +2814,11 @@ class NASModelClient:
         dict
             Mapping containing ``loss_plot`` and, when per-output histories are
             available, ``loss_components_plot``.
+
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
         """
         if history is None:
             if history_path is None:
@@ -2787,7 +2867,7 @@ class NASModelClient:
         written = {"loss_plot": str(loss_png)}
         if extra_png:
             written["loss_components_plot"] = str(extra_png)
-        print(f"[PLOTS] Saved loss plots: {written}")
+        logger.info("[PLOTS] Saved loss plots: %s", written)
         return written
 
     def evaluate_checkpoint(
@@ -2800,8 +2880,7 @@ class NASModelClient:
         evaluation_backend: str = "keras",
         tflite_path: Path | None = None,
     ) -> dict:
-        """
-        Evaluate the saved checkpoint on the held-out test split and log metrics.
+        """Evaluate the saved checkpoint on the held-out test split and log metrics.
 
         Parameters
         ----------
@@ -2857,7 +2936,6 @@ class NASModelClient:
         bool
             True when ``task.params.evaluation.protocol`` is ``fold_rotation``.
         """
-
         evaluation = getattr(self.task_config, "evaluation", Dict())
         return str(getattr(evaluation, "protocol", "fixed_split")) == "fold_rotation"
 
@@ -2869,7 +2947,6 @@ class NASModelClient:
         list[int]
             Requested UrbanSound8K test folds.
         """
-
         evaluation = getattr(self.task_config, "evaluation", Dict())
         fold_rotation = getattr(evaluation, "fold_rotation", Dict())
         return [int(fold) for fold in fold_rotation.get("test_folds", list(range(1, 11)))]
@@ -2882,7 +2959,6 @@ class NASModelClient:
         pathlib.Path
             Directory containing ``fold_XX`` cache directories.
         """
-
         return Path(self.config.dataset.params.fold_rotation_cache_dir).expanduser().resolve()
 
     def _bootstrap_fold_pipeline(self, fold_cache_dir: Path) -> Any:
@@ -2898,7 +2974,6 @@ class NASModelClient:
         object
             Bootstrapped pipeline for the fold-specific dataset bundle.
         """
-
         fold_config = copy.deepcopy(self.config)
         fold_config.dataset.params.cache_dir = str(fold_cache_dir)
         return bootstrap_pipeline(fold_config)
@@ -2918,8 +2993,12 @@ class NASModelClient:
         -------
         dict[str, float]
             Required metric values as floats.
-        """
 
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         required = {}
         for metric_name in ("accuracy", "macro_f1", "loss"):
             if metric_name not in metrics:
@@ -2944,7 +3023,6 @@ class NASModelClient:
         dict[str, dict[str, float | None]]
             Mean and sample standard deviation by metric.
         """
-
         aggregate: dict[str, dict[str, float | None]] = {}
         for metric_name in ("accuracy", "macro_f1", "loss"):
             values = np.asarray([float(row[metric_name]) for row in per_fold], dtype=np.float64)
@@ -2989,7 +3067,6 @@ class NASModelClient:
         pathlib.Path
             Written summary path.
         """
-
         output_dir.mkdir(parents=True, exist_ok=True)
         full_run = requested_folds == list(range(1, 11)) and status == "success"
         summary = {
@@ -3035,8 +3112,12 @@ class NASModelClient:
         -------
         dict[str, Any]
             Summary containing the fold report path and per-fold rows.
-        """
 
+        Raises
+        ------
+        Exception
+            If existing validation or execution checks fail.
+        """
         if not self._fold_rotation_enabled():
             return {}
         requested_folds = self._fold_rotation_test_folds()
@@ -3120,7 +3201,7 @@ class NASModelClient:
                 status="failed",
                 error=str(exc),
             )
-            print(f"[FOLD ROTATION] Saved partial failure summary to {partial_path}")
+            logger.info("[FOLD ROTATION] Saved partial failure summary to %s", partial_path)
             raise
 
         csv_path = output_dir / "fold_metrics.csv"
@@ -3149,8 +3230,8 @@ class NASModelClient:
             per_fold=per_fold,
             status="success",
         )
-        print(f"[FOLD ROTATION] Saved fold metrics to {csv_path}")
-        print(f"[FOLD ROTATION] Saved summary to {summary_path}")
+        logger.info("[FOLD ROTATION] Saved fold metrics to %s", csv_path)
+        logger.info("[FOLD ROTATION] Saved summary to %s", summary_path)
         return {
             "summary_path": str(summary_path),
             "fold_metrics_csv": str(csv_path),
@@ -3166,8 +3247,7 @@ class NASModelClient:
         window_size: int | None = None,
         study_name: str | None = None,
     ) -> dict:
-        """
-        Compute simple trajectory metrics (ATE/RTE-style) and save example plots.
+        """Compute simple trajectory metrics (ATE/RTE-style) and save example plots.
 
         Parameters
         ----------
@@ -3337,7 +3417,7 @@ class NASModelClient:
         if self.config_path.exists():
             dest_cfg = plot_dir / self.config_path.name
             shutil.copy2(self.config_path, dest_cfg)
-        print(f"[TRAJ] Saved trajectory metrics to {metrics_path}")
+        logger.info("[TRAJ] Saved trajectory metrics to %s", metrics_path)
         return metrics
 
     def write_summary_bundle(
@@ -3351,8 +3431,7 @@ class NASModelClient:
         fold_rotation_artifacts: dict | None = None,
         summary_path: Path | None = None,
     ) -> Path:
-        """
-        Collect training/eval artifacts into a single summary JSON for write-ups.
+        """Collect training/eval artifacts into a single summary JSON for write-ups.
 
         Parameters
         ----------
@@ -3409,7 +3488,7 @@ class NASModelClient:
         }
         with open(summary_path, "w") as f:
             json.dump(summary, f, indent=2)
-        print(f"[SUMMARY] Saved summary bundle to {summary_path}")
+        logger.info("[SUMMARY] Saved summary bundle to %s", summary_path)
         return summary_path
 
     def close(self):
@@ -3458,20 +3537,25 @@ if __name__ == "__main__":
     storage_uri = "sqlite:///optuna.db"
     client: NASModelClient | None = None
     try:
+        config = load_config(args.config)
+        logging.basicConfig(
+            level=getattr(logging, str(config.logging.level).upper(), logging.INFO),
+            format="%(levelname)s:%(name)s:%(message)s",
+        )
         client = NASModelClient(args.config)
         if args.smoke_test > 0:
-            print(f"[MAIN] Starting smoke test with {args.smoke_test} trials...")
+            logger.info("[MAIN] Starting smoke test with %s trials...", args.smoke_test)
             study_name = f"{args.study_name}_{client.config.device.name}"
             client.smoke_test(
                 trials=args.smoke_test,
                 epochs=3,
                 study_name=study_name,
             )
-            print("[MAIN] Smoke test complete.")
+            logger.info("[MAIN] Smoke test complete.")
         else:
-            print(f"[MAIN] Starting full NAS workflow with study name '{args.study_name}'...")
+            logger.info("[MAIN] Starting full NAS workflow with study name '%s'...", args.study_name)
             client.run_scoring_nas(study_name=args.study_name, storage_uri=storage_uri)
-            print("[MAIN] Full NAS workflow complete.")
+            logger.info("[MAIN] Full NAS workflow complete.")
     finally:
         if client is not None:
             client.close()

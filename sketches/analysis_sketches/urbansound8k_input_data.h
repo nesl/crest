@@ -1,8 +1,7 @@
 #pragma once
 
-// Placeholder UrbanSound8K log-mel input profile.
-// Regenerate from a local cache with:
-//   python analysis_scripts/hil_noise_analysis/urbansound8k_input_profile.py --split calibration --export-header sketches/analysis_sketches/urbansound8k_input_data.h
+// Placeholder UrbanSound8K log-mel input profile used by firmware smoke paths.
+// Replace with a real cache-derived profile before representative audio HIL.
 
 #include <stdint.h>
 

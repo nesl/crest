@@ -20,6 +20,7 @@ class CollectMetricsIntegrationTests(unittest.TestCase):
 
     def test_proxy_flow_runs_end_to_end(self) -> None:
         # The proxy-only training flow should still run end to end with the integration fixture.
+        """Validate proxy flow runs end to end."""
         sketch_src = ROOT_DIR / "test" / "odom_tcn"
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "odom_tcn"

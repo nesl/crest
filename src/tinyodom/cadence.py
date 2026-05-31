@@ -24,7 +24,6 @@ def _field_present(container: Any, key: str) -> bool:
     bool
         ``True`` when ``key`` is explicitly present, otherwise ``False``.
     """
-
     if container is None:
         return False
     if isinstance(container, Mapping):
@@ -47,7 +46,6 @@ def _field_value(container: Any, key: str) -> Any:
     Any
         Explicit field value, or the private missing sentinel when absent.
     """
-
     if not _field_present(container, key):
         return _MISSING
     if isinstance(container, Mapping):
@@ -76,7 +74,6 @@ def _parse_positive_float(raw_value: Any, *, field_name: str) -> float:
         If ``raw_value`` is null, empty, boolean, nonnumeric, non-finite, or
         non-positive.
     """
-
     if raw_value in (None, "") or isinstance(raw_value, bool):
         raise ValueError(f"Cadence field '{field_name}' must be a positive finite number.")
     try:
@@ -115,7 +112,6 @@ def _resolve_metadata_or_params_value(
     ValueError
         If the field is absent from both sources or present but invalid.
     """
-
     metadata_value = _field_value(dataset_metadata, key)
     if metadata_value is not _MISSING:
         return _parse_positive_float(metadata_value, field_name=f"dataset.metadata.{key}")
@@ -159,7 +155,6 @@ def resolve_batch_period_ms(
     ValueError
         If no valid cadence contract can be resolved.
     """
-
     device_budget = _field_value(device_config, "latency_budget_ms")
     if device_budget is not _MISSING and device_budget is not None:
         return _parse_positive_float(device_budget, field_name="device.latency_budget_ms")

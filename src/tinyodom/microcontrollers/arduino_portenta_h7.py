@@ -51,6 +51,15 @@ class PortentaH7BoardOptions:
         On-chip memory split policy (for example ``75_25``).
     security : str
         Boot/security profile passed through to Arduino CLI board options.
+
+    Attributes
+    ----------
+    target_core : str
+        Target core identifier (``cm7`` or ``cm4``).
+    split : str
+        On-chip memory split policy (for example ``75_25``).
+    security : str
+        Boot/security profile passed through to Arduino CLI board options.
     """
 
     target_core: str
@@ -158,6 +167,11 @@ def _split_shares(split: str) -> tuple[float, float]:
     -------
     tuple[float, float]
         Memory ownership fractions for CM7 and CM4.
+
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
     """
     if split == "50_50":
         return 0.5, 0.5
@@ -373,6 +387,11 @@ class ArduinoPortentaH7Device(ArduinoDevice):
         None
             Uploads the helper sketch only when the cached board-option
             signature for ``serial_port`` is missing or stale.
+
+        Raises
+        ------
+        RuntimeError
+            If existing validation or execution checks fail.
         """
         helper_signature = ",".join(
             f"{key}={value}" for key, value in sorted(self._cm7_boot_helper_board_options().items())
@@ -438,7 +457,15 @@ class ArduinoPortentaH7Device(ArduinoDevice):
         _CM4_BOOT_HELPER_SIGNATURES[serial_port] = helper_signature
 
     def prepare_for_runtime(self, *, runtime_mode: RuntimeMeasureMode, serial_port: str) -> None:
-        """Prepare dual-core runtime prerequisites before DUT upload."""
+        """Prepare dual-core runtime prerequisites before DUT upload.
+
+        Parameters
+        ----------
+        runtime_mode : RuntimeMeasureMode
+            Runtime profile requested for the backend measurement pass.
+        serial_port : str
+            Serial device path used to communicate with the DUT or harness.
+        """
         if runtime_mode == "harness_only" and self._resolved_options.target_core == "cm4":
             logger.info(
                 "Portenta CM4 runtime uses harness-only telemetry; DUT Serial diagnostics are limited on host USB."

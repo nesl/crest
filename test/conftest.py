@@ -5,21 +5,27 @@ from pathlib import Path
 
 
 ANALYSIS_SCRIPT_TESTS = {
-    "test_analysis_scripts.py",
-    "test_audio_desktop_smoke.py",
-    "test_audio_portenta_hil_smoke.py",
-    "test_audio_stm32_hil_smoke.py",
-    "test_stedgeai_phase0_probe.py",
-    "test_stm32_build_wrapper.py",
-    "test_stm32_project_portability.py",
-    "test_stm32_runner_wrappers.py",
-    "test_stm32_template_ownership.py",
-    "test_urbansound8k_input_profile.py",
+    "test_compare_pareto_fronts.py",
+    "test_cs3_audio_sensitivity.py",
+    "test_micro_workload_energy_probe.py",
 }
 
 
 def pytest_ignore_collect(collection_path: Path, config) -> bool:
-    """Keep non-default suites opt-in for the default `pytest test/` run."""
+    """Keep non-default suites opt-in for the default `pytest test/` run.
+
+    Parameters
+    ----------
+    collection_path : Path
+        Path to the collection used by the helper.
+    config : object
+        Configuration object used by the helper.
+
+    Returns
+    -------
+    bool
+        Whether pytest should skip collecting the given path.
+    """
     path = Path(str(collection_path))
     if (
         os.environ.get("RUN_INTEGRATION_TESTS") != "1"

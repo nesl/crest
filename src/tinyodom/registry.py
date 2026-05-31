@@ -26,6 +26,11 @@ class ComponentRegistry(Generic[T]):
     ----------
     component_kind : str
         Human-readable component label used in error messages.
+
+    Attributes
+    ----------
+    component_kind : str
+        Human-readable component label used in error messages.
     """
 
     component_kind: str
@@ -50,7 +55,6 @@ class ComponentRegistry(Generic[T]):
         ValueError
             If ``name`` is empty or already registered.
         """
-
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError(f"{self.component_kind} registration names must be non-empty.")
@@ -79,7 +83,6 @@ class ComponentRegistry(Generic[T]):
         KeyError
             If ``name`` is not registered.
         """
-
         normalized_name = name.strip()
         try:
             return self._items[normalized_name]
@@ -97,7 +100,6 @@ class ComponentRegistry(Generic[T]):
         tuple[str, ...]
             Sorted registered component names.
         """
-
         return tuple(sorted(self._items))
 
     def __contains__(self, name: object) -> bool:
@@ -113,7 +115,6 @@ class ComponentRegistry(Generic[T]):
         bool
             ``True`` when ``name`` is a registered string key.
         """
-
         return isinstance(name, str) and name in self._items
 
     def __getitem__(self, name: str) -> type[T]:
@@ -130,7 +131,6 @@ class ComponentRegistry(Generic[T]):
         type[T]
             Registered component class.
         """
-
         return self.get(name)
 
 

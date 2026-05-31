@@ -37,7 +37,6 @@ class PredictOnlyModel:
         logits : numpy.ndarray
             Logits returned from prediction calls.
         """
-
         self.logits = np.asarray(logits, dtype=np.float32)
         self.predict_calls = 0
 
@@ -54,7 +53,6 @@ class PredictOnlyModel:
         numpy.ndarray
             Configured logits.
         """
-
         del inputs
         self.predict_calls += 1
         return self.logits
@@ -73,7 +71,6 @@ def _task(tmp_path: Path) -> SoundClassificationTask:
     SoundClassificationTask
         Configured task instance.
     """
-
     return SoundClassificationTask(checkpoint_path=tmp_path / "checkpoint.keras")
 
 
@@ -102,7 +99,6 @@ def _bundle(
     DatasetBundle
         Bundle with flat integer class-index targets.
     """
-
     inputs = np.zeros((3, 201, 64), dtype=np.float32)
     targets = np.asarray([0, 1, 1], dtype=np.int64)
     split = DataSplit(inputs=inputs, targets=targets)
@@ -131,7 +127,6 @@ class SoundClassificationTaskTests(unittest.TestCase):
         None
             Releases Keras graph state accumulated by model tests.
         """
-
         tf.keras.backend.clear_session()
 
     def test_target_spec_and_metric_contract(self) -> None:
@@ -142,7 +137,6 @@ class SoundClassificationTaskTests(unittest.TestCase):
         None
             Asserts logits target metadata and task metric names.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             task = _task(Path(tmpdir))
             target_spec = task.build_target_spec(_bundle(), Dict())
@@ -163,7 +157,6 @@ class SoundClassificationTaskTests(unittest.TestCase):
         None
             Asserts class count, class names, and label encoding are fixed.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             task = _task(Path(tmpdir))
             with self.assertRaisesRegex(ValueError, "num_classes"):
@@ -181,7 +174,6 @@ class SoundClassificationTaskTests(unittest.TestCase):
         None
             Asserts compile-time optimizer, loss, and metric choices.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             task = _task(Path(tmpdir))
             target_spec = task.build_target_spec(_bundle(), Dict())
@@ -207,7 +199,6 @@ class SoundClassificationTaskTests(unittest.TestCase):
         None
             Asserts search and final fit wiring use array targets.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             task = _task(Path(tmpdir))
             bundle = _bundle()
@@ -243,7 +234,6 @@ class SoundClassificationTaskTests(unittest.TestCase):
             Asserts logits pass while bad class counts and multiple outputs
             fail.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             task = _task(Path(tmpdir))
             target_spec = task.build_target_spec(_bundle(), Dict())
@@ -284,7 +274,6 @@ class SoundClassificationTaskTests(unittest.TestCase):
         None
             Asserts final Dense softmax and final Softmax layer are rejected.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             task = _task(Path(tmpdir))
             target_spec = task.build_target_spec(_bundle(), Dict())
@@ -318,7 +307,6 @@ class SoundClassificationTaskTests(unittest.TestCase):
             Asserts predictions, macro-F1 zero-support behavior, and JSON
             serializability.
         """
-
         logits = np.full((3, 10), -4.0, dtype=np.float32)
         logits[0, 0] = 4.0
         logits[1, 2] = 4.0
@@ -349,7 +337,6 @@ class SoundClassificationTaskTests(unittest.TestCase):
         None
             Asserts closeout artifact path and JSON payload.
         """
-
         logits = np.full((3, 10), -4.0, dtype=np.float32)
         logits[:, 0] = 4.0
         model = PredictOnlyModel(logits)
@@ -379,7 +366,6 @@ class SoundClassificationTaskTests(unittest.TestCase):
         None
             Asserts no file is written when `bundle.test` is absent.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             task = _task(tmp_path)
@@ -404,7 +390,6 @@ class SoundClassificationTaskTests(unittest.TestCase):
         None
             Asserts bools, floats, and strings fail before task construction.
         """
-
         config = SimpleNamespace(outputs=SimpleNamespace(checkpoint_path=Path("checkpoint.keras")))
         invalid_values = [True, 3.5, "3"]
         for value in invalid_values:
@@ -428,7 +413,6 @@ class SoundClassificationTaskTests(unittest.TestCase):
             Asserts the existing odometry task still constructs with integer
             patience.
         """
-
         config = SimpleNamespace(outputs=SimpleNamespace(checkpoint_path=Path("checkpoint.keras")))
         with patch(
             "tinyodom.runtime_bootstrap.task_registry.get",
