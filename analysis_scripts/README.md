@@ -26,9 +26,6 @@ and small hardware smoke checks that sit outside the core TinyODOM runtime.
 - `cs3_audio_sensitivity/`
   - Case Study 3 post-hoc score-sensitivity analysis over audio NAS logs.
 
-- `hil_single_run/`
-  - Minimal one-pass HIL sanity checks plus toy GPIO DUT/harness validation.
-
 - `ina228_check/`
   - Minimal Arduino sketch for verifying INA228 voltage, power, and current
     telemetry over I2C.
@@ -40,12 +37,6 @@ and small hardware smoke checks that sit outside the core TinyODOM runtime.
 - `paper_plots/`
   - Publication figure generators plus sidecar plotted-point and summary
     outputs from explicit input CSV/replay paths.
-
-- `static_memory_proxy/`
-  - Offline static memory-traffic proxy prototype for logged OdomTCN trials.
-
-- `toy_gpio_dut/` and `toy_gpio_harness/`
-  - Minimal Arduino sketches used by `hil_single_run/run_toy_hil.py`.
 
 ## Running The INA228 Check
 
