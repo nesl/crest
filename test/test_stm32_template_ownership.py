@@ -82,7 +82,6 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
         )
         scoped_files = {
             "README.md",
-            "analysis_scripts/stm32_example_project/README.md",
             "setup_stm32.sh",
             "sketches/README.md",
             "src/tinyodom/microcontrollers/README.md",
@@ -192,6 +191,18 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
         self.assertIn("prune_materialized_vendor_copy_files", script_text)
         self.assertNotIn("fsbl_ownership_manifest.tsv", script_text)
         self.assertNotIn("assemble_canonical_template", script_text)
+
+    def test_setup_script_preserves_checked_in_license_files(self) -> None:
+        # These files are tracked overlay files, so rsync --delete must not remove them.
+        script_text = (ROOT_DIR / "setup_stm32.sh").read_text(encoding="utf-8")
+
+        for license_path in (
+            "LICENSE.md",
+            "LICENSE.CMSIS.txt",
+            "LICENSE.STM32N6xx_HAL_Driver.md",
+            "LICENSE.STM32_ExtMem_Manager.md",
+        ):
+            self.assertIn(f'"{license_path}"', script_text)
 
 
 if __name__ == "__main__":

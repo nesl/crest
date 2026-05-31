@@ -7,6 +7,10 @@ tinyodom_owned	Appli/Inc/tinyodom_dut_runner.h
 tinyodom_owned	Appli/Src/tinyodom_dut_runner.c
 tinyodom_owned	lrun_ownership_manifest.tsv	
 
+vendor_derived	LICENSE.md
+vendor_derived	LICENSE.CMSIS.txt
+vendor_derived	LICENSE.STM32N6xx_HAL_Driver.md
+vendor_derived	LICENSE.STM32_ExtMem_Manager.md
 vendor_derived	Appli/Inc/mx25um51245g_conf.h	
 vendor_derived	Appli/Inc/stm32n6xx_hal_conf.h	
 vendor_derived	Appli/Inc/stm32n6xx_nucleo_conf.h	

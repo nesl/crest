@@ -184,9 +184,9 @@ This analysis script reuses:
   options and CM4 boot-helper behavior.
 - `src/tinyodom/microcontrollers/arduino_ble33.py` for BLE FQBN/device
   metadata.
-- `analysis_scripts/stm32_example_project/stm32_lrun_common.py` for STM32 LRUN
-  workspace build, signing, FSBL copy-window update, and external image
-  programming.
+- `src/tinyodom/microcontrollers/stm32_cube_clt.py` plus script-local wrappers
+  for STM32 LRUN workspace build, signing, FSBL copy-window update, and
+  external image programming.
 - `sketches/stm32/tinyodom_stm32_lrun/` as the staged STM32 production
   template.
 - `sketches/common/tinyodom_hil_config.h` and the existing harness sketch

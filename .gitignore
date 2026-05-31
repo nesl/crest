@@ -203,6 +203,10 @@ sketches/stm32/tinyodom_stm32_lrun/**
 !sketches/stm32/tinyodom_stm32_lrun/
 !sketches/stm32/tinyodom_stm32_lrun/README.md
 !sketches/stm32/tinyodom_stm32_lrun/lrun_ownership_manifest.tsv
+!sketches/stm32/tinyodom_stm32_lrun/LICENSE.md
+!sketches/stm32/tinyodom_stm32_lrun/LICENSE.CMSIS.txt
+!sketches/stm32/tinyodom_stm32_lrun/LICENSE.STM32N6xx_HAL_Driver.md
+!sketches/stm32/tinyodom_stm32_lrun/LICENSE.STM32_ExtMem_Manager.md
 !sketches/stm32/tinyodom_stm32_lrun/Appli/
 !sketches/stm32/tinyodom_stm32_lrun/Appli/Inc/
 !sketches/stm32/tinyodom_stm32_lrun/Appli/Inc/mx25um51245g_conf.h

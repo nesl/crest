@@ -1,154 +1,59 @@
 # Analysis Scripts
 
-This folder collects small, self-contained utilities for HIL experiments and
-hardware checks. It is intentionally separate from the core training/runtime
-code so you can run diagnostics without touching the main workflow.
-
-Current script contract:
-
-- HIL analysis runners should derive runtime dimensions from
-  `HILServer.get_runtime_dimensions()` when they are intentionally exercising
-  the live HIL server path. Preflight/export-only scripts may derive dimensions
-  from `BootstrappedPipeline.model_build_context` so they can validate config,
-  model construction, and request payloads without constructing a server.
-- Export-oriented runners should read representative inputs from
-  `HILServer.get_calibration_inputs()` or the bootstrapped dataset bundle,
-  rather than from ad hoc `training_data` aliases.
-- HIL request scripts should call
-  `HILServer.determine_metrics(family_hparams, runtime_metadata, ...)` with
-  the structured request shape introduced by the runtime refactor.
-- Fixed TinyODOM helper scripts should route through
-  `tinyodom.analysis_support` instead of importing build/FLOP helpers from
-  `tinyodom.model`.
-- Host-side accuracy diagnostics can use
-  `compare_keras_tflite_accuracy.py` to load a trained checkpoint from a run
-  config, export fresh float and int8 TFLite artifacts, and compare all three
-  backends on the same dataset windows. The script prints tensor quantization
-  metadata, RMSE, output ranges, endpoint saturation fractions, and
-  Keras-vs-TFLite deltas. For example:
-
-  ```bash
-  conda run -n tinyodomex python analysis_scripts/compare_keras_tflite_accuracy.py \
-    --config models/OxIOD_FLOPS_PROXY_case1_1/nas_config_flops_rmse.yaml \
-    --split val \
-    --max-windows 4096 \
-    --keep-tflite-dir /tmp/tinyodom_compare
-  ```
-
-Recent Portenta H7 analysis packages in this folder rely on shared DUT clock
-telemetry emitted by `sketches/common/tinyodom_clock_telemetry.h`. When the
-target core exposes a DWT cycle counter, the DUT can now report:
-
-- `clock_hz`
-- `dwt_cycles_per_inference`
+This folder contains public-facing analysis utilities, paper-figure generators,
+and small hardware smoke checks that sit outside the core TinyODOM runtime.
 
 ## Folders
 
-- `cadenced_portenta_h7/`
-  - Runs Portenta H7 perturbed-model experiments for:
-    - back-to-back (10 consecutive windows)
-    - cadenced (one window every latency budget with idle sleep)
-  - Produces JSON + CSV summaries across `cm7` and `cm4`.
-  - See `analysis_scripts/cadenced_portenta_h7/README.md`.
-
-- `portenta_baseline_load/`
-  - Synthetic baseline timing/energy test for Portenta H7 using harness
-    telemetry.
-  - Compares `heavy` (busy-loop 10 x 200 ms) vs `sleep` (`delay(200)` for
-    10 iterations) across `cm7` and `cm4`.
-  - Produces JSON + CSV summaries.
-  - See `analysis_scripts/portenta_baseline_load/README.md`.
-
-- `hil_noise_analysis/`
-  - Scripts for running multi-mode HIL noise scans, exporting representative
-    input data, analyzing the resulting CSV outputs, and running the staged
-    `epoch_sweep/` checkpoint workflow.
-  - See `analysis_scripts/hil_noise_analysis/README.md` for details.
-
-- `ina228_check/`
-  - A minimal Arduino sketch that verifies INA228 readings over I2C.
-  - Prints bus voltage, power, and computed current every second.
-
-- `hil_single_run/`
-  - Runs a single HIL controller pass and prints the metrics.
-  - Useful as a quick “does the board/toolchain still work?” sanity check.
-  - Surfaces clock telemetry fields too when the underlying DUT sketch reports
-    them.
-  - Also contains the toy GPIO harness validation runner used to debug D2/D3
-    handshake wiring.
-
-- `arena_latency_curve/`
-  - Runs fixed-arena HIL sweeps and records latency/energy per arena size.
-  - Produces attempt CSV, aggregated JSON, and a dual-axis latency+energy PNG.
-  - Supports BLE and Portenta H7 (`cm7` / `cm4`).
-  - Includes a companion failure-probe runner for narrowing arena bounds and
-    forced-model-size experiments.
-  - See `analysis_scripts/arena_latency_curve/README.md`.
-
-- `clock_tick_latency/`
-  - Runs repeated perturbed-model Portenta H7 HIL attempts and exports
-    `latency_ms` + `ticks_per_inference`.
-  - Produces attempt CSV, aggregates JSON, and latency-vs-ticks scatter PNG.
-  - See `analysis_scripts/clock_tick_latency/README.md`.
-
-- `compare_pareto_front_calcs/`
-  - Compares two CSV-derived Pareto fronts with explicit quality/cost columns,
-    matching rules, feasibility filters, and reduction denominators.
-  - Writes reproducibility artifacts such as `manifest.json`, front CSVs,
-    match rows, and summaries.
-  - See `analysis_scripts/compare_pareto_front_calcs/README.md`.
-
-- `paper_plots/`
-  - Generates publication figures and sidecar plotted-point or summary files
-    from explicit input CSVs and replay directories.
-  - See `analysis_scripts/paper_plots/README.md`.
-
 - `audio_desktop_smoke/`
-  - Runs a hardware-free UrbanSound8K audio DS-CNN training smoke pass over
-    cached log-mel feature tensors.
-  - Produces a small checkpoint plus history/metrics JSON under
+  - Hardware-free UrbanSound8K audio DS-CNN training smoke test.
+  - Writes checkpoint, history, and metrics artifacts under
     `models/audio_desktop_smoke/`.
-  - See `analysis_scripts/audio_desktop_smoke/README.md`.
-
-- `audio_stm32_hil_smoke/`
-  - Runs the Phase 6 STM32 smoke path for `audio_dscnn` over cached
-    UrbanSound8K log-mel feature tensors.
-  - Supports hardware-free preflight, STM32 prepare-only staging, and full HIL
-    timing through the existing STM32 backend.
-  - Reports classifier inference over precomputed features only; it does not
-    include firmware-side microphone capture or log-mel feature extraction.
-  - See `analysis_scripts/audio_stm32_hil_smoke/README.md`.
 
 - `audio_portenta_hil_smoke/`
-  - Runs the Phase 8 Arduino-backed audio DS-CNN smoke path for Portenta H7 and
-    BLE compile/preflight coverage over cached UrbanSound8K log-mel tensors.
-  - Supports preflight-only, prepare-only, and full HIL modes.
-  - See `analysis_scripts/audio_portenta_hil_smoke/README.md`.
+  - Arduino-backed audio DS-CNN preflight, prepare-only, and full HIL smoke path
+    for Portenta H7 and BLE over cached UrbanSound8K log-mel tensors.
 
-- `stm32_example_project/`
-  - STM32N6 HIL package for `NUCLEO-N657X0-Q`.
-  - Contains the blink bring-up project, the toy AI FSBL project, and the full
-    HIL runner (`run_stm32_toy_ai_hil.py`) that stages a perturbed TinyODOM
-    model, builds the firmware, optionally programs weights to external NOR
-    flash, and collects energy + latency metrics via the Arduino harness.
-  - Also includes the host-only ST Edge AI Phase 0 probe, the standalone
-    staging helper, the back-to-back vs cadenced comparison runner, the
-    archival CPU-clock sweep runner, the plotting helper for archived sweeps,
-    and the smoke-test script.
-  - See `analysis_scripts/stm32_example_project/README.md`.
+- `audio_stm32_hil_smoke/`
+  - STM32 audio DS-CNN preflight, prepare-only, and full HIL smoke path over
+    cached UrbanSound8K log-mel tensors.
+
+- `compare_pareto_front_calcs/`
+  - Generic CSV-derived Pareto-front comparison helper with explicit
+    quality/cost columns, feasibility filters, matching rules, and reduction
+    denominators.
+
+- `cs3_audio_sensitivity/`
+  - Case Study 3 post-hoc score-sensitivity analysis over audio NAS logs.
+
+- `hil_single_run/`
+  - Minimal one-pass HIL sanity checks plus toy GPIO DUT/harness validation.
+
+- `ina228_check/`
+  - Minimal Arduino sketch for verifying INA228 voltage, power, and current
+    telemetry over I2C.
+
+- `micro_workload_energy_probe/`
+  - Synthetic phase-energy probe for TinyODOM-compatible MCU targets, reusing
+    the existing HIL harness and INA228 telemetry path.
+
+- `paper_plots/`
+  - Publication figure generators plus sidecar plotted-point and summary
+    outputs from explicit input CSV/replay paths.
+
+- `static_memory_proxy/`
+  - Offline static memory-traffic proxy prototype for logged OdomTCN trials.
 
 - `toy_gpio_dut/` and `toy_gpio_harness/`
   - Minimal Arduino sketches used by `hil_single_run/run_toy_hil.py`.
-  - Intended for GPIO-only timing validation without the full TinyODOM runtime.
 
-## Running the INA228 check
+## Running The INA228 Check
 
-These commands assume you have already run `make arduino-setup` and installed
-the Arduino core package needed for the board you are using. The examples below
-use the Nano 33 BLE FQBN because that is the common harness-board setup in this
-repo.
+These commands assume `make arduino-setup` has already installed the Arduino
+core package for the board you are using. The examples below use the Nano 33
+BLE FQBN because that is the common harness-board setup in this repo.
 
-1. Compile:
+Compile:
 
 ```bash
 tools/bin/arduino-cli compile \
@@ -157,7 +62,7 @@ tools/bin/arduino-cli compile \
   analysis_scripts/ina228_check
 ```
 
-2. Upload:
+Upload:
 
 ```bash
 tools/bin/arduino-cli upload \
@@ -167,17 +72,11 @@ tools/bin/arduino-cli upload \
   analysis_scripts/ina228_check
 ```
 
-3. Monitor serial output:
+Monitor:
 
 ```bash
 tools/bin/arduino-cli monitor \
   -p /dev/ttyACM0 \
   --config-file tools/arduino-cli.yaml \
   --config baudrate=115200
-```
-
-If your port differs, replace `/dev/ttyACM0` with the value from:
-
-```bash
-tools/bin/arduino-cli board list --config-file tools/arduino-cli.yaml
 ```

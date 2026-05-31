@@ -79,7 +79,7 @@ DEFAULT_SIGNING_LOAD_OFFSET = stm32_cube_clt.DEFAULT_SIGNING_LOAD_OFFSET
 DEFAULT_WEIGHTS_FLASH_ADDRESS = "0x71000000"
 # Default ST Edge AI memory-pool description for externalized weights.
 DEFAULT_WEIGHTS_MEMORY_POOL = (
-    REPO_ROOT / "analysis_scripts" / "stm32_example_project" / "nucleo_mypool.json"
+    REPO_ROOT / "src" / "config" / "stm32_nucleo_mypool.json"
 )
 # Supported fixed clock presets accepted by the STM staging pipeline.
 SUPPORTED_CPU_CLOCK_MHZ = frozenset({200, 300, 400, 600, 800})

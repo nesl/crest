@@ -29,7 +29,7 @@ device:
     wake_margin_us: 5000
     min_sleep_us: 5000
     weight_storage_mode: "external_flash"
-    weights_memory_pool: "analysis_scripts/stm32_example_project/nucleo_mypool.json"
+    weights_memory_pool: "src/config/stm32_nucleo_mypool.json"
 
 dataset:
   name: oxiod

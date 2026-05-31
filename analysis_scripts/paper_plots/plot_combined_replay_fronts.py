@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import csv
 import math
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -16,30 +15,24 @@ import numpy as np
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HIL_REPLAY_DIR = REPO_ROOT / "analysis_scripts" / "hil_replay"
-for import_dir in (SCRIPT_DIR, HIL_REPLAY_DIR):
-    if str(import_dir) not in sys.path:
-        sys.path.insert(0, str(import_dir))
-
-from compare_replayed_pareto import (  # noqa: E402
-    FrontPoint,
-    SUCCESS_ERROR_CODE,
-    energy_regret_rows,
-    filter_latency_feasible,
-    find_log_csv,
-    load_crest_points,
-    load_replay_points,
-    pareto_front,
-    parse_float,
-    read_csv_rows,
-    resolve_replay_results,
-)
+SUCCESS_ERROR_CODE = 1
 
 
 MARKERS = ("o", "s", "^", "D", "P", "X", "v", "<", ">")
 COLORS = ("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b")
 CREST_COLOR = "#1f77b4"
 REPLAY_COLOR = "#ff7f0e"
+
+
+@dataclass(frozen=True)
+class FrontPoint:
+    """One valid point in measured-energy/RMSE objective space."""
+
+    payload_key: str
+    energy_mj: float
+    rmse: float
+    latency_feasible: bool | None
+    row: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -62,6 +55,203 @@ class PairInput:
     crest_run_dir: Path | None
     replay_path: Path | None
     placeholder: bool = False
+
+
+def parse_float(value: Any) -> float | None:
+    """Parse a finite float from a CSV cell."""
+
+    if value in (None, ""):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def read_csv_rows(path: Path) -> list[dict[str, str]]:
+    """Read CSV rows as dictionaries."""
+
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if not reader.fieldnames:
+            raise ValueError(f"CSV has no header row: {path}")
+        rows = [dict(row) for row in reader]
+    if not rows:
+        raise ValueError(f"CSV has no data rows: {path}")
+    return rows
+
+
+def first_float(row: Mapping[str, Any], names: Sequence[str]) -> float | None:
+    """Return the first finite float from a sequence of possible column names."""
+
+    for name in names:
+        parsed = parse_float(row.get(name))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def find_log_csv(run_dir: Path) -> Path:
+    """Resolve the NAS log CSV inside a measured-energy run directory."""
+
+    candidates = sorted(run_dir.glob("log_NAS_*.csv"))
+    if candidates:
+        return candidates[0]
+    trials_csv = run_dir / "trials.csv"
+    if trials_csv.is_file():
+        return trials_csv
+    raise FileNotFoundError(f"No log_NAS_*.csv or trials.csv found in {run_dir}")
+
+
+def resolve_replay_results(replay_path: Path) -> Path:
+    """Resolve a replay directory or explicit replay CSV path."""
+
+    if replay_path.is_file():
+        return replay_path
+    candidate = replay_path / "replay_results.csv"
+    if candidate.is_file():
+        return candidate
+    raise FileNotFoundError(f"No replay_results.csv found at {replay_path}")
+
+
+def latency_feasible_from_row(
+    row: Mapping[str, Any],
+    *,
+    latency_columns: Sequence[str],
+    budget_columns: Sequence[str],
+) -> bool | None:
+    """Derive latency feasibility from common latency and budget columns."""
+
+    latency = first_float(row, latency_columns)
+    budget = first_float(row, budget_columns)
+    if latency is None or budget is None or latency <= 0.0 or budget <= 0.0:
+        return None
+    return latency <= budget
+
+
+def load_crest_points(csv_path: Path) -> list[FrontPoint]:
+    """Load valid measured-energy NAS points."""
+
+    points: list[FrontPoint] = []
+    for index, row in enumerate(read_csv_rows(csv_path)):
+        state = str(row.get("state", row.get("status", ""))).strip().lower()
+        if state and state not in {"complete", "completed", "success", "succeeded"}:
+            continue
+        error_code = parse_float(row.get("error_code"))
+        if error_code is not None and int(error_code) != SUCCESS_ERROR_CODE:
+            continue
+        energy = first_float(row, ("values_energy_mj_per_inference", "energy_mj_per_inference"))
+        rmse = first_float(row, ("values_rmse_total", "metric__rmse_total", "rmse_total"))
+        if energy is None or rmse is None or energy <= 0.0:
+            continue
+        points.append(
+            FrontPoint(
+                payload_key=str(row.get("number") or row.get("trial_id") or index),
+                energy_mj=energy,
+                rmse=rmse,
+                latency_feasible=latency_feasible_from_row(
+                    row,
+                    latency_columns=("values_latency_ms", "latency_ms"),
+                    budget_columns=("values_latency_budget_ms", "latency_budget_ms"),
+                ),
+                row=row,
+            )
+        )
+    return points
+
+
+def load_replay_points(csv_path: Path) -> list[FrontPoint]:
+    """Load valid replayed proxy points in measured target-board space."""
+
+    points: list[FrontPoint] = []
+    for index, row in enumerate(read_csv_rows(csv_path)):
+        if str(row.get("replay_status", "")).strip().lower() != "completed":
+            continue
+        error_code = parse_float(row.get("target__error_code"))
+        if error_code is None or int(error_code) != SUCCESS_ERROR_CODE:
+            continue
+        energy = first_float(row, ("target__energy_mj_per_inference", "target__cadenced_energy_mj_per_window"))
+        rmse = first_float(row, ("source__metric__rmse_total", "source__rmse_total", "target__metric__rmse_total"))
+        if energy is None or rmse is None or energy <= 0.0:
+            continue
+        points.append(
+            FrontPoint(
+                payload_key=str(row.get("replay_payload_key") or row.get("payload_key") or row.get("source_row_index") or index),
+                energy_mj=energy,
+                rmse=rmse,
+                latency_feasible=latency_feasible_from_row(
+                    row,
+                    latency_columns=("target__latency_ms", "target__cadenced_active_inference_latency_ms"),
+                    budget_columns=("target__latency_budget_ms", "target__cadenced_latency_budget_ms"),
+                ),
+                row=row,
+            )
+        )
+    return points
+
+
+def filter_latency_feasible(points: Sequence[FrontPoint], feasible_only: bool) -> list[FrontPoint]:
+    """Optionally retain only latency-feasible points."""
+
+    if not feasible_only:
+        return list(points)
+    return [point for point in points if point.latency_feasible is True]
+
+
+def pareto_front(points: Sequence[FrontPoint]) -> list[FrontPoint]:
+    """Return non-dominated points minimizing energy and RMSE."""
+
+    front: list[FrontPoint] = []
+    for point in points:
+        dominated = any(
+            other is not point
+            and other.energy_mj <= point.energy_mj
+            and other.rmse <= point.rmse
+            and (other.energy_mj < point.energy_mj or other.rmse < point.rmse)
+            for other in points
+        )
+        if not dominated:
+            front.append(point)
+    return sorted(front, key=lambda item: (item.energy_mj, item.rmse))
+
+
+def energy_regret_rows(
+    *,
+    crest_front: Sequence[FrontPoint],
+    proxy_front: Sequence[FrontPoint],
+) -> list[dict[str, float | str]]:
+    """Match replayed points to CREST front points and compute energy regret."""
+
+    rows: list[dict[str, float | str]] = []
+    if not crest_front:
+        return rows
+    for proxy in proxy_front:
+        candidates = [point for point in crest_front if point.rmse <= proxy.rmse]
+        fallback = False
+        if not candidates:
+            candidates = list(crest_front)
+            fallback = True
+        matched = min(candidates, key=lambda point: (point.energy_mj, abs(point.rmse - proxy.rmse)))
+        if matched.energy_mj <= 0.0:
+            continue
+        energy_delta = proxy.energy_mj - matched.energy_mj
+        energy_ratio = proxy.energy_mj / matched.energy_mj
+        rows.append(
+            {
+                "proxy_key": proxy.payload_key,
+                "crest_key": matched.payload_key,
+                "proxy_rmse": proxy.rmse,
+                "crest_rmse": matched.rmse,
+                "proxy_energy_mj": proxy.energy_mj,
+                "crest_energy_mj": matched.energy_mj,
+                "energy_delta_mj": energy_delta,
+                "energy_ratio": energy_ratio,
+                "energy_percent_increase": (energy_ratio - 1.0) * 100.0,
+                "fallback_nearest_rmse": str(fallback).lower(),
+            }
+        )
+    return rows
 
 
 @dataclass(frozen=True)

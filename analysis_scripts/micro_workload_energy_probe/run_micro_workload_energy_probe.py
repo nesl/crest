@@ -33,7 +33,6 @@ except Exception:  # pragma: no cover - tqdm is a declared project dependency
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 SRC_DIR = REPO_ROOT / "src"
-STM32_HELPER_DIR = REPO_ROOT / "analysis_scripts" / "stm32_example_project"
 
 VALID_BOARDS = ("stm32", "portenta_m4", "portenta_m7", "ble")
 VALID_WORKLOADS = ("sleep", "wait", "poll", "float", "int")
@@ -52,6 +51,7 @@ DEFAULT_STM32_CPU_CLOCK_MHZ = 600
 DEFAULT_STM32_APPLI_FLASH_ADDRESS = "0x70100000"
 DEFAULT_STM32_SIGNING_HEADER_VERSION = "2.3"
 DEFAULT_STM32_SIGNING_LOAD_OFFSET = "0x80000000"
+DEFAULT_STM32_EXTERNAL_LOADER_NAME = "MX25UM51245G_STM32N6570-NUCLEO.stldr"
 
 ERROR_LABELS = {
     0: "ok",
@@ -326,7 +326,7 @@ def ensure_import_paths() -> None:
         ``sys.path`` is updated in place when required.
     """
 
-    for path in (str(SRC_DIR), str(STM32_HELPER_DIR)):
+    for path in (str(SRC_DIR),):
         if path not in sys.path:
             sys.path.insert(0, path)
 
@@ -1421,6 +1421,89 @@ def stage_stm32_workspace(settings: RuntimeSettings, workload: str) -> Path:
     return stage_root
 
 
+@dataclass(frozen=True)
+class STM32BuildArtifacts:
+    """Minimal STM32 LRUN build artifacts needed by the synthetic probe."""
+
+    app_bin: Path
+
+
+def _resolve_stm32_bin_path(elf_path: Path) -> Path:
+    """Resolve the binary emitted beside an STM32CubeIDE ELF artifact."""
+
+    candidate = elf_path.with_suffix(".bin")
+    if candidate.is_file():
+        return candidate
+    siblings = sorted(elf_path.parent.glob("*.bin"))
+    if len(siblings) == 1:
+        return siblings[0]
+    if siblings:
+        names = ", ".join(path.name for path in siblings)
+        raise RuntimeError(f"Could not determine matching BIN artifact for {elf_path}; found: {names}")
+    raise RuntimeError(f"Missing BIN artifact after build: {candidate}")
+
+
+def build_stm32_workspace(project_root: Path, *, clean: bool, jobs: int | None) -> STM32BuildArtifacts:
+    """Build the staged production STM32 LRUN workspace used by the probe."""
+
+    from tinyodom.microcontrollers import stm32_cube_clt  # type: ignore
+
+    boot_project_root = project_root / "STM32CubeIDE" / "Boot"
+    app_project_root = project_root / "STM32CubeIDE" / "AppS"
+    for required_dir in (project_root / "FSBL", project_root / "Appli", boot_project_root, app_project_root):
+        if not required_dir.is_dir():
+            raise stm32_cube_clt.WorkflowError(f"Missing STM32 LRUN workspace path: {required_dir}")
+    stm32_cube_clt.build_project(project_root=boot_project_root, jobs=jobs, clean=clean)
+    app_build = stm32_cube_clt.build_project(project_root=app_project_root, jobs=jobs, clean=clean)
+    return STM32BuildArtifacts(app_bin=_resolve_stm32_bin_path(app_build.elf_path))
+
+
+def update_stm32_lrun_source_size(
+    project_root: Path,
+    *,
+    trusted_app_size: int,
+    alignment: int = 0x400,
+) -> tuple[Path, bool, int]:
+    """Update the LRUN boot copy-window size from the signed app size."""
+
+    from tinyodom.microcontrollers import stm32_cube_clt  # type: ignore
+
+    header_path = project_root / "FSBL" / "Inc" / "stm32_extmem_conf.h"
+    if not header_path.is_file():
+        raise stm32_cube_clt.WorkflowError(f"Missing FSBL extmem config: {header_path}")
+    aligned_size = ((int(trusted_app_size) + alignment - 1) // alignment) * alignment
+    pattern = re.compile(r"^(#define\s+EXTMEM_LRUN_SOURCE_SIZE\s+)0x[0-9A-Fa-f]+\s*$", re.MULTILINE)
+    original_text = header_path.read_text(encoding="utf-8")
+    updated_text, replacements = pattern.subn(rf"\g<1>0x{aligned_size:08X}", original_text, count=1)
+    if replacements != 1:
+        raise stm32_cube_clt.WorkflowError(f"Could not update EXTMEM_LRUN_SOURCE_SIZE in {header_path}")
+    changed = updated_text != original_text
+    if changed:
+        header_path.write_text(updated_text, encoding="utf-8")
+    return header_path, changed, aligned_size
+
+
+def resolve_stm32_external_loader(cubeprog_bin: Path | None) -> Path:
+    """Resolve the STM32CubeProgrammer external loader for the Nucleo flash."""
+
+    from tinyodom.microcontrollers import stm32_cube_clt  # type: ignore
+
+    cubeprog_dir = cubeprog_bin or stm32_cube_clt.default_cubeprog_bin()
+    if cubeprog_dir is None:
+        raise stm32_cube_clt.WorkflowError("STM32CubeProgrammer bin directory was not provided.")
+    candidates = (
+        cubeprog_dir / "ExternalLoader" / DEFAULT_STM32_EXTERNAL_LOADER_NAME,
+        cubeprog_dir.parent / "ExternalLoader" / DEFAULT_STM32_EXTERNAL_LOADER_NAME,
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    searched = "\n".join(f"  - {path}" for path in candidates)
+    raise stm32_cube_clt.WorkflowError(
+        f"Could not find external loader {DEFAULT_STM32_EXTERNAL_LOADER_NAME}.\nSearched:\n{searched}"
+    )
+
+
 def run_stm32_attempt(settings: RuntimeSettings, board: BoardSpec, workload: str, repeat_idx: int) -> dict[str, Any]:
     """Run one STM32 synthetic workload attempt.
 
@@ -1447,13 +1530,6 @@ def run_stm32_attempt(settings: RuntimeSettings, board: BoardSpec, workload: str
     from tinyodom import hil_protocol  # type: ignore
     from tinyodom.microcontrollers import arduino_base, stm32_cube_clt  # type: ignore
     from tinyodom.microcontrollers import stm32_runtime  # type: ignore
-    from stm32_lrun_common import (  # type: ignore
-        build_workspace,
-        flash_external_image,
-        resolve_weights_external_loader,
-        sign_binary,
-        update_fsbl_lrun_source_size,
-    )
 
     attempt = base_attempt(settings, board, workload, repeat_idx)
     log_stem = f"{board.token}_{workload}_repeat{repeat_idx:02d}"
@@ -1473,22 +1549,22 @@ def run_stm32_attempt(settings: RuntimeSettings, board: BoardSpec, workload: str
         return attempt
 
     try:
-        build = build_workspace(stage_root, clean=(repeat_idx == 1), jobs=settings.stm32_jobs)
+        build = build_stm32_workspace(stage_root, clean=(repeat_idx == 1), jobs=settings.stm32_jobs)
         app_trusted = build.app_bin.with_name(f"{build.app_bin.stem}-trusted.bin")
-        sign_binary(
+        stm32_cube_clt.sign_binary(
             signing_tool=settings.stm32_signing_tool,
             input_bin=build.app_bin,
             output_bin=app_trusted,
             load_offset=settings.stm32_signing_load_offset,
             header_version=settings.stm32_signing_header_version,
         )
-        _header, copy_window_changed, _copy_window_bytes = update_fsbl_lrun_source_size(
+        _header, copy_window_changed, _copy_window_bytes = update_stm32_lrun_source_size(
             stage_root,
             trusted_app_size=app_trusted.stat().st_size,
         )
         if copy_window_changed:
-            build = build_workspace(stage_root, clean=False, jobs=settings.stm32_jobs)
-        external_loader = resolve_weights_external_loader(settings.stm32_cubeprog_bin, None)
+            build_stm32_workspace(stage_root, clean=False, jobs=settings.stm32_jobs)
+        external_loader = resolve_stm32_external_loader(settings.stm32_cubeprog_bin)
     except Exception as exc:
         set_attempt_error(attempt, 8)
         attempt["serial_log_path"] = str(write_serial_log(settings.log_dir, log_stem, [f"stm32_build_failed: {exc}"]))
@@ -1497,7 +1573,7 @@ def run_stm32_attempt(settings: RuntimeSettings, board: BoardSpec, workload: str
     dut_lines: list[str] = []
     harness_lines: list[str] = []
     try:
-        flash_external_image(
+        stm32_cube_clt.program_external_image(
             cubeprog_bin=settings.stm32_cubeprog_bin,
             apid=settings.stm32_apid,
             image_path=app_trusted,

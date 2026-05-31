@@ -25,8 +25,7 @@ For plot-only reproduction, the required Python packages are:
 - `numpy`
 - `pandas`
 
-Some scripts import helper modules from `analysis_scripts/hil_replay`, so run
-commands from the repository root unless noted otherwise.
+Run commands from the repository root unless noted otherwise.
 
 ## Scripts
 
@@ -59,8 +58,7 @@ For non-plot Pareto-front comparison calculations, see
 
 ## Examples
 
-The examples below use placeholder paths so they can be adapted to released
-artifacts, local experiment outputs, or regenerated replay data.
+The examples below use placeholder paths so they can be adapted to user artifacts.
 
 ### Case Study 1
 
@@ -116,23 +114,4 @@ python -B analysis_scripts/paper_plots/plot_case3_audio_transfer.py \
   --transfer-stem case3_cross_board_transfer \
   --transfer-v2-stem case3_cross_board_transfer_compact \
   --transfer-points-stem case3_cross_board_transfer_points
-```
-
-## Development Checks
-
-Before changing the plotting scripts, capture the current figure outputs. After
-the change, regenerate the same figures into a scratch directory and compare the
-image dimensions and any expected checksums for the artifacts you are updating.
-
-Basic checks:
-
-```bash
-python -B -m py_compile analysis_scripts/paper_plots/*.py
-python -B analysis_scripts/paper_plots/plot_stm32_oxiod_cadenced_motivation.py --help
-python -B analysis_scripts/paper_plots/plot_case1_combined_fronts_v2.py --help
-python -B analysis_scripts/paper_plots/plot_case2_b2b_cadenced_fronts.py --help
-python -B analysis_scripts/paper_plots/plot_case3_audio_selection_tradeoff.py --help
-python -B analysis_scripts/paper_plots/plot_case3_audio_transfer.py --help
-python -B analysis_scripts/paper_plots/plot_combined_replay_fronts.py --help
-git diff --check -- analysis_scripts/paper_plots
 ```

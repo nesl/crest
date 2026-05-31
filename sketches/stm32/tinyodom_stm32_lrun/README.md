@@ -82,3 +82,4 @@ This repo-local project includes copied ST license material:
 - `LICENSE.md`
 - `LICENSE.STM32N6xx_HAL_Driver.md`
 - `LICENSE.CMSIS.txt`
+- `LICENSE.STM32_ExtMem_Manager.md`
