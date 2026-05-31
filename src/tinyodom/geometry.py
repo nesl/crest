@@ -12,7 +12,7 @@ import math
 _MAX_FLOAT = np.maximum_sctype(float)
 _FLOAT_EPS = np.finfo(float).eps
 def quat2mat(q):
-    """ Calculate rotation matrix corresponding to quaternion
+    """Calculate rotation matrix corresponding to quaternion.
 
     Parameters
     ----------
@@ -61,7 +61,7 @@ def quat2mat(q):
 
 
 def mat2quat(M):
-    """ Calculate quaternion corresponding to given rotation matrix
+    """Calculate quaternion corresponding to given rotation matrix.
 
     Parameters
     ----------
@@ -111,7 +111,6 @@ def mat2quat(M):
     quaternion from a rotation matrix", AIAA Journal of Guidance,
     Control and Dynamics 23(6):1085-1087 (Engineering Note), ISSN
     0731-5090
-
     """
     # Qyx refers to the contribution of the y input vector component to
     # the x output vector component.  Qyx is therefore the same as
@@ -297,7 +296,7 @@ def mat2euler(mat, axes='sxyz'):
     return ax, ay, az
 
 def euler2quat(ai, aj, ak, axes='sxyz'):
-    """Return `quaternion` from Euler angles and axis sequence `axes`
+    """Return `quaternion` from Euler angles and axis sequence `axes`.
 
     Parameters
     ----------
@@ -369,7 +368,7 @@ def euler2quat(ai, aj, ak, axes='sxyz'):
 
 
 def quat2euler(quaternion, axes='sxyz'):
-    """Euler angles from `quaternion` for specified axis sequence `axes`
+    """Euler angles from `quaternion` for specified axis sequence `axes`.
 
     Parameters
     ----------

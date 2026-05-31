@@ -57,6 +57,25 @@ class DeviceSpec:
         Fully qualified board name (Arduino CLI only).
     toolchain : str | None, optional
         Toolchain identifier (e.g., "arduino-cli", "stm32-cube").
+
+    Attributes
+    ----------
+    name : str
+        Human-readable device identifier.
+    arena_sizes_kb : Sequence[int]
+        Candidate tensor arena sizes in KiB.
+    max_ram_bytes : int
+        Maximum usable RAM on the device in bytes.
+    max_flash_bytes : int
+        Maximum usable flash on the device in bytes.
+    max_external_flash_bytes : Optional[int]
+        Maximum usable external flash on the device in bytes, when the backend
+        supports separate weight storage outside the primary program image.
+        Not used by all boards.
+    fqbn : Optional[str]
+        Fully qualified board name (Arduino CLI only).
+    toolchain : Optional[str]
+        Toolchain identifier (e.g., "arduino-cli", "stm32-cube").
     """
 
     name: str
@@ -90,6 +109,26 @@ class DeviceMetrics:
         External flash bytes consumed by staged weight blobs when the backend
         uses separate weight storage. Not used by Arduino boards.
     retry_hint_bytes : int | None, optional
+        Suggested arena size in bytes for the next attempt, when available.
+
+    Attributes
+    ----------
+    ram_bytes : int
+        RAM usage in bytes (or -1 if unavailable).
+    flash_bytes : int
+        Flash usage in bytes (or -1 if unavailable).
+    latency_s : float
+        Inference latency in seconds (or -1.0 if unavailable).
+    arena_bytes : int
+        Tensor arena size used in bytes.
+    error_code : int
+        Error code emitted by the device evaluation.
+    power_metrics : Optional[Dict[str, Any]]
+        Optional raw power metrics parsed from the serial log.
+    external_flash_bytes : Optional[int]
+        External flash bytes consumed by staged weight blobs when the backend
+        uses separate weight storage. Not used by Arduino boards.
+    retry_hint_bytes : Optional[int]
         Suggested arena size in bytes for the next attempt, when available.
     """
 
@@ -145,6 +184,45 @@ class CompileResult:
         STM32-only trusted application image path emitted after signing.
     fsbl_copy_window_bytes : int | None, optional
         STM32 LRUN copy-window size compiled into the bootloader.
+
+    Attributes
+    ----------
+    success : bool
+        True when compilation succeeded.
+    log : str
+        Combined stdout/stderr from the compile step.
+    flash_bytes : Optional[int]
+        Parsed flash usage in bytes, if available.
+    ram_bytes : Optional[int]
+        Parsed RAM usage in bytes, if available.
+    overflow_kind : Optional[str]
+        "flash" or "ram" when an overflow is detected.
+    build_dir : Optional[Path]
+        Build cache directory if applicable.
+    arena_bytes : Optional[int]
+        Parsed activation arena size in bytes, if available.
+    heap_bytes : Optional[int]
+        Linker-reserved heap bytes, if available.
+    stack_bytes : Optional[int]
+        Linker-reserved stack bytes, if available.
+    external_flash_bytes : Optional[int]
+        External flash bytes consumed by staged weight blobs when the backend
+        uses separate weight storage.
+        Not used by all boards.
+    boot_build_dir : Optional[Path]
+        STM32-only Boot-project build directory when the backend produces
+        separate boot and application artifacts.
+    boot_elf_path : Optional[Path]
+        STM32-only Boot-project ELF path used for debug loading.
+    app_build_dir : Optional[Path]
+        STM32-only App-project build directory when the backend produces
+        separate boot and application artifacts.
+    app_elf_path : Optional[Path]
+        STM32-only App-project ELF path.
+    signed_app_bin_path : Optional[Path]
+        STM32-only trusted application image path emitted after signing.
+    fsbl_copy_window_bytes : Optional[int]
+        STM32 LRUN copy-window size compiled into the bootloader.
     """
 
     success: bool
@@ -175,6 +253,13 @@ class UploadResult:
         True when upload succeeded.
     log : str
         Combined stdout/stderr from the upload step.
+
+    Attributes
+    ----------
+    success : bool
+        True when upload succeeded.
+    log : str
+        Combined stdout/stderr from the upload step.
     """
 
     success: bool
@@ -194,6 +279,17 @@ class MeasureResult:
     serial_log : list[str]
         Decoded serial log captured during measurement.
     power_metrics : dict[str, float | None] | None
+        Parsed power metrics fields, if present.
+
+    Attributes
+    ----------
+    latency_s : Optional[float]
+        Inference latency in seconds, if available.
+    arena_error_line : Optional[str]
+        First arena allocation error line, if found.
+    serial_log : list[str]
+        Decoded serial log captured during measurement.
+    power_metrics : Optional[Dict[str, Optional[float]]]
         Parsed power metrics fields, if present.
     """
 
@@ -228,6 +324,28 @@ class CandidatePrepareRequest:
     checkpoint_path : pathlib.Path | str | None, optional
         Checkpoint path associated with trained export variants when one
         exists.
+
+    Attributes
+    ----------
+    config : Any
+        Loaded TinyODOM configuration object.
+    model : Any
+        Model instance to export and stage for one backend attempt.
+    model_variant : str
+        Human-readable export variant label.
+    artifact_root : Path
+        Root directory chosen by orchestration for backend-owned artifacts.
+    tflite_model_path : Path
+        Explicit TFLite output path selected by orchestration.
+    calibration_split : DataSplit | None
+        Calibration split used for representative export data when required.
+    quantization_mode : str
+        Deployment quantization mode selected for this candidate.
+    input_shape : tuple[int, ...] | None
+        Logical model input shape excluding the batch dimension.
+    checkpoint_path : Path | str | None
+        Checkpoint path associated with trained export variants when one
+        exists.
     """
 
     config: Any
@@ -245,35 +363,85 @@ class DeviceInterface(ABC):
     """Contract for device-specific compile/upload/measure workflows."""
 
     def requires_candidate_model(self) -> bool:
-        """Return whether this backend consumes generated model artifacts."""
+        """Return whether this backend consumes generated model artifacts.
+
+        Returns
+        -------
+        bool
+            ``True`` when the backend needs a generated candidate model before compilation.
+        """
         return True
 
     def requires_training_data(self) -> bool:
-        """Return whether candidate preparation needs calibration/training data."""
+        """Return whether candidate preparation needs calibration/training data.
+
+        Returns
+        -------
+        bool
+            ``True`` when calibration or training data must be available during candidate preparation.
+        """
         return True
 
     def requires_arena_validation(self) -> bool:
-        """Return whether ``arena_bytes`` should be treated as a required metric."""
+        """Return whether ``arena_bytes`` should be treated as a required metric.
+
+        Returns
+        -------
+        bool
+            ``True`` when missing arena accounting should invalidate the device result.
+        """
         return True
 
     def supports_energy_measurement(self) -> bool:
-        """Return whether this backend can produce real energy metrics."""
+        """Return whether this backend can produce real energy metrics.
+
+        Returns
+        -------
+        bool
+            ``True`` when the backend can report measured energy rather than proxy values.
+        """
         return True
 
     def supports_runtime_measurement(self) -> bool:
-        """Return whether this backend can run upload/measurement passes."""
+        """Return whether this backend can run upload/measurement passes.
+
+        Returns
+        -------
+        bool
+            ``True`` when the backend can upload and execute firmware on a target device.
+        """
         return True
 
     def runtime_measure_mode(self) -> RuntimeMeasureMode:
-        """Return runtime measurement mode for this device profile."""
+        """Return runtime measurement mode for this device profile.
+
+        Returns
+        -------
+        RuntimeMeasureMode
+            Measurement path used by orchestration for this backend.
+        """
         return "direct_serial"
 
     def runtime_mode_build_defines(self) -> Dict[str, int]:
-        """Return additional compile-time defines for the runtime mode."""
+        """Return additional compile-time defines for the runtime mode.
+
+        Returns
+        -------
+        Dict[str, int]
+            Compile-time defines required by the selected runtime mode.
+        """
         return {}
 
     def prepare_for_runtime(self, *, runtime_mode: RuntimeMeasureMode, serial_port: str) -> None:
-        """Run optional board-specific setup before upload/measurement."""
+        """Run optional board-specific setup before upload/measurement.
+
+        Parameters
+        ----------
+        runtime_mode : RuntimeMeasureMode
+            Runtime profile requested for the backend measurement pass.
+        serial_port : str
+            Serial device path used to communicate with the DUT or harness.
+        """
         del runtime_mode, serial_port
 
     def prepare_candidate(
@@ -281,7 +449,23 @@ class DeviceInterface(ABC):
         *,
         request: CandidatePrepareRequest,
     ) -> Path:
-        """Prepare backend-owned build inputs and return the compile directory."""
+        """Prepare backend-owned build inputs and return the compile directory.
+
+        Parameters
+        ----------
+        request : CandidatePrepareRequest
+            Candidate preparation payload assembled by orchestration.
+
+        Returns
+        -------
+        Path
+            Directory that should be passed to the backend compile step.
+
+        Raises
+        ------
+        NotImplementedError
+            If existing validation or execution checks fail.
+        """
         del request
         raise NotImplementedError("prepare_candidate() must be implemented by backend classes.")
 
@@ -304,15 +488,40 @@ class DeviceInterface(ABC):
         sketches_dir: Path | None = None,
         runtime_phase: str = "back_to_back",
     ) -> Path | None:
-        """Apply an input-mode change when the backend uses that concept."""
+        """Apply an input-mode change when the backend uses that concept.
+
+        Parameters
+        ----------
+        input_mode : str
+            Input-header generation mode selected for the staged sketch.
+        outputs_dir : Path
+            Directory where generated sketch or backend artifacts are written.
+        config : Any
+            Loaded TinyODOM configuration object or mapping.
+        sketches_dir : Path | None
+            Repository sketch root used to locate checked-in Arduino templates.
+        runtime_phase : str
+            Runtime phase label used to select generated telemetry settings.
+
+        Returns
+        -------
+        Path | None
+            Staged input header path when a backend rewrites one, otherwise
+            ``None``.
+        """
         del input_mode, outputs_dir, config, sketches_dir, runtime_phase
         return None
 
     @property
     @abstractmethod
     def spec(self) -> DeviceSpec:
-        """Return the device specification metadata."""
+        """Return the device specification metadata.
 
+        Returns
+        -------
+        DeviceSpec
+            Static limits and toolchain metadata for this device.
+        """
     @abstractmethod
     def compile(
         self,
@@ -341,7 +550,6 @@ class DeviceInterface(ABC):
         CompileResult
             Parsed compile output and resource usage.
         """
-
     @abstractmethod
     def upload(
         self,
@@ -366,7 +574,6 @@ class DeviceInterface(ABC):
         UploadResult
             Upload success flag and log output.
         """
-
     @abstractmethod
     def measure(
         self,
@@ -430,7 +637,6 @@ class DeviceInterface(ABC):
         MeasureResult
             Parsed latency/power metrics.
         """
-
     @abstractmethod
     def evaluate(
         self,
@@ -485,8 +691,6 @@ class DeviceInterface(ABC):
         DeviceMetrics
             Normalized metrics for the run.
         """
-
-
 _LEGACY_DEVICE_SPECS = {
     "NUCLEO_F746ZG": {
         "arena_sizes": np.array([10, 30, 50, 75, 100, 150, 175, 200, 250, 280, 280]),
@@ -594,6 +798,11 @@ def get_device_spec(name: str) -> DeviceSpec:
     -------
     DeviceSpec
         Normalized device specification.
+
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
     """
     if name not in DEVICE_SPECS:
         # Retry loading registry defaults in case callers imported this module
@@ -650,6 +859,11 @@ def _normalize_portenta_target_core(raw_value: object) -> str:
     -------
     str
         Normalized ``cm7`` or ``cm4`` token.
+
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
     """
     normalized = str(raw_value).strip().lower() if raw_value is not None else ""
     if normalized not in {"cm7", "cm4"}:
@@ -671,8 +885,12 @@ def arduino_staged_sketch_path(outputs_dir: Path) -> Path:
     -------
     Path
         Path whose filename matches the candidate directory basename.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     candidate_dir = Path(outputs_dir)
     if not candidate_dir.name:
         raise ValueError(f"Candidate directory has no basename: {candidate_dir}")
@@ -836,6 +1054,11 @@ class ArduinoDevice(DeviceInterface):
             Optional board-option mapping forwarded to subclasses.
         spec_override : DeviceSpec | None, optional
             Explicit spec override used by board-specific wrappers.
+
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
         """
         self._device_name = device_name
         self._device_options = dict(device_options or {})
@@ -847,35 +1070,85 @@ class ArduinoDevice(DeviceInterface):
 
     @property
     def spec(self) -> DeviceSpec:
-        """Return the device specification metadata."""
+        """Return the device specification metadata.
+
+        Returns
+        -------
+        DeviceSpec
+            Static limits and Arduino FQBN metadata for this wrapper.
+        """
         return self._spec
 
     def runtime_measure_mode(self) -> RuntimeMeasureMode:
-        """Return runtime measurement mode for this board wrapper."""
+        """Return runtime measurement mode for this board wrapper.
+
+        Returns
+        -------
+        RuntimeMeasureMode
+            Measurement path used by orchestration for this backend.
+        """
         return "direct_serial"
 
     def requires_candidate_model(self) -> bool:
-        """Return whether Arduino backends consume generated model artifacts."""
+        """Return whether Arduino backends consume generated model artifacts.
+
+        Returns
+        -------
+        bool
+            ``True`` when the backend needs a generated candidate model before compilation.
+        """
         return True
 
     def requires_training_data(self) -> bool:
-        """Return whether Arduino candidate preparation needs calibration data."""
+        """Return whether Arduino candidate preparation needs calibration data.
+
+        Returns
+        -------
+        bool
+            ``True`` when calibration or training data must be available during candidate preparation.
+        """
         return True
 
     def requires_arena_validation(self) -> bool:
-        """Return whether Arduino backends require arena validation."""
+        """Return whether Arduino backends require arena validation.
+
+        Returns
+        -------
+        bool
+            ``True`` when missing arena accounting should invalidate the device result.
+        """
         return True
 
     def supports_energy_measurement(self) -> bool:
-        """Return whether Arduino backends support real energy measurement."""
+        """Return whether Arduino backends support real energy measurement.
+
+        Returns
+        -------
+        bool
+            ``True`` when the backend can report measured energy rather than proxy values.
+        """
         return True
 
     def runtime_mode_build_defines(self) -> Dict[str, int]:
-        """Return additional compile-time defines for runtime behavior."""
+        """Return additional compile-time defines for runtime behavior.
+
+        Returns
+        -------
+        Dict[str, int]
+            Compile-time defines required by the selected runtime mode.
+        """
         return {}
 
     def prepare_for_runtime(self, *, runtime_mode: RuntimeMeasureMode, serial_port: str) -> None:
-        """Run optional board-specific setup before upload/measurement."""
+        """Run optional board-specific setup before upload/measurement.
+
+        Parameters
+        ----------
+        runtime_mode : RuntimeMeasureMode
+            Runtime profile requested for the backend measurement pass.
+        serial_port : str
+            Serial device path used to communicate with the DUT or harness.
+        """
         del runtime_mode, serial_port
 
     def prepare_candidate(
@@ -901,6 +1174,11 @@ class ArduinoDevice(DeviceInterface):
         The current Arduino flow quantizes against
         ``request.calibration_split.inputs`` and then stages the selected
         sketch variant beside the generated C model sources.
+
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
         """
         if request.model is None:
             raise ValueError("Arduino candidate preparation requires a built Keras model.")
@@ -931,7 +1209,26 @@ class ArduinoDevice(DeviceInterface):
         sketches_dir: Path | None = None,
         runtime_phase: str = "back_to_back",
     ) -> Path | None:
-        """Update Arduino input mode and resynchronize the active sketch."""
+        """Update Arduino input mode and resynchronize the active sketch.
+
+        Parameters
+        ----------
+        input_mode : str
+            Input-header generation mode selected for the staged sketch.
+        outputs_dir : Path
+            Directory where generated sketch or backend artifacts are written.
+        config : Any
+            Loaded TinyODOM configuration object or mapping.
+        sketches_dir : Path | None
+            Repository sketch root used to locate checked-in Arduino templates.
+        runtime_phase : str
+            Runtime phase label used to select generated telemetry settings.
+
+        Returns
+        -------
+        Path | None
+            Path to the synchronized sketch variant, when one was staged.
+        """
         config.training.input_mode = str(input_mode).lower()
         return _sync_arduino_sketch_variant_for_config(
             config,
@@ -967,7 +1264,26 @@ class ArduinoDevice(DeviceInterface):
         num_channels: int,
         build_defines: Optional[Dict[str, int]] = None,
     ) -> CompileResult:
-        """Compile firmware using the Arduino CLI toolchain."""
+        """Compile firmware using the Arduino CLI toolchain.
+
+        Parameters
+        ----------
+        sketch_path : Path
+            Directory containing the Arduino sketch to compile or upload.
+        arena_kb : int
+            Tensor arena size in KiB requested for the staged candidate.
+        window_size : int
+            Number of timesteps compiled into the model input buffer.
+        num_channels : int
+            Number of sensor or feature channels compiled into the model input buffer.
+        build_defines : Optional[Dict[str, int]]
+            Compile-time macro definitions forwarded to the backend toolchain.
+
+        Returns
+        -------
+        CompileResult
+            Parsed compile result with size accounting and failure classification.
+        """
         logger.info(
             "ArduinoDevice.compile: patching constants and compiling sketch at %s",
             sketch_path,
@@ -1001,7 +1317,27 @@ class ArduinoDevice(DeviceInterface):
         build_dir: Optional[Path],
         serial_port: Optional[str],
     ) -> UploadResult:
-        """Upload firmware using the Arduino CLI toolchain."""
+        """Upload firmware using the Arduino CLI toolchain.
+
+        Parameters
+        ----------
+        sketch_path : Path
+            Directory containing the Arduino sketch to compile or upload.
+        build_dir : Optional[Path]
+            Backend build-cache directory containing compiled artifacts.
+        serial_port : Optional[str]
+            Serial device path used to communicate with the DUT or harness.
+
+        Returns
+        -------
+        UploadResult
+            Parsed upload result with combined tool output.
+
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         use_serial_port = self._serial_port if serial_port is None else serial_port
         if use_serial_port is None:
             raise ValueError("serial_port must be provided for Arduino upload.")
@@ -1060,6 +1396,11 @@ class ArduinoDevice(DeviceInterface):
         MeasureResult
             Parsed latency, optional arena diagnostics, serial log, and power
             metrics captured for the run.
+
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
         """
         use_serial_port = self._serial_port if serial_port is None else serial_port
         if use_serial_port is None:
@@ -1150,6 +1491,11 @@ class ArduinoDevice(DeviceInterface):
         Compile overflow classification takes precedence over generic compile
         failure. For harness-only runtime modes, upload and timing are routed
         through the harness flow instead of the normal DUT serial path.
+
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
         """
         sketch_path = Path(dirpath).resolve()
         arena_bytes = arena_kb * 1024

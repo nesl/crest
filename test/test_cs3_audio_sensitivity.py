@@ -22,8 +22,12 @@ def load_cs3_module() -> Any:
     -------
     Any
         Imported module object.
-    """
 
+    Raises
+    ------
+    RuntimeError
+        If existing validation or execution checks fail.
+    """
     spec = importlib.util.spec_from_file_location("cs3_score_sensitivity_for_tests", SCRIPT_PATH)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {SCRIPT_PATH}")
@@ -51,7 +55,6 @@ def write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
     None
         The CSV is written to disk.
     """
-
     fieldnames: list[str] = []
     for row in rows:
         for key in row:
@@ -77,7 +80,6 @@ def read_json(path: Path) -> Any:
     Any
         Parsed JSON payload.
     """
-
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -94,7 +96,6 @@ def read_csv_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     tuple[list[str], list[dict[str, str]]]
         Header names and parsed row dictionaries.
     """
-
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         return list(reader.fieldnames or []), list(reader)
@@ -113,7 +114,6 @@ def run_cli(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
     subprocess.CompletedProcess[str]
         Completed subprocess result.
     """
-
     return subprocess.run(
         [sys.executable, "-B", str(SCRIPT_PATH), *args],
         check=False,
@@ -159,7 +159,6 @@ def nas_row(
     dict[str, Any]
         Synthetic CSV row.
     """
-
     return {
         "number": trial,
         "user_attrs_metric_macro_f1": quality,
@@ -180,7 +179,6 @@ def test_cli_help_lists_sensitivity_flags() -> None:
     None
         The test passes when help exits successfully and includes expected flags.
     """
-
     result = run_cli(["--help"])
 
     assert result.returncode == 0
@@ -204,7 +202,6 @@ def test_cli_rejects_malformed_run_and_duplicate_labels(tmp_path: Path) -> None:
     None
         The test passes when both invalid commands fail.
     """
-
     malformed = run_cli(["--run", "missing-equals", "--output-dir", str(tmp_path / "out")])
     duplicate = run_cli(
         [
@@ -236,7 +233,6 @@ def test_missing_configured_column_fails_clearly(tmp_path: Path) -> None:
     None
         The test passes when the CLI reports the missing configured column.
     """
-
     source = tmp_path / "source.csv"
     write_csv(source, [nas_row("1", 0.5, 10.0)])
 
@@ -271,7 +267,6 @@ def test_directory_discovery_is_top_level_and_uses_usable_csv(tmp_path: Path) ->
     None
         The test passes when the selected mapping points at the top-level usable CSV.
     """
-
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     nested = run_dir / "nested"
@@ -304,7 +299,6 @@ def test_filtering_and_source_score_behavior(tmp_path: Path) -> None:
     None
         The test passes when only the valid candidate remains.
     """
-
     source = tmp_path / "source.csv"
     write_csv(
         source,
@@ -346,7 +340,6 @@ def test_output_schema_and_synthetic_golden_sweeps(tmp_path: Path) -> None:
         The test passes when baseline selections and sweep changes match the
         preserved CS3 pattern.
     """
-
     portenta = tmp_path / "portenta.csv"
     stm32 = tmp_path / "stm32.csv"
     write_csv(

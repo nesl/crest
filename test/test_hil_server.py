@@ -36,6 +36,7 @@ class FakeDataset:
 
     @classmethod
     def reset(cls) -> None:
+        """Reset the requested operation."""
         cls.bundle = None
         cls.calibration_split_override = None
         cls.validate_calls = []
@@ -43,9 +44,28 @@ class FakeDataset:
         cls.calibration_calls = []
 
     def validate_config(self, dataset_config: object) -> None:
+        """Validate config.
+
+        Parameters
+        ----------
+        dataset_config : object
+            Dataset configuration used to build the task bundle.
+        """
         type(self).validate_calls.append(dataset_config)
 
     def load(self, dataset_config: object) -> DatasetBundle:
+        """Load the requested operation.
+
+        Parameters
+        ----------
+        dataset_config : object
+            Dataset configuration used to build the task bundle.
+
+        Returns
+        -------
+        DatasetBundle
+            Dataset bundle returned by the fake loader.
+        """
         type(self).load_calls.append(dataset_config)
         assert type(self).bundle is not None
         return type(self).bundle
@@ -70,7 +90,6 @@ class FakeDataset:
             Explicit override when configured, otherwise the bundle's
             calibration split.
         """
-
         type(self).calibration_calls.append((bundle, dataset_config))
         if type(self).calibration_split_override is not None:
             return type(self).calibration_split_override
@@ -99,6 +118,7 @@ class FakeTask:
 
     @classmethod
     def reset(cls) -> None:
+        """Reset the requested operation."""
         cls.init_kwargs = []
         cls.validate_calls = []
         cls.build_target_spec_calls = []
@@ -109,7 +129,15 @@ class FakeTask:
         checkpoint_path: Path | None = None,
         early_stopping_patience: int = 40,
     ) -> None:
-        """Record the constructor arguments that the server passes through."""
+        """Record the constructor arguments that the server passes through.
+
+        Parameters
+        ----------
+        checkpoint_path : Path | None
+            Checkpoint path passed through the training configuration.
+        early_stopping_patience : int
+            Early-stopping patience value passed through the training config.
+        """
         type(self).init_kwargs.append(
             {
                 "checkpoint_path": checkpoint_path,
@@ -118,6 +146,13 @@ class FakeTask:
         )
 
     def validate_config(self, task_config: object) -> None:
+        """Validate config.
+
+        Parameters
+        ----------
+        task_config : object
+            Task configuration passed into the scaffolded method.
+        """
         type(self).validate_calls.append(task_config)
 
     def build_target_spec(
@@ -125,7 +160,20 @@ class FakeTask:
         bundle: DatasetBundle,
         task_config: object,
     ) -> TargetSpec:
-        """Return the shared target spec while recording the bootstrap inputs."""
+        """Return the shared target spec while recording the bootstrap inputs.
+
+        Parameters
+        ----------
+        bundle : DatasetBundle
+            Task bundle passed into the scaffolded task method.
+        task_config : object
+            Task configuration passed into the scaffolded method.
+
+        Returns
+        -------
+        TargetSpec
+            Constructed target spec.
+        """
         type(self).build_target_spec_calls.append((bundle, task_config))
         return type(self).target_spec
 
@@ -134,12 +182,33 @@ class FakeTask:
         target_spec: TargetSpec,
         task_config: object,
     ) -> TaskMetricContract:
-        """Return the shared metric contract while recording bootstrap inputs."""
+        """Return the shared metric contract while recording bootstrap inputs.
 
+        Parameters
+        ----------
+        target_spec : TargetSpec
+            Target specification passed into the task method.
+        task_config : object
+            Task configuration passed into the scaffolded method.
+
+        Returns
+        -------
+        TaskMetricContract
+            Metric contract returned by the fake task.
+        """
         del target_spec, task_config
         return type(self).metric_contract_value
 
     def validate_model_outputs(self, model: object, target_spec: TargetSpec) -> None:
+        """Validate model outputs.
+
+        Parameters
+        ----------
+        model : object
+            Model instance supplied to the task method.
+        target_spec : TargetSpec
+            Target specification passed into the task method.
+        """
         type(self).validate_model_outputs_calls.append((model, target_spec))
 
 
@@ -152,11 +221,19 @@ class FakeModelFamily:
 
     @classmethod
     def reset(cls) -> None:
+        """Reset the requested operation."""
         cls.model = None
         cls.validate_calls = []
         cls.materialize_calls = []
 
     def validate_config(self, model_config: object) -> None:
+        """Validate config.
+
+        Parameters
+        ----------
+        model_config : object
+            Model configuration used by the request builder.
+        """
         type(self).validate_calls.append(model_config)
 
     def materialize_export_model(
@@ -168,7 +245,26 @@ class FakeModelFamily:
         model_variant: str,
         checkpoint_path: Path | str | None = None,
     ) -> object:
-        """Record export requests and return the configured fake model object."""
+        """Record export requests and return the configured fake model object.
+
+        Parameters
+        ----------
+        hparams : dict[str, object]
+            Hyperparameters supplied to the model-family helper.
+        ctx : object
+            Model context passed into the helper.
+        config : object
+            Configuration object used by the helper.
+        model_variant : str
+            Model variant name included in the request payload.
+        checkpoint_path : Path | str | None
+            Checkpoint path passed through the training configuration.
+
+        Returns
+        -------
+        object
+            Export model returned by the fake model family.
+        """
         type(self).materialize_calls.append(
             {
                 "hparams": dict(hparams),
@@ -193,6 +289,7 @@ class HILServerTestCase(unittest.TestCase):
 
     def setUp(self) -> None:
         # Create a lightweight mock config object to avoid loading YAML files.
+        """Prepare test fixtures."""
         self.config = Dict(
             network=SimpleNamespace(host="127.0.0.1", port=6000, recv_timeout_sec=1, send_timeout_sec=1),
             training=Dict(
@@ -294,6 +391,7 @@ class HILServerTestCase(unittest.TestCase):
         self.zmq_mock = self.zmq_patcher.start()
 
     def tearDown(self) -> None:
+        """Clean up test fixtures."""
         patch.stopall()
 
     def build_server(self) -> HILServer:
@@ -330,8 +428,18 @@ class HILServerTestCase(unittest.TestCase):
 
     @staticmethod
     def request_family_hparams(**overrides: object) -> Dict:
-        """Build a minimal family-hyperparameter payload for HIL tests."""
+        """Build a minimal family-hyperparameter payload for HIL tests.
 
+        Parameters
+        ----------
+        **overrides : dict[str, object]
+            Configuration overrides merged for the test case.
+
+        Returns
+        -------
+        Dict
+            Family hyperparameters extracted from the sample request.
+        """
         payload = {}
         payload.update(overrides)
         return Dict(payload)
@@ -343,8 +451,22 @@ class HILServerTestCase(unittest.TestCase):
         runtime_metadata: Dict | None = None,
         device_options_overrides: dict | None = None,
     ) -> dict[str, object]:
-        """Build the structured REQ payload used by the server loop tests."""
+        """Build the structured REQ payload used by the server loop tests.
 
+        Parameters
+        ----------
+        family_hparams : Dict | None
+            Model-family hyperparameters used by the request builder.
+        runtime_metadata : Dict | None
+            Runtime metadata included in the HIL request.
+        device_options_overrides : dict | None
+            Device option overrides merged into the test configuration.
+
+        Returns
+        -------
+        dict[str, object]
+            Payload dictionary used by the HIL request test.
+        """
         payload: dict[str, object] = {
             "family_hparams": self.request_family_hparams() if family_hparams is None else family_hparams,
             "runtime_metadata": self.request_runtime_metadata() if runtime_metadata is None else runtime_metadata,
@@ -520,7 +642,6 @@ class DetermineMetricsTests(HILServerTestCase):
             Asserts the normalized metrics request carries the explicit device
             latency budget.
         """
-
         # Device-level latency-budget overrides should win when the request explicitly provides them.
         server = self.build_server()
         self.config.device.latency_budget_ms = 75.0
@@ -551,7 +672,6 @@ class DetermineMetricsTests(HILServerTestCase):
             Asserts metadata-owned batch periods flow into the collected
             metrics request without requiring legacy stride fields.
         """
-
         server = self.build_server()
         self.config.dataset.params = Dict(directory="data", calibration_windows=100)
         FakeDataset.bundle = DatasetBundle(
@@ -592,7 +712,6 @@ class DetermineMetricsTests(HILServerTestCase):
             Asserts already-loaded dataset metadata is reused when malformed
             request metrics are generated.
         """
-
         server = self.build_server()
         self.config.dataset.params = Dict(directory="data")
         FakeDataset.bundle = DatasetBundle(
@@ -622,7 +741,6 @@ class DetermineMetricsTests(HILServerTestCase):
             Asserts config-owned batch cadence can populate failure metrics
             without bootstrapping the dataset.
         """
-
         self.config.dataset.params = Dict(directory="data", batch_period_ms=2000)
         server = self.build_server()
         FakeDataset.load_calls = []
@@ -640,6 +758,7 @@ class DetermineMetricsTests(HILServerTestCase):
 
     def test_determine_metrics_rejects_missing_timesteps(self) -> None:
         # Missing timesteps should be rejected before the server stages any backend work.
+        """Validate determine metrics rejects missing timesteps."""
         server = self.build_server()
 
         with patch("hil_server.get_microcontroller_device") as device_mock:
@@ -654,6 +773,7 @@ class DetermineMetricsTests(HILServerTestCase):
 
     def test_determine_metrics_rejects_missing_input_dim(self) -> None:
         # Missing input_dim should be rejected before the server stages any backend work.
+        """Validate determine metrics rejects missing input dim."""
         server = self.build_server()
 
         with patch("hil_server.get_microcontroller_device") as device_mock:
@@ -668,6 +788,7 @@ class DetermineMetricsTests(HILServerTestCase):
 
     def test_determine_metrics_rejects_non_integer_runtime_fields(self) -> None:
         # Non-integer runtime dimensions should fail request validation before any backend is touched.
+        """Validate determine metrics rejects non integer runtime fields."""
         server = self.build_server()
 
         with patch("hil_server.get_microcontroller_device") as device_mock:
@@ -682,6 +803,7 @@ class DetermineMetricsTests(HILServerTestCase):
 
     def test_determine_metrics_rejects_dimension_mismatches(self) -> None:
         # Shape mismatches should be rejected before the server tries to prepare a candidate for hardware.
+        """Validate determine metrics rejects dimension mismatches."""
         server = self.build_server()
 
         with patch("hil_server.get_microcontroller_device") as device_mock:
@@ -696,6 +818,7 @@ class DetermineMetricsTests(HILServerTestCase):
 
     def test_determine_metrics_rejects_invalid_model_build_context_input_shapes(self) -> None:
         # Invalid model-build context shapes should come back as request errors instead of backend failures.
+        """Validate determine metrics rejects invalid model build context input shapes."""
         server = self.build_server()
         server._ensure_pipeline_bootstrapped()
 
@@ -713,6 +836,7 @@ class DetermineMetricsTests(HILServerTestCase):
 
     def test_determine_metrics_runs_arduino_cadenced_second_pass_after_successful_base_run(self) -> None:
         # Cadenced Arduino runs should only schedule the second pass after the base latency pass succeeds, otherwise follow-up telemetry hides the primary failure.
+        """Validate determine metrics runs Arduino cadenced second pass after successful base run."""
         server = self.build_server()
         self.config.device.name = "ARDUINO_NANO_33_BLE_SENSE"
         self.config.device.runtime_mode = "cadenced"
@@ -759,6 +883,7 @@ class DetermineMetricsTests(HILServerTestCase):
 
     def test_determine_metrics_discards_arduino_cadenced_second_pass_latency(self) -> None:
         # The Arduino cadenced follow-up should contribute energy data without overwriting the latency from the primary pass.
+        """Validate determine metrics discards Arduino cadenced second pass latency."""
         server = self.build_server()
         self.config.device.name = "ARDUINO_NANO_33_BLE_SENSE"
         self.config.device.runtime_mode = "cadenced"
@@ -800,6 +925,7 @@ class DetermineMetricsTests(HILServerTestCase):
 
     def test_determine_metrics_uses_override_clock_for_runtime_options_only(self) -> None:
         # Clock overrides should affect runtime measurement options without mutating the static model-build context.
+        """Validate determine metrics uses override clock for runtime options only."""
         server = self.build_server()
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
@@ -825,6 +951,7 @@ class DetermineMetricsTests(HILServerTestCase):
 
     def test_determine_metrics_unsampled_stm_clock_logs_minus_one(self) -> None:
         # If the STM32 backend does not report a sampled clock, the server should emit the stable sentinel rather than fabricating a value.
+        """Validate determine metrics unsampled stm clock logs minus one."""
         server = self.build_server()
         self.config.device.name = "STM32_NUCLEO_N657X0_Q"
         fake_device = MagicMock()
@@ -846,6 +973,7 @@ class DetermineMetricsTests(HILServerTestCase):
 
     def test_determine_metrics_invalid_clock_override_returns_request_error(self) -> None:
         # Invalid clock overrides should return a structured request error before any backend work starts.
+        """Validate determine metrics invalid clock override returns request error."""
         server = self.build_server()
 
         with patch("hil_server.resolve_device_options", return_value={"cpu_clock_mhz": 600}), patch(
@@ -909,6 +1037,7 @@ class StartLoopTests(HILServerTestCase):
 
     def test_start_normalizes_structured_payload(self) -> None:
         # Structured network payloads should normalize into the same call signature used by simpler requests.
+        """Validate start normalizes structured payload."""
         server = self.build_server()
         payload = self.request_payload(
             runtime_metadata=self.request_runtime_metadata(flops=1, timesteps=32, input_dim=2),
@@ -994,6 +1123,7 @@ class InitializationTests(HILServerTestCase):
 
     def test_constructor_preserves_explicit_component_selection_without_bootstrap(self) -> None:
         # Constructor setup should defer bootstrap while keeping the explicit component contract intact.
+        """Validate constructor preserves explicit component selection without bootstrap."""
         server = self.build_server()
 
         self.dataset_registry_mock.assert_not_called()
@@ -1008,6 +1138,7 @@ class InitializationTests(HILServerTestCase):
 
     def test_constructor_preserves_model_params_and_search_blocks(self) -> None:
         # Preloaded model params and search blocks should survive construction unchanged.
+        """Validate constructor preserves model params and search blocks."""
         self.config.model = SimpleNamespace(
             family="custom_family",
             params=Dict(width=8, export_variant="untrained"),
@@ -1023,6 +1154,7 @@ class InitializationTests(HILServerTestCase):
 
     def test_constructor_requires_explicit_dataset_task_and_model_blocks(self) -> None:
         # The breaking contract rejects configs that omit component blocks.
+        """Validate constructor requires explicit dataset task and model blocks."""
         delattr(self.config, "dataset")
 
         with self.assertRaisesRegex(KeyError, "dataset"):
@@ -1058,6 +1190,7 @@ class InitializationTests(HILServerTestCase):
 
     def test_pipeline_bootstraps_once_across_multiple_requests(self) -> None:
         # The server should cache the modular bootstrap so repeated requests do not reload datasets or rebuild component state.
+        """Validate pipeline bootstraps once across multiple requests."""
         server = self.build_server()
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
@@ -1092,6 +1225,7 @@ class InitializationTests(HILServerTestCase):
 
     def test_latency_budget_fallback_uses_dataset_config_without_legacy_data_block(self) -> None:
         # Latency-budget fallback should prefer dataset params directly from the explicit dataset block.
+        """Validate latency budget fallback uses dataset config without legacy data block."""
         self.config.dataset = SimpleNamespace(
             name="oxiod",
             params=Dict(directory="data", sampling_rate_hz=100, window_size=32, stride=4),
@@ -1117,6 +1251,7 @@ class InitializationTests(HILServerTestCase):
 
     def test_require_calibration_split_raises_when_dataset_has_no_calibration_data(self) -> None:
         # Calibration-dependent requests should fail with a clear error when the dataset cannot supply any calibration split.
+        """Validate require calibration split raises when dataset has no calibration data."""
         server = self.build_server()
         server.dataset_bundle = DatasetBundle(
             train=self.train_split,
@@ -1133,6 +1268,7 @@ class InitializationTests(HILServerTestCase):
 
     def test_determine_metrics_returns_config_error_when_calibration_data_is_missing(self) -> None:
         # Missing calibration data should surface as a structured config error rather than a backend crash.
+        """Validate determine metrics returns config error when calibration data is missing."""
         server = self.build_server()
         server.dataset_bundle = DatasetBundle(
             train=self.train_split,
@@ -1164,6 +1300,7 @@ class InitializationTests(HILServerTestCase):
 
     def test_determine_metrics_uses_dataset_calibration_fallback_when_bundle_calibration_missing(self) -> None:
         # If the bundle omits a calibration split, the server should ask the dataset adapter for one before failing the request.
+        """Validate determine metrics uses dataset calibration fallback when bundle calibration missing."""
         FakeDataset.bundle = DatasetBundle(
             train=self.train_split,
             val=self.train_split,
@@ -1503,7 +1640,7 @@ class SketchVariantTests(unittest.TestCase):
         device_name : str, optional
             Device profile used to route uniform sketch variants.
         target_core : str | None, optional
-            Optional Portenta target core (``cm7``/``cm4``).
+            Optional Portenta target core (``CM7``/``CM4``).
 
         Returns
         -------
@@ -1524,6 +1661,15 @@ class SketchVariantTests(unittest.TestCase):
         return server
 
     def _write_sketch(self, path: Path, label: str) -> None:
+        """Write sketch.
+
+        Parameters
+        ----------
+        path : Path
+            Path to the file used by the helper.
+        label : str
+            Label written alongside the captured path.
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"// {label}\n")
 
@@ -1613,7 +1759,7 @@ class SketchVariantTests(unittest.TestCase):
             self.assertIn("no_energy_shared_cm4", out_path.read_text())
 
     def test_selects_oxiod_representative_variant_and_copies_header(self) -> None:
-        """OxIOD representative staging should copy the sketch and staged include header."""
+        """Representative OxIOD staging should copy the sketch and staged include header."""
         # Representative input-mode runs should switch sketches and copy the generated header that drives the sample payload.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
@@ -1634,7 +1780,7 @@ class SketchVariantTests(unittest.TestCase):
             self.assertEqual((candidate_dir / "tinyodom_input_data.h").read_text(), "// header\n")
 
     def test_selects_oxiod_real_variant_and_copies_header(self) -> None:
-        """OxIOD real-data staging should copy the sketch and staged include header."""
+        """Real-data OxIOD staging should copy the sketch and staged include header."""
         # Real-input runs should stage the real-data sketch and copy the matching generated header.
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
@@ -1700,6 +1846,7 @@ class SketchVariantTests(unittest.TestCase):
 
     def test_invalid_input_mode_raises(self) -> None:
         # Unknown input modes should fail before sketch selection can stage the wrong artifact.
+        """Validate invalid input mode raises."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
@@ -1738,6 +1885,7 @@ class SketchVariantTests(unittest.TestCase):
 
     def test_portenta_uniform_requires_target_core(self) -> None:
         # Uniform Portenta sketch selection needs an explicit target core so the server does not guess between CM4 and CM7.
+        """Validate Portenta uniform requires target core."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"

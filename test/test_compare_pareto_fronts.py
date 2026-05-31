@@ -24,8 +24,12 @@ def load_compare_module() -> Any:
     -------
     Any
         Imported module object.
-    """
 
+    Raises
+    ------
+    RuntimeError
+        If existing validation or execution checks fail.
+    """
     spec = importlib.util.spec_from_file_location("compare_pareto_fronts_for_tests", SCRIPT_PATH)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {SCRIPT_PATH}")
@@ -53,7 +57,6 @@ def write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
     None
         The CSV is written to disk.
     """
-
     fieldnames: list[str] = []
     for row in rows:
         for key in row:
@@ -85,7 +88,6 @@ def base_config(tmp_path: Path, source_csv: Path, target_csv: Path, **overrides:
     Any
         ``FrontCompareConfig`` instance from the script under test.
     """
-
     kwargs = {
         "source_csv": source_csv,
         "target_csv": target_csv,
@@ -114,7 +116,6 @@ def read_json(path: Path) -> Any:
     Any
         Parsed JSON payload.
     """
-
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -131,7 +132,6 @@ def read_csv_rows(path: Path) -> list[dict[str, str]]:
     list[dict[str, str]]
         Parsed rows.
     """
-
     with path.open("r", encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle))
 
@@ -144,7 +144,6 @@ def test_cli_help_lists_semantic_flags() -> None:
     None
         The test passes when help exits successfully and includes expected flags.
     """
-
     result = subprocess.run(
         [sys.executable, "-B", str(SCRIPT_PATH), "--help"],
         check=False,
@@ -173,7 +172,6 @@ def test_missing_column_and_malformed_numeric_errors(tmp_path: Path) -> None:
     None
         The test passes when expected exceptions are raised.
     """
-
     source = tmp_path / "source.csv"
     target = tmp_path / "target.csv"
     write_csv(source, [{"id": "s1", "quality": "1.0", "cost": "10"}])
@@ -203,7 +201,6 @@ def test_filtering_status_sentinel_and_nonpositive_cost(tmp_path: Path) -> None:
     None
         The test passes when summary counts reflect filtered rows.
     """
-
     source = tmp_path / "source.csv"
     target = tmp_path / "target.csv"
     write_csv(
@@ -251,7 +248,6 @@ def test_pareto_recomputation_removes_dominated_rows_deterministically(tmp_path:
     None
         The test passes when expected front IDs are written.
     """
-
     source = tmp_path / "source.csv"
     target = tmp_path / "target.csv"
     write_csv(
@@ -285,7 +281,6 @@ def test_match_rules_can_produce_distinct_matches(tmp_path: Path) -> None:
     None
         The test passes when the two rules choose different target IDs.
     """
-
     source = tmp_path / "source.csv"
     target = tmp_path / "target.csv"
     write_csv(source, [{"id": "s1", "quality": "1.0", "cost": "10"}])
@@ -328,7 +323,6 @@ def test_denominator_modes_change_selected_reduction(tmp_path: Path) -> None:
     None
         The test passes when summary reductions use the requested denominator.
     """
-
     source = tmp_path / "source.csv"
     target = tmp_path / "target.csv"
     write_csv(source, [{"id": "s1", "quality": "1.0", "cost": "100"}])
@@ -361,7 +355,6 @@ def test_cs2_reverse_style_fixture_uses_source_vs_target_orientation(tmp_path: P
         The test passes when target-denominator source-vs-target reduction is
         positive and rounds to 44.1 percent.
     """
-
     source = tmp_path / "cadenced_replay.csv"
     target = tmp_path / "native_continuous.csv"
     write_csv(source, [{"id": "cad_replay", "quality": "1.0", "cost": "55.9"}])
@@ -394,7 +387,6 @@ def test_outputs_include_manifest_summary_fronts_and_matches(tmp_path: Path) -> 
     None
         The test passes when files exist and include expected schema values.
     """
-
     source = tmp_path / "source.csv"
     target = tmp_path / "target.csv"
     output_dir = tmp_path / "cli_out"

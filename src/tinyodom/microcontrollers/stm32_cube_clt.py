@@ -1,4 +1,4 @@
-"""STM32CubeCLT and GDB helper workflows for the STM32 backend.
+"""Describe sTM32CubeCLT and GDB helper workflows for the STM32 backend.
 
 These helpers wrap STM32CubeCLT build, sign, and program steps plus the
 ST-LINK GDB server flow used to debug-load split boot/application artifacts
@@ -58,10 +58,8 @@ class WorkflowError(RuntimeError):
     dataclasses and public error codes.
     """
 
-
 class SigningWorkflowError(WorkflowError):
     """Raised when trusted STM32 binary signing fails."""
-
 
 def _stm32_programmer_env(argv: list[str]) -> dict[str, str] | None:
     """Build an isolated environment for STM32CubeProgrammer.
@@ -78,7 +76,6 @@ def _stm32_programmer_env(argv: list[str]) -> dict[str, str] | None:
         first in ``LD_LIBRARY_PATH`` when launching ``STM32_Programmer_CLI``;
         otherwise ``None`` so non-Qt tools inherit the process environment.
     """
-
     if not argv:
         return None
     executable = Path(argv[0])
@@ -109,6 +106,15 @@ class BuildResult:
         Resolved STM32CubeIDE ``Debug`` directory used for the build.
     elf_path : pathlib.Path
         ELF artifact produced by the build.
+
+    Attributes
+    ----------
+    log : str
+        Combined build log captured from the invoked ``make`` commands.
+    debug_dir : Path
+        Resolved STM32CubeIDE ``Debug`` directory used for the build.
+    elf_path : Path
+        ELF artifact produced by the build.
     """
 
     log: str
@@ -121,6 +127,15 @@ class SizeResult:
     """Parsed size information from ``arm-none-eabi-size``.
 
     Parameters
+    ----------
+    elf_flash_bytes : int
+        Flash usage derived from ``text + data``.
+    ram_bytes : int
+        RAM usage derived from ``data + bss``.
+    raw_output : str
+        Raw stdout emitted by ``arm-none-eabi-size`` for logging/debugging.
+
+    Attributes
     ----------
     elf_flash_bytes : int
         Flash usage derived from ``text + data``.
@@ -144,6 +159,13 @@ class SignedBinaryResult:
     log : str
         Combined signing-tool output.
     output_bin : pathlib.Path
+        Trusted binary emitted by the signing tool.
+
+    Attributes
+    ----------
+    log : str
+        Combined signing-tool output.
+    output_bin : Path
         Trusted binary emitted by the signing tool.
     """
 
@@ -578,6 +600,11 @@ def sign_binary(
     -------
     SignedBinaryResult
         Signing log and trusted output path.
+
+    Raises
+    ------
+    SigningWorkflowError
+        If existing validation or execution checks fail.
     """
     resolved_tool = resolve_signing_tool(signing_tool)
     resolved_input = resolve_required_file_path(input_bin, label="STM32 unsigned binary")
@@ -644,6 +671,11 @@ def program_external_image(
     -------
     str
         Combined programmer log text.
+
+    Raises
+    ------
+    WorkflowError
+        If existing validation or execution checks fail.
     """
     cubeprog_dir = (
         default_cubeprog_bin()
@@ -905,6 +937,19 @@ def _run_gdb_load(
         # is therefore treated as success unless the partial output clearly
         # contains a failure signature.
         def _expected_post_jump_disconnect(output: str) -> bool:
+            """Detect the expected GDB disconnect after jumping into the app.
+
+            Parameters
+            ----------
+            output : str
+                Raw command or tool output to parse.
+
+            Returns
+            -------
+            bool
+                ``True`` when the partial GDB log matches the expected
+                post-jump disconnect path.
+            """
             lowered = output.lower()
             loaded_ok = (
                 "loading section" in lowered

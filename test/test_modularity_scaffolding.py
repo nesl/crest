@@ -40,6 +40,18 @@ class DummyDataset(DatasetABC):
     """Minimal dataset implementation used for scaffolding tests."""
 
     def load(self, dataset_config):
+        """Load the requested operation.
+
+        Parameters
+        ----------
+        dataset_config : object
+            Dataset configuration used to build the task bundle.
+
+        Returns
+        -------
+        object
+            Dataset bundle returned by the fake loader.
+        """
         split = DataSplit(inputs=[1.0], targets=[0.0])
         return DatasetBundle(train=split, metadata={"source": dataset_config})
 
@@ -48,7 +60,20 @@ class DummyTask(TaskABC):
     """Minimal task implementation used for scaffolding tests."""
 
     def build_target_spec(self, bundle, task_config):
-        """Return a tiny target spec while preserving the supplied task config."""
+        """Return a tiny target spec while preserving the supplied task config.
+
+        Parameters
+        ----------
+        bundle : object
+            Task bundle passed into the scaffolded task method.
+        task_config : object
+            Task configuration passed into the scaffolded method.
+
+        Returns
+        -------
+        object
+            Constructed target spec.
+        """
         del bundle
         return TargetSpec(
             task_type="dummy",
@@ -58,7 +83,20 @@ class DummyTask(TaskABC):
         )
 
     def metric_contract(self, target_spec, task_config):
-        """Expose a single training metric for default ABC behavior tests."""
+        """Expose a single training metric for default ABC behavior tests.
+
+        Parameters
+        ----------
+        target_spec : object
+            Target specification passed into the task method.
+        task_config : object
+            Task configuration passed into the scaffolded method.
+
+        Returns
+        -------
+        object
+            Metric contract returned by the fake task.
+        """
         del target_spec, task_config
         return TaskMetricContract(
             available_metric_names={"loss"},
@@ -67,7 +105,17 @@ class DummyTask(TaskABC):
         )
 
     def compile_model(self, model, task_config, target_spec):
-        """Accept the compile hook without mutating the supplied model."""
+        """Accept the compile hook without mutating the supplied model.
+
+        Parameters
+        ----------
+        model : object
+            Model instance supplied to the task method.
+        task_config : object
+            Task configuration passed into the scaffolded method.
+        target_spec : object
+            Target specification passed into the task method.
+        """
         del model, task_config, target_spec
 
     def build_fit_plan(
@@ -79,7 +127,26 @@ class DummyTask(TaskABC):
         mode,
         combine_train_val,
     ):
-        """Return a minimal fit plan with one callback and monitor metric."""
+        """Return a minimal fit plan with one callback and monitor metric.
+
+        Parameters
+        ----------
+        bundle : object
+            Task bundle passed into the scaffolded task method.
+        task_config : object
+            Task configuration passed into the scaffolded method.
+        target_spec : object
+            Target specification passed into the task method.
+        mode : object
+            Dataset split mode requested by the test.
+        combine_train_val : object
+            Whether training and validation splits should be combined.
+
+        Returns
+        -------
+        object
+            Constructed fit plan.
+        """
         del bundle, task_config, target_spec, mode, combine_train_val
         return FitPlan(
             fit_kwargs={"x": [1.0], "y": [0.0]},
@@ -88,12 +155,46 @@ class DummyTask(TaskABC):
         )
 
     def evaluate(self, model, split, task_config, target_spec):
-        """Return a trivial evaluation payload for ABC default wiring tests."""
+        """Return a trivial evaluation payload for ABC default wiring tests.
+
+        Parameters
+        ----------
+        model : object
+            Model instance supplied to the task method.
+        split : object
+            Dataset split name used by the task helper.
+        task_config : object
+            Task configuration passed into the scaffolded method.
+        target_spec : object
+            Target specification passed into the task method.
+
+        Returns
+        -------
+        object
+            Evaluation metrics returned by the fake task.
+        """
         del model, split, task_config, target_spec
         return EvaluationResult(metrics={"loss": 0.0})
 
     def evaluate_predictions(self, predictions, split, task_config, target_spec):
-        """Return a trivial prediction-level evaluation payload."""
+        """Return a trivial prediction-level evaluation payload.
+
+        Parameters
+        ----------
+        predictions : object
+            Predictions passed into the task metric helper.
+        split : object
+            Dataset split name used by the task helper.
+        task_config : object
+            Task configuration passed into the scaffolded method.
+        target_spec : object
+            Target specification passed into the task method.
+
+        Returns
+        -------
+        object
+            Prediction metrics returned by the fake task.
+        """
         del predictions, split, task_config, target_spec
         return EvaluationResult(metrics={"loss": 0.0})
 
@@ -102,12 +203,42 @@ class DummyModelFamily(ModelFamilyABC):
     """Minimal model-family implementation used for scaffolding tests."""
 
     def sample_hparams(self, trial, ctx, config):
-        """Return one deterministic hyperparameter payload."""
+        """Return one deterministic hyperparameter payload.
+
+        Parameters
+        ----------
+        trial : object
+            Trial object supplied to the model builder.
+        ctx : object
+            Model context passed into the helper.
+        config : object
+            Configuration object used by the helper.
+
+        Returns
+        -------
+        object
+            Hyperparameters returned by the fake model family.
+        """
         del trial, ctx, config
         return {"width": 4}
 
     def build_model(self, hparams, ctx, config):
-        """Return the sentinel model used by the scaffolding tests."""
+        """Return the sentinel model used by the scaffolding tests.
+
+        Parameters
+        ----------
+        hparams : object
+            Hyperparameters supplied to the model-family helper.
+        ctx : object
+            Model context passed into the helper.
+        config : object
+            Configuration object used by the helper.
+
+        Returns
+        -------
+        object
+            Constructed model.
+        """
         del hparams, ctx, config
         return sentinel.model
 
@@ -117,6 +248,7 @@ class PipelineTypesTests(unittest.TestCase):
 
     def test_pipeline_types_instantiate_with_minimal_payloads(self) -> None:
         # The pipeline payload types should instantiate cleanly with the minimal fields the scaffold expects.
+        """Validate pipeline types instantiate with minimal payloads."""
         split = DataSplit(inputs=[1.0], targets=[0.0])
         bundle = DatasetBundle(train=split, input_shape=(1,), input_dtype="float32")
         target_spec = TargetSpec(
@@ -141,6 +273,7 @@ class PipelineTypesTests(unittest.TestCase):
 
     def test_payload_dataclasses_disable_value_equality(self) -> None:
         # Pipeline payload dataclasses should compare by identity so mutable payloads are not mistaken for pure values.
+        """Validate payload dataclasses disable value equality."""
         self.assertFalse(DataSplit.__dataclass_params__.eq)
         self.assertFalse(DatasetBundle.__dataclass_params__.eq)
         self.assertFalse(TargetSpec.__dataclass_params__.eq)
@@ -155,6 +288,7 @@ class RegistryTests(unittest.TestCase):
 
     def test_registry_registers_and_returns_classes(self) -> None:
         # Component registries should return the exact classes registered under each name.
+        """Validate registry registers and returns classes."""
         registry = ComponentRegistry[object]("component")
         registry.register("dummy", DummyDataset)
 
@@ -164,6 +298,7 @@ class RegistryTests(unittest.TestCase):
 
     def test_registry_rejects_duplicate_names(self) -> None:
         # Component registries should reject duplicate names before they overwrite an existing registration.
+        """Validate registry rejects duplicate names."""
         registry = ComponentRegistry[object]("component")
         registry.register("dummy", DummyDataset)
 
@@ -172,6 +307,7 @@ class RegistryTests(unittest.TestCase):
 
     def test_registry_rejects_empty_or_whitespace_names(self) -> None:
         # Component registries should reject empty or whitespace-only names.
+        """Validate registry rejects empty or whitespace names."""
         registry = ComponentRegistry[object]("component")
 
         with self.assertRaises(ValueError):
@@ -181,6 +317,7 @@ class RegistryTests(unittest.TestCase):
 
     def test_registry_rejects_missing_names(self) -> None:
         # Component registries should reject classes that do not define a usable registry name.
+        """Validate registry rejects missing names."""
         registry = ComponentRegistry[object]("component")
 
         with self.assertRaises(KeyError):
@@ -195,7 +332,6 @@ class RegistryTests(unittest.TestCase):
             Asserts repeated registration calls are idempotent and global
             registries expose the new audio components.
         """
-
         ensure_builtin_components_registered()
         ensure_builtin_components_registered()
 
@@ -208,7 +344,6 @@ class RegistryTests(unittest.TestCase):
 
     def test_audio_registration_avoids_odometry_components(self) -> None:
         """Audio-only registration should not require OxIOD imports."""
-
         dataset_registry._items.pop("oxiod", None)
         dataset_registry._items.pop("urbansound8k_mel", None)
         task_registry._items.pop("sound_classification", None)
@@ -226,6 +361,7 @@ class InterfaceDefaultsTests(unittest.TestCase):
     """Validate the generic ABC defaults defined in Phase 1."""
 
     def setUp(self) -> None:
+        """Prepare test fixtures."""
         self.dataset = DummyDataset()
         self.task = DummyTask()
         self.model_family = DummyModelFamily()
@@ -244,17 +380,20 @@ class InterfaceDefaultsTests(unittest.TestCase):
 
     def test_default_name_property_uses_class_name(self) -> None:
         # Default component names should fall back to the class name when no explicit registry name is provided.
+        """Validate default name property uses class name."""
         self.assertEqual(self.dataset.name, "DummyDataset")
         self.assertEqual(self.task.name, "DummyTask")
         self.assertEqual(self.model_family.name, "DummyModelFamily")
 
     def test_dataset_default_methods_are_noops_or_passthroughs(self) -> None:
         # Dataset interface defaults should stay no-op or passthrough so subclasses only override what they need.
+        """Validate dataset default methods are noops or passthroughs."""
         self.dataset.validate_config({"ok": True})
         self.assertIs(self.dataset.make_calibration_data(self.bundle, {}), self.split)
 
     def test_task_default_methods_are_noops(self) -> None:
         # Task interface defaults should remain no-ops until a concrete task overrides them.
+        """Validate task default methods are noops."""
         self.task.validate_config({"ok": True})
         self.task.validate_model_outputs(sentinel.model, self.target_spec)
         self.assertEqual(self.task.history_component_keys(self.target_spec), [])
@@ -271,6 +410,7 @@ class InterfaceDefaultsTests(unittest.TestCase):
 
     def test_model_family_default_helpers_are_generic(self) -> None:
         # Model-family defaults should keep returning the generic helper behavior the scaffold promises.
+        """Validate model family default helpers are generic."""
         self.model_family.validate_config({"ok": True})
         self.model_family.validate_hparams({"width": 4}, self.ctx, {"ok": True})
         self.assertEqual(
@@ -283,6 +423,7 @@ class InterfaceDefaultsTests(unittest.TestCase):
 
     def test_default_load_model_uses_generic_keras_loader(self) -> None:
         # Default model loading should continue delegating to the generic Keras loader.
+        """Validate default load model uses generic keras loader."""
         with tempfile.TemporaryDirectory() as tmpdir:
             model_path = Path(tmpdir) / "model.keras"
             model_path.write_text("placeholder")
@@ -309,6 +450,7 @@ class InterfaceDefaultsTests(unittest.TestCase):
 
     def test_default_materialize_export_model_routes_trained_variant_through_load_model(self) -> None:
         # Default export materialization should route trained variants through load_model.
+        """Validate default materialize export model routes trained variant through load model."""
         with tempfile.TemporaryDirectory() as tmpdir:
             checkpoint_path = Path(tmpdir) / "trained.keras"
             checkpoint_path.write_text("placeholder")
@@ -327,6 +469,7 @@ class InterfaceDefaultsTests(unittest.TestCase):
 
     def test_default_materialize_export_model_rejects_missing_trained_checkpoint(self) -> None:
         # Default export materialization should reject trained variants that omit a checkpoint.
+        """Validate default materialize export model rejects missing trained checkpoint."""
         missing_checkpoint = Path("/tmp/does-not-exist-trained.keras")
 
         with self.assertRaises(FileNotFoundError):
@@ -340,6 +483,7 @@ class InterfaceDefaultsTests(unittest.TestCase):
 
     def test_default_count_flops_uses_generic_keras_estimator(self) -> None:
         # The default model-family FLOP hook should use the shared generic Keras profiler when an input shape is available.
+        """Validate default count flops uses generic keras estimator."""
         model = tf.keras.Sequential(
             [
                 tf.keras.layers.Input(shape=(1,)),
@@ -354,6 +498,7 @@ class InterfaceDefaultsTests(unittest.TestCase):
 
     def test_default_count_flops_rejects_missing_input_shape(self) -> None:
         # Generic FLOP estimation needs a logical input shape so it can build the batch-size-1 signature.
+        """Validate default count flops rejects missing input shape."""
         ctx = ModelBuildContext(
             input_shape=None,
             input_dtype="float32",
@@ -369,6 +514,7 @@ class PurityTests(unittest.TestCase):
 
     def test_new_modules_do_not_import_forbidden_runtime_modules(self) -> None:
         # The modular scaffold should keep new modules free of the forbidden runtime imports.
+        """Validate new modules do not import forbidden runtime modules."""
         forbidden_modules = {
             "tinyodom.data",
             "tinyodom.model",

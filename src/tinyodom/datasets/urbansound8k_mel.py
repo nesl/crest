@@ -1,4 +1,4 @@
-"""UrbanSound8K cached log-mel dataset adapter."""
+"""Describe urbanSound8K cached log-mel dataset adapter."""
 
 from __future__ import annotations
 
@@ -63,7 +63,6 @@ def _cfg_get(config: Any, key: str, default: Any = None) -> Any:
     Any
         Resolved value or ``default``.
     """
-
     getter = getattr(config, "get", None)
     if callable(getter):
         return getter(key, default)
@@ -91,7 +90,6 @@ def _require_positive_number(raw_value: Any, *, field_name: str) -> float:
         If the value is missing, boolean, nonnumeric, non-finite, or
         non-positive.
     """
-
     if raw_value in (None, "") or isinstance(raw_value, bool):
         raise ValueError(f"UrbanSound8KMelDataset requires positive numeric {field_name}.")
     try:
@@ -123,7 +121,6 @@ def _read_metadata(cache_dir: Path) -> dict[str, Any]:
     ValueError
         If the file does not decode to a JSON object.
     """
-
     metadata_path = cache_dir / "metadata.json"
     if not metadata_path.is_file():
         raise FileNotFoundError(f"UrbanSound8K cache is missing {metadata_path}.")
@@ -141,7 +138,6 @@ def _expected_metadata_values() -> dict[str, Any]:
     dict[str, Any]
         Metadata fields that must exactly match the v1 cache contract.
     """
-
     return {
         "schema_version": CACHE_SCHEMA_VERSION,
         "dataset_name": DATASET_NAME,
@@ -188,8 +184,12 @@ def _fold_split_for_test_fold(test_fold: int) -> FoldSplit:
     -------
     dict[str, tuple[int, ...]]
         Split ownership mapping for train, validation, and test.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if int(test_fold) not in ALL_FOLDS:
         raise ValueError("rotation_fold_index must be an UrbanSound8K fold from 1 to 10.")
     val_fold = int(test_fold) % len(ALL_FOLDS) + 1
@@ -209,8 +209,12 @@ def _metadata_fold_split(metadata: dict[str, Any]) -> FoldSplit:
     -------
     dict[str, tuple[int, ...]]
         Normalized split ownership mapping.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     raw_split = metadata.get("fold_split")
     if not isinstance(raw_split, dict):
         raise ValueError("UrbanSound8K metadata field 'fold_split' must be an object.")
@@ -254,8 +258,12 @@ def _validate_metadata(metadata: dict[str, Any], *, expected_batch_period_ms: fl
     -------
     dict[str, tuple[int, ...]]
         Normalized fold split declared by the cache metadata.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if metadata.get("schema_version") != CACHE_SCHEMA_VERSION:
         raise ValueError(
             "UrbanSound8K cache schema_version is stale or unsupported; "
@@ -316,8 +324,12 @@ def _validate_split_arrays(
     -------
     None
         Raises on invalid split contents.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     missing = [array_name for array_name in REQUIRED_CACHE_ARRAYS if array_name not in arrays]
     if missing:
         raise ValueError(f"UrbanSound8K {split_name}.npz missing arrays: {', '.join(missing)}.")
@@ -376,8 +388,12 @@ def _load_split(cache_dir: Path, split_name: str, fold_split: FoldSplit) -> Data
     -------
     DataSplit
         Generic split with inputs, integer labels, and split metadata arrays.
-    """
 
+    Raises
+    ------
+    FileNotFoundError
+        If existing validation or execution checks fail.
+    """
     split_path = cache_dir / f"{split_name}.npz"
     if not split_path.is_file():
         raise FileNotFoundError(f"UrbanSound8K cache is missing {split_path}.")
@@ -412,7 +428,6 @@ class UrbanSound8KMelDataset(DatasetABC):
         str
             Stable dataset identifier.
         """
-
         return COMPONENT_NAME
 
     def validate_config(self, dataset_config: Any) -> None:
@@ -427,8 +442,12 @@ class UrbanSound8KMelDataset(DatasetABC):
         -------
         None
             Raises if required pre-load fields are missing or invalid.
-        """
 
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         cache_dir = _cfg_get(dataset_config, "cache_dir", None)
         if cache_dir in (None, ""):
             raise ValueError("UrbanSound8KMelDataset requires dataset.params.cache_dir.")
@@ -453,7 +472,6 @@ class UrbanSound8KMelDataset(DatasetABC):
             Dataset bundle containing train, validation, test, and calibration
             splits plus audio classification metadata.
         """
-
         self.validate_config(dataset_config)
         cache_dir = Path(str(_cfg_get(dataset_config, "cache_dir"))).expanduser().resolve()
         batch_period_ms = _require_positive_number(
@@ -508,6 +526,5 @@ class UrbanSound8KMelDataset(DatasetABC):
         DataSplit | None
             Calibration split stored in the cache.
         """
-
         del dataset_config
         return bundle.calibration

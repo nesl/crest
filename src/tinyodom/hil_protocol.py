@@ -50,6 +50,7 @@ class HandshakeResult:
     error : str | None
         Human-readable protocol error, if the handshake failed.
     """
+
     dut_log: List[str]
     harness_log: List[str]
     dut_timer_found: bool
@@ -76,6 +77,7 @@ class HarnessSessionResult:
     error : str | None
         Human-readable protocol error, if one occurred.
     """
+
     harness_log: List[str]
     harness_ready: bool
     harness_done: bool

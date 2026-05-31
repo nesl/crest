@@ -39,6 +39,15 @@ class ObjectiveSpec:
         Optimization direction, either ``"minimize"`` or ``"maximize"``.
     metric : str
         Config or log metric name that resolved to ``column``.
+
+    Attributes
+    ----------
+    column : str
+        CSV column containing the objective values.
+    direction : str
+        Optimization direction, either ``"minimize"`` or ``"maximize"``.
+    metric : str
+        Config or log metric name that resolved to ``column``.
     """
 
     column: str
@@ -51,6 +60,31 @@ class ReplayCandidate:
     """One source NAS candidate reconstructed for HIL replay.
 
     Parameters
+    ----------
+    source_row_index : int
+        Zero-based CSV row index from the source run.
+    source_row : dict[str, Any]
+        Raw source CSV row.
+    family_hparams : dict[str, Any]
+        Model-family-owned hparams for ``HILServer.determine_metrics``.
+    runtime_metadata : dict[str, Any]
+        Runtime-owned metadata for ``HILServer.determine_metrics``.
+    quantization_mode : str
+        Candidate deployment quantization mode.
+    device_options_overrides : dict[str, Any] | None
+        Optional runner-owned device options reconstructed from the source row.
+    model_variant : str | None
+        Optional model variant override forwarded to HIL.
+    checkpoint_path : str | None
+        Optional checkpoint path forwarded to HIL.
+    objective_values : dict[str, float]
+        Selected objective values keyed by objective CSV column.
+    payload_key : str
+        Legacy stable JSON key preserved for artifact compatibility.
+    replay_payload_key : str
+        Runtime-option-aware stable JSON key used for new dedupe/resume checks.
+
+    Attributes
     ----------
     source_row_index : int
         Zero-based CSV row index from the source run.
@@ -100,6 +134,14 @@ class CompletedReplayKeys:
         ``replay_payload_key``.
     legacy_payload_keys : frozenset[str]
         Legacy keys loaded from older rows that only have ``payload_key``.
+
+    Attributes
+    ----------
+    replay_payload_keys : frozenset[str]
+        New runtime-option-aware keys loaded from rows with
+        ``replay_payload_key``.
+    legacy_payload_keys : frozenset[str]
+        Legacy keys loaded from older rows that only have ``payload_key``.
     """
 
     replay_payload_keys: frozenset[str]
@@ -118,7 +160,6 @@ class CompletedReplayKeys:
         bool
             ``True`` when the candidate should be skipped for resume.
         """
-
         return (
             candidate.replay_payload_key in self.replay_payload_keys
             or candidate.payload_key in self.legacy_payload_keys
@@ -159,6 +200,37 @@ class ReplayRunConfig:
         Optional model variant forwarded to HIL.
     checkpoint_path : str | None
         Optional checkpoint path forwarded to HIL.
+
+    Attributes
+    ----------
+    source_run_dir : Path
+        Source NAS run directory.
+    target_run_dir : Path | None
+        Target run directory containing a target config.
+    target_config : Path | None
+        Explicit target config path.
+    source_csv : Path | None
+        Optional source CSV override.
+    source_config : Path | None
+        Optional source config override.
+    objectives : str | None
+        Optional source objective override string.
+    output_dir : Path | None
+        Optional replay output directory.
+    max_candidates : int | None
+        Optional positive cap after Pareto selection and dedupe.
+    dry_run : bool
+        Whether to write replay payloads without running HIL.
+    resume : bool
+        Whether to skip payloads already present in the result CSV.
+    allow_gpu : bool
+        Whether to leave ``CUDA_VISIBLE_DEVICES`` untouched for HIL execution.
+    device_option_policy : str
+        Device option replay policy.
+    model_variant : str | None
+        Optional model variant forwarded to HIL.
+    checkpoint_path : str | None
+        Optional checkpoint path forwarded to HIL.
     """
 
     source_run_dir: Path
@@ -183,8 +255,12 @@ class ReplayRunConfig:
         -------
         None
             The method raises ``ValueError`` for invalid configurations.
-        """
 
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         if self.max_candidates is not None and self.max_candidates <= 0:
             raise ValueError("max_candidates must be a positive integer when provided.")
         if self.target_run_dir is None and self.target_config is None:
@@ -205,8 +281,12 @@ def normalize_direction(value: Any) -> str:
     -------
     str
         ``"minimize"`` or ``"maximize"``.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     text = str(value).strip().lower()
     if text in {"minimize", "min"}:
         return "minimize"
@@ -228,7 +308,6 @@ def parse_bool(value: Any) -> bool:
     bool
         Parsed boolean value.
     """
-
     if isinstance(value, bool):
         return value
     if value is None:
@@ -254,7 +333,6 @@ def parse_cell_value(value: Any) -> Any:
     Any
         Parsed scalar/list value suitable for HIL request payloads.
     """
-
     if value is None:
         return None
     if not isinstance(value, str):
@@ -300,7 +378,6 @@ def parse_finite_float(value: Any) -> float | None:
     float | None
         Parsed finite float, or ``None``.
     """
-
     parsed = parse_cell_value(value)
     if isinstance(parsed, bool) or parsed is None:
         return None
@@ -328,7 +405,6 @@ def metric_column(columns: Sequence[str], metric: str) -> str | None:
     str | None
         Matching column, or ``None`` when unavailable.
     """
-
     available = set(columns)
     candidates = [metric]
     if metric in {"rmse_total", "aggregate_rmse"}:
@@ -355,8 +431,12 @@ def parse_objective_override(value: str | None, columns: Sequence[str]) -> tuple
     -------
     tuple[ObjectiveSpec, ...] | None
         Parsed objective specs, or ``None`` when no override was provided.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if value is None or not value.strip():
         return None
     specs: list[ObjectiveSpec] = []
@@ -396,7 +476,6 @@ def parse_json_list(value: Any) -> list[Any]:
     list[Any]
         Parsed JSON list, or an empty list.
     """
-
     if value is None:
         return []
     text = str(value).strip()
@@ -432,8 +511,12 @@ def resolve_objective_specs(
     -------
     tuple[ObjectiveSpec, ...]
         Objective specs used for Pareto-front selection.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     overridden = parse_objective_override(override, columns)
     if overridden is not None:
         return overridden
@@ -498,8 +581,12 @@ def load_yaml_config(path: Path | None) -> dict[str, Any]:
     -------
     dict[str, Any]
         Parsed config mapping.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if path is None:
         return {}
     with path.open("r", encoding="utf-8") as handle:
@@ -522,7 +609,6 @@ def find_config_path(run_dir: Path) -> Path | None:
     pathlib.Path | None
         Resolved config path, or ``None``.
     """
-
     exact = run_dir / "nas_config.yaml"
     if exact.exists():
         return exact
@@ -544,8 +630,12 @@ def find_csv_path(run_dir: Path, config: Mapping[str, Any]) -> Path:
     -------
     pathlib.Path
         Source NAS log path.
-    """
 
+    Raises
+    ------
+    FileNotFoundError
+        If existing validation or execution checks fail.
+    """
     outputs = config.get("outputs", {}) if isinstance(config.get("outputs"), Mapping) else {}
     log_name = outputs.get("log_file_name")
     if log_name:
@@ -570,8 +660,12 @@ def read_csv_rows(path: Path) -> tuple[list[dict[str, str]], list[str]]:
     -------
     tuple[list[dict[str, str]], list[str]]
         Rows and fieldnames.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames:
@@ -597,7 +691,6 @@ def is_source_row_valid(row: Mapping[str, Any], objectives: Sequence[ObjectiveSp
     bool
         ``True`` when the row can be considered for Pareto selection.
     """
-
     if parse_bool(row.get("pruned")):
         return False
     error_code = parse_finite_float(row.get("error_code"))
@@ -637,7 +730,6 @@ def dominates(left: Sequence[float], right: Sequence[float], objectives: Sequenc
     bool
         ``True`` when ``left`` is no worse on all objectives and better on one.
     """
-
     no_worse = True
     strictly_better = False
     for left_value, right_value, objective in zip(left, right, objectives):
@@ -674,7 +766,6 @@ def pareto_indices(
     list[int]
         Zero-based indices of valid non-dominated rows.
     """
-
     valid_values: list[tuple[int, tuple[float, ...]]] = []
     for index, row in enumerate(rows):
         if not is_source_row_valid(row, objectives):
@@ -706,7 +797,6 @@ def is_missing_device_option_value(value: Any) -> bool:
     bool
         ``True`` when the value is empty or a known sentinel.
     """
-
     if value is None:
         return True
     text = str(value).strip().lower()
@@ -735,8 +825,12 @@ def resolve_device_options_overrides(
     -------
     dict[str, Any] | None
         Device option override payload, or ``None`` when omitted.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if policy == "target-default":
         return None
     if policy != "preserve-source":
@@ -792,7 +886,6 @@ def stable_payload_key(
     str
         Deterministic JSON payload key.
     """
-
     return json.dumps(
         {
             "family_hparams": dict(family_hparams),
@@ -829,7 +922,6 @@ def legacy_payload_key(
     str
         Deterministic JSON payload key matching pre-migration artifacts.
     """
-
     return json.dumps(
         {
             "family_hparams": dict(family_hparams),
@@ -871,8 +963,12 @@ def build_replay_candidate(
     -------
     ReplayCandidate
         Candidate payload ready for HIL replay.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     family_hparams: dict[str, Any] = {}
     runtime_metadata: dict[str, Any] = {}
     for column, raw_value in row.items():
@@ -951,7 +1047,6 @@ def dedupe_candidates(candidates: Iterable[ReplayCandidate]) -> list[ReplayCandi
     list[ReplayCandidate]
         Deduplicated candidates.
     """
-
     seen: set[str] = set()
     deduped: list[ReplayCandidate] = []
     for candidate in candidates:
@@ -975,7 +1070,6 @@ def load_completed_payload_keys(results_path: Path) -> CompletedReplayKeys:
     CompletedReplayKeys
         New-format and legacy completed payload keys.
     """
-
     if not results_path.exists():
         return CompletedReplayKeys(replay_payload_keys=frozenset(), legacy_payload_keys=frozenset())
     replay_payload_keys: set[str] = set()
@@ -1012,7 +1106,6 @@ def default_output_dir(source_run_dir: Path, target_config_path: Path, timestamp
     pathlib.Path
         Default replay artifact directory.
     """
-
     target_parent = target_config_path.parent
     target_name = target_parent.name if target_parent != REPO_ROOT else target_config_path.stem
     return DEFAULT_OUTPUT_ROOT / f"{source_run_dir.name}__on__{target_name}_{timestamp}"
@@ -1031,7 +1124,6 @@ def replay_config_to_manifest_args(config: ReplayRunConfig) -> dict[str, Any]:
     dict[str, Any]
         JSON-serializable mapping using current CLI argument names.
     """
-
     return {
         "source_run_dir": str(config.source_run_dir),
         "target_run_dir": str(config.target_run_dir) if config.target_run_dir else None,
@@ -1088,7 +1180,6 @@ def write_manifest(
     config : ReplayRunConfig
         Replay run configuration.
     """
-
     manifest = {
         "source_run_dir": str(source_run_dir),
         "source_csv_path": str(source_csv_path),
@@ -1120,7 +1211,6 @@ def append_jsonl(path: Path, record: Mapping[str, Any]) -> None:
     record : Mapping[str, Any]
         JSON-compatible record.
     """
-
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, sort_keys=True) + "\n")
 
@@ -1156,7 +1246,6 @@ def flatten_result_row(
     dict[str, Any]
         Flattened CSV row.
     """
-
     row: dict[str, Any] = {
         "source_run": source_run_dir.name,
         "source_row_index": candidate.source_row_index,
@@ -1199,7 +1288,6 @@ class ResultCsvWriter:
         path : pathlib.Path
             Results CSV path.
         """
-
         self.path = path
         self.fieldnames: list[str] | None = None
         if path.exists():
@@ -1215,7 +1303,6 @@ class ResultCsvWriter:
         row : Mapping[str, Any]
             Flattened row to append.
         """
-
         serialized = {key: self._serialize(value) for key, value in row.items()}
         if self.fieldnames is None:
             self.fieldnames = list(serialized.keys())
@@ -1239,7 +1326,6 @@ class ResultCsvWriter:
         None
             This method mutates the CSV file in place.
         """
-
         with self.path.open("r", encoding="utf-8", newline="") as handle:
             rows = list(csv.DictReader(handle))
         with self.path.open("w", encoding="utf-8", newline="") as handle:
@@ -1262,7 +1348,6 @@ class ResultCsvWriter:
         Any
             CSV-compatible scalar value.
         """
-
         if isinstance(value, (dict, list, tuple)):
             return json.dumps(value, sort_keys=True)
         if value is None:
@@ -1284,8 +1369,14 @@ def resolve_target_config(target_run_dir: Path | None, target_config: Path | Non
     -------
     pathlib.Path
         Resolved target config path.
-    """
 
+    Raises
+    ------
+    FileNotFoundError
+        If existing validation or execution checks fail.
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if target_config:
         path = target_config.expanduser().resolve()
         if not path.exists():
@@ -1335,7 +1426,6 @@ def prepare_candidates(
         Candidates, objective specs, CSV path, config path, total row count,
         and selected Pareto row count before dedupe.
     """
-
     resolved_source_config_path = source_config_path or find_config_path(source_run_dir)
     source_config = load_yaml_config(resolved_source_config_path)
     resolved_source_csv_path = source_csv_path or find_csv_path(source_run_dir, source_config)
@@ -1381,7 +1471,6 @@ def create_hil_server(config_path: Path) -> Any:
     Any
         ``HILServer`` instance.
     """
-
     from hil_server import HILServer
 
     return HILServer(config_path=config_path)
@@ -1409,7 +1498,6 @@ def determine_candidate_metrics(
     Mapping[str, Any]
         Metric mapping returned by the replay backend.
     """
-
     determine_metrics = metrics_callback if metrics_callback is not None else server.determine_metrics
     return determine_metrics(
         candidate.family_hparams,
@@ -1436,7 +1524,6 @@ def request_record_for_candidate(candidate: ReplayCandidate, ordinal: int) -> di
     dict[str, Any]
         JSON-compatible request record.
     """
-
     return {
         "ordinal": ordinal,
         "source_row_index": candidate.source_row_index,
@@ -1472,8 +1559,12 @@ def run_replay(
     -------
     int
         Process exit code.
-    """
 
+    Raises
+    ------
+    FileNotFoundError
+        If existing validation or execution checks fail.
+    """
     source_run_dir = config.source_run_dir.expanduser().resolve()
     if not source_run_dir.exists():
         raise FileNotFoundError(f"Source run directory does not exist: {source_run_dir}")

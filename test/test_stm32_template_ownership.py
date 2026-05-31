@@ -30,8 +30,12 @@ def _load_manifest_rows() -> list[tuple[str, str, str]]:
     list[tuple[str, str, str]]
         ``(category, relative_path, source_path)`` rows. Entries that omit the
         optional source path are normalized to an empty string.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     rows: list[tuple[str, str, str]] = []
     for raw_line in MANIFEST_PATH.read_text(encoding="utf-8").splitlines():
         if not raw_line or raw_line.startswith("#"):
@@ -51,6 +55,8 @@ def _load_manifest_rows() -> list[tuple[str, str, str]]:
 
 
 class STM32TemplateOwnershipTests(unittest.TestCase):
+    """Tests covering STM32 template ownership behavior."""
+
     def test_tracked_text_files_do_not_use_legacy_lrun_dut_names(self) -> None:
         """Ensure tracked text files no longer use legacy LRUN DUT identifiers.
 
@@ -135,6 +141,7 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
 
     def test_manifest_categories_and_paths_are_unique(self) -> None:
         # The LRUN ownership manifest should keep categories and paths unique.
+        """Validate manifest categories and paths are unique."""
         rows = _load_manifest_rows()
         seen_paths: set[str] = set()
 
@@ -150,12 +157,14 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
 
     def test_manifest_kept_files_exist_in_canonical_workspace(self) -> None:
         # Files marked as kept in the manifest should still exist in the canonical workspace.
+        """Validate manifest kept files exist in canonical workspace."""
         for category, relative_path, _ in _load_manifest_rows():
             if category in {"vendor_derived", "tinyodom_owned", "build_recipe"}:
                 self.assertTrue((CANONICAL_ROOT / relative_path).is_file(), relative_path)
 
     def test_vendor_copy_sources_exist_when_cube_checkout_is_available(self) -> None:
         # Vendor copy sources should exist whenever the Cube checkout is available.
+        """Validate vendor copy sources exist when cube checkout is available."""
         firmware_root = ROOT_DIR / "tools" / "stm32" / "STM32CubeN6"
         if not firmware_root.is_dir():
             self.skipTest("STM32CubeN6 checkout is not present under tools/stm32")
@@ -166,6 +175,7 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
 
     def test_gitignore_covers_setup_managed_vendor_copy_and_generated_paths(self) -> None:
         # The repo gitignore should keep covering setup-managed vendor copies and generated paths.
+        """Validate gitignore covers setup managed vendor copy and generated paths."""
         for category, relative_path, _ in _load_manifest_rows():
             if category not in {"vendor_copy", "generated"}:
                 continue
@@ -178,6 +188,7 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
 
     def test_setup_script_references_lrun_manifest_only(self) -> None:
         # The setup script should only reference the LRUN manifest it is supposed to manage.
+        """Validate setup script references lrun manifest only."""
         script_text = (ROOT_DIR / "setup_stm32.sh").read_text(encoding="utf-8")
         self.assertIn("lrun_ownership_manifest.tsv", script_text)
         self.assertIn("prune_materialized_vendor_copy_files", script_text)
@@ -186,6 +197,7 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
 
     def test_setup_script_preserves_checked_in_license_files(self) -> None:
         # These files are tracked overlay files, so rsync --delete must not remove them.
+        """Validate setup script preserves checked in license files."""
         script_text = (ROOT_DIR / "setup_stm32.sh").read_text(encoding="utf-8")
 
         for license_path in (

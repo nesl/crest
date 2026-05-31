@@ -12,7 +12,20 @@ ANALYSIS_SCRIPT_TESTS = {
 
 
 def pytest_ignore_collect(collection_path: Path, config) -> bool:
-    """Keep non-default suites opt-in for the default `pytest test/` run."""
+    """Keep non-default suites opt-in for the default `pytest test/` run.
+
+    Parameters
+    ----------
+    collection_path : Path
+        Path to the collection used by the helper.
+    config : object
+        Configuration object used by the helper.
+
+    Returns
+    -------
+    bool
+        Whether pytest should skip collecting the given path.
+    """
     path = Path(str(collection_path))
     if (
         os.environ.get("RUN_INTEGRATION_TESTS") != "1"

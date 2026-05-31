@@ -103,6 +103,17 @@ class _FakeCompletedProcess:
     """Lightweight stand-in for subprocess.CompletedProcess used in tests."""
 
     def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
+        """Initialize the instance.
+
+        Parameters
+        ----------
+        returncode : int
+            Subprocess return code exposed by the fake result.
+        stdout : str
+            Captured stdout exposed by the fake result.
+        stderr : str
+            Captured stderr exposed by the fake result.
+        """
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
@@ -142,6 +153,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
 
     def test_convert_to_tflite_model_creates_file(self):
         # TFLite conversion should create the expected output file so later deployment steps can consume it directly.
+        """Validate convert to tflite model creates file."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tflite_path = Path(tmpdir) / "model_float.tflite"
             convert_to_tflite_model(self.model, self.train_x, output_name=tflite_path)
@@ -150,6 +162,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
 
     def test_convert_to_tflite_model_quantized_flow(self):
         # Quantized TFLite conversion should still follow the expected end-to-end artifact path.
+        """Validate convert to tflite model quantized flow."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tflite_path = Path(tmpdir) / "model_int8.tflite"
             convert_to_tflite_model(
@@ -197,7 +210,6 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
             The test passes when conversion raises a user-facing
             ``ValueError`` before invoking the TFLite converter.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             tflite_path = Path(tmpdir) / "model_int8.tflite"
 
@@ -218,7 +230,6 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
             The test passes when conversion raises a user-facing
             ``ValueError`` before invoking the TFLite converter.
         """
-
         calibration = np.asarray(self.train_x, dtype=np.float32).copy()
         calibration[0, 0] = np.nan
 
@@ -242,7 +253,6 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
             The test passes when capped sampling includes the first and last
             windows and does not use a contiguous prefix.
         """
-
         data = np.arange(1200, dtype=np.float32).reshape(1200, 1)
 
         selected = _representative_calibration_samples(data)
@@ -253,7 +263,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
         self.assertGreater(float(selected[500, 0]), 500.0)
 
     def test_tflite_quant_helpers_use_interpreter_params(self):
-        """TFLite tensor helpers should use scale and zero-point from details."""
+        """Tensor helpers should use TFLite scale and zero-point details."""
         detail = {"dtype": np.int8, "quantization": (0.5, -3)}
         values = np.asarray([[0.0, 1.0, -1.0]], dtype=np.float32)
 
@@ -272,7 +282,6 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
             The test passes when non-lexical signature output names are returned
             in the flatbuffer-declared order instead of sorted order.
         """
-
         runner = Mock()
         runner.get_output_details.return_value = {
             "z_vel": {"index": 10},
@@ -291,6 +300,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
 
     def test_convert_to_cpp_model_old_emits_sources(self):
         # Legacy C-array export should emit the expected source files for older embedded workflows.
+        """Validate convert to cpp model old emits sources."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tflite_path = Path(tmpdir) / "model_float.tflite"
             convert_to_tflite_model(self.model, self.train_x, output_name=tflite_path)
@@ -305,6 +315,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
     @unittest.skipUnless(shutil.which("xxd"), "xxd command required for this test.")
     def test_convert_to_cpp_model_via_xxd(self):
         # The xxd-based C-array export should produce the same kind of firmware-ready sources as the Python path.
+        """Validate convert to cpp model via xxd."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tflite_path = Path(tmpdir) / "model_float.tflite"
             convert_to_tflite_model(self.model, self.train_x, output_name=tflite_path)
@@ -318,6 +329,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
 
     def test_convert_to_cpp_model_missing_source_raises(self):
         # Missing model files should fail before the C-array export path tries to stage any output.
+        """Validate convert to cpp model missing source raises."""
         with tempfile.TemporaryDirectory() as tmpdir:
             bogus_model = Path(tmpdir) / "missing_model.tflite"
             with self.assertRaises(FileNotFoundError):
@@ -326,6 +338,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
     @unittest.skipUnless(shutil.which("xxd"), "xxd command required for this test.")
     def test_convert_to_cpp_model_handles_corrupt_bytes(self):
         # Even arbitrary bytes should still flow through the raw C-array export path without needing a valid TFLite parse.
+        """Validate convert to cpp model handles corrupt bytes."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tflite_path = Path(tmpdir) / "model_corrupt.tflite"
             tflite_path.write_bytes(os.urandom(128))
@@ -338,6 +351,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
     @unittest.skipUnless(XXD_BIN, "xxd command required for parity validation.")
     def test_python_and_xxd_emit_matching_sources(self):
         # Python and xxd export paths should stay byte-for-byte aligned so embedded builds do not depend on the conversion route.
+        """Validate python and xxd emit matching sources."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tflite_path = Path(tmpdir) / "model_stub.tflite"
             tflite_path.write_bytes(bytes(range(64)))
@@ -362,6 +376,7 @@ class ConversionHelperTests(TinyModelMixin, unittest.TestCase):
 
     def test_convert_to_cpp_model_output_dir_conflict(self):
         # C-array export should fail when the output path conflicts with an existing file or directory.
+        """Validate convert to cpp model output dir conflict."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "not_a_directory"
             output_path.write_text("stub")
@@ -383,7 +398,6 @@ class TFLiteSubprocessPredictionTests(TinyModelMixin, unittest.TestCase):
 
     def test_subprocess_env_disables_visible_gpus(self) -> None:
         """Subprocess environment should hide training GPUs from TensorFlow."""
-
         with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "1", "PYTHONPATH": "existing"}, clear=False):
             env = _tflite_subprocess_env()
 
@@ -436,7 +450,6 @@ class TFLiteSubprocessPredictionTests(TinyModelMixin, unittest.TestCase):
             The test passes when direct host-side TFLite predictions match
             Keras output shapes and values in the original output order.
         """
-
         inputs = tf.keras.Input(shape=(4,), name="input")
         shared = tf.keras.layers.Dense(3, activation="relu")(inputs)
         output_0 = tf.keras.layers.Dense(1, activation="linear", name="first")(shared)
@@ -511,24 +524,30 @@ class TFLiteSubprocessPredictionTests(TinyModelMixin, unittest.TestCase):
 
 
 class SpecHelperTests(unittest.TestCase):
+    """Tests covering spec helper behavior."""
+
     def test_return_hardware_specs_known_device(self):
         # Known-device hardware-spec lookups should return the expected memory and timing limits.
+        """Validate return hardware specs known device."""
         ram, flash = return_hardware_specs("ARDUINO_NANO_33_BLE_SENSE")
         self.assertGreater(ram, 0)
         self.assertGreater(flash, 0)
 
     def test_return_hardware_specs_unknown_device(self):
         # Unknown devices should raise immediately instead of pretending to know their hardware limits.
+        """Validate return hardware specs unknown device."""
         with self.assertRaises(ValueError):
             return_hardware_specs("NOT_A_BOARD")
 
     def test_return_hardware_specs_portenta_requires_device_options(self):
         # Portenta hardware-spec resolution should require device options so limits are tied to an explicit core split.
+        """Validate return hardware specs Portenta requires device options."""
         with self.assertRaises(ValueError):
             return_hardware_specs("PORTENTA_H7")
 
     def test_return_hardware_specs_portenta_case_insensitive(self):
         # Portenta hardware-spec lookup should normalize device names so case-only input differences do not change the result.
+        """Validate return hardware specs Portenta case insensitive."""
         options = {"target_core": "cm7", "split": "75_25", "security": "none"}
         upper_ram, upper_flash = return_hardware_specs("PORTENTA_H7", device_options=options)
         lower_ram, lower_flash = return_hardware_specs("portenta_h7", device_options=options)
@@ -536,22 +555,26 @@ class SpecHelperTests(unittest.TestCase):
 
     def test_arena_size_candidates_happy_path(self):
         # Arena-size enumeration should return the expected candidate list for supported devices.
+        """Validate arena size candidates happy path."""
         arena = arena_size_candidates("ARDUINO_NANO_33_BLE_SENSE")
         self.assertIsInstance(arena, np.ndarray)
         self.assertGreater(len(arena), 0)
 
     def test_arena_size_candidates_invalid_device(self):
         # Unsupported devices should fail before arena-size exploration can start.
+        """Validate arena size candidates invalid device."""
         with self.assertRaises(ValueError):
             arena_size_candidates("UNKNOWN_DEVICE")
 
     def test_arena_size_candidates_portenta_requires_device_options(self):
         # Portenta arena-size candidates should require device options because the split affects available memory.
+        """Validate arena size candidates Portenta requires device options."""
         with self.assertRaises(ValueError):
             arena_size_candidates("PORTENTA_H7")
 
     def test_arena_size_candidates_portenta_case_insensitive(self):
         # Portenta arena-size lookup should normalize name casing before it inspects device options.
+        """Validate arena size candidates Portenta case insensitive."""
         options = {"target_core": "cm7", "split": "75_25", "security": "none"}
         upper = arena_size_candidates("PORTENTA_H7", device_options=options)
         lower = arena_size_candidates("portenta_h7", device_options=options)
@@ -559,6 +582,7 @@ class SpecHelperTests(unittest.TestCase):
 
     def test_get_model_memory_usage_quantized_smaller(self):
         # Quantized models should report a smaller memory footprint than their float counterpart.
+        """Validate get model memory usage quantized smaller."""
         model = tf.keras.Sequential(
             [
                 tf.keras.layers.Input(shape=(4,)),
@@ -573,8 +597,11 @@ class SpecHelperTests(unittest.TestCase):
 
 
 class DeviceCatalogTests(unittest.TestCase):
+    """Tests covering device catalog behavior."""
+
     def test_catalog_devices_are_accessible(self):
         # The built-in device catalog should expose the expected device entries.
+        """Validate catalog devices are accessible."""
         for name, spec in DEVICE_SPECS.items():
             options = (
                 {"target_core": "cm7", "split": "75_25", "security": "none"}
@@ -590,6 +617,7 @@ class DeviceCatalogTests(unittest.TestCase):
 
     def test_catalog_allows_new_device_entries(self):
         # The device catalog should accept new entries without breaking existing lookups.
+        """Validate catalog allows new device entries."""
         new_name = "TEST_DEVICE"
         new_spec = {
             "arena_sizes": np.array([5, 15, 25]),
@@ -606,7 +634,16 @@ class DeviceCatalogTests(unittest.TestCase):
 
 
 class MemoryUsageBoundaryTests(unittest.TestCase):
+    """Tests covering memory usage boundary behavior."""
+
     def _build_dense_model(self) -> tf.keras.Model:
+        """Build dense model.
+
+        Returns
+        -------
+        tf.keras.Model
+            Constructed dense model.
+        """
         return tf.keras.Sequential(
             [
                 tf.keras.layers.Input(shape=(4,), name="input"),
@@ -616,6 +653,13 @@ class MemoryUsageBoundaryTests(unittest.TestCase):
         )
 
     def _build_example_model(self) -> tf.keras.Model:
+        """Build example model.
+
+        Returns
+        -------
+        tf.keras.Model
+            Constructed example model.
+        """
         timesteps = 200
         input_dim = 6
         inputs = tf.keras.Input(shape=(timesteps, input_dim), name="imu_window")
@@ -640,6 +684,7 @@ class MemoryUsageBoundaryTests(unittest.TestCase):
 
     def test_memory_usage_matches_manual_estimate(self):
         # Memory estimation should still match the manual layer-by-layer calculation.
+        """Validate memory usage matches manual estimate."""
         model = self._build_dense_model()
         batch_size = 1
         usage = get_model_memory_usage(batch_size, model, quantized=False)
@@ -665,6 +710,7 @@ class MemoryUsageBoundaryTests(unittest.TestCase):
 
     def test_memory_usage_respects_float_precision(self):
         # Memory estimation should scale with the model's float precision settings.
+        """Validate memory usage respects float precision."""
         original_floatx = tf.keras.backend.floatx()
         try:
             tf.keras.backend.set_floatx("float16")
@@ -682,6 +728,7 @@ class MemoryUsageBoundaryTests(unittest.TestCase):
 
     def test_memory_usage_outpaces_model_serialization(self):
         # Estimated memory usage should stay larger than the serialized artifact when runtime tensors dominate.
+        """Validate memory usage outpaces model serialization."""
         model = self._build_example_model()
         usage = get_model_memory_usage(1, model, quantized=False)
         param_bytes = 4.0 * model.count_params()
@@ -696,14 +743,18 @@ class MemoryUsageBoundaryTests(unittest.TestCase):
 
 
 class SketchHelperTests(unittest.TestCase):
+    """Tests covering sketch helper behavior."""
+
     def test_replace_define_updates_value(self):
         # Define replacement should update the requested constant without disturbing the rest of the file.
+        """Validate replace define updates value."""
         text = "#define TINYODOM_WINDOW_SIZE 100\nvoid loop() {}\n"
         updated = _replace_define(text, "TINYODOM_WINDOW_SIZE", "256")
         self.assertIn("TINYODOM_WINDOW_SIZE 256", updated)
 
     def test_patch_sketch_constants_edits_ino(self):
         # Sketch constant patching should rewrite the `.ino` file in place with the requested values.
+        """Validate patch sketch constants edits ino."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             ino_path = sketch_dir / "TinyOdom.ino"
@@ -743,6 +794,7 @@ class SketchHelperTests(unittest.TestCase):
 
     def test_patch_sketch_constants_updates_latency_budget_when_present(self):
         # Sketch patching should update an existing latency-budget constant so generated test firmware matches the requested timing window.
+        """Validate patch sketch constants updates latency budget when present."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             ino_path = sketch_dir / "TinyOdom.ino"
@@ -768,6 +820,7 @@ class SketchHelperTests(unittest.TestCase):
 
     def test_parse_memory_from_compile_extracts_numbers(self):
         # Compile-output parsing should recover flash and RAM counts from the standard Arduino summary.
+        """Validate parse memory from compile extracts numbers."""
         sample_output = (
             "Sketch uses 376104 bytes (38%) of program storage space. Maximum is 983040 bytes. \n \
             Global variables use 98112 bytes (37%) of dynamic memory, leaving 164032 bytes for local variables. Maximum is 262144 bytes."
@@ -778,47 +831,71 @@ class SketchHelperTests(unittest.TestCase):
 
     def test_parse_memory_from_compile_handles_missing_data(self):
         # Compile-output parsing should return unknown memory figures when the build log omits them.
+        """Validate parse memory from compile handles missing data."""
         flash_bytes, ram_bytes = _parse_memory_from_compile("no relevant information")
         self.assertIsNone(flash_bytes)
         self.assertIsNone(ram_bytes)
 
 
 class CompileFailureClassificationTests(unittest.TestCase):
+    """Tests covering compile failure classification behavior."""
+
     def test_classify_returns_none_for_normal_output(self):
         # Normal compiler output should not classify as an overflow so successful builds stay on the happy path.
+        """Validate classify returns none for normal output."""
         result = _classify_compile_failure(COMPILE_SAMPLE_OUTPUT)
         self.assertIsNone(result)
 
     def test_classify_detects_flash_overflow(self):
         # Linker flash-overflow text must classify as flash so NAS pruning can stop obviously too-large candidates.
+        """Validate classify detects flash overflow."""
         result = _classify_compile_failure(FLASH_OVERFLOW_STDERR)
         self.assertEqual(result, "flash")
 
     def test_classify_detects_ram_overflow(self):
         # RAM-overflow diagnostics must classify as RAM so pruning does not misreport a working memory failure as flash.
+        """Validate classify detects ram overflow."""
         result = _classify_compile_failure(RAM_OVERFLOW_STDERR)
         self.assertEqual(result, "ram")
 
 
 class PortentaOptionValidationTests(unittest.TestCase):
+    """Tests covering Portenta option validation behavior."""
+
     def test_missing_target_core_raises(self):
         # Portenta split resolution should fail when the target core is missing instead of guessing a board half.
+        """Validate missing target core raises."""
         with self.assertRaises(ValueError):
             arduino_portenta_h7.resolve_portenta_h7_options({})
 
     def test_invalid_split_raises(self):
         # Unsupported Portenta split values should fail before compilation starts.
+        """Validate invalid split raises."""
         with self.assertRaises(ValueError):
             arduino_portenta_h7.resolve_portenta_h7_options({"target_core": "cm7", "split": "bad_split"})
 
     def test_cm4_100_0_rejected(self):
         # CM4 cannot own the entire split, so the option parser should reject the unsupported 100/0 layout early.
+        """Validate CM4 100 0 rejected."""
         with self.assertRaises(ValueError):
             arduino_portenta_h7.resolve_portenta_h7_options({"target_core": "cm4", "split": "100_0"})
 
 
 class ArduinoBoardContractShapeTests(unittest.TestCase):
+    """Tests covering Arduino board contract shape behavior."""
+
     def _assert_spec_complete(self, spec, *, expected_name: str, expected_fqbn: str):
+        """Exercise assert spec complete behavior.
+
+        Parameters
+        ----------
+        spec : object
+            Device spec checked by the assertion helper.
+        expected_name : str
+            Expected device name asserted by the helper.
+        expected_fqbn : str
+            Expected Arduino FQBN asserted by the helper.
+        """
         self.assertEqual(spec.name, expected_name)
         self.assertEqual(spec.fqbn, expected_fqbn)
         self.assertEqual(spec.toolchain, "arduino-cli")
@@ -829,6 +906,7 @@ class ArduinoBoardContractShapeTests(unittest.TestCase):
 
     def test_ble33_contract_symbols_and_spec(self):
         # The BLE33 contract should expose the expected symbol set and hardware spec so registry lookups remain stable.
+        """Validate BLE33 contract symbols and spec."""
         required_symbols = (
             "BOARD_NAME",
             "BOARD_FQBN",
@@ -851,6 +929,7 @@ class ArduinoBoardContractShapeTests(unittest.TestCase):
 
     def test_portenta_contract_symbols_and_spec(self):
         # The Portenta contract should expose the expected symbol set and board-specific limits.
+        """Validate Portenta contract symbols and spec."""
         required_symbols = (
             "BOARD_NAME",
             "BOARD_FQBN",
@@ -877,8 +956,11 @@ class ArduinoBoardContractShapeTests(unittest.TestCase):
 
 
 class ArduinoRegistryContractTests(unittest.TestCase):
+    """Tests covering Arduino registry contract behavior."""
+
     def test_list_device_specs_includes_ble_and_portenta(self):
         # Listing device specs should include both BLE33 and Portenta entries so the public catalog stays complete.
+        """Validate list device specs includes ble and Portenta."""
         specs = list_device_specs()
         self.assertIn("ARDUINO_NANO_33_BLE_SENSE", specs)
         self.assertIn("PORTENTA_H7", specs)
@@ -893,6 +975,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
 
     def test_get_device_constructs_portenta_with_options(self):
         # Device construction should pass Portenta board options through to the concrete device instance.
+        """Validate get device constructs Portenta with options."""
         device = get_device(
             "PORTENTA_H7",
             device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
@@ -904,6 +987,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
 
     def test_get_device_normalizes_registry_name_case_and_whitespace(self):
         # Device lookup should normalize registry-name casing and whitespace before resolving the catalog entry.
+        """Validate get device normalizes registry name case and whitespace."""
         device = get_device(
             "  portenta_h7  ",
             device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
@@ -912,6 +996,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
 
     def test_get_device_non_arduino_legacy_entry_raises_actionable_error(self):
         # Legacy non-Arduino device aliases should raise an actionable error instead of silently misrouting the request.
+        """Validate get device non Arduino legacy entry raises actionable error."""
         with self.assertRaises(ValueError) as context:
             get_device("ARCH_MAX")
         message = str(context.exception)
@@ -920,6 +1005,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
 
     def test_get_device_normalizes_legacy_name_in_actionable_error(self):
         # Legacy-name errors should show the normalized name so callers can see exactly what lookup failed.
+        """Validate get device normalizes legacy name in actionable error."""
         with self.assertRaises(ValueError) as context:
             get_device("  arch_max  ")
         message = str(context.exception)
@@ -928,6 +1014,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
 
     def test_portenta_runtime_mode_resolution(self):
         # Portenta runtime-mode resolution should preserve the CM4/CM7 split semantics the backend depends on.
+        """Validate Portenta runtime mode resolution."""
         cm7 = get_device(
             "PORTENTA_H7",
             device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
@@ -945,6 +1032,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
 
     def test_portenta_cm4_prepare_for_runtime_bootstraps_cm7_helper(self):
         # CM4 runtime preparation should bootstrap the CM7 helper image before the CM4 run can start.
+        """Validate Portenta CM4 prepare for runtime bootstraps CM7 helper."""
         cm4 = get_device(
             "PORTENTA_H7",
             device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
@@ -955,6 +1043,7 @@ class ArduinoRegistryContractTests(unittest.TestCase):
 
     def test_portenta_cm7_prepare_for_runtime_skips_bootstrap(self):
         # CM7 runtime preparation should skip the helper bootstrap path that only CM4 depends on.
+        """Validate Portenta CM7 prepare for runtime skips bootstrap."""
         cm7 = get_device(
             "PORTENTA_H7",
             device_options={"target_core": "cm7", "split": "75_25", "security": "none"},
@@ -965,8 +1054,11 @@ class ArduinoRegistryContractTests(unittest.TestCase):
 
 
 class ArduinoCommandOptionTests(unittest.TestCase):
+    """Tests covering Arduino command option behavior."""
+
     def test_resolve_build_dir_hash_includes_board_options(self):
         # Build-directory hashing should include board options so distinct Portenta layouts do not reuse one cache entry.
+        """Validate resolve build dir hash includes board options."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "odom_tcn"
             sketch_dir.mkdir()
@@ -1034,6 +1126,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
 
     def test_upload_sketch_includes_board_options(self):
         # Sketch upload should forward board options so the right core and split receive the firmware.
+        """Validate upload sketch includes board options."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "odom_tcn"
             sketch_dir.mkdir()
@@ -1063,6 +1156,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
 
     def test_compile_sketch_leaves_memory_unknown_without_summary_or_recipe(self):
         # When Arduino build output lacks a size summary, memory accounting should stay unknown instead of inventing values.
+        """Validate compile sketch leaves memory unknown without summary or recipe."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "odom_tcn"
             sketch_dir.mkdir()
@@ -1087,6 +1181,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
 
     def test_parse_memory_from_size_recipe_uses_platform_regexes(self):
         # Size-recipe parsing should use each platform's regex contract so memory extraction stays portable.
+        """Validate parse memory from size recipe uses platform regexes."""
         with tempfile.TemporaryDirectory() as tmpdir:
             build_dir = Path(tmpdir) / "build"
             build_dir.mkdir(parents=True)
@@ -1135,6 +1230,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
 
     def test_resolve_platform_txt_path_supports_hardware_folders_list(self):
         # Platform.txt resolution should search hardware-folders lists in the same order Arduino tooling expects.
+        """Validate resolve platform txt path supports hardware folders list."""
         with tempfile.TemporaryDirectory() as tmpdir:
             build_dir = Path(tmpdir) / "build"
             build_dir.mkdir(parents=True)
@@ -1157,6 +1253,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
 
     def test_resolve_platform_txt_path_skips_empty_entries(self):
         # Platform.txt resolution should ignore empty folder entries instead of treating them like valid paths.
+        """Validate resolve platform txt path skips empty entries."""
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             build_dir = root / "build"
@@ -1186,6 +1283,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
 
     def test_compile_sketch_uses_size_recipe_when_summary_missing(self):
         # Size-recipe parsing should backfill memory accounting when the standard summary block is absent.
+        """Validate compile sketch uses size recipe when summary missing."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir) / "odom_tcn"
             sketch_dir.mkdir()
@@ -1210,39 +1308,97 @@ class ArduinoCommandOptionTests(unittest.TestCase):
 
     def test_sum_size_regex_matches_without_capture_group_returns_none(self):
         # Malformed size-regex matches should return None instead of claiming a bogus memory total.
+        """Validate sum size regex matches without capture group returns none."""
         output = ".text 149680 134479872\n.data 6184 603979776\n"
         total = _sum_size_regex_matches(output, r"^(?:\\.text|\\.data)\\s+\\d+.*")
         self.assertIsNone(total)
 
     def test_upload_permission_error_appends_linux_guidance(self):
         # Upload permission errors should append the Linux guidance so the failure is actionable from the first message.
+        """Validate upload permission error appends linux guidance."""
         augmented = _augment_upload_error("dfu-util: LIBUSB_ERROR_ACCESS")
         self.assertIn("udev", augmented)
         self.assertIn("Linux", augmented)
 
 
 class SerialHelperTests(unittest.TestCase):
+    """Tests covering serial helper behavior."""
+
     class _DummySerial:
+        """Dummy serial stream used by serial helper tests."""
+
         def __init__(self, responses):
+            """Initialize the instance.
+
+            Parameters
+            ----------
+            responses : object
+                Byte responses yielded by the dummy serial stream.
+            """
             self._responses = iter(responses)
 
         def readline(self):
+            """Read line.
+
+            Returns
+            -------
+            object
+                Next byte response from the dummy serial stream.
+            """
             try:
                 return next(self._responses)
             except StopIteration:
                 return b""
 
         def __enter__(self):
+            """Enter the context manager.
+
+            Returns
+            -------
+            object
+                Active context manager instance.
+            """
             return self
 
         def __exit__(self, exc_type, exc, tb):
+            """Exit the context manager.
+
+            Parameters
+            ----------
+            exc_type : object
+                Exception type passed to the context manager.
+            exc : object
+                Exception instance passed to the context manager.
+            tb : object
+                Traceback object passed to the context manager.
+
+            Returns
+            -------
+            object
+                Whether the exception was handled by the context manager.
+            """
             return False
 
     def test_collect_latency_returns_value(self):
         # Latency collection should parse and return a numeric latency sample from the serial stream.
+        """Validate collect latency returns value."""
         responses = [b"ignored\n", b"timer output: 0.42\n"]
 
         def factory(*_args, **_kwargs):
+            """Create a dummy serial connection.
+
+            Parameters
+            ----------
+            *_args : tuple[object, ...]
+                Positional arguments captured by the test double.
+            **_kwargs : dict[str, object]
+                Keyword arguments captured by the test double.
+
+            Returns
+            -------
+            object
+                Dummy serial instance returned by the patched factory.
+            """
             return self._DummySerial(responses)
 
         with patch("tinyodom.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
@@ -1257,9 +1413,24 @@ class SerialHelperTests(unittest.TestCase):
 
     def test_collect_latency_handles_timeout(self):
         # Latency collection should return the timeout sentinel when the serial stream never reports a sample.
+        """Validate collect latency handles timeout."""
         responses = [b"", b""]
 
         def factory(*_args, **_kwargs):
+            """Create a dummy serial connection.
+
+            Parameters
+            ----------
+            *_args : tuple[object, ...]
+                Positional arguments captured by the test double.
+            **_kwargs : dict[str, object]
+                Keyword arguments captured by the test double.
+
+            Returns
+            -------
+            object
+                Dummy serial instance returned by the patched factory.
+            """
             return self._DummySerial(responses)
 
         with patch("tinyodom.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
@@ -1272,6 +1443,7 @@ class SerialHelperTests(unittest.TestCase):
 
     def test_collect_latency_invalid_port_raises(self):
         # Serial-port failures should surface immediately instead of being misreported as a valid latency timeout.
+        """Validate collect latency invalid port raises."""
         with patch(
             "tinyodom.microcontrollers.arduino_base.serial.Serial",
             side_effect=serial.SerialException("boom"),
@@ -1281,9 +1453,24 @@ class SerialHelperTests(unittest.TestCase):
 
     def test_collect_latency_handles_non_numeric_payload(self):
         # Latency collection should reject non-numeric serial payloads instead of treating them like valid timings.
+        """Validate collect latency handles non-numeric payload."""
         responses = [b"timer output: not-a-float\n"]
 
         def factory(*_args, **_kwargs):
+            """Create a dummy serial connection.
+
+            Parameters
+            ----------
+            *_args : tuple[object, ...]
+                Positional arguments captured by the test double.
+            **_kwargs : dict[str, object]
+                Keyword arguments captured by the test double.
+
+            Returns
+            -------
+            object
+                Dummy serial instance returned by the patched factory.
+            """
             return self._DummySerial(responses)
 
         with patch("tinyodom.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
@@ -1296,9 +1483,24 @@ class SerialHelperTests(unittest.TestCase):
 
     def test_collect_latency_detects_arena_error(self):
         # Detect collect latency detects arena error so error classification and pruning stay stable.
+        """Validate collect latency detects arena error."""
         responses = [b"size is too small for all buffers\n"]
 
         def factory(*_args, **_kwargs):
+            """Create a dummy serial connection.
+
+            Parameters
+            ----------
+            *_args : tuple[object, ...]
+                Positional arguments captured by the test double.
+            **_kwargs : dict[str, object]
+                Keyword arguments captured by the test double.
+
+            Returns
+            -------
+            object
+                Dummy serial instance returned by the patched factory.
+            """
             return self._DummySerial(responses)
 
         with patch("tinyodom.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
@@ -1311,11 +1513,15 @@ class SerialHelperTests(unittest.TestCase):
 
 
 class RetryHintHelperTests(unittest.TestCase):
+    """Tests covering retry hint helper behavior."""
+
     def tearDown(self) -> None:
+        """Clean up test fixtures."""
         _store_retry_hint_bytes(None)
 
     def test_compute_retry_hint_uses_missing_field(self):
         # Retry-hint logic should fall back to the missing-field value when the measurement did not report a new size.
+        """Validate compute retry hint uses missing field."""
         current_bytes = 100_000
         line = "Failed... missing: 4096"
         hint = _compute_retry_hint_bytes(current_bytes, line)
@@ -1323,6 +1529,7 @@ class RetryHintHelperTests(unittest.TestCase):
 
     def test_compute_retry_hint_uses_requested_field(self):
         # Retry-hint logic should use the requested size field when the backend reported one.
+        """Validate compute retry hint uses requested field."""
         current_bytes = 50_000
         line = "Requested: 60000, available: 123"
         hint = _compute_retry_hint_bytes(current_bytes, line)
@@ -1330,6 +1537,7 @@ class RetryHintHelperTests(unittest.TestCase):
 
     def test_compute_retry_hint_returns_none_without_growth(self):
         # Retry-hint logic should return None when it cannot justify a larger retry window.
+        """Validate compute retry hint returns none without growth."""
         current_bytes = 40_000
         line = "Requested: 1000, missing: 0"
         hint = _compute_retry_hint_bytes(current_bytes, line)
@@ -1338,33 +1546,77 @@ class RetryHintHelperTests(unittest.TestCase):
 
     def test_store_and_pop_retry_hint_bytes(self):
         # Retry-hint bytes should round-trip through storage so later retries can reuse the computed jump.
+        """Validate store and pop retry hint bytes."""
         _store_retry_hint_bytes(12_345)
         self.assertEqual(_pop_retry_hint_bytes(), 12_345)
         self.assertIsNone(_pop_retry_hint_bytes())
 
 
 class ProtocolHandshakeTests(unittest.TestCase):
+    """Tests covering protocol handshake behavior."""
+
     class _DummySerial:
+        """Dummy serial stream used by serial helper tests."""
+
         def __init__(self, responses):
+            """Initialize the instance.
+
+            Parameters
+            ----------
+            responses : object
+                Byte responses yielded by the dummy serial stream.
+            """
             self._responses = iter(responses)
 
         def readline(self):
+            """Read line.
+
+            Returns
+            -------
+            object
+                Next byte response from the dummy serial stream.
+            """
             try:
                 return next(self._responses)
             except StopIteration:
                 return b""
 
         def reset_input_buffer(self):
+            """Reset input buffer."""
             return None
 
         def __enter__(self):
+            """Enter the context manager.
+
+            Returns
+            -------
+            object
+                Active context manager instance.
+            """
             return self
 
         def __exit__(self, exc_type, exc, tb):
+            """Exit the context manager.
+
+            Parameters
+            ----------
+            exc_type : object
+                Exception type passed to the context manager.
+            exc : object
+                Exception instance passed to the context manager.
+            tb : object
+                Traceback object passed to the context manager.
+
+            Returns
+            -------
+            object
+                Whether the exception was handled by the context manager.
+            """
             return False
 
     def test_run_handshake_sends_ping_and_start_without_arm(self):
         # The harness handshake should prime the session with ping/start traffic before any arm pulse is needed.
+        """Validate run handshake sends ping and start without arm."""
         harness_lines = [
             b"HARNESS READY\n",
             b"ARMED\n",
@@ -1379,6 +1631,27 @@ class ProtocolHandshakeTests(unittest.TestCase):
         ]
 
         def serial_factory(port, *args, **kwargs):
+            """Create a dummy serial connection.
+
+            Parameters
+            ----------
+            port : object
+                Serial port name used by the fake connection.
+            *args : tuple[object, ...]
+                Arguments supplied when opening the serial connection.
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Dummy serial connection returned by the patched factory.
+
+            Raises
+            ------
+            AssertionError
+                If existing validation or execution checks fail.
+            """
             if port == "/dev/harness":
                 return self._DummySerial(harness_lines)
             if port == "/dev/dut":
@@ -1413,8 +1686,11 @@ class ProtocolHandshakeTests(unittest.TestCase):
 
 
 class HarnessMetricSelectionTests(unittest.TestCase):
+    """Tests covering harness metric selection behavior."""
+
     def test_parse_power_metrics_reads_clock_and_dwt_tags(self):
         # Power-metric parsing should capture clock and DWT tags so later scoring can reason about runtime fidelity.
+        """Validate parse power metrics reads clock and dwt tags."""
         parsed = _parse_power_metrics(
             [
                 "clock hz output: 480000000",
@@ -1428,6 +1704,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
     def test_normalize_power_metrics_defaults_clock_and_dwt(self):
         # Power-metric normalization should fill in stable clock and DWT defaults when the harness did not report them.
+        """Validate normalize power metrics defaults clock and dwt."""
         normalized = normalize_power_metrics({"harness_latency_s": 0.2})
         self.assertAlmostEqual(normalized["harness_latency_s"], 0.2)
         self.assertEqual(normalized["clock_hz"], -1.0)
@@ -1435,6 +1712,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
     def test_merge_power_metrics_uses_secondary_when_primary_has_sentinel(self):
         # Power-metric merging should promote secondary readings when the primary path only has sentinels.
+        """Validate merge power metrics uses secondary when primary has sentinel."""
         merged = _merge_power_metrics(
             primary={
                 "harness_latency_s": 0.25,
@@ -1454,6 +1732,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
     def test_merge_power_metrics_keeps_valid_primary_values(self):
         # Power-metric merging should preserve valid primary readings instead of overwriting them with follow-up data.
+        """Validate merge power metrics keeps valid primary values."""
         merged = _merge_power_metrics(
             primary={
                 "clock_hz": 400000000.0,
@@ -1471,6 +1750,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
     def test_measure_serial_discards_energy_without_dut_timer(self):
         # Energy should be dropped when the DUT never reported its timer because the harness window cannot be aligned safely.
+        """Validate measure serial discards energy without dut timer."""
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 10"],
             harness_log=[
@@ -1518,6 +1798,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
     def test_measure_serial_discards_energy_on_run_mismatch(self):
         # Energy should be dropped when DUT and harness disagree on run count so cross-window samples do not contaminate scoring.
+        """Validate measure serial discards energy on run mismatch."""
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 10", "timer output: 0.250000"],
             harness_log=[
@@ -1565,6 +1846,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
     def test_measure_serial_keeps_latency_when_harness_done_missing(self):
         # If the harness misses DONE after latency was captured, the latency result should survive while the error is still reported.
+        """Validate measure serial keeps latency when harness done missing."""
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 10", "timer output: 0.125000"],
             harness_log=["runs: 10", "harness error: active_timeout"],
@@ -1607,6 +1889,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
     def test_measure_serial_merges_dut_clock_with_harness_energy(self):
         # Serial measurement should combine DUT clock telemetry with harness energy so the final payload contains both perspectives.
+        """Validate measure serial merges dut clock with harness energy."""
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=[
                 "runs: 10",
@@ -1663,6 +1946,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
     def test_measure_serial_compiles_harness_with_measured_inference_runs(self):
         # Harness compilation should inherit the measured-run count so the helper firmware matches the DUT timing window.
+        """Validate measure serial compiles harness with measured inference runs."""
         handshake_result = hil_protocol.HandshakeResult(
             dut_log=["runs: 7", "timer output: 0.125000"],
             harness_log=["runs: 7", "harness timer output: 0.125000", "DONE"],
@@ -1705,6 +1989,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
     def test_measure_harness_only_open_session_uses_harness_latency(self):
         # Harness-only open-session measurements should source latency from the harness because the DUT is not reporting directly.
+        """Validate measure harness only open session uses harness latency."""
         session = hil_protocol.HarnessSessionResult(
             harness_log=[
                 "runs: 1",
@@ -1732,6 +2017,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
     def test_measure_harness_only_open_session_timeout_sets_error(self):
         # Harness-only session timeouts should surface as latency errors once bring-up has already succeeded.
+        """Validate measure harness only open session timeout sets error."""
         session = hil_protocol.HarnessSessionResult(
             harness_log=[
                 "runs: 1",
@@ -1755,8 +2041,11 @@ class HarnessMetricSelectionTests(unittest.TestCase):
 
 
 class HarnessOnlyOrderingTests(unittest.TestCase):
+    """Tests covering harness only ordering behavior."""
+
     def test_harness_only_opens_harness_before_upload(self):
         # Harness-only runs should open the harness session before upload so READY failures stay attached to the correct stage.
+        """Validate harness only opens harness before upload."""
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -1787,18 +2076,66 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
         events: list[str] = []
 
         class _DummyHarness:
+            """Minimal harness used to exercise controller ordering."""
+
             def __init__(self, *_args, **_kwargs) -> None:
+                """Initialize the instance.
+
+                Parameters
+                ----------
+                *_args : tuple[object, ...]
+                    Positional arguments captured by the test double.
+                **_kwargs : dict[str, object]
+                    Keyword arguments captured by the test double.
+                """
                 events.append("serial_open")
 
             def __enter__(self):
+                """Enter the context manager.
+
+                Returns
+                -------
+                object
+                    Active context manager instance.
+                """
                 events.append("serial_enter")
                 return self
 
             def __exit__(self, exc_type, exc, tb):
+                """Exit the context manager.
+
+                Parameters
+                ----------
+                exc_type : object
+                    Exception type passed to the context manager.
+                exc : object
+                    Exception instance passed to the context manager.
+                tb : object
+                    Traceback object passed to the context manager.
+
+                Returns
+                -------
+                object
+                    Whether the exception was handled by the context manager.
+                """
                 events.append("serial_exit")
                 return False
 
         def _upload_side_effect(*args, **kwargs):
+            """Exercise upload side effect behavior.
+
+            Parameters
+            ----------
+            *args : tuple[object, ...]
+                Upload callback arguments captured by the test.
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Upload result returned by the fake callback.
+            """
             del args, kwargs
             events.append("upload")
             return upload_result
@@ -1835,6 +2172,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
     def test_harness_only_missing_diagnostics_maps_to_latency_error(self):
         # If the harness omits timing diagnostics after the run starts, classify the result as a latency-side failure.
         # diagnostics, so timeout-like misses map to HIL_ERROR_LATENCY.
+        """Validate harness only missing diagnostics maps to latency error."""
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -1864,13 +2202,47 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
         )
 
         class _DummyHarness:
+            """Minimal harness used to exercise controller ordering."""
+
             def __init__(self, *_args, **_kwargs) -> None:
+                """Initialize the instance.
+
+                Parameters
+                ----------
+                *_args : tuple[object, ...]
+                    Positional arguments captured by the test double.
+                **_kwargs : dict[str, object]
+                    Keyword arguments captured by the test double.
+                """
                 return None
 
             def __enter__(self):
+                """Enter the context manager.
+
+                Returns
+                -------
+                object
+                    Active context manager instance.
+                """
                 return self
 
             def __exit__(self, exc_type, exc, tb):
+                """Exit the context manager.
+
+                Parameters
+                ----------
+                exc_type : object
+                    Exception type passed to the context manager.
+                exc : object
+                    Exception instance passed to the context manager.
+                tb : object
+                    Traceback object passed to the context manager.
+
+                Returns
+                -------
+                object
+                    Whether the exception was handled by the context manager.
+                """
                 return False
 
         with patch.object(device, "compile", return_value=compile_result), patch(
@@ -1903,6 +2275,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
 
     def test_harness_only_not_ready_maps_to_upload_error(self):
         # If the harness never announces READY, treat it as bring-up/upload failure because inference never actually started.
+        """Validate harness only not ready maps to upload error."""
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -1925,13 +2298,47 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
         )
 
         class _DummyHarness:
+            """Minimal harness used to exercise controller ordering."""
+
             def __init__(self, *_args, **_kwargs) -> None:
+                """Initialize the instance.
+
+                Parameters
+                ----------
+                *_args : tuple[object, ...]
+                    Positional arguments captured by the test double.
+                **_kwargs : dict[str, object]
+                    Keyword arguments captured by the test double.
+                """
                 return None
 
             def __enter__(self):
+                """Enter the context manager.
+
+                Returns
+                -------
+                object
+                    Active context manager instance.
+                """
                 return self
 
             def __exit__(self, exc_type, exc, tb):
+                """Exit the context manager.
+
+                Parameters
+                ----------
+                exc_type : object
+                    Exception type passed to the context manager.
+                exc : object
+                    Exception instance passed to the context manager.
+                tb : object
+                    Traceback object passed to the context manager.
+
+                Returns
+                -------
+                object
+                    Whether the exception was handled by the context manager.
+                """
                 return False
 
         with patch.object(device, "compile", return_value=compile_result), patch(
@@ -1961,6 +2368,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
 
     def test_harness_only_prepare_failure_maps_to_upload_error(self):
         # Harness-only runtime preparation failures should stay in the upload bucket so callers can separate staging failures from measurement timeouts.
+        """Validate harness only prepare failure maps to upload error."""
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -2002,6 +2410,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
 
     def test_harness_only_prepare_for_runtime_runtimeerror_maps_to_upload_error(self):
         # prepare_for_runtime failures in harness-only mode should stay in the upload bucket because runtime execution never actually began.
+        """Validate harness only prepare for runtime runtimeerror maps to upload error."""
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -2043,6 +2452,8 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
 
 
 class DeviceTimeoutPassThroughTests(unittest.TestCase):
+    """Tests covering device timeout pass through behavior."""
+
     def test_arduino_prepare_candidate_float_does_not_require_calibration(self):
         """Arduino float exports should stage without representative data."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2072,6 +2483,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
 
     def test_arduino_device_measure_preserves_zero_timeouts(self):
         # Zero timeout overrides should survive measurement setup instead of being replaced by defaults.
+        """Validate Arduino device measure preserves zero timeouts."""
         device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE")
         fake_result = ArduinoMeasureResult(
             latency_s=0.1,
@@ -2104,6 +2516,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
 
     def test_arduino_device_measure_forwards_measured_inference_runs(self):
         # Measured-run overrides should flow through Arduino measurement so latency and energy use the requested averaging window.
+        """Validate Arduino device measure forwards measured inference runs."""
         device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE")
         fake_result = ArduinoMeasureResult(
             latency_s=0.1,
@@ -2126,6 +2539,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
 
     def test_arduino_device_evaluate_compiles_dut_with_measured_inference_runs(self):
         # Arduino DUT compilation should bake in the measured-run count so the flashed sketch matches the requested loop length.
+        """Validate Arduino device evaluate compiles dut with measured inference runs."""
         device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE", serial_port="/dev/ttyACM0")
         compile_result = ArduinoCompileResult(
             success=True,
@@ -2161,6 +2575,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
 
     def test_portenta_cm4_harness_only_compiles_harness_with_measured_inference_runs(self):
         # Portenta CM4 harness-only runs should compile the helper harness with the requested measured-run count.
+        """Validate Portenta CM4 harness only compiles harness with measured inference runs."""
         device = get_device(
             "PORTENTA_H7",
             serial_port="/dev/ttyACM0",
@@ -2190,10 +2605,35 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
         )
 
         class _DummyHarness:
+            """Minimal harness used to exercise controller ordering."""
+
             def __enter__(self):
+                """Enter the context manager.
+
+                Returns
+                -------
+                object
+                    Active context manager instance.
+                """
                 return self
 
             def __exit__(self, exc_type, exc, tb):
+                """Exit the context manager.
+
+                Parameters
+                ----------
+                exc_type : object
+                    Exception type passed to the context manager.
+                exc : object
+                    Exception instance passed to the context manager.
+                tb : object
+                    Traceback object passed to the context manager.
+
+                Returns
+                -------
+                object
+                    Whether the exception was handled by the context manager.
+                """
                 return False
 
         with patch.object(device, "compile", return_value=compile_result), patch.object(
@@ -2225,19 +2665,28 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
 
 
 class HILSpecErrorTests(unittest.TestCase):
+    """Tests covering HIL spec error behavior."""
+
     def test_hil_spec_default_dirpath_uses_odom_candidate_dir(self):
-        """HIL_spec should default to the renamed odom_tcn candidate directory."""
+        """HIL spec should default to the renamed odometry candidate directory."""
         signature = inspect.signature(HIL_spec)
 
         self.assertEqual(signature.parameters["dirpath"].default, "odom_tcn/")
 
     def test_hil_controller_default_dirpath_uses_odom_candidate_dir(self):
-        """HIL_controller should default to the renamed odom_tcn candidate directory."""
+        """HIL controller should default to the renamed odometry candidate directory."""
         signature = inspect.signature(HIL_controller)
 
         self.assertEqual(signature.parameters["dirpath"].default, "odom_tcn/")
 
     def _write_sketch(self, sketch_dir: Path) -> None:
+        """Write sketch.
+
+        Parameters
+        ----------
+        sketch_dir : Path
+            Sketch directory forwarded to the hardware helper.
+        """
         sketch_dir.mkdir(parents=True, exist_ok=True)
         (sketch_dir / "TinyOdom.ino").write_text(
             "\n".join(
@@ -2251,6 +2700,7 @@ class HILSpecErrorTests(unittest.TestCase):
 
     def test_hil_spec_upload_failure_sets_error_flag(self):
         # HIL spec generation should flag upload failures so later phases do not treat them like runtime timings.
+        """Validate hil spec upload failure sets error flag."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             self._write_sketch(sketch_dir)
@@ -2275,6 +2725,7 @@ class HILSpecErrorTests(unittest.TestCase):
 
     def test_hil_spec_latency_timeout_sets_error_flag(self):
         # HIL spec generation should flag latency timeouts so runtime failures stay distinguishable from build failures.
+        """Validate hil spec latency timeout sets error flag."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             self._write_sketch(sketch_dir)
@@ -2302,6 +2753,7 @@ class HILSpecErrorTests(unittest.TestCase):
 
     def test_hil_spec_rejects_out_of_range_arena_index(self):
         # HIL spec generation should reject arena indices outside the candidate list.
+        """Validate hil spec rejects out of range arena index."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             self._write_sketch(sketch_dir)
@@ -2315,6 +2767,7 @@ class HILSpecErrorTests(unittest.TestCase):
 
     def test_hil_spec_detects_flash_overflow(self):
         # Detect HIL spec detects flash overflow so error classification and pruning stay stable.
+        """Validate hil spec detects flash overflow."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             self._write_sketch(sketch_dir)
@@ -2339,6 +2792,7 @@ class HILSpecErrorTests(unittest.TestCase):
 
     def test_hil_spec_detects_ram_overflow_message(self):
         # Detect HIL spec detects RAM overflow message so error classification and pruning stay stable.
+        """Validate hil spec detects ram overflow message."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             self._write_sketch(sketch_dir)
@@ -2363,6 +2817,7 @@ class HILSpecErrorTests(unittest.TestCase):
 
     def test_hil_spec_maps_arena_errors_to_under_sized_flag(self):
         # Arena-sizing failures should set the undersized flag so the search loop can widen the next attempt.
+        """Validate hil spec maps arena errors to under sized flag."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
             self._write_sketch(sketch_dir)
@@ -2390,21 +2845,60 @@ class HILSpecErrorTests(unittest.TestCase):
 
 
 class HILControllerTests(unittest.TestCase):
+    """Tests covering HIL controller behavior."""
+
     @staticmethod
     def _controller_device(arena_sizes_kb: np.ndarray, *, name: str = "ARDUINO_NANO_33_BLE_SENSE"):
+        """Create a controller device test double.
+
+        Parameters
+        ----------
+        arena_sizes_kb : np.ndarray
+            Arena sizes in kilobytes used by the helper.
+        name : str
+            Parameter name requested by the fake sampler.
+
+        Returns
+        -------
+        object
+            Device specification exposed by the fake controller.
+        """
         class _Spec:
+            """Tests covering spec behavior."""
+
             def __init__(self, spec_name: str, arenas: np.ndarray) -> None:
+                """Initialize the instance.
+
+                Parameters
+                ----------
+                spec_name : str
+                    Device specification name exposed by the fake object.
+                arenas : np.ndarray
+                    Arena sizes exposed by the fake device specification.
+                """
                 self.name = spec_name
                 self.arena_sizes_kb = [int(v) for v in arenas]
 
         class _Device:
+            """Tests covering device behavior."""
+
             def __init__(self, spec_name: str, arenas: np.ndarray) -> None:
+                """Initialize the instance.
+
+                Parameters
+                ----------
+                spec_name : str
+                    Device specification name exposed by the fake object.
+                arenas : np.ndarray
+                    Arena sizes exposed by the fake device specification.
+                """
                 self.spec = _Spec(spec_name, arenas)
 
         return _Device(name, arena_sizes_kb)
 
     def test_hil_controller_success_on_first_candidate(self):
         # The HIL controller should stop at the first successful arena candidate.
+        """Validate hil controller success on first candidate."""
         arena_candidates = np.array([10, 20])
         device = self._controller_device(arena_candidates)
         hil_return = (64000, 128000, 0.25, 10 * 1024, HIL_ERROR_OK, None)
@@ -2427,10 +2921,23 @@ class HILControllerTests(unittest.TestCase):
 
     def test_hil_controller_exhausts_candidates(self):
         # The HIL controller should return the final failure once every arena candidate has been tried.
+        """Validate hil controller exhausts candidates."""
         arena_candidates = np.array([10, 20])
         device = self._controller_device(arena_candidates)
 
         def hil_side_effect(**_kwargs):
+            """Return fake HIL metrics for the requested arena.
+
+            Parameters
+            ----------
+            **_kwargs : dict[str, object]
+                Keyword arguments captured by the test double.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL callback.
+            """
             idx = _kwargs["idx"]
             arena = arena_candidates[idx] * 1024
             return (50000, 100000, -1.0, arena, HIL_ERROR_LATENCY, None)
@@ -2453,6 +2960,7 @@ class HILControllerTests(unittest.TestCase):
     def test_hil_controller_single_shot_stm_timeout_is_fatal(self):
         # Single-shot STM32 timeouts should be treated as fatal because there is no arena-search retry path to recover them.
         # runtime failure instead of being rewritten as arena exhaustion.
+        """Validate hil controller single shot stm timeout is fatal."""
         arena_candidates = np.array([-1])
         device = self._controller_device(arena_candidates, name="STM32_NUCLEO_N657X0_Q")
 
@@ -2475,6 +2983,7 @@ class HILControllerTests(unittest.TestCase):
 
     def test_hil_controller_non_arena_failure(self):
         # Non-arena failures should surface immediately instead of triggering another arena candidate.
+        """Validate hil controller non arena failure."""
         arena_candidates = np.array([10, 20])
         device = self._controller_device(arena_candidates)
         hil_return = (72000, 160000, -1.0, 10 * 1024, HIL_ERROR_COMPILE, None)
@@ -2495,6 +3004,7 @@ class HILControllerTests(unittest.TestCase):
 
     def test_hil_controller_reports_flash_overflow(self):
         # Flash overflows should bubble out of the HIL controller with the stable overflow code.
+        """Validate hil controller reports flash overflow."""
         arena_candidates = np.array([10])
         device = self._controller_device(arena_candidates)
         hil_return = (-1, -1, -1.0, 10 * 1024, HIL_ERROR_FLASH_OVERFLOW, None)
@@ -2515,6 +3025,7 @@ class HILControllerTests(unittest.TestCase):
 
     def test_hil_controller_reports_device_not_found(self):
         # Device lookup failures should surface immediately so the caller sees a catalog problem, not a measurement failure.
+        """Validate hil controller reports device not found."""
         arena_candidates = np.array([10])
         device = self._controller_device(arena_candidates)
         hil_return = (64000, 128000, -1.0, 10 * 1024, HIL_ERROR_UPLOAD, None)
@@ -2535,11 +3046,24 @@ class HILControllerTests(unittest.TestCase):
 
     def test_hil_controller_prefers_smallest_successful_arena(self):
         # When several arena sizes work, the HIL controller should keep the smallest successful one.
+        """Validate hil controller prefers smallest successful arena."""
         arena_candidates = np.array([10, 20, 40, 80])
         device = self._controller_device(arena_candidates)
         call_log: list[int] = []
 
         def hil_side_effect(**kwargs):
+            """Return fake HIL metrics for the requested arena.
+
+            Parameters
+            ----------
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL callback.
+            """
             idx = kwargs["idx"]
             call_log.append(idx)
             arena = arena_candidates[idx] * 1024
@@ -2567,6 +3091,7 @@ class HILControllerTests(unittest.TestCase):
 
     def test_hil_controller_reports_master_ram_overflow_at_smallest(self):
         # If even the smallest arena candidate overflows, the controller should report master RAM overflow.
+        """Validate hil controller reports master ram overflow at smallest."""
         arena_candidates = np.array([10])
         device = self._controller_device(arena_candidates)
         hil_return = (-1, -1, -1.0, 10 * 1024, HIL_ERROR_RAM_OVERFLOW, None)
@@ -2585,11 +3110,24 @@ class HILControllerTests(unittest.TestCase):
 
     def test_hil_controller_retains_success_after_smaller_failure(self):
         # A later smaller-arena failure should not erase the best successful candidate already found.
+        """Validate hil controller retains success after smaller failure."""
         arena_candidates = np.array([10, 20, 40])
         device = self._controller_device(arena_candidates)
         call_order: list[int] = []
 
         def hil_side_effect(**kwargs):
+            """Return fake HIL metrics for the requested arena.
+
+            Parameters
+            ----------
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL callback.
+            """
             idx = kwargs["idx"]
             call_order.append(idx)
             arena = arena_candidates[idx] * 1024
@@ -2617,12 +3155,25 @@ class HILControllerTests(unittest.TestCase):
 
     def test_hil_controller_uses_retry_hint_to_jump(self):
         # Retry hints should let the HIL controller skip directly to a more plausible arena candidate.
+        """Validate hil controller uses retry hint to jump."""
         _store_retry_hint_bytes(None)
         arena_candidates = np.array([10, 20, 40, 80])
         device = self._controller_device(arena_candidates)
         call_sequence: list[int] = []
 
         def hil_side_effect(**kwargs):
+            """Return fake HIL metrics for the requested arena.
+
+            Parameters
+            ----------
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL callback.
+            """
             idx = kwargs["idx"]
             call_sequence.append(idx)
             arena = arena_candidates[idx] * 1024
@@ -2655,11 +3206,24 @@ class HILControllerTests(unittest.TestCase):
 
     def test_hil_controller_uses_injected_device_spec_not_catalog(self):
         # Injected device specs should take precedence so tests can pin the HIL controller to a precise hardware contract.
+        """Validate hil controller uses injected device spec not catalog."""
         arena_candidates = np.array([11, 33, 77])
         device = self._controller_device(arena_candidates, name="PORTENTA_H7")
         observed_indices: list[int] = []
 
         def hil_side_effect(**kwargs):
+            """Return fake HIL metrics for the requested arena.
+
+            Parameters
+            ----------
+            **kwargs : dict[str, object]
+                Keyword arguments forwarded to the helper.
+
+            Returns
+            -------
+            object
+                Metrics returned by the fake HIL callback.
+            """
             idx = kwargs["idx"]
             observed_indices.append(idx)
             arena = arena_candidates[idx] * 1024
@@ -2690,9 +3254,12 @@ class HILControllerTests(unittest.TestCase):
 
 
 class IntegrationTests(TinyModelMixin, unittest.TestCase):
+    """Tests covering integration behavior."""
+
     @unittest.skipUnless(shutil.which("xxd"), "xxd command required for this test.")
     def test_compile_only_pipeline(self):
         # Compile-only HIL runs should stop after staging and size accounting without entering runtime measurement.
+        """Validate compile only pipeline."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             tflite_path = tmp_path / "model_full.tflite"
@@ -2733,5 +3300,5 @@ class IntegrationTests(TinyModelMixin, unittest.TestCase):
 if __name__ == "__main__":
     defaultTest=None
     # defaultTest='ConversionHelperTests.test_convert_to_tflite_model_creates_file'
-    
+
     unittest.main(defaultTest=defaultTest)

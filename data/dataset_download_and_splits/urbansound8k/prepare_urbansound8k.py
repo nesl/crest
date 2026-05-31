@@ -73,7 +73,6 @@ def progress_iter(iterable: Iterable[Any], description: str) -> Iterable[Any]:
         Wrapped iterable. Uses ``tqdm`` when available and falls back to
         line-buffered progress messages otherwise.
     """
-
     items = list(iterable)
     total = len(items)
     if total == 0:
@@ -83,6 +82,13 @@ def progress_iter(iterable: Iterable[Any], description: str) -> Iterable[Any]:
         from tqdm.auto import tqdm  # type: ignore
     except ImportError:
         def _fallback() -> Iterable[Any]:
+            """Apply fallback behavior.
+
+            Yields
+            ------
+            object
+                Values yielded by the generator.
+            """
             interval = max(1, min(25, total // 10 or 1))
             print(f"{description}: 0/{total}", flush=True)
             for index, item in enumerate(items, start=1):
@@ -114,6 +120,23 @@ class PrepConfig:
         Number of deterministic crop variants generated for each train clip.
     crop_seed : int
         Global seed mixed with stable clip IDs for train crop generation.
+
+    Attributes
+    ----------
+    raw_root : Path
+        Root directory containing raw dataset files.
+    cache_root : Path
+        Root directory used for prepared dataset caches.
+    cache_version : str
+        Cache schema version used to invalidate stale features.
+    batch_period_ms : int
+        Batch period in milliseconds for cached audio examples.
+    calibration_examples : int
+        Number of examples reserved for calibration.
+    train_crop_variants : int
+        Number of crop variants generated for each training clip.
+    crop_seed : int
+        Random seed used for audio crop generation.
     """
 
     raw_root: Path
@@ -133,7 +156,6 @@ class PrepConfig:
         pathlib.Path
             Directory where split `.npz` files and `metadata.json` are stored.
         """
-
         return self.cache_root / self.cache_version
 
     @property
@@ -145,7 +167,6 @@ class PrepConfig:
         pathlib.Path
             Directory where `fold_XX` cache directories are stored.
         """
-
         return self.cache_dir / FOLD_ROTATION_DIRNAME
 
 
@@ -167,6 +188,21 @@ class ClipRecord:
         Mono or multichannel waveform loaded from soundata.
     sample_rate : int
         Sample rate of `waveform`.
+
+    Attributes
+    ----------
+    clip_id : str
+        Stable soundata clip identifier.
+    fold : int
+        UrbanSound8K fold number from 1 to 10.
+    class_id : int
+        Integer class label from 0 to 9.
+    class_label : str
+        Human-readable class label matching ``CLASS_NAMES[class_id]``.
+    waveform : np.ndarray
+        Mono or multichannel waveform loaded from soundata.
+    sample_rate : int
+        Sample rate of ``waveform``.
     """
 
     clip_id: str
@@ -191,6 +227,17 @@ class CropResult:
         Number of zero samples prepended.
     pad_after_sample : int
         Number of zero samples appended.
+
+    Attributes
+    ----------
+    waveform : np.ndarray
+        Cropped or padded waveform with exactly ``TARGET_NUM_SAMPLES`` samples.
+    crop_start_sample : int
+        Source waveform start index before padding.
+    pad_before_sample : int
+        Number of zero samples prepended.
+    pad_after_sample : int
+        Number of zero samples appended.
     """
 
     waveform: np.ndarray
@@ -207,7 +254,6 @@ def parse_args() -> argparse.Namespace:
     argparse.Namespace
         Parsed preparation options.
     """
-
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--raw-root", default="data/urbansound8k/raw")
     parser.add_argument("--cache-root", default="data/urbansound8k/cache")
@@ -244,8 +290,12 @@ def parse_test_folds(raw_value: str | Sequence[int]) -> tuple[int, ...]:
     -------
     tuple[int, ...]
         Unique fold numbers in caller-provided order.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if isinstance(raw_value, str):
         raw_items = [item.strip() for item in raw_value.split(",") if item.strip()]
     else:
@@ -281,7 +331,6 @@ def config_from_args(args: argparse.Namespace) -> PrepConfig:
     PrepConfig
         Normalized configuration with resolved paths.
     """
-
     return PrepConfig(
         raw_root=Path(args.raw_root),
         cache_root=Path(args.cache_root),
@@ -308,7 +357,6 @@ def stable_clip_seed(crop_seed: int, clip_id: str) -> int:
     int
         Seed suitable for `numpy.random.default_rng`.
     """
-
     # Python's built-in hash function is randomized per process, so use SHA-256
     # to keep crop starts stable across machines and reruns.
     digest_value = int.from_bytes(hashlib.sha256(clip_id.encode("utf-8")).digest()[:8], "little")
@@ -327,8 +375,12 @@ def to_mono_float32(waveform: np.ndarray) -> np.ndarray:
     -------
     numpy.ndarray
         One-dimensional float32 waveform.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     arr = np.asarray(waveform, dtype=np.float32)
     if arr.ndim == 1:
         return arr
@@ -344,8 +396,12 @@ def require_librosa() -> Any:
     -------
     module
         Imported `librosa` module.
-    """
 
+    Raises
+    ------
+    ImportError
+        If existing validation or execution checks fail.
+    """
     try:
         import librosa  # type: ignore
     except ImportError as exc:
@@ -373,7 +429,6 @@ def resample_audio(waveform: np.ndarray, sample_rate: int, target_rate: int = SA
     numpy.ndarray
         Resampled mono float32 waveform.
     """
-
     mono = to_mono_float32(waveform)
     if int(sample_rate) == int(target_rate):
         return mono
@@ -398,7 +453,6 @@ def crop_or_pad_waveform(waveform: np.ndarray, start_sample: int, target_samples
     CropResult
         Fixed-length waveform plus crop and padding metadata.
     """
-
     mono = to_mono_float32(waveform)
     if mono.shape[0] >= target_samples:
         start = max(0, min(int(start_sample), mono.shape[0] - target_samples))
@@ -436,7 +490,6 @@ def center_crop_start(num_samples: int, target_samples: int = TARGET_NUM_SAMPLES
     int
         Center-crop start, or zero for short clips.
     """
-
     if int(num_samples) <= int(target_samples):
         return 0
     return (int(num_samples) - int(target_samples)) // 2
@@ -459,7 +512,6 @@ def train_crop_starts(clip_id: str, num_samples: int, config: PrepConfig) -> lis
     list[int]
         Crop starts, one per configured train crop variant.
     """
-
     if int(num_samples) <= TARGET_NUM_SAMPLES:
         return [0 for _ in range(config.train_crop_variants)]
     rng = np.random.default_rng(stable_clip_seed(config.crop_seed, clip_id))
@@ -481,8 +533,12 @@ def compute_log_mel_features(waveform: np.ndarray, sample_rate: int) -> np.ndarr
     -------
     numpy.ndarray
         Float32 feature array with shape `(201, 64)`.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     librosa = require_librosa()
     mel_power = librosa.feature.melspectrogram(
         y=np.asarray(waveform, dtype=np.float32),
@@ -518,7 +574,6 @@ def normalize_features(features: np.ndarray, mean: np.ndarray, std: np.ndarray) 
     numpy.ndarray
         Standardized float32 features.
     """
-
     normalized = (np.asarray(features, dtype=np.float32) - mean) / (std + NORMALIZATION_EPSILON)
     return normalized.astype(np.float32, copy=False)
 
@@ -536,7 +591,6 @@ def compute_normalization_stats(train_inputs: np.ndarray) -> tuple[np.ndarray, n
     tuple[numpy.ndarray, numpy.ndarray]
         Mean and standard deviation arrays with shape `(64,)`.
     """
-
     mean = np.mean(train_inputs, axis=(0, 1), dtype=np.float64).astype(np.float32)
     std = np.std(train_inputs, axis=(0, 1), dtype=np.float64).astype(np.float32)
     return mean, std
@@ -554,8 +608,12 @@ def fold_split_for_test_fold(test_fold: int) -> FoldSplit:
     -------
     dict[str, tuple[int, ...]]
         Split mapping with train, validation, and test fold tuples.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if int(test_fold) not in ALL_FOLDS:
         raise ValueError("test_fold must be an UrbanSound8K fold from 1 to 10.")
     val_fold = int(test_fold) % len(ALL_FOLDS) + 1
@@ -581,7 +639,6 @@ def split_records(
     dict[str, list[ClipRecord]]
         Mapping for train, validation, and test records.
     """
-
     active_split = FOLD_SPLIT if fold_split is None else fold_split
     split_by_name = {name: [] for name in ("train", "val", "test")}
     fold_to_split = {
@@ -611,7 +668,6 @@ def select_calibration_records(records: Sequence[ClipRecord], limit: int) -> lis
     list[ClipRecord]
         Calibration records without duplicate clip IDs.
     """
-
     buckets: dict[int, list[ClipRecord]] = {class_id: [] for class_id in range(len(CLASS_NAMES))}
     for record in records:
         buckets[int(record.class_id)].append(record)
@@ -674,7 +730,6 @@ def build_split_payload(
     dict[str, numpy.ndarray]
         Arrays ready to write to a split `.npz` file.
     """
-
     inputs: list[np.ndarray] = []
     labels: list[int] = []
     folds: list[int] = []
@@ -759,7 +814,6 @@ def expected_metadata(
     dict[str, object]
         Metadata payload.
     """
-
     zero_stats = [0.0 for _ in range(MEL_BINS)]
     active_split = FOLD_SPLIT if fold_split is None else fold_split
     metadata = {
@@ -820,7 +874,6 @@ def write_cache(cache_dir: Path, metadata: dict[str, Any], payloads: dict[str, d
     payloads : dict[str, dict[str, numpy.ndarray]]
         Mapping of split name to `.npz` array payload.
     """
-
     cache_dir.mkdir(parents=True, exist_ok=True)
     for split_name, payload in payloads.items():
         np.savez_compressed(cache_dir / f"{split_name}.npz", **payload)
@@ -860,7 +913,6 @@ def validate_cache(
     ValueError
         If present cache files conflict with the requested configuration.
     """
-
     if not cache_dir.exists():
         return False
     metadata_path = cache_dir / "metadata.json"
@@ -985,7 +1037,6 @@ def build_cache_from_records(
     pathlib.Path
         Generated or reused cache directory.
     """
-
     active_split = FOLD_SPLIT if fold_split is None else fold_split
     cache_dir = config.cache_dir if cache_dir is None else Path(cache_dir)
     if cache_dir.exists() and not force:
@@ -1094,7 +1145,6 @@ def build_fold_rotation_caches(
     list[pathlib.Path]
         Generated or reused per-fold cache directories.
     """
-
     written: list[Path] = []
     parsed_test_folds = parse_test_folds(test_folds)
     for fold_index, test_fold in enumerate(parsed_test_folds, start=1):
@@ -1126,8 +1176,12 @@ def require_soundata() -> Any:
     -------
     module
         Imported `soundata` module.
-    """
 
+    Raises
+    ------
+    ImportError
+        If existing validation or execution checks fail.
+    """
     try:
         import soundata  # type: ignore
     except ImportError as exc:
@@ -1154,8 +1208,14 @@ def initialize_soundata_dataset(config: PrepConfig, *, download: bool, accept_li
     -------
     object
         Initialized soundata dataset object.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    RuntimeError
+        If existing validation or execution checks fail.
+    """
     if download and not accept_license:
         raise ValueError("--accept-license is required when --download is used.")
     soundata = require_soundata()
@@ -1192,7 +1252,6 @@ def count_validation_issues(validation_payload: Any) -> int:
     int
         Number of nested validation issues.
     """
-
     if validation_payload is None:
         return 0
     if isinstance(validation_payload, dict):
@@ -1217,7 +1276,6 @@ def records_from_soundata(dataset: Any, progress: ProgressFactory | None = None)
     list[ClipRecord]
         Sorted clip records ready for cache generation.
     """
-
     records: list[ClipRecord] = []
     clips = sorted(dataset.load_clips().items())
     active_clips = progress(clips, "load clips") if progress is not None else clips
@@ -1241,7 +1299,6 @@ def records_from_soundata(dataset: Any, progress: ProgressFactory | None = None)
 
 def main() -> None:
     """Run the UrbanSound8K preparation workflow from the command line."""
-
     args = parse_args()
     config = config_from_args(args)
     dataset = initialize_soundata_dataset(

@@ -106,6 +106,13 @@ def get_device(
     -------
     Any
         Device wrapper implementing the ``DeviceInterface`` contract.
+
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    Exception
+        If existing validation or execution checks fail.
     """
     normalized_name = name.strip().upper()
     entries = _registry_entries()
@@ -164,7 +171,6 @@ def resolve_device_options(
     Backend-owned fields still come from per-board config subtrees because the
     Portenta and STM32 wrappers expose different option schemas.
     """
-
     def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
         """Read a config field from mapping-like or attribute-style objects.
 

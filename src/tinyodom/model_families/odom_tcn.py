@@ -51,7 +51,6 @@ def build_tinyodom_model(hyperparams: dict[str, Any]) -> Model:
     tensorflow.keras.Model
         Uncompiled two-head velocity model.
     """
-
     inputs = Input(shape=(int(hyperparams["timesteps"]), int(hyperparams["input_dim"])))
     features = TCN(
         nb_filters=int(hyperparams["nb_filters"]),
@@ -86,7 +85,6 @@ def _iter_layers(model: tf.keras.Model) -> list[tf.keras.layers.Layer]:
     list[tensorflow.keras.layers.Layer]
         Reachable layers in breadth-first traversal order.
     """
-
     queue = deque([model])
     seen_nodes: set[int] = set()
     layers: list[tf.keras.layers.Layer] = []
@@ -121,7 +119,6 @@ def apply_combined_perturbation(
     tuple[int, int]
         Number of BN layers touched and number of non-BN bias layers touched.
     """
-
     rng = np.random.default_rng(int(seed))
     bn_touched = 0
     bias_touched = 0
@@ -163,7 +160,6 @@ def _conv_output_channels(layer: tf.keras.layers.Layer) -> int | None:
     int | None
         Output channel count when available from layer attributes or weights.
     """
-
     filters = getattr(layer, "filters", None)
     if filters is not None:
         return int(filters)
@@ -190,7 +186,6 @@ def _activation_bytes(elements: int | None, dtype_bytes: int) -> tuple[int, int]
     tuple[int, int]
         Bytes and warning increment.
     """
-
     if elements is None:
         return 0, 1
     return int(elements) * int(dtype_bytes), 0
@@ -215,7 +210,6 @@ def _estimate_odom_tcn_static_memory(
     StaticMemoryEstimate
         Static memory proxy estimate for batch size 1.
     """
-
     dtype_bytes = dtype_bytes_for_quantization(quantization_mode)
     seen_weights: set[int] = set()
     weight_bytes = 0
@@ -242,7 +236,6 @@ def _estimate_odom_tcn_static_memory(
         inferred_shape : bool, optional
             Whether the activation shape came from architecture-aware inference.
         """
-
         nonlocal weight_bytes, activation_bytes, warning_count
         input_bytes, input_warning = _activation_bytes(input_elements, dtype_bytes)
         output_bytes, output_warning = _activation_bytes(output_elements, dtype_bytes)
@@ -349,7 +342,7 @@ def _estimate_odom_tcn_static_memory(
 
 
 class OdomTCNFamily(ModelFamilyABC):
-    """TCN model family matching the current TinyODOM architecture surface.
+    """Describe tCN model family matching the current TinyODOM architecture surface.
 
     The family exposes the stable ``"odom_tcn"`` name, owns the TinyODOM
     search surface, model builder, FLOP estimation, persisted-trial decoding,
@@ -365,7 +358,6 @@ class OdomTCNFamily(ModelFamilyABC):
         str
             Stable model-family identifier.
         """
-
         return "odom_tcn"
 
     def sample_hparams(
@@ -390,7 +382,6 @@ class OdomTCNFamily(ModelFamilyABC):
         dict[str, Any]
             Sampled family hyperparameters without runner-owned fields.
         """
-
         del ctx, config
         dilations_index = trial.suggest_int("dilations_index", 0, len(DILATION_CANDIDATES) - 1)
         return {
@@ -424,7 +415,6 @@ class OdomTCNFamily(ModelFamilyABC):
         dict[str, Any]
             Build-time TinyODOM hyperparameters with ``dilations`` expanded.
         """
-
         del ctx, config
         decoded = dict(raw_params)
         if "dilations_index" in decoded and "dilations" not in decoded:
@@ -453,7 +443,6 @@ class OdomTCNFamily(ModelFamilyABC):
         dict[str, Any] | None
             Raw trial parameters matching the NAS sampling surface.
         """
-
         del ctx, config
         return {
             "nb_filters": 10,
@@ -492,7 +481,6 @@ class OdomTCNFamily(ModelFamilyABC):
             If ``ctx.input_shape`` does not contain the legacy timestep and
             channel dimensions required by the current model builder.
         """
-
         del config
         self.validate_hparams(hparams, ctx, None)
         if ctx.input_shape is None or len(ctx.input_shape) < 2:
@@ -531,7 +519,6 @@ class OdomTCNFamily(ModelFamilyABC):
         ValueError
             If required hyperparameters are missing.
         """
-
         del ctx, config
         required = (
             "nb_filters",
@@ -555,7 +542,6 @@ class OdomTCNFamily(ModelFamilyABC):
         dict[str, Any]
             Loader mapping for custom Keras layers.
         """
-
         return {"TCN": TCN}
 
     def estimate_static_memory(
@@ -585,7 +571,6 @@ class OdomTCNFamily(ModelFamilyABC):
         StaticMemoryEstimate
             Static tensor memory traffic estimate for batch size 1.
         """
-
         del ctx, config
         return _estimate_odom_tcn_static_memory(
             model,
@@ -619,7 +604,6 @@ class OdomTCNFamily(ModelFamilyABC):
         ValueError
             If the model build context does not expose a usable logical input shape.
         """
-
         del config
         if ctx.input_shape is None or len(ctx.input_shape) < 2:
             raise ValueError("OdomTCNFamily requires a 2D input shape: (timesteps, input_dim).")
@@ -658,7 +642,6 @@ class OdomTCNFamily(ModelFamilyABC):
             deterministic perturbation path on a freshly built model; other
             variants defer to :class:`ModelFamilyABC`.
         """
-
         normalized_variant = str(model_variant).strip().lower()
         if normalized_variant in {
             "approx_trained",

@@ -23,7 +23,6 @@ def _executable_print_calls(source_path: Path) -> list[tuple[int, int]]:
     list[tuple[int, int]]
         One-based line and column locations for every executable ``print`` call.
     """
-
     tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
     locations: list[tuple[int, int]] = []
     for node in ast.walk(tree):
@@ -41,7 +40,6 @@ def test_src_contains_no_executable_print_calls() -> None:
         The test passes when every Python file under ``src`` is free of
         executable ``print`` calls.
     """
-
     offenders: list[str] = []
     for source_path in sorted(SRC_DIR.rglob("*.py")):
         for line_number, column in _executable_print_calls(source_path):

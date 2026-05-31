@@ -64,6 +64,29 @@ class ColumnMapping:
         Columns used to build an architecture fingerprint.
     auto_detected:
         Whether the mapping came from heuristics rather than explicit columns.
+
+    Attributes
+    ----------
+    csv_path : Path
+        Path to the CSV artifact.
+    trial_id : str | None
+        Trial identifier column, when present.
+    quality : str
+        Quality value used for Pareto comparison.
+    energy : str
+        Energy column used for sensitivity scoring.
+    latency : str | None
+        Latency column used for optional feasibility filtering.
+    status : str | None
+        Status column used for optional run filtering.
+    feasible : str | None
+        Feasibility column used for optional run filtering.
+    source_score : str | None
+        Source score column used to mirror prior filtering behavior.
+    architecture_columns : tuple[str, ...]
+        Column names for architecture values.
+    auto_detected : bool
+        Whether the mapping came from heuristic column detection.
     """
 
     csv_path: Path
@@ -88,6 +111,13 @@ class RunInput:
         Human-readable run label.
     path:
         Path to a CSV file or run directory containing top-level CSV logs.
+
+    Attributes
+    ----------
+    label : str
+        Display label used in reports and plots.
+    path : Path
+        CSV file or run directory containing log data.
     """
 
     label: str
@@ -116,6 +146,25 @@ class ColumnOverrides:
         Explicit source-score column.
     architecture_columns:
         Explicit architecture fingerprint columns.
+
+    Attributes
+    ----------
+    quality : str | None
+        Quality value used for Pareto comparison.
+    energy : str | None
+        Explicit energy column override.
+    trial_id : str | None
+        Explicit trial identifier column override.
+    latency : str | None
+        Explicit latency column override.
+    status : str | None
+        Explicit status column override.
+    feasible : str | None
+        Explicit feasibility column override.
+    source_score : str | None
+        Explicit source-score column override.
+    architecture_columns : tuple[str, ...]
+        Column names for architecture values.
     """
 
     quality: str | None = None
@@ -154,6 +203,29 @@ class SensitivityConfig:
         Optional global column overrides.
     command:
         Command line recorded in the manifest.
+
+    Attributes
+    ----------
+    runs : tuple[RunInput, ...]
+        Labeled CSV or run-directory inputs.
+    output_dir : Path
+        Directory where comparison artifacts are written.
+    budgets_mj : tuple[float, ...]
+        Energy budgets used for the budget sweep.
+    lambdas : tuple[float, ...]
+        Penalty values used for the lambda sweep.
+    baseline_budget_mj : float
+        Baseline energy budget in millijoules.
+    baseline_lambda : float
+        Baseline energy-penalty value.
+    status_values : tuple[str, ...]
+        Allowed values for status.
+    feasible_values : tuple[str, ...]
+        Allowed values for feasible.
+    column_overrides : ColumnOverrides
+        Global column overrides applied before auto-detection.
+    command : tuple[str, ...]
+        Command line recorded in the output manifest.
     """
 
     runs: tuple[RunInput, ...]
@@ -175,7 +247,6 @@ class SensitivityConfig:
         ValueError
             If inputs, sweep values, or baseline values are invalid.
         """
-
         if not self.runs:
             raise ValueError("at least one --run LABEL=CSV_OR_RUN_DIR is required")
         labels = [run.label for run in self.runs]
@@ -211,7 +282,6 @@ def norm(name: str) -> str:
     str
         Lowercase alphanumeric/underscore column key.
     """
-
     return "".join(ch.lower() if ch.isalnum() else "_" for ch in name).strip("_")
 
 
@@ -228,7 +298,6 @@ def col_tokens(name: str) -> set[str]:
     set[str]
         Token set used by column scorers.
     """
-
     return {part for part in norm(name).split("_") if part}
 
 
@@ -247,7 +316,6 @@ def choose_col(columns: Sequence[str], scorer: Callable[[str], int]) -> str | No
     str | None
         Selected column, or ``None`` when every score is zero.
     """
-
     ranked = sorted(
         ((scorer(col), idx, col) for idx, col in enumerate(columns)),
         key=lambda item: (-item[0], item[1]),
@@ -268,7 +336,6 @@ def score_quality_col(col: str) -> int:
     int
         Heuristic score. Zero means the column is not a quality candidate.
     """
-
     tokens = col_tokens(col)
     name = norm(col)
     score = 0
@@ -302,7 +369,6 @@ def score_energy_col(col: str) -> int:
     int
         Heuristic score. Zero means the column is not an energy candidate.
     """
-
     tokens = col_tokens(col)
     if "energy" not in tokens:
         return 0
@@ -335,7 +401,6 @@ def score_trial_col(col: str) -> int:
     int
         Heuristic score. Zero means the column is not a trial-id candidate.
     """
-
     tokens = col_tokens(col)
     name = norm(col)
     if name in {"number", "trial", "trial_id", "trial_number", "trial_num"}:
@@ -358,7 +423,6 @@ def score_latency_col(col: str) -> int:
     int
         Heuristic score. Zero means the column is not a latency candidate.
     """
-
     tokens = col_tokens(col)
     if "latency" not in tokens:
         return 0
@@ -389,7 +453,6 @@ def score_status_col(col: str) -> int:
     int
         Heuristic score. Zero means the column is not a status candidate.
     """
-
     name = norm(col)
     tokens = col_tokens(col)
     if name == "state":
@@ -412,7 +475,6 @@ def score_feasible_col(col: str) -> int:
     int
         Heuristic score. Zero means the column is not a feasibility candidate.
     """
-
     name = norm(col)
     tokens = col_tokens(col)
     if name in {"feasible", "user_attrs_feasible"}:
@@ -437,7 +499,6 @@ def score_source_score_col(col: str) -> int:
     int
         Heuristic score. Zero means the column is not a source-score candidate.
     """
-
     name = norm(col)
     if name in {"value_score", "score", "objective_score"}:
         return 100
@@ -463,7 +524,6 @@ def validate_columns(path: Path, columns: Sequence[str], required: Mapping[str, 
     KeyError
         If a configured column is missing.
     """
-
     column_set = set(columns)
     missing = [
         f"{logical}={column!r}" for logical, column in required.items() if column and column not in column_set
@@ -486,7 +546,6 @@ def default_architecture_columns(columns: Sequence[str]) -> tuple[str, ...]:
         Architecture columns using the preserved ``params_`` priority, falling
         back to hparam columns only when no params columns are present.
     """
-
     params_cols = [col for col in columns if norm(col).startswith("params_")]
     hparam_cols = [
         col
@@ -519,7 +578,6 @@ def build_mapping(path: Path, df: pd.DataFrame, overrides: ColumnOverrides) -> C
     KeyError
         If a configured column is missing.
     """
-
     columns = list(df.columns)
     validate_columns(
         path,
@@ -588,7 +646,6 @@ def score_log_candidate(
     tuple[int, pandas.DataFrame, ColumnMapping | None]
         Discovery score, loaded frame, and mapping when usable.
     """
-
     df = pd.read_csv(path)
     mapping = build_mapping(path, df, overrides)
     if mapping is None:
@@ -622,7 +679,6 @@ def discover_csvs(path: Path) -> tuple[Path, ...]:
     ValueError
         If the path is neither a file nor a directory, or no CSVs are present.
     """
-
     if not path.exists():
         raise FileNotFoundError(f"run input does not exist: {path}")
     if path.is_file():
@@ -663,7 +719,6 @@ def load_run(run: RunInput, overrides: ColumnOverrides) -> tuple[pd.DataFrame, C
     RuntimeError
         If no usable CSV log is found.
     """
-
     diagnostics: list[dict[str, Any]] = []
     valid: list[tuple[int, pd.DataFrame, ColumnMapping]] = []
     for path in discover_csvs(run.path):
@@ -699,7 +754,6 @@ def accepted_mask(series: pd.Series, accepted_values: Sequence[str]) -> pd.Serie
     pandas.Series
         Boolean mask.
     """
-
     if pd.api.types.is_bool_dtype(series):
         bool_accepted = {value.strip().lower() for value in accepted_values} & {"true", "1", "yes", "y"}
         if bool_accepted:
@@ -722,7 +776,6 @@ def finite_numeric_mask(series: pd.Series) -> pd.Series:
     pandas.Series
         Boolean mask that rejects missing, ``inf``, and ``-inf`` values.
     """
-
     return series.map(lambda value: bool(pd.notna(value) and math.isfinite(float(value))))
 
 
@@ -739,7 +792,6 @@ def clean_scalar(value: Any) -> Any:
     Any
         Cleaned scalar, or ``None`` for missing values.
     """
-
     if pd.isna(value):
         return None
     if hasattr(value, "item"):
@@ -762,7 +814,6 @@ def compact_arch_fingerprint(row: pd.Series, arch_cols: Sequence[str]) -> str:
     str
         Deterministic compact JSON object.
     """
-
     values: dict[str, Any] = {}
     for col in arch_cols:
         key = col
@@ -804,7 +855,6 @@ def prepare_candidates(
     ValueError
         If filtering removes every candidate.
     """
-
     work = df.copy()
     work["_quality"] = pd.to_numeric(work[mapping.quality], errors="coerce")
     work["_energy"] = pd.to_numeric(work[mapping.energy], errors="coerce")
@@ -856,7 +906,6 @@ def score_candidates(df: pd.DataFrame, lam: float, budget_mj: float) -> pd.DataF
     pandas.DataFrame
         Scored candidates.
     """
-
     scored = df.copy()
     scored["_score"] = scored["_quality"] - lam * scored["_energy"] / budget_mj
     return scored
@@ -879,7 +928,6 @@ def select_candidate(df: pd.DataFrame, lam: float, budget_mj: float) -> pd.Serie
     pandas.Series
         Selected candidate row.
     """
-
     scored = score_candidates(df, lam, budget_mj)
     scored = scored.sort_values(
         by=["_score", "_quality", "_energy", "_trial_id"],
@@ -902,7 +950,6 @@ def select_highest_quality(df: pd.DataFrame) -> pd.Series:
     pandas.Series
         Candidate with max quality, min energy, then string trial-id tie-break.
     """
-
     selected = df.sort_values(
         by=["_quality", "_energy", "_trial_id"],
         ascending=[False, True, True],
@@ -925,7 +972,6 @@ def select_lowest_energy(df: pd.DataFrame) -> pd.Series:
     pandas.Series
         Candidate with min energy, max quality, then string trial-id tie-break.
     """
-
     selected = df.sort_values(
         by=["_energy", "_quality", "_trial_id"],
         ascending=[True, False, True],
@@ -968,7 +1014,6 @@ def row_for_selection(
     dict[str, Any]
         Stable output row.
     """
-
     score = selected.get("_score", math.nan)
     return {
         "section": section,
@@ -1002,7 +1047,6 @@ def fmt_float(value: Any, digits: int = 4) -> str:
     str
         Formatted text or blank for missing values.
     """
-
     if value is None or pd.isna(value):
         return ""
     return f"{float(value):.{digits}f}"
@@ -1023,7 +1067,6 @@ def md_table(rows: Sequence[Mapping[str, Any]], columns: Sequence[tuple[str, str
     str
         Markdown table text.
     """
-
     header = "| " + " | ".join(label for label, _ in columns) + " |"
     sep = "| " + " | ".join("---" for _ in columns) + " |"
     body = []
@@ -1055,7 +1098,6 @@ def mapping_dict(mapping: ColumnMapping) -> dict[str, Any]:
     dict[str, Any]
         JSON-ready mapping metadata.
     """
-
     return {
         "csv_path": str(mapping.csv_path),
         "trial_id": mapping.trial_id,
@@ -1085,7 +1127,6 @@ def write_json(path: Path, payload: Mapping[str, Any]) -> None:
     None
         The JSON file is written to disk.
     """
-
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
@@ -1125,7 +1166,6 @@ def write_markdown(
     None
         The Markdown file is written to disk.
     """
-
     lines = [
         "# Score Sensitivity Summary",
         "",
@@ -1227,8 +1267,12 @@ def run_sensitivity(config: SensitivityConfig) -> dict[str, Any]:
     -------
     dict[str, Any]
         Summary payload also written to ``summary.json``.
-    """
 
+    Raises
+    ------
+    RuntimeError
+        If existing validation or execution checks fail.
+    """
     config.output_dir.mkdir(parents=True, exist_ok=True)
     mappings: dict[str, ColumnMapping] = {}
     diagnostics: dict[str, list[dict[str, Any]]] = {}
@@ -1376,7 +1420,6 @@ def parse_run_spec(spec: str) -> RunInput:
     argparse.ArgumentTypeError
         If the argument is malformed.
     """
-
     if "=" not in spec:
         raise argparse.ArgumentTypeError("--run must use LABEL=CSV_OR_RUN_DIR")
     label, raw_path = spec.split("=", 1)
@@ -1409,7 +1452,6 @@ def parse_float_list(values: Sequence[str] | None, default: Sequence[float], lab
     ValueError
         If a value cannot be parsed as a float.
     """
-
     if values is None:
         return tuple(default)
     parsed: list[float] = []
@@ -1436,7 +1478,6 @@ def parse_value_list(values: Sequence[str] | None, default: Sequence[str]) -> tu
     tuple[str, ...]
         Normalized nonempty accepted values.
     """
-
     if values is None:
         return tuple(default)
     parsed: list[str] = []
@@ -1453,7 +1494,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     argparse.ArgumentParser
         Configured parser.
     """
-
     parser = argparse.ArgumentParser(
         description="Run score-sensitivity sweeps over CSV-derived NAS candidates.",
     )
@@ -1516,7 +1556,6 @@ def config_from_args(args: argparse.Namespace, argv: Sequence[str]) -> Sensitivi
     SensitivityConfig
         Validated configuration.
     """
-
     overrides = ColumnOverrides(
         quality=args.quality_col,
         energy=args.energy_col,
@@ -1555,7 +1594,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     int
         Process exit code.
     """
-
     parser = build_arg_parser()
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     try:

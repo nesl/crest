@@ -35,6 +35,17 @@ class NativeRun:
         Matplotlib color for this board.
     marker : str
         Marker used for native points from this board.
+
+    Attributes
+    ----------
+    label : str
+        Display label used in reports and plots.
+    log_path : Path
+        Path to the run log used for plotting.
+    color : str
+        Plot color used for the series.
+    marker : str
+        Matplotlib marker used for the series.
     """
 
     label: str
@@ -67,6 +78,27 @@ class TransferPoint:
         NAS score associated with the selected architecture.
     row_index : int
         Source CSV row index.
+
+    Attributes
+    ----------
+    architecture : str
+        Architecture identifier selected by NAS.
+    measurement_board : str
+        Board used to collect the measurement.
+    point_type : str
+        Category used to style the plotted point.
+    energy_mj : float
+        Measured energy in millijoules.
+    latency_ms : float
+        Measured latency in milliseconds.
+    accuracy : float
+        Validation accuracy for the selected architecture.
+    macro_f1 : float
+        Validation macro-F1 for the selected architecture.
+    score : float
+        NAS score for the selected architecture.
+    row_index : int
+        Index of the source row in the input CSV.
     """
 
     architecture: str
@@ -97,7 +129,6 @@ def numeric_series(frame: pd.DataFrame, column: str, default: float | None = Non
     pandas.Series
         Numeric series aligned to ``frame``.
     """
-
     if column in frame.columns:
         return pd.to_numeric(frame[column], errors="coerce")
     return pd.Series([default] * len(frame), index=frame.index, dtype="float64")
@@ -116,7 +147,6 @@ def valid_successful_trials(frame: pd.DataFrame) -> pd.DataFrame:
     pandas.DataFrame
         Filtered frame preserving original row indices.
     """
-
     error_code = numeric_series(frame, "error_code")
     pruned = frame.get("pruned", pd.Series([False] * len(frame), index=frame.index))
     pruned = pruned.astype(str).str.lower().isin({"true", "1", "yes"})
@@ -138,8 +168,12 @@ def best_trial(frame: pd.DataFrame) -> pd.Series:
     -------
     pandas.Series
         Best valid trial row.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     valid = valid_successful_trials(frame)
     if valid.empty:
         raise ValueError("No successful finite-score trials found.")
@@ -154,7 +188,6 @@ def configure_matplotlib() -> None:
     None
         Updates Matplotlib process-wide rcParams.
     """
-
     plt.rcParams.update(
         {
             "figure.dpi": 140,
@@ -192,7 +225,6 @@ def plot_score_progress(
     output_stem : str
         Output filename stem.
     """
-
     fig, axes = plt.subplots(
         len(native_runs),
         1,
@@ -313,7 +345,6 @@ def transfer_points(
     list[TransferPoint]
         Four plot-ready transfer points.
     """
-
     stm_frame = pd.read_csv(stm_log)
     portenta_frame = pd.read_csv(portenta_log)
     stm_best = best_trial(stm_frame)
@@ -382,7 +413,6 @@ def point_dataframe(points: Sequence[TransferPoint]) -> pd.DataFrame:
     pandas.DataFrame
         Tabular transfer summary.
     """
-
     return pd.DataFrame([point.__dict__ for point in points])
 
 
@@ -409,7 +439,6 @@ def plot_transfer_panel(
     x_scale : {"linear", "log"}, optional
         Axis scale for the x metric.
     """
-
     arch_colors = {"STM-selected": "#1f77b4", "Portenta-selected": "#ff7f0e"}
     board_markers = {"STM32 N657": "o", "Portenta H7": "s"}
 
@@ -479,7 +508,6 @@ def plot_transfer(
     points_stem : str
         Transfer-points CSV filename stem.
     """
-
     frame = point_dataframe(points)
     fig, axes = plt.subplots(2, 1, figsize=(5.7, 5.8), sharex=False)
     plot_transfer_panel(
@@ -574,7 +602,6 @@ def board_short(label: str) -> str:
     str
         Compact board label.
     """
-
     if "STM32" in label:
         return "STM32"
     if "Portenta" in label:
@@ -595,7 +622,6 @@ def endpoint_label(point: pd.Series) -> str:
     str
         Multiline endpoint label.
     """
-
     board = board_short(point["measurement_board"])
     if point["point_type"] == "Native optimum":
         return f"selected\nfor {board}"
@@ -614,7 +640,6 @@ def plot_transfer_v2(points: Sequence[TransferPoint], output_dir: Path, output_s
     output_stem : str
         Output filename stem.
     """
-
     frame = point_dataframe(points)
     architecture_order = ["STM-selected", "Portenta-selected"]
     arch_colors = {"STM-selected": "#0072B2", "Portenta-selected": "#D55E00"}
@@ -738,7 +763,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     argparse.ArgumentParser
         Configured parser.
     """
-
     parser = argparse.ArgumentParser(description="Plot Case 3 audio cross-board NAS transfer figures.")
     parser.add_argument("--stm-log", type=Path, required=True)
     parser.add_argument("--portenta-log", type=Path, required=True)
@@ -765,7 +789,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     int
         Process exit code.
     """
-
     args = build_arg_parser().parse_args(argv)
     configure_matplotlib()
     native_runs = [

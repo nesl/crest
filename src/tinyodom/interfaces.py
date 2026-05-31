@@ -1,3 +1,5 @@
+"""Document interfaces utilities."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -38,7 +40,6 @@ class DatasetABC(ABC):
         str
             Default identifier derived from the implementing class name.
         """
-
         return type(self).__name__
 
     @abstractmethod
@@ -57,7 +58,6 @@ class DatasetABC(ABC):
             The returned bundle is also the source object consumed by later
             dataset hooks, including the default calibration-data passthrough.
         """
-
     def validate_config(self, dataset_config: Any) -> None:
         """Validate dataset-local configuration.
 
@@ -72,7 +72,6 @@ class DatasetABC(ABC):
             The default implementation intentionally performs no validation and
             accepts any config object.
         """
-
         del dataset_config
 
     def make_calibration_data(
@@ -96,7 +95,6 @@ class DatasetABC(ABC):
             ignores ``dataset_config``, forwards ``bundle.calibration``
             unchanged, and may therefore return ``None``.
         """
-
         del dataset_config
         return bundle.calibration
 
@@ -120,7 +118,6 @@ class TaskABC(ABC):
         str
             Default identifier derived from the implementing class name.
         """
-
         return type(self).__name__
 
     @abstractmethod
@@ -145,7 +142,6 @@ class TaskABC(ABC):
             validation. This is the task-owned contract returned by the task
             implementation for downstream task logic.
         """
-
     @abstractmethod
     def metric_contract(
         self,
@@ -166,7 +162,6 @@ class TaskABC(ABC):
         TaskMetricContract
             Task-defined metric declaration consumed by orchestration code.
         """
-
     @abstractmethod
     def compile_model(
         self,
@@ -191,7 +186,6 @@ class TaskABC(ABC):
             The task implementation applies compile configuration to the passed
             model using ``task_config`` and ``target_spec``.
         """
-
     @abstractmethod
     def build_fit_plan(
         self,
@@ -223,7 +217,6 @@ class TaskABC(ABC):
         FitPlan
             Task-owned fit wiring excluding runner-injected schedule policy.
         """
-
     def history_component_keys(
         self,
         target_spec: TargetSpec,
@@ -243,7 +236,6 @@ class TaskABC(ABC):
             empty list so generic tasks do not need to expose component-loss
             plots.
         """
-
         del target_spec
         return []
 
@@ -279,7 +271,6 @@ class TaskABC(ABC):
             implementation returns an empty mapping so tasks opt into extra
             closeout artifacts explicitly.
         """
-
         del model, dataset_bundle, task_config, target_spec, output_dir
         return {}
 
@@ -310,7 +301,6 @@ class TaskABC(ABC):
         EvaluationResult
             Structured evaluation output.
         """
-
     @abstractmethod
     def evaluate(
         self,
@@ -337,7 +327,6 @@ class TaskABC(ABC):
         EvaluationResult
             Structured evaluation output.
         """
-
     def validate_config(self, task_config: Any) -> None:
         """Validate task-local configuration.
 
@@ -352,7 +341,6 @@ class TaskABC(ABC):
             The default implementation intentionally performs no validation and
             accepts any config object.
         """
-
         del task_config
 
     def validate_model_outputs(
@@ -375,7 +363,6 @@ class TaskABC(ABC):
             The default implementation intentionally performs no checks and
             exists as an override hook for task-specific output validation.
         """
-
         del model, target_spec
 
 
@@ -398,7 +385,6 @@ class ModelFamilyABC(ABC):
         str
             Default identifier derived from the implementing class name.
         """
-
         return type(self).__name__
 
     @abstractmethod
@@ -425,7 +411,6 @@ class ModelFamilyABC(ABC):
             Normalized hyperparameter dictionary produced by the model-family
             implementation.
         """
-
     @abstractmethod
     def build_model(
         self,
@@ -450,7 +435,6 @@ class ModelFamilyABC(ABC):
             Model instance constructed for the sampled hyperparameters and
             build context.
         """
-
     def validate_config(self, model_config: Any) -> None:
         """Validate model-family configuration.
 
@@ -465,7 +449,6 @@ class ModelFamilyABC(ABC):
             The default implementation intentionally performs no validation and
             accepts any config object.
         """
-
         del model_config
 
     def validate_hparams(
@@ -491,7 +474,6 @@ class ModelFamilyABC(ABC):
             The default implementation intentionally performs no
             hyperparameter checks.
         """
-
         del hparams, ctx, config
 
     def decode_trial_hparams(
@@ -522,7 +504,6 @@ class ModelFamilyABC(ABC):
         families only need to override this hook when their persisted trial
         shape differs from their build-time hyperparameter shape.
         """
-
         del ctx, config
         return dict(raw_params)
 
@@ -550,7 +531,6 @@ class ModelFamilyABC(ABC):
             Raw persisted-trial parameter mapping, or ``None`` when the family
             does not define a legacy seed payload.
         """
-
         del ctx, config
         return None
 
@@ -578,7 +558,6 @@ class ModelFamilyABC(ABC):
             default implementation ignores ``ctx`` and ``config`` and passes
             :meth:`custom_objects` through to the Keras loader.
         """
-
         del ctx, config
 
         from tensorflow.keras.models import load_model as keras_load_model
@@ -626,7 +605,6 @@ class ModelFamilyABC(ABC):
             If ``model_variant`` is unsupported or if a trained variant is
             requested without ``checkpoint_path``.
         """
-
         normalized_variant = str(model_variant).strip().lower()
         if normalized_variant == "untrained":
             return self.build_model(hparams, ctx, config)
@@ -655,7 +633,6 @@ class ModelFamilyABC(ABC):
             Mapping of custom object names to runtime symbols. The default
             implementation returns an empty dictionary.
         """
-
         return {}
 
     def estimate_static_memory(
@@ -686,7 +663,6 @@ class ModelFamilyABC(ABC):
         StaticMemoryEstimate
             Static proxy estimate for batch size 1.
         """
-
         del ctx, config
         return estimate_static_memory_keras(
             model,
@@ -721,7 +697,6 @@ class ModelFamilyABC(ABC):
         ValueError
             If ``ctx.input_shape`` is missing or empty.
         """
-
         del config
         if ctx.input_shape is None or len(ctx.input_shape) == 0:
             raise ValueError("ModelFamilyABC requires a non-empty input shape to count FLOPs.")
@@ -739,5 +714,4 @@ class ModelFamilyABC(ABC):
             ``True`` by default. Families may override this when export is not
             supported.
         """
-
         return True

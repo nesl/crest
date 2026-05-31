@@ -11,8 +11,11 @@ CANONICAL_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_stm32_lrun"
 
 
 class Stm32ProjectPortabilityTests(unittest.TestCase):
+    """Tests covering STM32 project portability behavior."""
+
     def test_canonical_lrun_makefiles_avoid_tools_checkout_paths(self):
         # Canonical LRUN makefiles should avoid hard-coded tools checkout paths so the project remains portable.
+        """Validate canonical lrun makefiles avoid tools checkout paths."""
         paths = [
             CANONICAL_ROOT / "STM32CubeIDE" / "AppS" / "Debug" / "Src" / "subdir.mk",
             CANONICAL_ROOT / "STM32CubeIDE" / "Boot" / "Debug" / "Src" / "subdir.mk",
@@ -24,6 +27,7 @@ class Stm32ProjectPortabilityTests(unittest.TestCase):
 
     def test_canonical_lrun_app_recipe_includes_repo_relative_secure_nsclib(self):
         # The canonical LRUN app recipe should use the repo-relative secure NSC library path.
+        """Validate canonical lrun app recipe includes repo relative secure nsclib."""
         path = CANONICAL_ROOT / "STM32CubeIDE" / "AppS" / "Debug" / "Src" / "subdir.mk"
         text = path.read_text(encoding="utf-8")
         self.assertIn("../../../Secure_nsclib", text, path)

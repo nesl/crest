@@ -290,6 +290,18 @@ class ScoreEvaluationResult:
         Ordered objective values.
     objective_directions : list[str]
         Ordered objective directions matching Optuna conventions.
+
+    Attributes
+    ----------
+    score : float | None
+        Scalar score for single-objective runs. ``None`` for multi-objective
+        runs.
+    objective_names : list[str]
+        Ordered objective labels.
+    objective_values : list[float]
+        Ordered objective values.
+    objective_directions : list[str]
+        Ordered objective directions matching Optuna conventions.
     """
 
     score: float | None
@@ -303,6 +315,26 @@ class TrialOutcome:
     """Generic trial outcome used by NAS logging and pruning paths.
 
     Parameters
+    ----------
+    score : float | None
+        Scalar score for single-objective runs. ``None`` for multi-objective
+        runs.
+    objective_names : list[str]
+        Ordered objective labels.
+    objective_values : list[float]
+        Ordered objective values.
+    objective_directions : list[str]
+        Ordered objective directions matching Optuna conventions.
+    task_metrics : dict[str, Any]
+        Task-owned metric payload recorded for this trial.
+    hyperparams : dict[str, Any]
+        Resolved trial hyperparameters used for HIL, scoring, and logging.
+    artifact_summary : dict[str, Any] | None
+        JSON-safe task-owned artifact summary associated with the trial.
+    quantization_mode : str
+        Deployment quantization mode used for this trial.
+
+    Attributes
     ----------
     score : float | None
         Scalar score for single-objective runs. ``None`` for multi-objective
@@ -348,6 +380,18 @@ class FeasibilityEvaluation:
         Signed Optuna constraint values in configuration order.
     first_violation : dict[str, Any] | None
         Metadata for the first violating rule in configuration order.
+
+    Attributes
+    ----------
+    feasible : bool
+        Whether every configured feasibility constraint is satisfied.
+    status : str
+        Stable status label: ``"feasible"``, ``"infeasible"``, or
+        ``"not_evaluated"``.
+    constraints : list[float]
+        Signed Optuna constraint values in configuration order.
+    first_violation : dict[str, Any] | None
+        Metadata for the first violating rule in configuration order.
     """
 
     feasible: bool
@@ -364,9 +408,16 @@ class ScoreConfigEvaluationError(ValueError):
     computed from the current trial context.
     """
 
-
 def set_error_code(metrics: dict, code: int) -> None:
-    """Attach a numeric error code and its descriptive label to `metrics`."""
+    """Attach a numeric error code and its descriptive label to `metrics`.
+
+    Parameters
+    ----------
+    metrics : dict
+        Mutable metric dictionary updated in place.
+    code : int
+        TinyODOM HIL error code to attach to the metrics.
+    """
     metrics["error_code"] = code
     metrics["error_label"] = describe_error_code(code)
 
@@ -687,7 +738,6 @@ def _resolve_nonnegative_metric_names(
         Union of infrastructure nonnegative metrics and task-declared
         nonnegative metrics.
     """
-
     effective_task_nonnegative = set(
         DEFAULT_TASK_SCORE_METRICS
         if task_nonnegative_metric_names is None
@@ -745,7 +795,6 @@ def _normalize_json_safe(value: Any) -> Any:
     Any
         Recursively normalized JSON-safe value.
     """
-
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, np.generic):
@@ -777,7 +826,6 @@ def normalize_artifact_summary(artifact_summary: dict[str, Any] | None) -> dict[
     dict[str, Any] | None
         Normalized JSON-safe artifact summary.
     """
-
     if artifact_summary is None:
         return None
     return dict(_normalize_json_safe(artifact_summary))
@@ -811,7 +859,6 @@ def build_trial_outcome(
     TrialOutcome
         Normalized generic trial outcome.
     """
-
     normalized_metrics = dict(_normalize_json_safe(task_metrics))
     normalized_hyperparams = dict(_normalize_json_safe(hyperparams))
     normalized_artifacts = normalize_artifact_summary(artifact_summary)
@@ -841,7 +888,6 @@ def quantization_requires_calibration(quantization_mode: str) -> bool:
         ``True`` for modes that use representative post-training
         quantization.
     """
-
     return str(quantization_mode).strip().lower() == "int8_ptq"
 
 
@@ -872,7 +918,6 @@ def _normalize_quantization_config(
         If the section is legacy boolean/string syntax, malformed, empty, or
         unsupported by the selected board.
     """
-
     if "quantization" not in training:
         raise KeyError("Expected 'training.quantization' to be set in the configuration.")
     raw_quantization = training.quantization
@@ -940,7 +985,6 @@ def configured_quantization_mode(config_or_training: Any) -> str:
     ValueError
         If the runtime object does not expose the normalized mapping shape.
     """
-
     training = getattr(config_or_training, "training", config_or_training)
     quantization = getattr(training, "quantization", None)
     if isinstance(quantization, Mapping):
@@ -1252,7 +1296,6 @@ def evaluate_score_config(
     ScoreEvaluationResult
         Structured scalar or multi-objective score result.
     """
-
     return _evaluate_score_config(
         metrics=metrics,
         hyperparams=hyperparams,
@@ -1800,7 +1843,6 @@ def _validate_feasibility_config(
         If any feasibility rule is invalid or references metrics unavailable
         before task training.
     """
-
     feasibility_config = Dict(feasibility_input or {})
     raw_train_if_infeasible = feasibility_config.get("train_if_infeasible", False)
     if not isinstance(raw_train_if_infeasible, bool):
@@ -1853,7 +1895,6 @@ def _validate_prefit_rule_config(
     ValueError
         If rules are malformed or reference metrics unavailable pre-training.
     """
-
     if raw_rules is None:
         raw_rules = []
     if not isinstance(raw_rules, list):
@@ -1987,7 +2028,6 @@ def validate_nas_policy_for_task(
         The same config object with its ``nas`` subtree normalized against the
         supplied task metric contract.
     """
-
     config.nas = _validate_nas_config(
         config,
         task_metric_names=task_metric_names,
@@ -2106,8 +2146,12 @@ def _signed_feasibility_constraint(
     rule text says the forbidden region includes equality. A tiny positive
     value preserves that distinction without changing ordinary violation
     magnitudes.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if condition in {"gt", "gte"}:
         signed = metric_value - reference_value
     elif condition in {"lt", "lte"}:
@@ -2153,7 +2197,6 @@ def evaluate_feasibility_rules(
     a signed Optuna constraint value, and the first positive value in
     configuration order is the CSV/user-attribute summary.
     """
-
     context = dict(metrics)
     context["flops"] = hyperparams["flops"]
     constraints: list[float] = []
@@ -2224,8 +2267,8 @@ def load_config(
     task_metric_names: set[str] | None = None,
     training_only_task_metric_names: set[str] | None = None,
 ) -> Dict:
-    """
-    Load the NAS configuration from YAML, derive convenience paths/names,
+    """Load the NAS configuration from YAML, derive convenience paths/names,.
+
     and return an addict.Dict for dot-attribute access.
 
     Parameters
@@ -2516,8 +2559,14 @@ def _validate_evaluation_config(config: Dict) -> None:
     None
         Mutates ``config.task.params.evaluation`` with normalized defaults or
         raises.
-    """
 
+    Raises
+    ------
+    KeyError
+        If existing validation or execution checks fail.
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if "evaluation" in config:
         raise KeyError(
             "Top-level 'evaluation' is no longer supported; move it to "
@@ -2595,7 +2644,6 @@ def count_flops(model, input_shape):
     -----
     Compatibility wrapper around :func:`tinyodom.model_metrics.count_flops_keras`.
     """
-
     return count_flops_keras(model, tuple(int(dim) for dim in input_shape))
 
 
@@ -2618,7 +2666,6 @@ def require_logical_input_shape(input_shape: Any) -> tuple[int, int]:
         If the shape is missing, not 2D, non-numeric, boolean, or contains
         non-positive dimensions.
     """
-
     error_message = (
         "The active model build context must expose a 2D logical input shape "
         "with positive integer timesteps and input_dim."
@@ -2657,7 +2704,6 @@ def _serialize_csv_cell(value: Any) -> Any:
     Any
         Primitive value or JSON string suitable for CSV writing.
     """
-
     normalized = _normalize_json_safe(value)
     if normalized is None:
         return ""
@@ -2697,7 +2743,6 @@ def _trial_log_row_mapping(
     dict[str, Any]
         Flat row mapping keyed by CSV column name.
     """
-
     score_type = "multi-objective" if trial_outcome.score is None else "scoring-function"
     mapping: dict[str, Any] = {
         "study_name": study_name,
@@ -2786,7 +2831,6 @@ def _read_trial_log(log_path: Path) -> tuple[list[str], list[dict[str, str]]]:
     tuple[list[str], list[dict[str, str]]]
         Existing header plus all row dictionaries.
     """
-
     with log_path.open(newline="") as csvfile:
         reader = csv.DictReader(csvfile)
         return list(reader.fieldnames or []), list(reader)
@@ -2811,8 +2855,12 @@ def _write_trial_log_atomic(
     Returns
     -------
     None
-    """
 
+    Raises
+    ------
+    Exception
+        If existing validation or execution checks fail.
+    """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -2850,7 +2898,6 @@ def _write_trial_log_append(log_path: Path, header: list[str], row: dict[str, An
     -------
     None
     """
-
     with log_path.open("a", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=header, extrasaction="ignore")
         writer.writerow({column: _serialize_csv_cell(row.get(column)) for column in header})
@@ -3081,7 +3128,7 @@ def build_tinyodom_model(hyperparams: Dict) -> Model:
     features = MaxPooling1D(pool_size=2)(features)
     features = Flatten()(features)
     features = Dense(32, activation="linear", name="pre")(features)
-    
+
     # Outputs for velocity in X and Y directions
     vel_x = Dense(1, activation="linear", name="velx")(features)
     vel_y = Dense(1, activation="linear", name="vely")(features)

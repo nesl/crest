@@ -48,8 +48,22 @@ def _minimum_stm32_serial_timeout_s(
     latency_budget_ms: float,
     measured_inference_runs: int,
 ) -> float:
-    """Return the minimum practical STM32 serial timeout for one HIL attempt."""
+    """Return the minimum practical STM32 serial timeout for one HIL attempt.
 
+    Parameters
+    ----------
+    runtime_mode : str
+        Runtime profile requested for the backend measurement pass.
+    latency_budget_ms : float
+        Per-window latency budget in milliseconds.
+    measured_inference_runs : int
+        Number of inferences averaged by the firmware for one measurement.
+
+    Returns
+    -------
+    float
+        Timeout in seconds used for the STM32 runtime serial session.
+    """
     normalized_runtime_mode = str(runtime_mode).strip().lower()
     safe_runs = max(1, int(measured_inference_runs))
     if normalized_runtime_mode == "cadenced":
@@ -58,8 +72,15 @@ def _minimum_stm32_serial_timeout_s(
 
 
 def set_error_code(metrics: dict[str, Any], code: int) -> None:
-    """Attach a numeric error code and its descriptive label to ``metrics``."""
+    """Attach a numeric error code and its descriptive label to ``metrics``.
 
+    Parameters
+    ----------
+    metrics : dict[str, Any]
+        Mutable metric dictionary updated in place.
+    code : int
+        TinyODOM HIL error code to attach to the metrics.
+    """
     metrics["error_code"] = code
     metrics["error_label"] = describe_error_code(code)
 
@@ -68,8 +89,15 @@ def apply_cadenced_metric_defaults(
     metrics: dict[str, Any],
     power_metrics: dict[str, Any] | None,
 ) -> None:
-    """Populate cadenced metric defaults from raw backend telemetry."""
+    """Populate cadenced metric defaults from raw backend telemetry.
 
+    Parameters
+    ----------
+    metrics : dict[str, Any]
+        Mutable metric dictionary updated in place.
+    power_metrics : dict[str, Any] | None
+        Raw power and timing telemetry parsed from the backend log.
+    """
     raw_power_metrics = dict(power_metrics or {})
     # Backends may omit runtime-mode metadata entirely on failure paths, so
     # normalize to the stable non-cadenced default before filling the rest.
@@ -111,6 +139,31 @@ class HarnessConfig:
     """Energy-aware harness settings forwarded to ``HIL_controller``.
 
     Parameters
+    ----------
+    harness_serial_port : str | None
+        Serial port for the INA228 harness.
+    harness_fqbn : str | None
+        FQBN used to compile/upload the harness sketch.
+    harness_auto_flash : str | None
+        Harness flashing policy (``once``, ``always``, ``never``).
+    harness_arm_pin : int | None
+        Harness arming GPIO pin.
+    harness_trigger_pin : int | None
+        Harness trigger GPIO pin.
+    dut_arm_hold_ms : int | None
+        Time to hold DUT arm low before trigger observation.
+    harness_stable_low_ms : int | None
+        Required stable-low arming duration.
+    harness_ready_timeout_s : float | None
+        Timeout waiting for ``HARNESS READY``.
+    harness_arm_timeout_s : float | None
+        Timeout waiting for a valid arm/trigger edge.
+    harness_active_timeout_s : float | None
+        Maximum active measurement window.
+    harness_done_timeout_s : float | None
+        Timeout waiting for ``DONE``.
+
+    Attributes
     ----------
     harness_serial_port : str | None
         Serial port for the INA228 harness.
@@ -186,6 +239,40 @@ class CollectMetricsRequest:
         Harness settings for energy-aware runs. ``None`` for non-energy-aware runs.
     device_options : dict[str, Any] | None, optional
         Optional board-specific options forwarded to the device factory.
+
+    Attributes
+    ----------
+    hil_enabled : bool
+        Whether to run HIL upload/measurement (vs compile-only proxy mode).
+    energy_aware : bool
+        Whether harness-assisted power measurement is enabled.
+    flops : float
+        Model FLOP estimate for trial bookkeeping.
+    device_name : str
+        Target hardware name.
+    window_size : int
+        Input window length compiled into firmware.
+    input_dim : int
+        Number of input channels compiled into firmware.
+    dirpath : Path
+        Firmware project directory containing generated model artifacts.
+    latency_proxy_max_flops : float
+        Maximum FLOPs used by proxy latency normalization.
+    serial_port : str | None
+        DUT serial port used for upload/latency capture during HIL runs.
+    latency_budget_ms : float | None
+        Target inference cadence in milliseconds for normalized latency checks.
+    dut_ready_timeout_s : float | None
+        Timeout waiting for DUT ready handshake.
+    serial_timeout_s : float | None
+        Post-``START`` runtime timeout forwarded to direct-serial backends.
+    measured_inference_runs : int
+        Number of on-device inference invokes averaged into one measured HIL
+        attempt.
+    harness : HarnessConfig | None
+        Harness settings for energy-aware runs. ``None`` for non-energy-aware runs.
+    device_options : dict[str, Any] | None
+        Optional board-specific options forwarded to the device factory.
     """
 
     hil_enabled: bool
@@ -257,10 +344,23 @@ def build_collect_metrics_request(
     ValueError
         If runtime dimensions cannot be resolved from the passed context.
     """
-
     def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
-        """Read a value from either an ``addict.Dict`` or a namespace-like object."""
+        """Read a value from either an ``addict.Dict`` or a namespace-like object.
 
+        Parameters
+        ----------
+        container : Any
+            Mapping or object that may contain the requested key.
+        key : str
+            Field name to read from the mapping or object.
+        default : Any
+            Fallback returned when the field is absent.
+
+        Returns
+        -------
+        Any
+            Resolved value from ``container`` or ``default`` when absent.
+        """
         getter = getattr(container, "get", None)
         if callable(getter):
             return getter(key, default)
@@ -396,7 +496,6 @@ def collect_metrics(request: CollectMetricsRequest) -> dict:
     RuntimeError
         If runtime measurement requires a harness but ``request.harness`` is missing.
     """
-
     controller_kwargs = {
         "dirpath": request.dirpath,
         "chosen_device": request.device_name,

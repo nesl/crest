@@ -48,7 +48,6 @@ def as_float(row: dict[str, str], key: str) -> float:
     float
         Parsed value, or ``NaN`` when the field is absent or invalid.
     """
-
     try:
         value = row.get(key, "")
         return float(value) if value not in ("", None) else math.nan
@@ -71,7 +70,6 @@ def r_squared(xs: list[float], ys: list[float]) -> float:
     float
         Coefficient of determination, or ``NaN`` when it cannot be computed.
     """
-
     if len(xs) < 3:
         return math.nan
     x_mean = sum(xs) / len(xs)
@@ -100,7 +98,6 @@ def linear_fit(xs: list[float], ys: list[float]) -> tuple[float, float, float]:
         Slope, intercept, and R-squared. Values are ``NaN`` when the fit is
         degenerate.
     """
-
     x_mean = sum(xs) / len(xs)
     y_mean = sum(ys) / len(ys)
     ssx = sum((x - x_mean) ** 2 for x in xs)
@@ -136,7 +133,6 @@ def load_paired_rows(
     list[dict[str, Any]]
         Normalized rows used by the motivation plot.
     """
-
     rows: list[dict[str, Any]] = []
     with log_path.open(newline="") as fp:
         for line_number, raw in enumerate(csv.DictReader(fp), start=2):
@@ -188,7 +184,6 @@ def flip_score(lower_b2b: dict[str, Any], higher_b2b: dict[str, Any]) -> float:
     float
         Heuristic score used only to choose an automatic callout pair.
     """
-
     b2b_gap = abs(
         higher_b2b["b2b_energy_mj_per_inference"]
         - lower_b2b["b2b_energy_mj_per_inference"]
@@ -221,7 +216,6 @@ def find_flip_pair(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str
     ValueError
         If no ranking flip exists in the filtered rows.
     """
-
     candidates: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
     for first, second in itertools.combinations(rows, 2):
         first_b2b = first["b2b_energy_mj_per_inference"]
@@ -264,7 +258,6 @@ def row_by_id(rows: list[dict[str, Any]], row_id: str) -> dict[str, Any]:
     ValueError
         If ``row_id`` is not present after filtering.
     """
-
     for row in rows:
         if row["row"] == row_id:
             return row
@@ -281,7 +274,6 @@ def write_points_csv(rows: list[dict[str, Any]], path: Path) -> None:
     path : pathlib.Path
         Destination CSV path.
     """
-
     fieldnames = [
         "row",
         "b2b_latency_ms",
@@ -347,7 +339,6 @@ def add_panel(
     ylim : tuple[float, float]
         Y-axis limits.
     """
-
     normal = [row for row in rows if row["row"] not in highlights]
     if flip_participants is None:
         ax.scatter(
@@ -535,7 +526,6 @@ def count_flips(rows: list[dict[str, Any]]) -> tuple[int, int]:
     tuple[int, int]
         Number of flips and number of comparable pairs.
     """
-
     pairs = 0
     flips = 0
     for first, second in itertools.combinations(rows, 2):
@@ -568,7 +558,6 @@ def flip_participant_rows(rows: list[dict[str, Any]]) -> set[str]:
     set[str]
         Row ids included in at least one flip pair.
     """
-
     participants: set[str] = set()
     for first, second in itertools.combinations(rows, 2):
         b2b_delta = (
@@ -625,7 +614,6 @@ def build_plot(
     cadenced_ylim : tuple[float, float]
         Cadenced-mode y-axis limits.
     """
-
     flip_participants = flip_participant_rows(rows) if color_flip_participants else None
     if layout == "side-by-side":
         share_y = b2b_ylim == cadenced_ylim
@@ -706,7 +694,6 @@ def parse_args() -> argparse.Namespace:
     argparse.Namespace
         Parsed CLI arguments.
     """
-
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--outdir", type=Path, required=True)
@@ -745,8 +732,12 @@ def main() -> None:
     -------
     None
         Writes PNG, PDF, and point-summary CSV files.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     args = parse_args()
     args.outdir.mkdir(parents=True, exist_ok=True)
     rows = load_paired_rows(

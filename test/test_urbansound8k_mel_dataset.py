@@ -62,7 +62,6 @@ def _rotation_split(test_fold: int) -> dict[str, tuple[int, ...]]:
     dict[str, tuple[int, ...]]
         Fold split mapping.
     """
-
     val_fold = int(test_fold) % len(ALL_FOLDS) + 1
     train_folds = tuple(fold for fold in ALL_FOLDS if fold not in {int(test_fold), val_fold})
     return {"train": train_folds, "val": (val_fold,), "test": (int(test_fold),)}
@@ -93,7 +92,6 @@ def _metadata(
     dict[str, object]
         Metadata matching the schema-2 cache contract.
     """
-
     active_split = FOLD_SPLIT if fold_split is None else fold_split
     metadata = {
         "schema_version": CACHE_SCHEMA_VERSION,
@@ -162,7 +160,6 @@ def _split_payload(
     dict[str, numpy.ndarray]
         `.npz` payload matching the cache schema.
     """
-
     active_split = FOLD_SPLIT if fold_split is None else fold_split
     expected_folds = active_split["train"] if split_name == "calibration" else active_split[split_name]
     row_count = 2
@@ -200,7 +197,6 @@ def _write_cache(
     None
         Writes metadata and split `.npz` files.
     """
-
     cache_dir.mkdir(parents=True)
     (cache_dir / "metadata.json").write_text(
         json.dumps(_metadata() if metadata is None else metadata),
@@ -221,7 +217,6 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         None
             Asserts loaded bundle fields and metadata.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / CACHE_VERSION
             _write_cache(cache_dir)
@@ -248,7 +243,6 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         None
             Asserts fold-rotation metadata reaches the loaded bundle.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / "fold_01"
             fold_split = _rotation_split(1)
@@ -275,7 +269,6 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         None
             Asserts stale cache metadata is rejected.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / CACHE_VERSION
             metadata = _metadata()
@@ -297,7 +290,6 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         None
             Asserts inconsistent rotation metadata is rejected.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / "fold_01"
             fold_split = _rotation_split(1)
@@ -320,7 +312,6 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         None
             Asserts validation fails before loading metadata.
         """
-
         dataset = UrbanSound8KMelDataset()
 
         with self.assertRaisesRegex(ValueError, "cache_version"):
@@ -336,7 +327,6 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         None
             Asserts missing `.npz` files are rejected.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / CACHE_VERSION
             _write_cache(cache_dir)
@@ -354,7 +344,6 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         None
             Asserts array schema validation is enforced.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / CACHE_VERSION
             _write_cache(cache_dir)
@@ -374,7 +363,6 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         None
             Asserts feature tensor validation is enforced.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / CACHE_VERSION
             _write_cache(cache_dir)
@@ -394,7 +382,6 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         None
             Asserts class mapping is locked to the shared constant.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / CACHE_VERSION
             metadata = _metadata()
@@ -413,7 +400,6 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         None
             Asserts the loader enforces the fixed cache calibration contract.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / CACHE_VERSION
             metadata = _metadata()
@@ -432,7 +418,6 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         None
             Asserts class-index label validation is enforced.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / CACHE_VERSION
             _write_cache(cache_dir)
@@ -453,7 +438,6 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         None
             Asserts split ownership is preserved from the cache contract.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / CACHE_VERSION
             _write_cache(cache_dir)
@@ -474,7 +458,6 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
         None
             Asserts config cadence remains the source of truth.
         """
-
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir) / CACHE_VERSION
             _write_cache(cache_dir)

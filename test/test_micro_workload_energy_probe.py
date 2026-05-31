@@ -16,8 +16,12 @@ def _load_probe_module():
     -------
     module
         Imported probe runner module used by the focused unit tests.
-    """
 
+    Raises
+    ------
+    RuntimeError
+        If existing validation or execution checks fail.
+    """
     repo_root = Path(__file__).resolve().parents[1]
     module_path = repo_root / "analysis_scripts" / "micro_workload_energy_probe" / "run_micro_workload_energy_probe.py"
     spec = importlib.util.spec_from_file_location("micro_workload_energy_probe_for_tests", module_path)
@@ -43,7 +47,6 @@ class MicroWorkloadEnergyProbeTests(unittest.TestCase):
         None
             The test passes when workload constants match the firmware ABI.
         """
-
         self.assertEqual(probe.VALID_WORKLOADS, ("sleep", "wait", "poll", "float", "int"))
         self.assertEqual(probe.WORKLOAD_MODE, {"sleep": 0, "wait": 1, "poll": 2, "float": 3, "int": 4})
 
@@ -56,7 +59,6 @@ class MicroWorkloadEnergyProbeTests(unittest.TestCase):
             The test passes when telemetry defaults are explicit sentinel
             values rather than blanks.
         """
-
         attempt = probe.base_attempt(
             SimpleNamespace(window_ms=1000),
             probe.BoardSpec(token="ble", family="arduino", fqbn="arduino:mbed_nano:nano33ble"),
@@ -81,7 +83,6 @@ class MicroWorkloadEnergyProbeTests(unittest.TestCase):
             The test passes when optional stream prefixes do not affect parsed
             telemetry values.
         """
-
         telemetry = probe.parse_dut_telemetry(
             [
                 "DUT: dut iterations output: 1024",
@@ -112,7 +113,6 @@ class MicroWorkloadEnergyProbeTests(unittest.TestCase):
             The test passes when missing direct DUT telemetry marks the attempt
             as a parse failure.
         """
-
         attempt = {
             "workload": "float",
             "error_code": 0,
@@ -136,7 +136,6 @@ class MicroWorkloadEnergyProbeTests(unittest.TestCase):
             The test passes when an implausible trigger-high duration marks the
             attempt invalid.
         """
-
         attempt = {
             "error_code": 0,
             "error_label": "ok",
@@ -157,7 +156,6 @@ class MicroWorkloadEnergyProbeTests(unittest.TestCase):
             The test passes when phase and payload diagnostic fields use the
             expected local baseline rows.
         """
-
         attempts = [
             {"board": "ble", "workload": "sleep", "error_code": 0, "energy_mj_per_window": 100.0, "avg_power_mw": 100.0, "measured_harness_window_ms": 1000.0, "dut_work_units": 0},
             {"board": "ble", "workload": "wait", "error_code": 0, "energy_mj_per_window": 115.0, "avg_power_mw": 115.0, "measured_harness_window_ms": 1000.0, "dut_work_units": 1000},
@@ -183,7 +181,6 @@ class MicroWorkloadEnergyProbeTests(unittest.TestCase):
             The test passes when a high polling phase emits a warning while
             payload energy still uses the wait baseline.
         """
-
         attempts = [
             {"board": "m7", "workload": "sleep", "error_code": 0, "energy_mj_per_window": 100.0, "avg_power_mw": 100.0, "measured_harness_window_ms": 1000.0, "dut_work_units": 0},
             {"board": "m7", "workload": "wait", "error_code": 0, "energy_mj_per_window": 110.0, "avg_power_mw": 110.0, "measured_harness_window_ms": 1000.0, "dut_work_units": 1000},
@@ -206,7 +203,6 @@ class MicroWorkloadEnergyProbeTests(unittest.TestCase):
             The test passes when 64-bit counters use the custom decimal
             printer instead of ``%llu``.
         """
-
         repo_root = Path(__file__).resolve().parents[1]
         runner_source = repo_root / "analysis_scripts" / "micro_workload_energy_probe" / "stm32_synthetic_dut_runner.c"
         source = runner_source.read_text()

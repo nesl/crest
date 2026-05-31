@@ -34,6 +34,15 @@ class NumericFilter:
         Comparison operation: ``lt``, ``le``, ``eq``, ``ge``, ``gt``, or ``ne``.
     value:
         Numeric threshold.
+
+    Attributes
+    ----------
+    column : str
+        Column inspected by the row filter.
+    op : str
+        Comparison operator used by the row filter.
+    value : float
+        Numeric threshold used by the row filter.
     """
 
     column: str
@@ -48,7 +57,6 @@ class NumericFilter:
         ValueError
             If the operation or threshold is invalid.
         """
-
         if self.op not in FILTER_OPS:
             raise ValueError(f"numeric filter op must be one of {sorted(FILTER_OPS)}")
         if not math.isfinite(self.value):
@@ -109,6 +117,57 @@ class FrontCompareConfig:
         Whether nonpositive minimized costs are allowed.
     sentinel_abs_threshold:
         Absolute-value threshold for sentinel objective values.
+
+    Attributes
+    ----------
+    source_csv : Path
+        CSV file containing source Pareto points.
+    target_csv : Path
+        CSV file containing target Pareto points.
+    output_dir : Path
+        Directory where comparison artifacts are written.
+    source_quality_col : str
+        Quality column name in the source CSV.
+    source_cost_col : str
+        Cost column name in the source CSV.
+    target_quality_col : str
+        Quality column name in the target CSV.
+    target_cost_col : str
+        Cost column name in the target CSV.
+    quality_direction : str
+        Optimization direction for quality values.
+    cost_direction : str
+        Optimization direction for cost values.
+    match_rule : str
+        Rule used to match source rows to target rows.
+    reduction_denominator : str
+        Denominator used when computing reduction fractions.
+    reduction_direction : str
+        Direction used when interpreting reduction values.
+    source_label : str
+        Display label for the source dataset.
+    target_label : str
+        Display label for the target dataset.
+    source_id_col : str | None
+        Identifier column name in the source CSV.
+    target_id_col : str | None
+        Identifier column name in the target CSV.
+    source_status_col : str | None
+        Status column name in the source CSV.
+    target_status_col : str | None
+        Status column name in the target CSV.
+    source_status_values : tuple[str, ...]
+        Allowed status values for source rows.
+    target_status_values : tuple[str, ...]
+        Allowed status values for target rows.
+    source_filters : tuple[NumericFilter, ...]
+        Filters applied to source rows before comparison.
+    target_filters : tuple[NumericFilter, ...]
+        Filters applied to target rows before comparison.
+    allow_nonpositive_cost : bool
+        Whether non-positive cost values are accepted during comparison.
+    sentinel_abs_threshold : float
+        Absolute threshold used to identify sentinel values.
     """
 
     source_csv: Path
@@ -144,7 +203,6 @@ class FrontCompareConfig:
         ValueError
             If an enum-like option or threshold is invalid.
         """
-
         if self.quality_direction not in DIRECTIONS:
             raise ValueError(f"quality_direction must be one of {sorted(DIRECTIONS)}")
         if self.cost_direction not in DIRECTIONS:
@@ -175,6 +233,19 @@ class FrontPoint:
         Parsed cost/energy value.
     label:
         Source or target label.
+
+    Attributes
+    ----------
+    row_index : int
+        Index of the source row in the input CSV.
+    point_id : str
+        Identifier for the Pareto point.
+    quality : float
+        Quality value used for Pareto comparison.
+    cost : float
+        Cost value used for Pareto comparison.
+    label : str
+        Display label used in reports and plots.
     """
 
     row_index: int
@@ -204,6 +275,23 @@ class MatchRow:
         Reduction fraction using target cost as denominator.
     oriented_cost_delta:
         Cost delta under the configured reduction orientation.
+
+    Attributes
+    ----------
+    source : FrontPoint
+        Source point in the matched pair.
+    target : FrontPoint
+        Target point in the matched pair.
+    match_rule_applied : str
+        Match rule used for this source-target pair.
+    fallback_used : bool
+        Whether fallback matching was used for the pair.
+    reduction_source_fraction : float
+        Reduction fraction computed from the source point.
+    reduction_target_fraction : float
+        Reduction fraction computed from the target point.
+    oriented_cost_delta : float
+        Cost delta after applying the configured optimization direction.
     """
 
     source: FrontPoint
@@ -239,7 +327,6 @@ def parse_float_cell(value: str, *, path: Path, row_index: int, column: str) -> 
     ValueError
         If a nonblank cell cannot be parsed as a float.
     """
-
     text = "" if value is None else str(value).strip()
     if text.lower() in {"", "nan", "none", "null", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity"}:
         return None
@@ -270,7 +357,6 @@ def read_csv_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     ValueError
         If the CSV has no header.
     """
-
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames:
@@ -295,7 +381,6 @@ def require_columns(path: Path, fields: Sequence[str], columns: Iterable[str | N
     KeyError
         If a requested column is absent.
     """
-
     available = set(fields)
     missing = [column for column in columns if column and column not in available]
     if missing:
@@ -319,7 +404,6 @@ def status_allowed(row: Mapping[str, str], status_col: str | None, allowed_value
     bool
         ``True`` when the row passes status filtering.
     """
-
     if status_col is None:
         return True
     return str(row.get(status_col, "")).strip() in set(allowed_values)
@@ -340,7 +424,6 @@ def apply_filter(value: float, numeric_filter: NumericFilter) -> bool:
     bool
         ``True`` when the value satisfies the filter.
     """
-
     if numeric_filter.op == "lt":
         return value < numeric_filter.value
     if numeric_filter.op == "le":
@@ -373,7 +456,6 @@ def filters_allowed(row: Mapping[str, str], filters: Sequence[NumericFilter], *,
     bool
         ``True`` when every filter passes.
     """
-
     for numeric_filter in filters:
         value = parse_float_cell(row.get(numeric_filter.column, ""), path=path, row_index=row_index, column=numeric_filter.column)
         if value is None or not apply_filter(value, numeric_filter):
@@ -403,7 +485,6 @@ def valid_objectives(
     bool
         ``True`` when both values are finite, non-sentinel objectives.
     """
-
     if quality is None or cost is None:
         return False
     if abs(quality) >= config.sentinel_abs_threshold or abs(cost) >= config.sentinel_abs_threshold:
@@ -453,7 +534,6 @@ def load_points(
     tuple[list[FrontPoint], dict[str, int]]
         Valid points and row-count metadata.
     """
-
     fields, rows = read_csv_rows(path)
     require_columns(path, fields, [quality_col, cost_col, id_col, status_col, *(numeric_filter.column for numeric_filter in filters)])
     valid: list[FrontPoint] = []
@@ -511,7 +591,6 @@ def is_better(value: float, other: float, direction: str) -> bool:
     bool
         ``True`` when ``value`` is strictly better.
     """
-
     return value < other if direction == "minimize" else value > other
 
 
@@ -532,7 +611,6 @@ def is_no_worse(value: float, other: float, direction: str) -> bool:
     bool
         ``True`` when ``value`` is no worse.
     """
-
     return value <= other if direction == "minimize" else value >= other
 
 
@@ -551,7 +629,6 @@ def cost_sort_value(point: FrontPoint, direction: str) -> float:
     float
         Sort key for deterministic best-cost ordering.
     """
-
     return point.cost if direction == "minimize" else -point.cost
 
 
@@ -572,7 +649,6 @@ def point_sort_key(point: FrontPoint, *, quality_direction: str, cost_direction:
     tuple[float, float, str, int]
         Sort key ordered by quality, cost, ID, then row index.
     """
-
     quality_key = point.quality if quality_direction == "minimize" else -point.quality
     return (quality_key, cost_sort_value(point, cost_direction), point.point_id, point.row_index)
 
@@ -595,7 +671,6 @@ def dominates(candidate: FrontPoint, point: FrontPoint, *, config: FrontCompareC
         ``True`` when candidate is no worse in both objectives and strictly
         better in at least one.
     """
-
     no_worse_quality = is_no_worse(candidate.quality, point.quality, config.quality_direction)
     no_worse_cost = is_no_worse(candidate.cost, point.cost, config.cost_direction)
     strictly_better = is_better(candidate.quality, point.quality, config.quality_direction) or is_better(
@@ -619,7 +694,6 @@ def pareto_front(points: Sequence[FrontPoint], *, config: FrontCompareConfig) ->
     list[FrontPoint]
         Non-dominated points sorted by quality, cost, ID, and row index.
     """
-
     front: list[FrontPoint] = []
     for point in points:
         if not any(dominates(candidate, point, config=config) for candidate in points):
@@ -651,7 +725,6 @@ def count_dominated(points: Sequence[FrontPoint], candidates: Sequence[FrontPoin
     int
         Number of dominated points.
     """
-
     return sum(1 for point in points if any(dominates(candidate, point, config=config) for candidate in candidates))
 
 
@@ -672,7 +745,6 @@ def nearest_quality_match(source: FrontPoint, targets: Sequence[FrontPoint], *, 
     FrontPoint
         Matched target-front point.
     """
-
     return min(
         targets,
         key=lambda target: (
@@ -706,7 +778,6 @@ def equal_or_better_quality_match(
     tuple[FrontPoint, bool]
         Matched target and whether nearest-quality fallback was used.
     """
-
     eligible = [
         target
         for target in targets
@@ -745,7 +816,6 @@ def oriented_delta(source: FrontPoint, target: FrontPoint, direction: str) -> fl
     float
         Oriented cost delta.
     """
-
     if direction == "target-vs-source":
         return source.cost - target.cost
     return target.cost - source.cost
@@ -772,7 +842,6 @@ def make_match(source: FrontPoint, target: FrontPoint, rule: str, fallback: bool
     MatchRow
         Match with computed reductions.
     """
-
     delta = oriented_delta(source, target, config.reduction_direction)
     return MatchRow(
         source=source,
@@ -807,7 +876,6 @@ def match_fronts(source_front: Sequence[FrontPoint], target_front: Sequence[Fron
     ValueError
         If either front is empty.
     """
-
     if not source_front:
         raise ValueError("source front is empty after filtering")
     if not target_front:
@@ -837,7 +905,6 @@ def median(values: Iterable[float]) -> float | None:
     float | None
         Median, or ``None`` when no values are present.
     """
-
     finite = [float(value) for value in values if math.isfinite(float(value))]
     if not finite:
         return None
@@ -859,7 +926,6 @@ def selected_reduction(match: MatchRow, denominator: str) -> float | None:
     float | None
         Selected reduction fraction, or ``None`` for ``both``.
     """
-
     if denominator == "source":
         return match.reduction_source_fraction
     if denominator == "target":
@@ -880,7 +946,6 @@ def reduction_formulas(config: FrontCompareConfig) -> dict[str, str]:
     dict[str, str]
         Formula strings for manifest and summaries.
     """
-
     if config.reduction_direction == "target-vs-source":
         delta = "source_cost - target_cost"
         interpretation = "positive means target numeric cost is lower than source numeric cost"
@@ -910,7 +975,6 @@ def point_record(prefix: str, point: FrontPoint) -> dict[str, Any]:
     dict[str, Any]
         Flat point record.
     """
-
     return {
         f"{prefix}_row_index": point.row_index,
         f"{prefix}_id": point.point_id,
@@ -935,7 +999,6 @@ def match_record(match: MatchRow, *, config: FrontCompareConfig) -> dict[str, An
     dict[str, Any]
         Flat match record.
     """
-
     selected = selected_reduction(match, config.reduction_denominator)
     record: dict[str, Any] = {}
     record.update(point_record("source", match.source))
@@ -974,7 +1037,6 @@ def write_csv(path: Path, rows: Sequence[Mapping[str, Any]], fieldnames: Sequenc
     fieldnames:
         Header order.
     """
-
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -995,7 +1057,6 @@ def front_fieldnames(prefix: str) -> list[str]:
     list[str]
         Front CSV field names.
     """
-
     return [f"{prefix}_row_index", f"{prefix}_id", f"{prefix}_quality", f"{prefix}_cost", f"{prefix}_label"]
 
 
@@ -1030,7 +1091,6 @@ def build_summary(
     dict[str, Any]
         Summary metrics.
     """
-
     return {
         "source_label": config.source_label,
         "target_label": config.target_label,
@@ -1084,7 +1144,6 @@ def manifest_dict(config: FrontCompareConfig, argv: Sequence[str], summary: Mapp
     dict[str, Any]
         Manifest JSON payload.
     """
-
     return {
         "tool": "compare_pareto_fronts.py",
         "argv": list(argv),
@@ -1143,7 +1202,6 @@ def fmt_optional(value: Any, digits: int = 3) -> str:
     str
         Formatted number or ``n/a``.
     """
-
     if value is None:
         return "n/a"
     return f"{float(value):.{digits}f}"
@@ -1162,7 +1220,6 @@ def build_summary_markdown(summary: Mapping[str, Any]) -> str:
     str
         Markdown report.
     """
-
     formulas = summary["formulas"]
     lines = [
         "# Pareto Front Comparison",
@@ -1216,7 +1273,6 @@ def run_comparison(config: FrontCompareConfig, argv: Sequence[str]) -> dict[str,
     dict[str, Any]
         Summary metrics.
     """
-
     source_points, source_counts = load_points(
         path=config.source_csv,
         quality_col=config.source_quality_col,
@@ -1275,7 +1331,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     argparse.ArgumentParser
         Configured parser.
     """
-
     parser = argparse.ArgumentParser(
         description=(
             "Compare two CSV-derived Pareto fronts. Example: python -B "
@@ -1366,7 +1421,6 @@ def parse_numeric_filters(raw_filters: Sequence[Sequence[str]]) -> tuple[Numeric
     ValueError
         If a filter value is malformed.
     """
-
     filters: list[NumericFilter] = []
     for column, op, raw_value in raw_filters:
         try:
@@ -1390,7 +1444,6 @@ def namespace_to_config(args: argparse.Namespace) -> FrontCompareConfig:
     FrontCompareConfig
         Comparison configuration.
     """
-
     return FrontCompareConfig(
         source_csv=args.source_csv.expanduser(),
         target_csv=args.target_csv.expanduser(),
@@ -1432,7 +1485,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     int
         Process exit code.
     """
-
     parser = build_arg_parser()
     parsed_argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(parsed_argv)

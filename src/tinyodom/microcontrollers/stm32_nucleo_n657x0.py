@@ -1,4 +1,4 @@
-"""STM32 Nucleo N657X0-Q backend for staged TinyODOM evaluation.
+"""Describe sTM32 Nucleo N657X0-Q backend for staged TinyODOM evaluation.
 
 This module owns the LRUN workspace contract, ST Edge AI code-generation flow,
 staged manifest bookkeeping, and runtime/programming behavior for the
@@ -180,6 +180,54 @@ class STM32NucleoN657X0QOptions:
         Required `.stldr` loader path used to program external weight blobs.
     max_external_flash_bytes : int
         Maximum usable external flash bytes for staged weight blobs.
+
+    Attributes
+    ----------
+    project_root : Path
+        Canonical STM32 template/workspace root. The backend copies this root
+        into a per-candidate staging directory before build/upload.
+    gdbserver : Path | None
+        Optional explicit path to ``ST-LINK_gdbserver``.
+    gdb : Path | None
+        Optional explicit path to ``arm-none-eabi-gdb``.
+    cubeprog_bin : Path | None
+        Optional explicit path to the STM32CubeProgrammer ``bin`` directory.
+    gdb_port : int
+        TCP port used by the ST-LINK GDB server.
+    apid : int
+        ST-LINK access port identifier.
+    server_ready_timeout_s : float
+        Timeout waiting for the GDB server to report that it is ready.
+    cpu_clock_mhz : int
+        Requested fixed CPU clock preset written into the generated phase
+        configuration header.
+    runtime_mode : str
+        Requested STM32 runtime mode (`back_to_back` or `cadenced`).
+    latency_budget_ms : float
+        Cadence budget written into the generated phase configuration header.
+    wake_margin_us : int
+        Wake margin written into the generated phase configuration header.
+    min_sleep_us : int
+        Minimum stop-sleep duration written into the generated phase
+        configuration header.
+    weight_storage_mode : str
+        Weight placement policy (`embedded` or `external_flash`).
+    appli_flash_address : str
+        External-flash base address used for the signed application image.
+    weights_flash_address : str
+        Absolute external flash address used when externalizing weights.
+    weights_memory_pool : Path
+        ST Edge AI memory-pool JSON used when externalizing weights.
+    weights_external_loader : Path | None
+        Required `.stldr` loader path used to program external weight blobs.
+    signing_tool : Path | None
+        Optional signing-tool executable used to wrap the trusted application.
+    signing_load_offset : str
+        Load offset embedded in the generated signed application header.
+    signing_header_version : str
+        Header-format version passed to the STM32 signing tool.
+    max_external_flash_bytes : int
+        Maximum usable external flash bytes for staged weight blobs.
     """
 
     project_root: Path
@@ -207,7 +255,41 @@ class STM32NucleoN657X0QOptions:
 
 @dataclass(frozen=True)
 class STM32WorkspacePaths:
-    """Resolved layout-aware STM32 workspace paths."""
+    """Resolved layout-aware STM32 workspace paths.
+
+    Attributes
+    ----------
+    layout : str
+        STM32 project layout identifier used to select path conventions.
+    root : Path
+        Root of the staged STM32 workspace.
+    manifest_root : Path
+        Directory where TinyODOM staging metadata is persisted.
+    source_root : Path
+        Root containing generated ST Edge AI network sources.
+    inc_dir : Path
+        Include directory populated by ST Edge AI generation.
+    src_dir : Path
+        Source directory populated by ST Edge AI generation.
+    linker_project_root : Path
+        CubeIDE project root used for linker-script discovery.
+    boot_project_root : Path
+        CubeIDE Boot project root for LRUN dev_boot builds.
+    app_project_root : Path
+        CubeIDE App project root for trusted-application builds.
+    boot_debug_dir : Path
+        Boot project Debug directory containing make recipes and artifacts.
+    app_debug_dir : Path
+        App project Debug directory containing make recipes and artifacts.
+    boot_elf_path : Path | None
+        Boot ELF artifact path when the layout emits a separate boot image.
+    app_elf_path : Path | None
+        App ELF artifact path when the layout emits a separate application image.
+    signed_app_bin_path : Path | None
+        Signed trusted application binary ready for STM32 programming.
+    boot_copy_window_header : Path | None
+        Header containing the LRUN bootloader copy-window definition.
+    """
 
     layout: str
     root: Path
@@ -327,6 +409,11 @@ def _resolve_weight_storage_mode(raw_value: object | None) -> str:
     -------
     str
         Normalized storage mode.
+
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
     """
     mode = str(raw_value or DEFAULT_WEIGHT_STORAGE_MODE).strip().lower()
     if mode not in {"embedded", "external_flash"}:
@@ -403,6 +490,11 @@ def resolve_stm32_nucleo_n657x0_q_options(
     -------
     STM32NucleoN657X0QOptions
         Normalized options with defaults applied.
+
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
     """
     options = dict(device_options or {})
     raw_template_root = options.get("template_root")
@@ -541,6 +633,11 @@ def _resolve_workspace_paths(
     The LRUN flow validates both the Boot and AppS subprojects up front
     because later build, signing, and debug-load steps span both halves of the
     staged workspace.
+
+    Raises
+    ------
+    WorkflowError
+        If existing validation or execution checks fail.
     """
     root = Path(project_root).expanduser().resolve()
     resolved_root = root
@@ -616,6 +713,11 @@ def _find_boot_linker_script(paths: STM32WorkspacePaths) -> Path:
     -------
     Path
         Boot linker script path for the active workspace.
+
+    Raises
+    ------
+    WorkflowError
+        If existing validation or execution checks fail.
     """
     linker_scripts = sorted(paths.boot_project_root.glob("*.ld"))
     if not linker_scripts:
@@ -900,6 +1002,11 @@ def _generated_weights_blob_path(
     -------
     pathlib.Path | None
         Generated blob path in `external_flash` mode, otherwise `None`.
+
+    Raises
+    ------
+    WorkflowError
+        If existing validation or execution checks fail.
     """
     if weight_storage_mode != "external_flash":
         return None
@@ -1036,14 +1143,36 @@ def _hash_paths(entries: list[Path], *, root: Path) -> str:
 
 
 def _debug_recipe_inputs(debug_dir: Path) -> list[Path]:
-    """Return checked-in CubeIDE recipe files that affect a staged build."""
+    """Return checked-in CubeIDE recipe files that affect a staged build.
+
+    Parameters
+    ----------
+    debug_dir : Path
+        CubeIDE Debug directory containing generated make recipes.
+
+    Returns
+    -------
+    list[Path]
+        Recipe files that should participate in STM32 build-cache hashing.
+    """
     recipe_files = [debug_dir / name for name in DEBUG_RECIPE_ROOT_FILENAMES if (debug_dir / name).is_file()]
     recipe_files.extend(sorted(path for path in debug_dir.rglob("subdir.mk") if path.is_file()))
     return recipe_files
 
 
 def _lrun_app_build_input_hash(paths: STM32WorkspacePaths) -> str:
-    """Return a stable digest for LRUN AppS build inputs."""
+    """Return a stable digest for LRUN AppS build inputs.
+
+    Parameters
+    ----------
+    paths : STM32WorkspacePaths
+        Resolved STM32 workspace paths for the staged candidate.
+
+    Returns
+    -------
+    str
+        Digest that changes when LRUN App build inputs change.
+    """
     entries = [
         paths.inc_dir,
         paths.src_dir,
@@ -1059,7 +1188,18 @@ def _lrun_app_build_input_hash(paths: STM32WorkspacePaths) -> str:
 
 
 def _lrun_boot_build_input_hash(paths: STM32WorkspacePaths) -> str:
-    """Return a stable digest for LRUN Boot build inputs."""
+    """Return a stable digest for LRUN Boot build inputs.
+
+    Parameters
+    ----------
+    paths : STM32WorkspacePaths
+        Resolved STM32 workspace paths for the staged candidate.
+
+    Returns
+    -------
+    str
+        Digest that changes when LRUN Boot build inputs change.
+    """
     entries = [
         paths.root / "FSBL",
         paths.root / "Drivers",
@@ -1078,7 +1218,22 @@ def _lrun_app_sign_input_hash(
     signing_load_offset: str,
     signing_header_version: str,
 ) -> str:
-    """Return a stable digest for signed-App generation inputs."""
+    """Return a stable digest for signed-App generation inputs.
+
+    Parameters
+    ----------
+    app_bin : Path
+        Unsigned application binary emitted by the STM32 App build.
+    signing_load_offset : str
+        Load offset embedded into the STM32 signed application header.
+    signing_header_version : str
+        STM32 signing header version passed to the signing tool.
+
+    Returns
+    -------
+    str
+        Digest that changes when signed-App generation inputs change.
+    """
     digest = hashlib.sha256()
     digest.update(_sha256_file(app_bin).encode("ascii"))
     digest.update(b"\0")
@@ -1162,7 +1317,20 @@ def _write_staged_manifest(
 
 
 def _update_staged_manifest(paths: STM32WorkspacePaths, **updates: object) -> Path:
-    """Update selected manifest fields without dropping existing metadata."""
+    """Update selected manifest fields without dropping existing metadata.
+
+    Parameters
+    ----------
+    paths : STM32WorkspacePaths
+        Resolved STM32 workspace paths for the staged candidate.
+    **updates : dict[str, object]
+        Manifest fields to merge into the existing JSON payload.
+
+    Returns
+    -------
+    Path
+        Path to the updated staged manifest file.
+    """
     manifest = _read_staged_manifest(paths)
     manifest.update(updates)
     manifest_path = _manifest_path(paths)
@@ -1185,6 +1353,11 @@ def _read_staged_manifest(paths: STM32WorkspacePaths) -> dict[str, object]:
     -------
     dict[str, object]
         Parsed manifest payload.
+
+    Raises
+    ------
+    WorkflowError
+        If existing validation or execution checks fail.
     """
     manifest_path = _manifest_path(paths)
     if not manifest_path.is_file():
@@ -1305,7 +1478,18 @@ def _validate_memory_reservations(paths: STM32WorkspacePaths) -> tuple[int, int]
 
 
 def _validate_lrun_boot_include_path(paths: STM32WorkspacePaths) -> None:
-    """Ensure LRUN Boot recipes still include the FSBL header directory."""
+    """Ensure LRUN Boot recipes still include the FSBL header directory.
+
+    Parameters
+    ----------
+    paths : STM32WorkspacePaths
+        Resolved STM32 workspace paths for the staged candidate.
+
+    Raises
+    ------
+    WorkflowError
+        If existing validation or execution checks fail.
+    """
     if paths.boot_copy_window_header is None:
         return
     mk_files = sorted(paths.boot_debug_dir.rglob("*.mk"))
@@ -1329,7 +1513,27 @@ def _update_lrun_copy_window(
     trusted_app_size: int,
     alignment: int = 0x400,
 ) -> tuple[Path, bool, int]:
-    """Rewrite the staged LRUN copy-window define from the trusted app size."""
+    """Rewrite the staged LRUN copy-window define from the trusted app size.
+
+    Parameters
+    ----------
+    paths : STM32WorkspacePaths
+        Resolved STM32 workspace paths for the staged candidate.
+    trusted_app_size : int
+        Signed application size in bytes before copy-window alignment.
+    alignment : int
+        Byte alignment applied when rounding the copy window upward.
+
+    Returns
+    -------
+    tuple[Path, bool, int]
+        Updated header path, whether it changed, and aligned copy-window size.
+
+    Raises
+    ------
+    WorkflowError
+        If existing validation or execution checks fail.
+    """
     if paths.boot_copy_window_header is None:
         raise stm32_cube_clt.WorkflowError(
             "LRUN copy-window updates require a boot copy-window header path."
@@ -1357,7 +1561,22 @@ def _validate_lrun_flash_layout(
     appli_flash_address: str,
     weights_flash_address: str,
 ) -> None:
-    """Validate that the LRUN boot copy window does not overlap the weights region."""
+    """Validate that the LRUN boot copy window does not overlap the weights region.
+
+    Parameters
+    ----------
+    copy_window_bytes : int
+        Bootloader copy-window size in bytes for the trusted application.
+    appli_flash_address : str
+        Application image base address in external flash.
+    weights_flash_address : str
+        External-flash base address used for the weight blob.
+
+    Raises
+    ------
+    WorkflowError
+        If existing validation or execution checks fail.
+    """
     appli_addr = int(appli_flash_address, 16)
     weights_addr = int(weights_flash_address, 16)
     if appli_addr >= weights_addr:
@@ -1367,7 +1586,23 @@ def _validate_lrun_flash_layout(
 
 
 def _resolve_bin_artifact(elf_path: Path) -> Path:
-    """Return the BIN artifact emitted alongside one STM32 ELF."""
+    """Return the BIN artifact emitted alongside one STM32 ELF.
+
+    Parameters
+    ----------
+    elf_path : Path
+        ELF file whose section sizes are parsed.
+
+    Returns
+    -------
+    Path
+        Binary path derived from the ELF location.
+
+    Raises
+    ------
+    WorkflowError
+        If existing validation or execution checks fail.
+    """
     candidate = elf_path.with_suffix(".bin")
     if candidate.is_file():
         return candidate
@@ -1391,6 +1626,13 @@ def _strip_stale_debug_artifacts(paths: STM32WorkspacePaths) -> None:
         Layout-aware STM32 workspace paths.
     """
     def _prune_recipe_tree(directory: Path) -> None:
+        """Prune recipe tree.
+
+        Parameters
+        ----------
+        directory : Path
+            Directory to prune or inspect.
+        """
         for nested in directory.iterdir():
             if nested.is_dir():
                 _prune_recipe_tree(nested)
@@ -1459,6 +1701,11 @@ def _run_stedgeai_analyze(
         Per-candidate ST Edge AI workspace directory.
     output_dir : pathlib.Path
         Per-candidate output directory receiving analyze artifacts.
+
+    Raises
+    ------
+    WorkflowError
+        If existing validation or execution checks fail.
     """
     stedgeai = stm32_cube_clt.resolve_required_tool_path(
         None,
@@ -1734,7 +1981,7 @@ BOARD_DEFAULT_SPEC = build_stm32_nucleo_n657x0_q_spec()
 
 
 class STM32NucleoN657X0QDevice(DeviceInterface):
-    """TinyODOM-facing STM32 backend for the Nucleo N657x0 board.
+    """Describe tinyODOM-facing STM32 backend for the Nucleo N657x0 board.
 
     Notes
     -----
@@ -1787,7 +2034,18 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         return self._options
 
     def _resolve_paths(self, project_root: Path | str) -> STM32WorkspacePaths:
-        """Return validated layout-aware workspace paths."""
+        """Return validated layout-aware workspace paths.
+
+        Parameters
+        ----------
+        project_root : Path | str
+            STM32 project root containing the CubeIDE workspace to inspect.
+
+        Returns
+        -------
+        STM32WorkspacePaths
+            Validated layout-aware paths rooted at ``project_root``.
+        """
         resolved_root = Path(project_root).expanduser().resolve()
         return _validate_project_structure(
             _resolve_workspace_paths(
@@ -1933,6 +2191,11 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         -------
         dict[str, Any]
             Storage metadata to merge into final metrics.
+
+        Raises
+        ------
+        WorkflowError
+            If existing validation or execution checks fail.
         """
         paths = project_root if isinstance(project_root, STM32WorkspacePaths) else self._resolve_paths(project_root)
         try:
@@ -2020,7 +2283,25 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         *,
         compile_result: CompileResult,
     ) -> dict[str, Any]:
-        """Program the LRUN signed app and optional weights before boot."""
+        """Program the LRUN signed app and optional weights before boot.
+
+        Parameters
+        ----------
+        paths : STM32WorkspacePaths
+            Resolved STM32 workspace paths for the staged candidate.
+        compile_result : CompileResult
+            Compile result carrying paths and size accounting for the staged build.
+
+        Returns
+        -------
+        dict[str, Any]
+            Programming metadata recorded for the staged runtime images.
+
+        Raises
+        ------
+        WorkflowError
+            If existing validation or execution checks fail.
+        """
         signed_app_path = compile_result.signed_app_bin_path
         if signed_app_path is None:
             raise stm32_cube_clt.WorkflowError(
@@ -2231,7 +2512,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         sketches_dir: Path | None = None,
         runtime_phase: str = "back_to_back",
     ) -> Path | None:
-        """STM32 ignores input-mode selection and returns the canonical template.
+        """Validate sTM32 ignores input-mode selection and returns the canonical template.
 
         Parameters
         ----------
@@ -2314,6 +2595,11 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         CompileResult
             Parsed build result including flash, RAM, activation arena, and
             linker heap/stack diagnostics when successful.
+
+        Raises
+        ------
+        WorkflowError
+            If existing validation or execution checks fail.
         """
         del arena_kb, window_size, num_channels, build_defines
         project_root = Path(sketch_path).expanduser().resolve()
@@ -2675,6 +2961,11 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         -------
         MeasureResult
             Parsed latency, serial log, and backend error details when present.
+
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
         """
         del (
             measured_inference_runs,
@@ -2799,6 +3090,13 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         DeviceMetrics
             Normalized STM32 metrics with compile-time sizes and optional runtime
             latency when HIL is enabled.
+
+        Raises
+        ------
+        Exception
+            If existing validation or execution checks fail.
+        ValueError
+            If existing validation or execution checks fail.
         """
         del arena_kb
         project_root = Path(dirpath).expanduser().resolve()

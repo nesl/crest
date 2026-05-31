@@ -23,7 +23,6 @@ def ensure_audio_components_registered() -> None:
     This intentionally avoids importing OxIOD so audio-only preparation and
     smoke paths do not pull in unrelated pandas/giotto dependencies.
     """
-
     if "urbansound8k_mel" not in dataset_registry:
         from .datasets.urbansound8k_mel import UrbanSound8KMelDataset
 
@@ -48,7 +47,6 @@ def ensure_builtin_components_registered() -> None:
         component has not already been registered by name. Existing registry
         entries are left untouched so repeated calls are idempotent.
     """
-
     if "oxiod" not in dataset_registry:
         from .datasets.oxiod import OxIODDataset
 

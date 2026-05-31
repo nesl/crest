@@ -29,7 +29,6 @@ class CadenceResolutionTests(unittest.TestCase):
         None
             Asserts the device override wins over metadata and config cadence.
         """
-
         result = resolve_batch_period_ms(
             Dict(batch_period_ms=2000, stride=20, sampling_rate_hz=100),
             dataset_metadata={"batch_period_ms": 1000},
@@ -46,7 +45,6 @@ class CadenceResolutionTests(unittest.TestCase):
         None
             Asserts loaded dataset metadata takes precedence over config fields.
         """
-
         result = resolve_batch_period_ms(
             Dict(batch_period_ms=2000, stride=20, sampling_rate_hz=100),
             dataset_metadata={"batch_period_ms": 1500},
@@ -63,7 +61,6 @@ class CadenceResolutionTests(unittest.TestCase):
         None
             Asserts `dataset.params.batch_period_ms` wins over stride cadence.
         """
-
         result = resolve_batch_period_ms(
             SimpleNamespace(batch_period_ms=2000, stride=20, sampling_rate_hz=100),
             dataset_metadata={},
@@ -80,7 +77,6 @@ class CadenceResolutionTests(unittest.TestCase):
         None
             Asserts the odometry cadence formula remains unchanged.
         """
-
         result = resolve_batch_period_ms(
             Dict(stride=20, sampling_rate_hz=100),
             dataset_metadata={},
@@ -97,7 +93,6 @@ class CadenceResolutionTests(unittest.TestCase):
         None
             Asserts mixed-source fallback is resolved independently per field.
         """
-
         result = resolve_batch_period_ms(
             Dict(sampling_rate_hz=100),
             dataset_metadata={"stride": 25},
@@ -114,7 +109,6 @@ class CadenceResolutionTests(unittest.TestCase):
         None
             Asserts mixed-source fallback is resolved independently per field.
         """
-
         result = resolve_batch_period_ms(
             Dict(stride=25),
             dataset_metadata={"sampling_rate_hz": 50},
@@ -131,7 +125,6 @@ class CadenceResolutionTests(unittest.TestCase):
         None
             Asserts absent fields do not block lower-precedence cadence.
         """
-
         result = resolve_batch_period_ms(
             Dict(stride=10, sampling_rate_hz=100),
             dataset_metadata={},
@@ -148,7 +141,6 @@ class CadenceResolutionTests(unittest.TestCase):
         None
             Asserts present-invalid batch cadence blocks legacy fallback.
         """
-
         with self.assertRaisesRegex(ValueError, "dataset.params.batch_period_ms"):
             resolve_batch_period_ms(
                 Dict(batch_period_ms=None, stride=10, sampling_rate_hz=100),
@@ -164,7 +156,6 @@ class CadenceResolutionTests(unittest.TestCase):
         None
             Asserts invalid device overrides are not ignored.
         """
-
         with self.assertRaisesRegex(ValueError, "device.latency_budget_ms"):
             resolve_batch_period_ms(
                 Dict(batch_period_ms=2000),
@@ -180,7 +171,6 @@ class CadenceResolutionTests(unittest.TestCase):
         None
             Asserts invalid metadata-owned cadence is not ignored.
         """
-
         with self.assertRaisesRegex(ValueError, "dataset.metadata.batch_period_ms"):
             resolve_batch_period_ms(
                 Dict(batch_period_ms=2000),
@@ -196,7 +186,6 @@ class CadenceResolutionTests(unittest.TestCase):
         None
             Asserts invalid config-owned batch cadence is not ignored.
         """
-
         with self.assertRaisesRegex(ValueError, "dataset.params.batch_period_ms"):
             resolve_batch_period_ms(
                 Dict(batch_period_ms=math.inf, stride=10, sampling_rate_hz=100),
@@ -212,7 +201,6 @@ class CadenceResolutionTests(unittest.TestCase):
         None
             Asserts legacy cadence fields must be positive.
         """
-
         with self.assertRaisesRegex(ValueError, "dataset.params.stride"):
             resolve_batch_period_ms(
                 Dict(stride=0, sampling_rate_hz=100),
@@ -228,7 +216,6 @@ class CadenceResolutionTests(unittest.TestCase):
         None
             Asserts a fully missing cadence contract raises ``ValueError``.
         """
-
         with self.assertRaisesRegex(ValueError, "stride"):
             resolve_batch_period_ms(
                 Dict(),

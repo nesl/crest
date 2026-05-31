@@ -31,7 +31,6 @@ def source_config() -> dict[str, Any]:
     dict[str, Any]
         Config mapping with objectives and CSV log name.
     """
-
     return {
         "outputs": {"log_file_name": "log_NAS_test.csv"},
         "nas": {
@@ -60,7 +59,6 @@ def base_row(**overrides: Any) -> dict[str, str]:
     dict[str, str]
         String-valued CSV row mapping.
     """
-
     row: dict[str, Any] = {
         "trial_number": "0",
         "pruned": "False",
@@ -103,7 +101,6 @@ def write_source_run(
     tuple[pathlib.Path, pathlib.Path, pathlib.Path]
         Source run directory, CSV path, and config path.
     """
-
     source_dir = tmp_path / "source_run"
     source_dir.mkdir()
     config_path = source_dir / "nas_config.yaml"
@@ -135,7 +132,6 @@ def write_target_config(tmp_path: Path) -> Path:
     pathlib.Path
         Target config path.
     """
-
     target_config = tmp_path / "target.yaml"
     target_config.write_text("model:\n  family: odom_tcn\n", encoding="utf-8")
     return target_config
@@ -184,7 +180,6 @@ def make_args(
     tinyodom.pareto_replay.ReplayRunConfig
         Config compatible with ``pareto_replay.run_replay``.
     """
-
     return pareto_replay.ReplayRunConfig(
         source_run_dir=source_run_dir,
         target_run_dir=None,
@@ -216,7 +211,6 @@ def read_results(output_dir: Path) -> list[dict[str, str]]:
     list[dict[str, str]]
         Parsed CSV rows.
     """
-
     with (output_dir / "replay_results.csv").open("r", encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle))
 
@@ -234,7 +228,6 @@ def read_request_records(output_dir: Path) -> list[dict[str, Any]]:
     list[dict[str, Any]]
         Parsed request records.
     """
-
     requests_path = output_dir / "replay_requests.jsonl"
     if not requests_path.exists():
         return []
@@ -254,7 +247,6 @@ def test_replay_run_config_rejects_invalid_direct_library_config(tmp_path: Path)
     None
         The test passes when invalid configs raise ``ValueError``.
     """
-
     valid_kwargs = {
         "source_run_dir": tmp_path / "source",
         "target_run_dir": None,
@@ -288,7 +280,6 @@ def test_namespace_to_replay_config_maps_all_cli_fields() -> None:
     None
         The test passes when every CLI field maps to the typed config.
     """
-
     parser = pareto_hil_replay.build_arg_parser()
     args = parser.parse_args(
         [
@@ -344,7 +335,6 @@ def test_parser_requires_exactly_one_target_option() -> None:
     None
         The test passes when exactly one target selector is required.
     """
-
     parser = pareto_hil_replay.build_arg_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["--source-run-dir", "models/source"])
@@ -373,7 +363,6 @@ def test_replay_library_has_no_cli_parser_ownership() -> None:
     None
         The test passes when parser symbols are absent from the library module.
     """
-
     assert "argparse" not in pareto_replay.__dict__
     assert not hasattr(pareto_replay, "build_arg_parser")
     assert not hasattr(pareto_replay, "positive_int")
@@ -388,7 +377,6 @@ def test_parse_cell_value_handles_scalars_and_json() -> None:
     None
         The test passes when parsed values match expected Python values.
     """
-
     assert pareto_replay.parse_cell_value("true") is True
     assert pareto_replay.parse_cell_value("7") == 7
     assert pareto_replay.parse_cell_value("7.5") == 7.5
@@ -405,7 +393,6 @@ def test_objective_override_and_log_inference_fallback() -> None:
     None
         The test passes when objectives resolve from override and later rows.
     """
-
     columns = ["metric__rmse_total", "flops"]
     override = pareto_replay.parse_objective_override("rmse_total:min,flops:maximize", columns)
     assert override == (
@@ -437,7 +424,6 @@ def test_read_csv_rows_rejects_empty_and_header_only_csv(tmp_path: Path) -> None
     None
         The test passes when invalid CSV files raise clear errors.
     """
-
     empty = tmp_path / "empty.csv"
     empty.write_text("", encoding="utf-8")
     with pytest.raises(ValueError, match="no header"):
@@ -457,7 +443,6 @@ def test_source_row_filtering_and_multi_direction_pareto() -> None:
     None
         The test passes when invalid rows are skipped and the front is stable.
     """
-
     objectives = (
         pareto_replay.ObjectiveSpec("metric__rmse_total", "minimize", "rmse_total"),
         pareto_replay.ObjectiveSpec("accuracy", "maximize", "accuracy"),
@@ -479,7 +464,6 @@ def test_build_candidate_preserves_cpu_clock_and_runtime_payload() -> None:
     None
         The test passes when payload fields are split and typed correctly.
     """
-
     candidate = pareto_replay.build_replay_candidate(
         source_row_index=4,
         row=base_row(cpu_clock_mhz_requested="160.0"),
@@ -502,7 +486,6 @@ def test_build_candidate_rejects_missing_runtime_metadata() -> None:
     None
         The test passes when missing runtime fields fail before HIL.
     """
-
     row = base_row(**{"hparam__input_dim": None})
     with pytest.raises(ValueError, match="input_dim"):
         pareto_replay.build_replay_candidate(
@@ -520,7 +503,6 @@ def test_device_option_policies_preserve_omit_and_reject() -> None:
     None
         The test passes when device option policies behave as documented.
     """
-
     objective = (pareto_replay.ObjectiveSpec("metric__rmse_total", "minimize", "rmse_total"),)
     preserved = pareto_replay.build_replay_candidate(
         source_row_index=0,
@@ -568,7 +550,6 @@ def test_dedupe_preserves_order_and_completed_keys_include_dry_run(tmp_path: Pat
     None
         The test passes when duplicate payloads and resume statuses are handled.
     """
-
     objective = (pareto_replay.ObjectiveSpec("metric__rmse_total", "minimize", "rmse_total"),)
     first = pareto_replay.build_replay_candidate(source_row_index=0, row=base_row(), objectives=objective)
     duplicate = pareto_replay.build_replay_candidate(source_row_index=1, row=base_row(), objectives=objective)
@@ -614,7 +595,6 @@ def test_positive_int_rejects_non_positive_max_candidates() -> None:
     None
         The test passes when argparse rejects zero and negative values.
     """
-
     parser = pareto_hil_replay.build_arg_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["--source-run-dir", "x", "--target-config", "y", "--max-candidates", "0"])
@@ -635,7 +615,6 @@ def test_result_csv_header_expands_for_heterogeneous_metrics(tmp_path: Path) -> 
     None
         The test passes when later metric keys extend the CSV header.
     """
-
     objective = (pareto_replay.ObjectiveSpec("metric__rmse_total", "minimize", "rmse_total"),)
     candidate = pareto_replay.build_replay_candidate(source_row_index=0, row=base_row(), objectives=objective)
     writer = pareto_replay.ResultCsvWriter(tmp_path / "replay_results.csv")
@@ -685,7 +664,6 @@ def test_dry_run_writes_manifest_requests_and_results_without_server(
         The test passes when dry-run output and summary logs are complete
         without server creation.
     """
-
     source_dir, _, _ = write_source_run(tmp_path, [base_row()])
     target_config = write_target_config(tmp_path)
     output_dir = tmp_path / "replay"
@@ -703,8 +681,12 @@ def test_dry_run_writes_manifest_requests_and_results_without_server(
         -------
         object
             This function never returns in the passing path.
-        """
 
+        Raises
+        ------
+        AssertionError
+            If existing validation or execution checks fail.
+        """
         raise AssertionError(f"Unexpected HIL server construction for {config_path}")
 
     with caplog.at_level(logging.INFO, logger="tinyodom.pareto_replay"):
@@ -765,7 +747,6 @@ def test_non_dry_run_invokes_metrics_callback_with_full_request(tmp_path: Path) 
     None
         The test passes when all reconstructed fields reach the callback.
     """
-
     source_dir, _, _ = write_source_run(tmp_path, [base_row(quantization_mode="int8_ptq")])
     target_config = write_target_config(tmp_path)
     output_dir = tmp_path / "replay"
@@ -810,7 +791,6 @@ def test_non_dry_run_invokes_metrics_callback_with_full_request(tmp_path: Path) 
         Mapping[str, Any]
             Synthetic HIL metrics.
         """
-
         calls.append(
             {
                 "family_hparams": dict(family_hparams),
@@ -852,7 +832,6 @@ def test_runner_errors_become_result_rows(tmp_path: Path) -> None:
     None
         The test passes when errors do not crash the replay loop.
     """
-
     source_dir, _, _ = write_source_run(tmp_path, [base_row()])
     target_config = write_target_config(tmp_path)
     output_dir = tmp_path / "replay"
@@ -872,8 +851,12 @@ def test_runner_errors_become_result_rows(tmp_path: Path) -> None:
         -------
         Mapping[str, Any]
             This function never returns in the passing path.
-        """
 
+        Raises
+        ------
+        RuntimeError
+            If existing validation or execution checks fail.
+        """
         raise RuntimeError("synthetic failure")
 
     assert pareto_replay.run_replay(args, metrics_callback=failing_callback) == 0
@@ -895,7 +878,6 @@ def test_resume_skips_completed_and_dry_run_payloads(tmp_path: Path) -> None:
     None
         The test passes when a dry-run output directory is skipped on resume.
     """
-
     source_dir, _, _ = write_source_run(tmp_path, [base_row()])
     target_config = write_target_config(tmp_path)
     output_dir = tmp_path / "replay"
@@ -919,7 +901,6 @@ def test_resume_skips_completed_and_dry_run_payloads(tmp_path: Path) -> None:
         Mapping[str, Any]
             Synthetic metrics mapping.
         """
-
         calls.append("called")
         return {"error_code": 1}
 
@@ -950,7 +931,6 @@ def test_gpu_environment_behavior_matches_allow_gpu(tmp_path: Path, monkeypatch:
     None
         The test passes when CUDA visibility follows CLI policy.
     """
-
     source_dir, _, _ = write_source_run(tmp_path, [base_row()])
     target_config = write_target_config(tmp_path)
 
@@ -969,7 +949,6 @@ def test_gpu_environment_behavior_matches_allow_gpu(tmp_path: Path, monkeypatch:
         Mapping[str, Any]
             Synthetic metrics mapping.
         """
-
         return {"error_code": 1}
 
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
@@ -1003,7 +982,6 @@ def test_cli_help_smoke() -> None:
     None
         The test passes when the CLI exits successfully for ``--help``.
     """
-
     result = subprocess.run(
         [sys.executable, "src/pareto_hil_replay.py", "--help"],
         cwd=ROOT_DIR,

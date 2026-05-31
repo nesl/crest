@@ -110,6 +110,15 @@ class NASMetricDependencies:
         Metrics that require the compile-only HIL backend path.
     runtime_only : frozenset[str]
         Metrics that require real on-device runtime measurement.
+
+    Attributes
+    ----------
+    metrics : frozenset[str]
+        Metric names emitted by the study.
+    compile_derived : frozenset[str]
+        Metrics derived from compile-time artifacts.
+    runtime_only : frozenset[str]
+        Metrics populated only after runtime execution.
     """
 
     metrics: frozenset[str]
@@ -131,7 +140,6 @@ def _family_trial_params(params: Mapping[str, Any]) -> dict[str, Any]:
     dict[str, Any]
         Parameters safe to pass to ``ModelFamilyABC.decode_trial_hparams``.
     """
-
     return {key: value for key, value in params.items() if key not in RUNNER_OWNED_TRIAL_PARAM_KEYS}
 
 
@@ -196,6 +204,7 @@ class NASModelClient:
     >>> client = NASModelClient()
     >>> client.run_scoring_nas(study_name="tinyodom_nas_study")
     """
+
     def __init__(self, config_path: Path=DEFAULT_CONFIG_PATH):
         """Initialize NAS state, datasets, and the HIL client socket.
 
@@ -247,7 +256,6 @@ class NASModelClient:
         None
             The client state is populated from the supplied bootstrap result.
         """
-
         self.dataset = pipeline.dataset
         self.dataset_name = pipeline.selection["dataset_name"]
         self.task = pipeline.task
@@ -571,7 +579,6 @@ class NASModelClient:
         addict.Dict
             Feasibility policy exposing ``train_if_infeasible`` and ``rules``.
         """
-
         raw_config = getattr(self.config.nas, "feasibility", None)
         feasibility_config = Dict(raw_config or {})
         feasibility_config.train_if_infeasible = bool(
@@ -588,7 +595,6 @@ class NASModelClient:
         bool
             ``True`` when ``nas.feasibility.rules`` contains at least one rule.
         """
-
         return bool(self._feasibility_config().rules)
 
     @staticmethod
@@ -605,7 +611,6 @@ class NASModelClient:
         dict[str, Any]
             JSON-friendly reference shape used in the study policy signature.
         """
-
         ref_type = str(getattr(reference, "type", "")).strip().lower()
         if ref_type == "literal":
             return {"type": "literal", "value": float(reference.value)}
@@ -620,7 +625,6 @@ class NASModelClient:
             Ordered normalized policy signature, or ``None`` when feasibility
             is disabled.
         """
-
         feasibility_config = self._feasibility_config()
         if not feasibility_config.rules:
             return None
@@ -645,7 +649,6 @@ class NASModelClient:
         int
             Length of ``nas.feasibility.rules`` for the active config.
         """
-
         return len(self._feasibility_config().rules)
 
     def _constraints_func(self, frozen_trial: optuna.trial.FrozenTrial) -> tuple[float, ...]:
@@ -669,7 +672,6 @@ class NASModelClient:
         failures and prune-rule exits use a positive persisted status-derived
         sentinel so constrained samplers rank them infeasible.
         """
-
         if not self._feasibility_enabled():
             return ()
         raw_constraints = frozen_trial.user_attrs.get("feasibility_constraints")
@@ -697,7 +699,6 @@ class NASModelClient:
         RuntimeError
             If the active config and persisted study policy are incompatible.
         """
-
         active_signature = self._feasibility_policy_signature()
         stored_signature = getattr(study, "user_attrs", {}).get(FEASIBILITY_POLICY_SIGNATURE_ATTR)
         has_trials = bool(study.trials)
@@ -739,7 +740,6 @@ class NASModelClient:
             NSGA-II or TPE sampler with feasibility constraints enabled when
             configured.
         """
-
         constraints_func = self._constraints_func if self._feasibility_enabled() else None
         if self._score_is_multiobjective():
             kwargs = {
@@ -832,7 +832,6 @@ class NASModelClient:
         connection retries when ``device.hil`` and compile proxy collection are
         disabled.
         """
-
         if self.socket is not None:
             return
         self.context = zmq.Context.instance()
@@ -952,7 +951,6 @@ class NASModelClient:
         str
             Selected deployment quantization mode.
         """
-
         quantization = self.config.training.quantization
         if allow_search and bool(getattr(quantization, "search", False)):
             choices = list(getattr(quantization, "choices", []))
@@ -974,7 +972,6 @@ class NASModelClient:
             ``True`` when the metric cannot be produced by desktop or
             compile-only execution.
         """
-
         return metric_name in RUNTIME_ONLY_METRICS or metric_name.startswith("cadenced_")
 
     def _classify_nas_metric_dependencies(self) -> NASMetricDependencies:
@@ -986,18 +983,33 @@ class NASModelClient:
             Active dependencies grouped by local, compile-derived, and
             runtime-only availability.
         """
-
         score_config = self.config.nas.score
         score_metrics = getattr(score_config, "metrics", Dict())
         visited: set[str] = set()
 
         def _add_reference(reference: Any, stack: tuple[str, ...] = ()) -> None:
-            """Add a typed metric reference to the active dependency set."""
+            """Add a typed metric reference to the active dependency set.
+
+            Parameters
+            ----------
+            reference : Any
+                Reference metric name looked up in the Optuna stack.
+            stack : tuple[str, ...]
+                Call stack used to infer the current Optuna trial context.
+            """
             if reference is not None and getattr(reference, "type", None) == "metric":
                 _add_metric(str(reference.metric), stack)
 
         def _add_metric(metric_name: str, stack: tuple[str, ...] = ()) -> None:
-            """Add one metric and recursively add derived dependencies."""
+            """Add one metric and recursively add derived dependencies.
+
+            Parameters
+            ----------
+            metric_name : str
+                Metric name looked up in the Optuna stack.
+            stack : tuple[str, ...]
+                Call stack used to infer the current Optuna trial context.
+            """
             if metric_name in stack:
                 return
             visited.add(metric_name)
@@ -1058,7 +1070,6 @@ class NASModelClient:
             If a non-HIL policy references runtime-only metrics, or explicitly
             disables compile while depending on compile-derived metrics.
         """
-
         if bool(self.config.device.hil):
             return True
 
@@ -1095,7 +1106,6 @@ class NASModelClient:
             Positive latency budget in milliseconds, or ``-1.0`` when no
             dataset/device cadence contract is available.
         """
-
         try:
             return float(
                 resolve_batch_period_ms(
@@ -1116,7 +1126,6 @@ class NASModelClient:
             Metrics dictionary with logging-required keys populated using
             desktop-safe values and unavailable sentinels.
         """
-
         metrics: dict[str, Any] = {
             "ram_bytes": -1,
             "flash_bytes": -1,
@@ -1161,7 +1170,6 @@ class NASModelClient:
         pathlib.Path
             Path to the written TFLite flatbuffer.
         """
-
         output_path = self._artifacts_dir() / f"{self.study_name}_{split_name}_eval.tflite"
         representative_split = None
         if quantization_requires_calibration(quantization_mode):
@@ -1202,8 +1210,12 @@ class NASModelClient:
         -------
         EvaluationResult
             Task-owned evaluation result.
-        """
 
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         if evaluation_backend == "keras":
             return self.task.evaluate(model, split, self.task_config, self.target_spec)
         if evaluation_backend != "tflite":
@@ -1250,7 +1262,6 @@ class NASModelClient:
         -------
         None
         """
-
         metrics["feasible"] = False
         metrics["feasibility_status"] = "not_evaluated"
         metrics["feasibility_rule"] = ""
@@ -1276,7 +1287,6 @@ class NASModelClient:
         -------
         None
         """
-
         metrics["feasible"] = bool(evaluation.feasible)
         metrics["feasibility_status"] = str(evaluation.status)
         metrics["feasibility_constraints"] = list(evaluation.constraints)
@@ -1298,7 +1308,6 @@ class NASModelClient:
             ``1e12`` for minimized objectives and ``-1e12`` for maximized
             objectives.
         """
-
         return [
             -1e12 if direction == "maximize" else 1e12
             for direction in self._study_directions()
@@ -1350,7 +1359,6 @@ class NASModelClient:
         ValueError
             If the value cannot be resolved or is not positive and finite.
         """
-
         raw_value = None
         if split is not None:
             raw_value = split.metadata.get(key)
@@ -1387,7 +1395,6 @@ class NASModelClient:
             If the active test split does not expose the odometry metadata
             required by the trajectory helper.
         """
-
         split = self.dataset_bundle.test
         if split is None:
             raise ValueError("Trajectory reporting requires a held-out test split.")
@@ -1604,7 +1611,14 @@ class NASModelClient:
             )
 
         def _report_if_supported(value: float) -> None:
-            """Optuna trial.report is unsupported for multi-objective studies."""
+            """Optuna trial.report is unsupported for multi-objective studies.
+
+            Parameters
+            ----------
+            value : float
+                Scalar objective value to report to Optuna when reporting is
+                supported.
+            """
             if not self._score_is_multiobjective():
                 trial.report(value, step=0)
 
@@ -1612,7 +1626,26 @@ class NASModelClient:
             prune_reason: str,
             prune_rule: str = "",
         ):
-            """Helper to prune with a penalty score and log the failure."""
+            """Return a helper to prune with a penalty score and log the failure.
+
+            Parameters
+            ----------
+            prune_reason : str
+                Reason text attached to the pruning decision.
+            prune_rule : str
+                Rule name attached to the pruning decision.
+
+            Returns
+            -------
+            object
+                Penalty score or multi-objective penalty tuple used to record
+                the failed trial.
+
+            Raises
+            ------
+            TrialPruned
+                If existing validation or execution checks fail.
+            """
             # Normalize missing metrics, build a loggable TrialOutcome, and
             # then diverge between scalar Optuna pruning and multi-objective
             # penalty returns.
@@ -1920,7 +1953,7 @@ class NASModelClient:
             loaded YAML setting is used as-is.
         trials : int, optional
             Number of trials to run in the smoke test (default is 5).
-        epochs : int, optional 
+        epochs : int, optional
             Number of epochs to train during the smoke test (default is 5).
         study_name : str, optional
             Name of the Optuna study (default is "smoke_test_study").
@@ -1935,6 +1968,13 @@ class NASModelClient:
         Smoke tests reuse the same per-study SQLite storage and trial log when
         the caller passes the same ``study_name``. Re-running the smoke test
         therefore appends more trials instead of deleting prior results.
+
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        Exception
+            If existing validation or execution checks fail.
         """
         self.study_name = study_name
         artifacts_dir = self._artifacts_dir()
@@ -2036,7 +2076,7 @@ class NASModelClient:
             Name to register the Optuna study under.
         storage : str, optional
             Optuna storage URI (defaults to a local SQLite DB).
-        
+
         Notes
         -----
         The pipeline targets ``config.training.nas_trials`` feasible completed
@@ -2050,6 +2090,11 @@ class NASModelClient:
         -------
         optuna.Study
             Completed study for downstream inspection/evaluation.
+
+        Raises
+        ------
+        Exception
+            If existing validation or execution checks fail.
         """
         self.study_name = study_name
         target_completions = self.config.training.nas_trials
@@ -2233,7 +2278,7 @@ class NASModelClient:
         # 1) Run NAS with configured HIL/train settings.
         study = self.run_nas(study_name=study_name, storage=storage_uri)
         logger.info("[run_scoring_nas] Completed NAS study with %s total trials", len(study.trials))
-        
+
         # Persist raw Optuna trial history so convergence plots can be rebuilt later.
         trials_df = study.trials_dataframe()
         trials_csv = artifacts_dir / "trials.csv"
@@ -2254,7 +2299,7 @@ class NASModelClient:
             logger.info("[run_scoring_nas] Saved Pareto front to %s", pareto_csv)
             logger.info("[run_scoring_nas] Pareto front size: %s", len(pareto_trials))
             return
-        
+
         best_trial = self._best_trial_for_finalization(study)
         logger.info("[run_scoring_nas] Best feasible value: %s", best_trial.value)
         # 2) Retrain the best architecture for the long schedule with early stopping.
@@ -2382,7 +2427,6 @@ class NASModelClient:
         dict[str, Any]
             Best-trial parameters suitable for model-family decoding.
         """
-
         study = optuna.load_study(study_name=study_name, storage=study_storage)
         selected = self._best_trial_for_finalization(study)
         return _family_trial_params(selected.params)
@@ -2406,7 +2450,6 @@ class NASModelClient:
             If feasibility is enabled and the study has no feasible completed
             trial, or if no completed trial exists at all.
         """
-
         if self._feasibility_enabled():
             feasible_trials = [
                 trial
@@ -2472,7 +2515,6 @@ class NASModelClient:
         dict
             JSON-friendly training history.
         """
-
         history_path = Path(history_path)
         history_path.parent.mkdir(parents=True, exist_ok=True)
         ckpt_path = Path(checkpoint_path)
@@ -2567,8 +2609,12 @@ class NASModelClient:
         -------
         dict
             JSON-friendly metrics dictionary.
-        """
 
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         ckpt_path = Path(checkpoint_path)
         metrics_path = Path(metrics_path)
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2686,8 +2732,7 @@ class NASModelClient:
         checkpoint_path: Path | None = None,
         history_path: Path | None = None,
     ) -> dict:
-        """
-        Rebuild, retrain, and checkpoint the best Optuna trial with a longer schedule.
+        """Rebuild, retrain, and checkpoint the best Optuna trial with a longer schedule.
 
         Parameters
         ----------
@@ -2751,8 +2796,7 @@ class NASModelClient:
         output_dir: Path | None = None,
         study_name: str | None = None,
     ) -> dict:
-        """
-        Plot loss/validation loss curves (and per-output losses if present) to PNGs.
+        """Plot loss/validation loss curves (and per-output losses if present) to PNGs.
 
         Parameters
         ----------
@@ -2770,6 +2814,11 @@ class NASModelClient:
         dict
             Mapping containing ``loss_plot`` and, when per-output histories are
             available, ``loss_components_plot``.
+
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
         """
         if history is None:
             if history_path is None:
@@ -2831,8 +2880,7 @@ class NASModelClient:
         evaluation_backend: str = "keras",
         tflite_path: Path | None = None,
     ) -> dict:
-        """
-        Evaluate the saved checkpoint on the held-out test split and log metrics.
+        """Evaluate the saved checkpoint on the held-out test split and log metrics.
 
         Parameters
         ----------
@@ -2888,7 +2936,6 @@ class NASModelClient:
         bool
             True when ``task.params.evaluation.protocol`` is ``fold_rotation``.
         """
-
         evaluation = getattr(self.task_config, "evaluation", Dict())
         return str(getattr(evaluation, "protocol", "fixed_split")) == "fold_rotation"
 
@@ -2900,7 +2947,6 @@ class NASModelClient:
         list[int]
             Requested UrbanSound8K test folds.
         """
-
         evaluation = getattr(self.task_config, "evaluation", Dict())
         fold_rotation = getattr(evaluation, "fold_rotation", Dict())
         return [int(fold) for fold in fold_rotation.get("test_folds", list(range(1, 11)))]
@@ -2913,7 +2959,6 @@ class NASModelClient:
         pathlib.Path
             Directory containing ``fold_XX`` cache directories.
         """
-
         return Path(self.config.dataset.params.fold_rotation_cache_dir).expanduser().resolve()
 
     def _bootstrap_fold_pipeline(self, fold_cache_dir: Path) -> Any:
@@ -2929,7 +2974,6 @@ class NASModelClient:
         object
             Bootstrapped pipeline for the fold-specific dataset bundle.
         """
-
         fold_config = copy.deepcopy(self.config)
         fold_config.dataset.params.cache_dir = str(fold_cache_dir)
         return bootstrap_pipeline(fold_config)
@@ -2949,8 +2993,12 @@ class NASModelClient:
         -------
         dict[str, float]
             Required metric values as floats.
-        """
 
+        Raises
+        ------
+        ValueError
+            If existing validation or execution checks fail.
+        """
         required = {}
         for metric_name in ("accuracy", "macro_f1", "loss"):
             if metric_name not in metrics:
@@ -2975,7 +3023,6 @@ class NASModelClient:
         dict[str, dict[str, float | None]]
             Mean and sample standard deviation by metric.
         """
-
         aggregate: dict[str, dict[str, float | None]] = {}
         for metric_name in ("accuracy", "macro_f1", "loss"):
             values = np.asarray([float(row[metric_name]) for row in per_fold], dtype=np.float64)
@@ -3020,7 +3067,6 @@ class NASModelClient:
         pathlib.Path
             Written summary path.
         """
-
         output_dir.mkdir(parents=True, exist_ok=True)
         full_run = requested_folds == list(range(1, 11)) and status == "success"
         summary = {
@@ -3066,8 +3112,12 @@ class NASModelClient:
         -------
         dict[str, Any]
             Summary containing the fold report path and per-fold rows.
-        """
 
+        Raises
+        ------
+        Exception
+            If existing validation or execution checks fail.
+        """
         if not self._fold_rotation_enabled():
             return {}
         requested_folds = self._fold_rotation_test_folds()
@@ -3197,8 +3247,7 @@ class NASModelClient:
         window_size: int | None = None,
         study_name: str | None = None,
     ) -> dict:
-        """
-        Compute simple trajectory metrics (ATE/RTE-style) and save example plots.
+        """Compute simple trajectory metrics (ATE/RTE-style) and save example plots.
 
         Parameters
         ----------
@@ -3382,8 +3431,7 @@ class NASModelClient:
         fold_rotation_artifacts: dict | None = None,
         summary_path: Path | None = None,
     ) -> Path:
-        """
-        Collect training/eval artifacts into a single summary JSON for write-ups.
+        """Collect training/eval artifacts into a single summary JSON for write-ups.
 
         Parameters
         ----------

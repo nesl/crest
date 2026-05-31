@@ -44,7 +44,6 @@ def numeric_series(frame: pd.DataFrame, column: str, default: float | None = Non
     pandas.Series
         Numeric series aligned to ``frame``.
     """
-
     if column in frame.columns:
         return pd.to_numeric(frame[column], errors="coerce")
     return pd.Series([default] * len(frame), index=frame.index, dtype="float64")
@@ -65,7 +64,6 @@ def pareto_mask(x_values: np.ndarray, y_values: np.ndarray) -> np.ndarray:
     numpy.ndarray
         Boolean mask indicating Pareto-front membership.
     """
-
     values = np.column_stack([x_values, y_values]).astype(float)
     mask = np.ones(len(values), dtype=bool)
     for index, candidate in enumerate(values):
@@ -88,7 +86,6 @@ def add_front_flags(points: pd.DataFrame) -> pd.DataFrame:
     pandas.DataFrame
         Copy of ``points`` with an ``is_front`` column.
     """
-
     result = points.copy()
     result["is_front"] = False
     for policy, group in result.groupby("policy", sort=False):
@@ -115,7 +112,6 @@ def load_study_points(study_points_csv: Path) -> tuple[pd.DataFrame, pd.DataFram
     tuple[pandas.DataFrame, pandas.DataFrame]
         B2B-native and cadenced-native point frames.
     """
-
     raw = pd.read_csv(study_points_csv)
     b2b = raw[raw["study_label"].astype(str).str.contains("B2B", case=False, na=False)].copy()
     cadenced = raw[raw["study_label"].astype(str).str.contains("cadenced", case=False, na=False)].copy()
@@ -165,7 +161,6 @@ def load_cadenced_replay_on_b2b(overlay_points_csv: Path) -> pd.DataFrame:
     pandas.DataFrame
         Cleaned replay point frame for the left panel.
     """
-
     raw = pd.read_csv(overlay_points_csv)
     replay = raw[raw["series"].astype(str).str.contains("cadenced Pareto replayed B2B", na=False)].copy()
     points = pd.DataFrame(
@@ -205,7 +200,6 @@ def load_b2b_replay_on_cadenced(replay_csv: Path) -> pd.DataFrame:
     pandas.DataFrame
         Strict-feasible replay point frame for the right panel.
     """
-
     raw = pd.read_csv(replay_csv)
     completed = raw["replay_status"].astype(str).eq("completed")
     target_error = numeric_series(raw, "target__error_code")
@@ -254,7 +248,6 @@ def clean_points(points: pd.DataFrame) -> pd.DataFrame:
     pandas.DataFrame
         Filtered copy with finite RMSE and positive x coordinates.
     """
-
     result = points.copy()
     result["x_value"] = pd.to_numeric(result["x_value"], errors="coerce")
     result["rmse"] = pd.to_numeric(result["rmse"], errors="coerce")
@@ -287,7 +280,6 @@ def draw_policy(
     marker_size_scale : float
         Multiplier for marker areas.
     """
-
     group = points[points["policy"] == policy].copy()
     if group.empty:
         return
@@ -348,7 +340,6 @@ def summary_text(
     str
         Human-readable summary text.
     """
-
     cadenced_raw = pd.read_csv(cadenced_csv)
     err = numeric_series(cadenced_raw, "error_code")
     pruned = cadenced_raw.get("pruned", pd.Series(False, index=cadenced_raw.index)).astype(str).str.lower().eq("true")
@@ -462,7 +453,6 @@ def render_figure(
     tuple[pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path]
         PNG, PDF, plotted-points CSV, and summary paths.
     """
-
     output_dir.mkdir(parents=True, exist_ok=True)
     b2b_points, cadenced_points = load_study_points(study_points_csv)
     cadenced_replay_points = load_cadenced_replay_on_b2b(overlay_points_csv)
@@ -608,7 +598,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     argparse.ArgumentParser
         Configured parser.
     """
-
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--study-points-csv",
@@ -655,7 +644,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     int
         Process exit code.
     """
-
     args = build_arg_parser().parse_args(argv)
     for path in render_figure(
         study_points_csv=Path(args.study_points_csv),

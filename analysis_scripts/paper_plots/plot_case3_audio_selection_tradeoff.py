@@ -35,6 +35,15 @@ class NativeRun:
         Native NAS log CSV.
     color : str
         Matplotlib color for this run.
+
+    Attributes
+    ----------
+    label : str
+        Display label used in reports and plots.
+    log_path : Path
+        Path to the run log used for plotting.
+    color : str
+        Plot color used for the series.
     """
 
     label: str
@@ -59,7 +68,6 @@ def numeric_series(frame: pd.DataFrame, column: str, default: float | None = Non
     pandas.Series
         Numeric series aligned to ``frame``.
     """
-
     if column in frame.columns:
         return pd.to_numeric(frame[column], errors="coerce")
     return pd.Series([default] * len(frame), index=frame.index, dtype="float64")
@@ -82,7 +90,6 @@ def boolean_series(frame: pd.DataFrame, column: str, default: bool) -> pd.Series
     pandas.Series
         Boolean series aligned to ``frame``.
     """
-
     if column not in frame.columns:
         return pd.Series([default] * len(frame), index=frame.index, dtype="bool")
     raw = frame[column]
@@ -104,7 +111,6 @@ def valid_scored_trials(frame: pd.DataFrame) -> pd.DataFrame:
     pandas.DataFrame
         Filtered frame preserving original row indices.
     """
-
     error_code = numeric_series(frame, "error_code")
     pruned = boolean_series(frame, "pruned", False)
     feasible = boolean_series(frame, "feasible", True)
@@ -130,7 +136,6 @@ def configure_matplotlib() -> None:
     None
         Updates process-wide Matplotlib rcParams.
     """
-
     plt.rcParams.update(
         {
             "figure.dpi": 140,
@@ -165,7 +170,6 @@ def selected_rows(valid: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series]
     tuple[pandas.Series, pandas.Series, pandas.Series]
         Score-selected, highest-macro-F1, and lowest-energy rows.
     """
-
     score_selected = valid.loc[numeric_series(valid, "score").idxmax()]
     highest_f1 = valid.loc[numeric_series(valid, "metric__macro_f1").idxmax()]
     lowest_energy = valid.loc[numeric_series(valid, "energy_mj_per_inference").idxmin()]
@@ -189,7 +193,6 @@ def row_summary(run: NativeRun, label: str, row: pd.Series) -> dict[str, float |
     dict[str, float | int | str]
         CSV-ready summary row.
     """
-
     return {
         "board": run.label,
         "selection": label,
@@ -236,7 +239,6 @@ def plot_run(
     list[dict[str, float | int | str]]
         Highlighted-row summaries.
     """
-
     raw = pd.read_csv(run.log_path)
     valid = valid_scored_trials(raw)
     score_selected, highest_f1, lowest_energy = selected_rows(valid)
@@ -337,7 +339,6 @@ def plot_selection_tradeoff(
     color_by_trial : bool, default=False
         Whether to color trials by NAS log row index.
     """
-
     if vertical:
         fig, axes = plt.subplots(len(native_runs), 1, figsize=(3.45, 5.15), sharex=True, sharey=True)
     else:
@@ -433,7 +434,6 @@ def plot_selection_tradeoff_v2(
     output_stem : str
         Output filename stem.
     """
-
     with plt.rc_context(
         {
             "font.size": 13.8,
@@ -495,7 +495,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     argparse.ArgumentParser
         Configured parser.
     """
-
     parser = argparse.ArgumentParser(description="Plot Case 3 audio macro-F1/energy selection tradeoffs.")
     parser.add_argument("--portenta-log", type=Path, required=True)
     parser.add_argument("--stm-log", type=Path, required=True)
@@ -521,7 +520,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     int
         Process exit code.
     """
-
     args = build_arg_parser().parse_args(argv)
     configure_matplotlib()
     native_runs = [

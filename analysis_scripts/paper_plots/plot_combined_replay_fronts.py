@@ -26,7 +26,21 @@ REPLAY_COLOR = "#ff7f0e"
 
 @dataclass(frozen=True)
 class FrontPoint:
-    """One valid point in measured-energy/RMSE objective space."""
+    """One valid point in measured-energy/RMSE objective space.
+
+    Attributes
+    ----------
+    payload_key : str
+        Replay payload key identifying the candidate.
+    energy_mj : float
+        Measured energy in millijoules.
+    rmse : float
+        Root-mean-square error for the candidate.
+    latency_feasible : bool | None
+        Whether the candidate met the latency constraint.
+    row : Mapping[str, Any]
+        Source row associated with the parsed record.
+    """
 
     payload_key: str
     energy_mj: float
@@ -49,6 +63,17 @@ class PairInput:
         Replay output directory or explicit ``replay_results.csv`` path.
     placeholder : bool
         Whether this input is an empty placeholder panel.
+
+    Attributes
+    ----------
+    label : str
+        Display label used in reports and plots.
+    crest_run_dir : Path | None
+        Directory containing CREST run artifacts.
+    replay_path : Path | None
+        Path to the replay results file.
+    placeholder : bool
+        Whether the record is a placeholder for missing data.
     """
 
     label: str
@@ -58,8 +83,18 @@ class PairInput:
 
 
 def parse_float(value: Any) -> float | None:
-    """Parse a finite float from a CSV cell."""
+    """Parse a finite float from a CSV cell.
 
+    Parameters
+    ----------
+    value : Any
+        Value recorded by the test double.
+
+    Returns
+    -------
+    float | None
+        Parsed float.
+    """
     if value in (None, ""):
         return None
     try:
@@ -70,8 +105,23 @@ def parse_float(value: Any) -> float | None:
 
 
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
-    """Read CSV rows as dictionaries."""
+    """Read CSV rows as dictionaries.
 
+    Parameters
+    ----------
+    path : Path
+        Path to the file used by the helper.
+
+    Returns
+    -------
+    list[dict[str, str]]
+        Loaded CSV rows.
+
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames:
@@ -83,8 +133,20 @@ def read_csv_rows(path: Path) -> list[dict[str, str]]:
 
 
 def first_float(row: Mapping[str, Any], names: Sequence[str]) -> float | None:
-    """Return the first finite float from a sequence of possible column names."""
+    """Return the first finite float from a sequence of possible column names.
 
+    Parameters
+    ----------
+    row : Mapping[str, Any]
+        CSV row to inspect for candidate numeric columns.
+    names : Sequence[str]
+        Candidate column names, checked in order.
+
+    Returns
+    -------
+    float | None
+        First finite parsed value, or ``None`` when no candidate column parses.
+    """
     for name in names:
         parsed = parse_float(row.get(name))
         if parsed is not None:
@@ -93,8 +155,23 @@ def first_float(row: Mapping[str, Any], names: Sequence[str]) -> float | None:
 
 
 def find_log_csv(run_dir: Path) -> Path:
-    """Resolve the NAS log CSV inside a measured-energy run directory."""
+    """Resolve the NAS log CSV inside a measured-energy run directory.
 
+    Parameters
+    ----------
+    run_dir : Path
+        Directory used for run artifacts.
+
+    Returns
+    -------
+    Path
+        Matched log CSV.
+
+    Raises
+    ------
+    FileNotFoundError
+        If existing validation or execution checks fail.
+    """
     candidates = sorted(run_dir.glob("log_NAS_*.csv"))
     if candidates:
         return candidates[0]
@@ -105,8 +182,23 @@ def find_log_csv(run_dir: Path) -> Path:
 
 
 def resolve_replay_results(replay_path: Path) -> Path:
-    """Resolve a replay directory or explicit replay CSV path."""
+    """Resolve a replay directory or explicit replay CSV path.
 
+    Parameters
+    ----------
+    replay_path : Path
+        Path to the replay used by the helper.
+
+    Returns
+    -------
+    Path
+        Resolved replay results.
+
+    Raises
+    ------
+    FileNotFoundError
+        If existing validation or execution checks fail.
+    """
     if replay_path.is_file():
         return replay_path
     candidate = replay_path / "replay_results.csv"
@@ -121,8 +213,23 @@ def latency_feasible_from_row(
     latency_columns: Sequence[str],
     budget_columns: Sequence[str],
 ) -> bool | None:
-    """Derive latency feasibility from common latency and budget columns."""
+    """Derive latency feasibility from common latency and budget columns.
 
+    Parameters
+    ----------
+    row : Mapping[str, Any]
+        CSV row containing latency and budget fields.
+    latency_columns : Sequence[str]
+        Column names for latency values.
+    budget_columns : Sequence[str]
+        Column names for budget values.
+
+    Returns
+    -------
+    bool | None
+        ``True`` when latency is within budget, ``False`` when it exceeds
+        budget, or ``None`` when feasibility cannot be derived.
+    """
     latency = first_float(row, latency_columns)
     budget = first_float(row, budget_columns)
     if latency is None or budget is None or latency <= 0.0 or budget <= 0.0:
@@ -131,8 +238,18 @@ def latency_feasible_from_row(
 
 
 def load_crest_points(csv_path: Path) -> list[FrontPoint]:
-    """Load valid measured-energy NAS points."""
+    """Load valid measured-energy NAS points.
 
+    Parameters
+    ----------
+    csv_path : Path
+        Path to the CSV used by the helper.
+
+    Returns
+    -------
+    list[FrontPoint]
+        Loaded crest points.
+    """
     points: list[FrontPoint] = []
     for index, row in enumerate(read_csv_rows(csv_path)):
         state = str(row.get("state", row.get("status", ""))).strip().lower()
@@ -162,8 +279,18 @@ def load_crest_points(csv_path: Path) -> list[FrontPoint]:
 
 
 def load_replay_points(csv_path: Path) -> list[FrontPoint]:
-    """Load valid replayed proxy points in measured target-board space."""
+    """Load valid replayed proxy points in measured target-board space.
 
+    Parameters
+    ----------
+    csv_path : Path
+        Path to the CSV used by the helper.
+
+    Returns
+    -------
+    list[FrontPoint]
+        Loaded replay points.
+    """
     points: list[FrontPoint] = []
     for index, row in enumerate(read_csv_rows(csv_path)):
         if str(row.get("replay_status", "")).strip().lower() != "completed":
@@ -192,16 +319,38 @@ def load_replay_points(csv_path: Path) -> list[FrontPoint]:
 
 
 def filter_latency_feasible(points: Sequence[FrontPoint], feasible_only: bool) -> list[FrontPoint]:
-    """Optionally retain only latency-feasible points."""
+    """Optionally retain only latency-feasible points.
 
+    Parameters
+    ----------
+    points : Sequence[FrontPoint]
+        Candidate points to filter.
+    feasible_only : bool
+        Whether to discard points without confirmed latency feasibility.
+
+    Returns
+    -------
+    list[FrontPoint]
+        Filtered points, preserving the original ordering.
+    """
     if not feasible_only:
         return list(points)
     return [point for point in points if point.latency_feasible is True]
 
 
 def pareto_front(points: Sequence[FrontPoint]) -> list[FrontPoint]:
-    """Return non-dominated points minimizing energy and RMSE."""
+    """Return non-dominated points minimizing energy and RMSE.
 
+    Parameters
+    ----------
+    points : Sequence[FrontPoint]
+        Candidate points to rank by energy and RMSE.
+
+    Returns
+    -------
+    list[FrontPoint]
+        Non-dominated points sorted by energy and RMSE.
+    """
     front: list[FrontPoint] = []
     for point in points:
         dominated = any(
@@ -221,8 +370,20 @@ def energy_regret_rows(
     crest_front: Sequence[FrontPoint],
     proxy_front: Sequence[FrontPoint],
 ) -> list[dict[str, float | str]]:
-    """Match replayed points to CREST front points and compute energy regret."""
+    """Match replayed points to CREST front points and compute energy regret.
 
+    Parameters
+    ----------
+    crest_front : Sequence[FrontPoint]
+        Reference CREST Pareto-front points.
+    proxy_front : Sequence[FrontPoint]
+        Replayed Pareto-front points matched against the CREST front.
+
+    Returns
+    -------
+    list[dict[str, float | str]]
+        Per-match rows containing energy regret and identifying metadata.
+    """
     rows: list[dict[str, float | str]] = []
     if not crest_front:
         return rows
@@ -278,6 +439,27 @@ class LoadedPair:
         Raw replay outcome counts for all selected source-front candidates.
     placeholder : bool
         Whether this pair is an empty placeholder panel.
+
+    Attributes
+    ----------
+    label : str
+        Display label used in reports and plots.
+    crest_points : list[FrontPoint]
+        Candidate points produced by the CREST run.
+    replay_points : list[FrontPoint]
+        Candidate points produced by replay results.
+    crest_front : list[FrontPoint]
+        Pareto front produced by the CREST run.
+    replay_front : list[FrontPoint]
+        Pareto front produced by replay results.
+    regret_rows : list[dict[str, Any]]
+        Per-match energy-regret rows for the comparison.
+    crest_front_outcomes : "CandidateOutcomeSummary"
+        Outcome rows for candidates on the CREST front.
+    replay_outcomes : "CandidateOutcomeSummary"
+        Outcome rows produced by the replay run.
+    placeholder : bool
+        Whether the record is a placeholder for missing data.
     """
 
     label: str
@@ -309,6 +491,21 @@ class CandidateOutcomeSummary:
         Replay rows that did not complete before target measurement interpretation.
     timing_unknown : int
         Successful measurements without a usable latency or budget.
+
+    Attributes
+    ----------
+    total_candidates : int
+        Total number of candidates considered during replay.
+    timing_feasible : int
+        Number of candidates that met timing constraints.
+    timing_infeasible : int
+        Number of candidates that violated timing constraints.
+    hil_failed : int
+        Number of candidates that failed during HIL execution.
+    replay_failed : int
+        Number of candidates that failed during replay.
+    timing_unknown : int
+        Number of candidates without known timing status.
     """
 
     total_candidates: int
@@ -337,7 +534,6 @@ def parse_pair(value: str) -> PairInput:
     ValueError
         If the argument is malformed.
     """
-
     if "=" not in value:
         raise ValueError("--pair must use LABEL=CREST_RUN_DIR,REPLAY_DIR")
     label, paths = value.split("=", 1)
@@ -365,8 +561,12 @@ def parse_panel(value: str) -> PairInput:
     -------
     PairInput
         Parsed panel input.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if "=" in value:
         return parse_pair(value)
     label = value.strip()
@@ -390,7 +590,6 @@ def validate_pairs(pairs: Sequence[PairInput]) -> None:
     FileNotFoundError
         If any referenced directory or file is missing.
     """
-
     labels = [pair.label for pair in pairs]
     duplicates = sorted({label for label in labels if labels.count(label) > 1})
     if duplicates:
@@ -420,8 +619,12 @@ def load_pair(pair: PairInput, *, feasible_only: bool) -> LoadedPair:
     -------
     LoadedPair
         Loaded points, Pareto fronts, and regret rows.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if pair.placeholder:
         empty_outcomes = CandidateOutcomeSummary(
             total_candidates=0,
@@ -479,7 +682,6 @@ def summarize_point_outcomes(points: Sequence[FrontPoint]) -> CandidateOutcomeSu
     CandidateOutcomeSummary
         Timing feasibility counts for the provided points.
     """
-
     timing_feasible = 0
     timing_infeasible = 0
     timing_unknown = 0
@@ -514,7 +716,6 @@ def summarize_replay_outcomes(csv_path: Path) -> CandidateOutcomeSummary:
         Counts for successful timing-feasible measurements, timing violations,
         HIL failures, replay failures, and rows without latency information.
     """
-
     timing_feasible = 0
     timing_infeasible = 0
     hil_failed = 0
@@ -582,7 +783,6 @@ def scatter_points_by_latency(
     include_legend : bool
         Whether this scatter call should add fill-state entries to the legend.
     """
-
     feasible = [point for point in points if point.latency_feasible is not False]
     infeasible = [point for point in points if point.latency_feasible is False]
     feasible_label = f"{label} (<= budget)" if include_legend else "_nolegend_"
@@ -644,7 +844,6 @@ def scatter_policy_points_by_latency(
     linewidth : float
         Marker outline width.
     """
-
     scatter_points_by_latency(
         ax,
         points,
@@ -678,7 +877,6 @@ def plot_combined_fronts(
     x_scale : {"linear", "log"}
         Scale used for the measured-energy x-axis.
     """
-
     fig, ax = plt.subplots(figsize=(11, 7))
     real_pairs = [pair for pair in pairs if not pair.placeholder]
     for index, pair in enumerate(real_pairs):
@@ -785,7 +983,6 @@ def plot_subplot_fronts(
     subplot_cols : int
         Number of subplot columns.
     """
-
     if not pairs:
         return
     cols = max(1, min(int(subplot_cols), len(pairs)))
@@ -939,7 +1136,6 @@ def plot_candidate_outcome_counts(
     title : str
         Plot title.
     """
-
     categories = [
         ("timing_feasible", "Measured <= budget", "#2ca02c"),
         ("timing_infeasible", "Measured > budget", "#ff7f0e"),
@@ -1011,7 +1207,6 @@ def plot_combined_regret(
     x_scale : {"linear", "log"}
         Scale used for the replayed proxy RMSE x-axis.
     """
-
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.axhline(0.0, color="black", linewidth=1.0, alpha=0.8)
     for index, pair in enumerate(pairs):
@@ -1047,7 +1242,6 @@ def summarize_pair(pair: LoadedPair) -> dict[str, Any]:
     dict[str, Any]
         Summary row suitable for CSV output.
     """
-
     if pair.regret_rows:
         deltas = np.asarray([float(row["energy_delta_mj"]) for row in pair.regret_rows], dtype=float)
         ratios = np.asarray([float(row["energy_ratio"]) for row in pair.regret_rows], dtype=float)
@@ -1090,7 +1284,6 @@ def write_summary_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
     rows : Sequence[Mapping[str, Any]]
         Summary rows to write.
     """
-
     fieldnames = [
         "label",
         "crest_valid_points",
@@ -1127,7 +1320,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     argparse.ArgumentParser
         Configured parser.
     """
-
     parser = argparse.ArgumentParser(
         description="Plot combined replay-vs-CREST fronts for multiple HIL replay runs."
     )
@@ -1213,8 +1405,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     -------
     int
         Exit status code.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     args = build_arg_parser().parse_args(argv)
     if args.panel:
         pair_inputs = [parse_panel(value) for value in args.panel]

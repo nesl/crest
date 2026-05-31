@@ -107,7 +107,6 @@ def _as_mapping(value: Any, *, section_name: str) -> dict[str, Any]:
     ValueError
         If ``value`` cannot be interpreted as a mapping section.
     """
-
     if isinstance(value, Mapping):
         return dict(value.items())
     if hasattr(value, "items"):
@@ -133,7 +132,6 @@ def _config_mapping(config: Any) -> dict[str, Any]:
     ValueError
         If the config does not match the component-selection shape.
     """
-
     mapping = _as_mapping(config, section_name="model")
     required = {"family", "params", "search"}
     missing = sorted(required - set(mapping))
@@ -159,7 +157,6 @@ def _section(config: Any, section_name: str) -> dict[str, Any]:
     dict[str, Any]
         Plain section dictionary.
     """
-
     mapping = _config_mapping(config)
     return _as_mapping(mapping[section_name], section_name=section_name)
 
@@ -185,7 +182,6 @@ def _validate_exact_choice(name: str, value: Any, choices: tuple[Any, ...]) -> N
     ValueError
         If the value has an invalid type or is outside the allowed set.
     """
-
     if name in INTEGER_CATEGORICAL_FIELDS:
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError(f"audio_dscnn '{name}' must be one of {choices}.")
@@ -224,7 +220,6 @@ def _normalize_float_choice(name: str, value: Any, choices: tuple[Any, ...]) -> 
     ValueError
         If the value is not numeric or is outside the allowed set.
     """
-
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"audio_dscnn '{name}' must be one of {choices}.")
     normalized = float(value)
@@ -248,7 +243,6 @@ def _normalize_search_values(name: str, values: list[Any] | tuple[Any, ...]) -> 
     tuple[Any, ...]
         Normalized values preserving caller order.
     """
-
     choices = AUDIO_DSCNN_SEARCH_CHOICES[name]
     if name not in FLOAT_CATEGORICAL_FIELDS:
         return tuple(values)
@@ -275,7 +269,6 @@ def _normalize_bool_from_storage(name: str, value: Any) -> bool:
     ValueError
         If the value is not a boolean or integer 0/1 storage artifact.
     """
-
     if isinstance(value, bool):
         return value
     if isinstance(value, int) and value in (0, 1):
@@ -303,7 +296,6 @@ def resolve_stride_schedule(name: str, num_blocks: int) -> tuple[tuple[int, int]
     ValueError
         If the schedule name or block count is invalid.
     """
-
     if name not in STRIDE_SCHEDULE_CHOICES:
         raise ValueError(f"audio_dscnn stride_schedule must be one of {STRIDE_SCHEDULE_CHOICES}.")
     if isinstance(num_blocks, bool) or not isinstance(num_blocks, int) or num_blocks <= 0:
@@ -312,8 +304,15 @@ def resolve_stride_schedule(name: str, num_blocks: int) -> tuple[tuple[int, int]
     strides = [(1, 1) for _ in range(num_blocks)]
 
     def set_when_present(index: int, stride: tuple[int, int]) -> None:
-        """Assign one stride when its zero-based block index exists."""
+        """Assign one stride when its zero-based block index exists.
 
+        Parameters
+        ----------
+        index : int
+            Block index used to derive convolution naming and placement.
+        stride : tuple[int, int]
+            Temporal stride applied by the convolution block.
+        """
         if 0 <= index < num_blocks:
             strides[index] = stride
 
@@ -354,8 +353,12 @@ def _hidden_activation(name: str, activation: str) -> ReLU:
     -------
     tensorflow.keras.layers.ReLU
         Configured ReLU layer.
-    """
 
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
+    """
     if activation == "relu":
         return ReLU(name=name)
     if activation == "relu6":
@@ -378,7 +381,6 @@ def _pointwise_filters(hparams: dict[str, Any], block_index: int) -> int:
     int
         Clamped pointwise ``Conv2D`` filter count.
     """
-
     nominal = round(hparams["base_channels"] * (hparams["channel_growth"] ** block_index))
     filters = round(nominal * hparams["pointwise_scale"])
     return min(hparams["max_channels"], max(1, filters))
@@ -397,7 +399,6 @@ class AudioDSCNNFamily(ModelFamilyABC):
         str
             Stable model-family identifier.
         """
-
         return "audio_dscnn"
 
     def validate_config(self, model_config: Any) -> None:
@@ -417,7 +418,6 @@ class AudioDSCNNFamily(ModelFamilyABC):
         ValueError
             If family parameters or search overrides are unsupported.
         """
-
         params = _section(model_config, "params")
         unknown_params = sorted(set(params) - {"export_variant"})
         if unknown_params:
@@ -461,7 +461,6 @@ class AudioDSCNNFamily(ModelFamilyABC):
         tuple[Any, ...]
             Ordered categorical choices used for Optuna sampling.
         """
-
         search = _section(config, "search")
         if name not in search:
             return AUDIO_DSCNN_SEARCH_CHOICES[name]
@@ -489,7 +488,6 @@ class AudioDSCNNFamily(ModelFamilyABC):
         dict[str, Any]
             Sampled family hyperparameters.
         """
-
         self.validate_config(config)
         self._validate_target_spec(ctx.target_spec)
         return {
@@ -519,7 +517,6 @@ class AudioDSCNNFamily(ModelFamilyABC):
         dict[str, Any]
             Normalized hyperparameters accepted by :meth:`build_model`.
         """
-
         decoded = dict(raw_params)
         for name in BOOLEAN_FIELDS:
             if name in decoded:
@@ -552,7 +549,6 @@ class AudioDSCNNFamily(ModelFamilyABC):
         dict[str, Any] | None
             Raw trial parameters matching the audio sampling surface.
         """
-
         del ctx, config
         return dict(DEFAULT_AUDIO_DSCNN_SEED)
 
@@ -582,7 +578,6 @@ class AudioDSCNNFamily(ModelFamilyABC):
         ValueError
             If hyperparameters or build context are invalid.
         """
-
         del config
         expected = set(AUDIO_DSCNN_SEARCH_CHOICES)
         actual = set(hparams)
@@ -620,7 +615,6 @@ class AudioDSCNNFamily(ModelFamilyABC):
         tensorflow.keras.Model
             Uncompiled logits model with one ``class_logits`` output.
         """
-
         self.validate_hparams(hparams, ctx, config)
         frames, mel_bins = self._validate_input_shape(ctx.input_shape)
 
@@ -695,7 +689,6 @@ class AudioDSCNNFamily(ModelFamilyABC):
         int
             Estimated forward-pass FLOP count.
         """
-
         del config
         input_shape = self._validate_input_shape(ctx.input_shape)
         return count_flops_keras(model, input_shape)
@@ -719,7 +712,6 @@ class AudioDSCNNFamily(ModelFamilyABC):
         ValueError
             If the shape is missing, not 2D, or contains non-positive values.
         """
-
         if input_shape is None or len(input_shape) != 2:
             raise ValueError("AudioDSCNNFamily requires a 2D input shape: (frames, mel_bins).")
         if any(isinstance(dim, bool) or not isinstance(dim, int) for dim in input_shape):
@@ -748,7 +740,6 @@ class AudioDSCNNFamily(ModelFamilyABC):
             If the target contract is missing or not the Phase 3 audio
             classification logits contract.
         """
-
         if not isinstance(target_spec, TargetSpec):
             raise ValueError("AudioDSCNNFamily requires a classification TargetSpec.")
         if target_spec.task_type != "classification":

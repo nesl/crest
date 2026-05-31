@@ -54,7 +54,6 @@ def parse_target(value: str) -> tuple[PairInput, PairInput]:
     ValueError
         If the argument is malformed.
     """
-
     if "=" not in value:
         raise ValueError(
             "--target must use LABEL=MEASURED_RUN_DIR,FLOPS_REPLAY_PATH,MEMORY_REPLAY_PATH"
@@ -94,7 +93,6 @@ def point_key_set(points: Sequence[Any]) -> set[str]:
     set[str]
         Payload keys.
     """
-
     return {point.payload_key for point in points}
 
 
@@ -130,7 +128,6 @@ def scatter_latency_points(
     zorder : int
         Matplotlib z-order.
     """
-
     feasible = [point for point in points if point.latency_feasible is not False]
     infeasible = [point for point in points if point.latency_feasible is False]
     if feasible:
@@ -175,7 +172,6 @@ def draw_front(ax: Any, points: Sequence[Any], *, color: str, marker: str, lines
     linestyle : str
         Line style.
     """
-
     if not points:
         return
     ax.plot(
@@ -214,7 +210,6 @@ def write_plotted_points(
     memory_pairs : Sequence[LoadedPair] or None, optional
         Loaded memory-traffic-proxy replay pairs.
     """
-
     memory_by_label = {pair.label: pair for pair in memory_pairs or []}
     fieldnames = [
         "target",
@@ -276,7 +271,6 @@ def pair_summary_rows(pairs: Sequence[LoadedPair]) -> list[dict[str, Any]]:
     list[dict[str, Any]]
         Summary rows.
     """
-
     rows: list[dict[str, Any]] = []
     for pair in pairs:
         dominated = sum(float(row["energy_delta_mj"]) > 0.0 for row in pair.regret_rows)
@@ -312,7 +306,6 @@ def write_summary(
     memory_pairs : Sequence[LoadedPair] or None, optional
         Loaded memory-traffic-proxy replay pairs.
     """
-
     rows = pair_summary_rows(pairs)
     memory_by_label = {pair.label: pair for pair in memory_pairs or []}
     total_replay_valid = sum(row["replay_valid_points"] for row in rows)
@@ -368,7 +361,6 @@ def write_summary_csv(path: Path, pairs: Sequence[LoadedPair]) -> None:
     pairs : Sequence[LoadedPair]
         Loaded target pairs.
     """
-
     rows = pair_summary_rows(pairs)
     if not rows:
         return
@@ -394,7 +386,6 @@ def subplot_shape(layout: str, pair_count: int) -> tuple[int, int, tuple[float, 
     tuple[int, int, tuple[float, float], float, float]
         Rows, columns, figure size, horizontal spacing, and vertical spacing.
     """
-
     if layout == "row":
         return 1, pair_count, (10.6, 2.55), 0.12, 0.0
     if layout == "column":
@@ -439,7 +430,6 @@ def plot_case1_fronts_v2(
     tuple[pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path]
         PNG, PDF, plotted-points CSV, and summary paths.
     """
-
     output_dir.mkdir(parents=True, exist_ok=True)
     memory_by_label = {pair.label: pair for pair in memory_pairs or []}
     all_points = [point for pair in pairs for point in [*pair.crest_points, *pair.replay_points]]
@@ -631,7 +621,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     argparse.ArgumentParser
         Parser.
     """
-
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--target",
@@ -684,7 +673,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     int
         Exit code.
     """
-
     args = build_arg_parser().parse_args(argv)
     parsed_targets = [parse_target(value) for value in args.target]
     pairs = [load_pair(flops_pair, feasible_only=False) for flops_pair, _memory_pair in parsed_targets]

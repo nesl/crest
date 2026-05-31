@@ -48,7 +48,6 @@ def _log_arduino_cli_path() -> None:
     None
         Emits one debug log record per process.
     """
-
     global _ARDUINO_CLI_PATH_LOGGED
     if not _ARDUINO_CLI_PATH_LOGGED:
         logger.debug("Using Arduino CLI at: %s", ARDUINO_CLI_BIN)
@@ -110,6 +109,21 @@ class CompileResult:
         "flash" or "ram" when an overflow is detected.
     build_dir : pathlib.Path
         Build cache directory used by the Arduino CLI.
+
+    Attributes
+    ----------
+    success : bool
+        True when the compile returned zero.
+    log : str
+        Combined stdout/stderr from the compile step.
+    flash_bytes : Optional[int]
+        Parsed flash usage in bytes, if available.
+    ram_bytes : Optional[int]
+        Parsed RAM usage in bytes, if available.
+    overflow_kind : Optional[str]
+        "flash" or "ram" when an overflow is detected.
+    build_dir : Path
+        Build cache directory used by the Arduino CLI.
     """
 
     success: bool
@@ -125,6 +139,13 @@ class UploadResult:
     """Result of an Arduino CLI upload invocation.
 
     Parameters
+    ----------
+    success : bool
+        True when the upload returned zero.
+    log : str
+        Combined stdout/stderr from the upload step.
+
+    Attributes
     ----------
     success : bool
         True when the upload returned zero.
@@ -149,6 +170,17 @@ class MeasureResult:
     serial_log : list[str]
         Full decoded serial log captured during measurement.
     power_metrics : dict[str, float | None] | None
+        Parsed power telemetry fields, if present.
+
+    Attributes
+    ----------
+    latency_s : Optional[float]
+        Inference latency in seconds, if found.
+    arena_error_line : Optional[str]
+        First arena allocation error line, if found.
+    serial_log : list[str]
+        Full decoded serial log captured during measurement.
+    power_metrics : Optional[dict[str, Optional[float]]]
         Parsed power telemetry fields, if present.
     """
 
@@ -213,6 +245,11 @@ def _replace_define(text: str, name: str, value: str) -> str:
     -------
     str
         Updated sketch text with the new macro definition.
+
+    Raises
+    ------
+    ValueError
+        If existing validation or execution checks fail.
     """
     pattern = re.compile(rf"(#define\s+{re.escape(name)}\s+)([^\n]+)")
     if not pattern.search(text):
@@ -243,6 +280,11 @@ def _patch_sketch_constants(
         Cadence budget used by cadenced runtime sketches. When provided and the
         sketch declares ``TINYODOM_LATENCY_BUDGET_MS``, the define is updated
         in-place.
+
+    Raises
+    ------
+    FileNotFoundError
+        If existing validation or execution checks fail.
     """
     ino_files = sorted(sketch_path.glob("*.ino"))
     if not ino_files:
@@ -357,7 +399,20 @@ def _load_platform_properties(platform_txt: Path) -> Dict[str, str]:
 
 
 def _sum_size_regex_matches(output: str, pattern_text: Optional[str]) -> Optional[int]:
-    """Sum section sizes matched by a platform ``recipe.size.regex`` pattern."""
+    """Sum section sizes matched by a platform ``recipe.size.regex`` pattern.
+
+    Parameters
+    ----------
+    output : str
+        Raw command or tool output to parse.
+    pattern_text : Optional[str]
+        Regular-expression text from an Arduino platform size recipe.
+
+    Returns
+    -------
+    Optional[int]
+        Total bytes matched by the platform size regex, or ``None`` when unavailable.
+    """
     if not pattern_text:
         return None
     try:
@@ -568,6 +623,22 @@ def _resolve_build_dir(
     The cache path includes a short hash of compile-time defines so changing
     ``--build-property compiler.cpp.extra_flags`` cannot accidentally reuse
     artifacts from a previous define set.
+
+    Parameters
+    ----------
+    sketch_path : Path
+        Directory containing the Arduino sketch to compile or upload.
+    fqbn : str
+        Fully qualified board name used by Arduino CLI.
+    build_defines : Optional[Dict[str, int]]
+        Compile-time macro definitions forwarded to the backend toolchain.
+    board_options : Optional[Mapping[str, str]]
+        Board-option mapping included in the build-cache key.
+
+    Returns
+    -------
+    Path
+        Build-cache directory unique to the sketch, board, options, and compile defines.
     """
     build_cache_root = sketch_path / ".arduino-build"
     fqbn_key = fqbn.replace(":", "_")
@@ -694,6 +765,25 @@ def compile_harness_sketch(
     Before each compile, shared protocol/power headers from `sketches/common/`
     are copied into the harness `common/` directory so there is one source of
     truth and no manual sync step.
+
+    Parameters
+    ----------
+    sketch_path : Optional[Path]
+        Directory containing the Arduino sketch to compile or upload.
+    fqbn : str
+        Fully qualified board name used by Arduino CLI.
+    build_defines : Optional[Dict[str, int]]
+        Compile-time macro definitions forwarded to the backend toolchain.
+
+    Returns
+    -------
+    CompileResult
+        Parsed compile result for the harness sketch.
+
+    Raises
+    ------
+    FileNotFoundError
+        If existing validation or execution checks fail.
     """
     target_path = sketch_path or _HARNESS_SKETCH_DIR
     harness_common_dir = target_path / "common"
@@ -822,6 +912,11 @@ def ensure_harness_firmware(
     -------
     bool
         ``True`` when a flash was performed, otherwise ``False``.
+
+    Raises
+    ------
+    RuntimeError
+        If existing validation or execution checks fail.
     """
     harness_auto_flash = (harness_auto_flash or "once").lower()
     define_flags = _build_define_flags(build_defines)
@@ -1049,6 +1144,11 @@ def _collect_latency_seconds(
     -------
     tuple[float | None, str | None, list[str]]
         Latency (seconds), arena error line (if any), and captured serial log.
+
+    Raises
+    ------
+    RuntimeError
+        If existing validation or execution checks fail.
     """
     decoded_lines: List[str] = []
     try:

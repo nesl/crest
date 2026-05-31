@@ -25,7 +25,6 @@ def cfg_get(container: Any, key: str, default: Any = None) -> Any:
     Any
         Resolved configuration value or ``default``.
     """
-
     getter = getattr(container, "get", None)
     if callable(getter):
         return getter(key, default)
@@ -52,7 +51,6 @@ def _require_block(config: Any, key: str) -> Any:
     KeyError
         If the block is missing.
     """
-
     block = cfg_get(config, key, None)
     if block is None:
         raise KeyError(
@@ -84,7 +82,6 @@ def _require_string(block: Any, key: str, *, block_name: str) -> str:
     KeyError
         If the field is missing or empty.
     """
-
     raw_value = cfg_get(block, key, None)
     if raw_value is None or str(raw_value).strip() == "":
         raise KeyError(f"Missing required '{block_name}.{key}' field.")
@@ -111,7 +108,6 @@ def _normalize_mapping_like(value: Any, *, field_name: str) -> Dict:
     TypeError
         If ``value`` cannot be interpreted as mapping-like data.
     """
-
     if isinstance(value, Dict):
         return Dict(value)
     if isinstance(value, dict):
@@ -143,7 +139,6 @@ def _require_export_variant(model_params: Dict) -> str:
     ValueError
         If the field is not a non-empty string.
     """
-
     if "export_variant" not in model_params:
         raise KeyError("Missing required 'model.params.export_variant' field.")
     raw_variant = model_params.export_variant
@@ -178,7 +173,6 @@ def resolve_component_selection(config: Any) -> dict[str, Any]:
     TypeError
         If a config subtree that must be mapping-like cannot be normalized.
     """
-
     dataset_block = _require_block(config, "dataset")
     task_block = _require_block(config, "task")
     model_block = _require_block(config, "model")

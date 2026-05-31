@@ -36,7 +36,6 @@ def _fake_feature_fn(waveform: np.ndarray, _sample_rate: int) -> np.ndarray:
     numpy.ndarray
         Feature array with the audio contract shape.
     """
-
     base = float(np.mean(waveform, dtype=np.float64))
     mel_offsets = np.arange(prepare_urbansound8k.MEL_BINS, dtype=np.float32) / 100.0
     frame_offsets = np.arange(prepare_urbansound8k.EXPECTED_FRAMES, dtype=np.float32)[:, None] / 1000.0
@@ -58,7 +57,6 @@ def _constant_feature_fn(_waveform: np.ndarray, _sample_rate: int) -> np.ndarray
     numpy.ndarray
         Constant feature array with the audio contract shape.
     """
-
     return np.ones(
         (prepare_urbansound8k.EXPECTED_FRAMES, prepare_urbansound8k.MEL_BINS),
         dtype=np.float32,
@@ -84,7 +82,6 @@ def _record(clip_id: str, fold: int, class_id: int, length: int = 40000) -> obje
     object
         `ClipRecord` instance from the preparation module.
     """
-
     waveform = np.full(length, fill_value=class_id + fold / 100.0, dtype=np.float32)
     return prepare_urbansound8k.ClipRecord(
         clip_id=clip_id,
@@ -100,8 +97,7 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
     """Validate deterministic UrbanSound8K cache preparation helpers."""
 
     def test_config_from_args_uses_phase_defaults(self) -> None:
-        """config_from_args should preserve the Phase 1 CLI defaults."""
-
+        """Config_from_args should preserve the Phase 1 CLI defaults."""
         args = SimpleNamespace(
             raw_root="data/urbansound8k/raw",
             cache_root="data/urbansound8k/cache",
@@ -123,7 +119,6 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
 
     def test_parse_test_folds_validates_unique_urban_sound_folds(self) -> None:
         """Fold-list parsing should reject malformed rotation requests."""
-
         self.assertEqual(prepare_urbansound8k.parse_test_folds("1,2,10"), (1, 2, 10))
         with self.assertRaisesRegex(ValueError, "unique"):
             prepare_urbansound8k.parse_test_folds("1,1")
@@ -132,7 +127,6 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
 
     def test_class_names_and_fold_split_match_contract(self) -> None:
         """Shared constants should freeze class order and NAS fold split."""
-
         self.assertEqual(prepare_urbansound8k.CLASS_NAMES[0], "air_conditioner")
         self.assertEqual(prepare_urbansound8k.CLASS_NAMES[-1], "street_music")
         self.assertEqual(prepare_urbansound8k.FOLD_SPLIT["train"], (1, 2, 3, 4, 5, 6, 7, 8))
@@ -140,8 +134,7 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
         self.assertEqual(prepare_urbansound8k.FOLD_SPLIT["test"], (10,))
 
     def test_crop_or_pad_records_padding_for_all_lengths(self) -> None:
-        """crop_or_pad_waveform should emit uniform padding metadata fields."""
-
+        """Crop_or_pad_waveform should emit uniform padding metadata fields."""
         long_wave = np.arange(40000, dtype=np.float32)
         exact_wave = np.arange(prepare_urbansound8k.TARGET_NUM_SAMPLES, dtype=np.float32)
         short_wave = np.arange(100, dtype=np.float32)
@@ -160,8 +153,7 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
         self.assertEqual(short_crop.pad_before_sample + short_crop.pad_after_sample, prepare_urbansound8k.TARGET_NUM_SAMPLES - 100)
 
     def test_to_mono_float32_averages_2d_waveforms(self) -> None:
-        """to_mono_float32 should average multichannel waveforms."""
-
+        """To_mono_float32 should average multichannel waveforms."""
         waveform = np.asarray([[1.0, 3.0], [2.0, 4.0]], dtype=np.float32)
 
         mono = prepare_urbansound8k.to_mono_float32(waveform)
@@ -170,8 +162,7 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
         self.assertTrue(np.allclose(mono, [2.0, 3.0]))
 
     def test_stable_clip_seed_uses_sha256_not_python_hash(self) -> None:
-        """stable_clip_seed should use hashlib.sha256 for process-stable seeds."""
-
+        """Stable_clip_seed should use hashlib.sha256 for process-stable seeds."""
         source = inspect.getsource(prepare_urbansound8k.stable_clip_seed)
 
         self.assertIn("hashlib.sha256", source)
@@ -183,7 +174,6 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
 
     def test_train_crop_starts_are_order_independent(self) -> None:
         """Train crop starts should depend on clip ID, not iteration order."""
-
         config = prepare_urbansound8k.PrepConfig(
             raw_root=Path("raw"),
             cache_root=Path("cache"),
@@ -197,8 +187,7 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
         self.assertEqual(len(starts_a), config.train_crop_variants)
 
     def test_compute_log_mel_features_uses_natural_log_floor(self) -> None:
-        """compute_log_mel_features should use natural log, not dB scaling."""
-
+        """Compute_log_mel_features should use natural log, not dB scaling."""
         mel_power = np.ones(
             (prepare_urbansound8k.MEL_BINS, prepare_urbansound8k.EXPECTED_FRAMES),
             dtype=np.float32,
@@ -221,7 +210,6 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
 
     def test_normalization_uses_expanded_train_rows_and_epsilon(self) -> None:
         """Normalization should use all train variants and handle zero std."""
-
         train_inputs = np.stack(
             [
                 np.full((prepare_urbansound8k.EXPECTED_FRAMES, prepare_urbansound8k.MEL_BINS), 1.0, dtype=np.float32),
@@ -239,7 +227,6 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
 
     def test_select_calibration_records_round_robin_and_exhausts(self) -> None:
         """Calibration selection should round-robin classes and stop at exhaustion."""
-
         records = [
             _record("c0-a", 1, 0),
             _record("c0-b", 1, 0),
@@ -253,7 +240,6 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
 
     def test_build_split_payload_writes_required_arrays(self) -> None:
         """Split payloads should include all arrays with uniform lengths."""
-
         config = prepare_urbansound8k.PrepConfig(raw_root=Path("raw"), cache_root=Path("cache"))
         payload = prepare_urbansound8k.build_split_payload(
             [_record("short", 9, 0, length=100), _record("long", 9, 1, length=40000)],
@@ -274,7 +260,6 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
 
     def test_build_cache_reuses_valid_cache_and_rejects_metadata_mismatch(self) -> None:
         """Cache generation should reuse valid caches and reject stale metadata."""
-
         with self.subTest("reuse and reject"):
             with self.temporary_config() as config:
                 records = [_record("train", 1, 0), _record("val", 9, 1), _record("test", 10, 2)]
@@ -291,7 +276,6 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
 
     def test_build_fold_rotation_caches_write_train_only_splits(self) -> None:
         """Fold rotation should write per-fold schema-2 cache directories."""
-
         with self.temporary_config() as config:
             records = [
                 _record(f"fold-{fold}", fold, fold % len(prepare_urbansound8k.CLASS_NAMES))
@@ -317,13 +301,25 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
 
     def test_build_cache_progress_wrapper_labels_long_phases(self) -> None:
         """Cache generation should expose progress labels for long phases."""
-
         with self.temporary_config() as config:
             records = [_record("train", 1, 0), _record("val", 9, 1), _record("test", 10, 2)]
             labels: list[str] = []
 
             def _progress(iterable, description):
-                """Record progress labels while preserving iteration semantics."""
+                """Record progress labels while preserving iteration semantics.
+
+                Parameters
+                ----------
+                iterable : object
+                    Iterable wrapped by the helper.
+                description : object
+                    Progress label supplied to the iterator wrapper.
+
+                Returns
+                -------
+                object
+                    Iterable returned by the fake progress wrapper.
+                """
                 labels.append(description)
                 return iterable
 
@@ -346,8 +342,7 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
         )
 
     def test_validate_cache_rejects_each_required_metadata_mismatch(self) -> None:
-        """validate_cache should reject all contract metadata mismatches."""
-
+        """Validate_cache should reject all contract metadata mismatches."""
         mutable_fields = [
             field
             for field in prepare_urbansound8k.REQUIRED_METADATA_FIELDS
@@ -368,8 +363,7 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
                         prepare_urbansound8k.validate_cache(cache_dir, config)
 
     def test_validate_cache_rejects_malformed_split_arrays(self) -> None:
-        """validate_cache should reject bad dtypes, folds, and calibration duplicates."""
-
+        """Validate_cache should reject bad dtypes, folds, and calibration duplicates."""
         with self.temporary_config() as config:
             records = [_record("train", 1, 0), _record("val", 9, 1), _record("test", 10, 2)]
             cache_dir = prepare_urbansound8k.build_cache_from_records(records, config, feature_fn=_fake_feature_fn)
@@ -406,7 +400,6 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
 
     def test_force_overwrites_conflicting_cache(self) -> None:
         """The force flag should rebuild a conflicting cache."""
-
         with self.temporary_config() as config:
             records = [_record("train", 1, 0), _record("val", 9, 1), _record("test", 10, 2)]
             cache_dir = prepare_urbansound8k.build_cache_from_records(records, config, feature_fn=_fake_feature_fn)
@@ -428,7 +421,6 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
 
     def test_schema_one_cache_rebuilds_without_force(self) -> None:
         """Schema upgrades should rebuild stale caches without manual deletion."""
-
         with self.temporary_config() as config:
             records = [_record("train", 1, 0), _record("val", 9, 1), _record("test", 10, 2)]
             cache_dir = prepare_urbansound8k.build_cache_from_records(records, config, feature_fn=_fake_feature_fn)
@@ -449,7 +441,6 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
 
     def test_download_requires_license_acceptance_before_soundata_import(self) -> None:
         """Download mode should reject missing license acceptance before download."""
-
         config = prepare_urbansound8k.PrepConfig(raw_root=Path("raw"), cache_root=Path("cache"))
 
         with patch.object(prepare_urbansound8k, "require_soundata") as require_soundata:
@@ -463,8 +454,7 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
         require_soundata.assert_not_called()
 
     def test_initialize_soundata_dataset_downloads_and_validates(self) -> None:
-        """initialize_soundata_dataset should call mocked download and validate."""
-
+        """Initialize_soundata_dataset should call mocked download and validate."""
         import urllib
 
         config = prepare_urbansound8k.PrepConfig(raw_root=Path("raw"), cache_root=Path("cache"))
@@ -486,8 +476,7 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
         fake_dataset.validate.assert_called_once_with(verbose=False)
 
     def test_initialize_soundata_dataset_accepts_empty_nested_validation_dicts(self) -> None:
-        """initialize_soundata_dataset should treat empty soundata validation dicts as clean."""
-
+        """Initialize_soundata_dataset should treat empty soundata validation dicts as clean."""
         config = prepare_urbansound8k.PrepConfig(raw_root=Path("raw"), cache_root=Path("cache"))
         fake_dataset = Mock()
         fake_dataset.validate.return_value = ({"metadata": {}, "clips": {}}, {"metadata": {}, "clips": {}})
@@ -503,8 +492,7 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
         self.assertIs(returned, fake_dataset)
 
     def test_initialize_soundata_dataset_reports_nested_validation_issues(self) -> None:
-        """initialize_soundata_dataset should count nested validation failures."""
-
+        """Initialize_soundata_dataset should count nested validation failures."""
         config = prepare_urbansound8k.PrepConfig(raw_root=Path("raw"), cache_root=Path("cache"))
         fake_dataset = Mock()
         fake_dataset.validate.return_value = (
@@ -522,8 +510,7 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
                 )
 
     def test_main_uses_mocked_soundata_path(self) -> None:
-        """main should initialize soundata, convert clips, and build a cache."""
-
+        """Main should initialize soundata, convert clips, and build a cache."""
         args = SimpleNamespace(
             raw_root="raw",
             cache_root="cache",
@@ -559,14 +546,18 @@ class UrbanSound8KPrepareTests(unittest.TestCase):
         contextlib.AbstractContextManager
             Context manager yielding a preparation config.
         """
-
         import contextlib
         import tempfile
 
         @contextlib.contextmanager
         def _manager():
-            """Yield a temporary preparation config."""
+            """Yield a temporary preparation config.
 
+            Yields
+            ------
+            object
+                Values yielded by the generator.
+            """
             with tempfile.TemporaryDirectory() as tmpdir:
                 root = Path(tmpdir)
                 yield prepare_urbansound8k.PrepConfig(

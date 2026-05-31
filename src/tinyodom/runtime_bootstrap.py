@@ -31,7 +31,6 @@ def _resolve_early_stopping_patience(raw_value: Any) -> int:
     ValueError
         If the value is not a non-boolean positive integer.
     """
-
     if isinstance(raw_value, bool) or not isinstance(raw_value, Integral):
         raise ValueError("task.params.early_stopping_patience must be a positive integer.")
     if int(raw_value) <= 0:
@@ -44,6 +43,25 @@ class BootstrappedPipeline:
     """Resolved modular runtime state for one config.
 
     Parameters
+    ----------
+    selection : dict[str, Any]
+        Resolved component names and local config payloads.
+    dataset : Any
+        Instantiated dataset component.
+    task : Any
+        Instantiated task component.
+    model_family : Any
+        Instantiated model-family component.
+    bundle : DatasetBundle
+        Loaded dataset bundle.
+    target_spec : TargetSpec
+        Task-owned target specification.
+    metric_contract : TaskMetricContract
+        Task-owned metric declaration.
+    model_build_context : ModelBuildContext
+        Normalized build context shared with the model family.
+
+    Attributes
     ----------
     selection : dict[str, Any]
         Resolved component names and local config payloads.
@@ -101,7 +119,6 @@ def instantiate_task_component(
     Any
         Instantiated task component.
     """
-
     task_cls = task_registry.get(task_name)
     resolved_checkpoint_path = (
         Path(config.outputs.checkpoint_path)
@@ -138,7 +155,6 @@ def build_model_context(
     ModelBuildContext
         Normalized build context for model-family operations.
     """
-
     return ModelBuildContext(
         input_shape=bundle.input_shape,
         input_dtype=bundle.input_dtype,
@@ -177,7 +193,6 @@ def bootstrap_pipeline(
         Fully resolved modular runtime state, including task metric
         validation for the active NAS policy.
     """
-
     selection = resolve_component_selection(config)
     dataset_cls = dataset_registry.get(selection["dataset_name"])
     if dataset is None:

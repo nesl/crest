@@ -18,7 +18,6 @@ def _parse_args() -> argparse.Namespace:
     argparse.Namespace
         Parsed worker arguments containing model, input, and output paths.
     """
-
     parser = argparse.ArgumentParser(description="Run TinyODOM TFLite prediction in a child process.")
     parser.add_argument("--model", required=True, type=Path, help="Path to the TFLite model flatbuffer.")
     parser.add_argument("--inputs", required=True, type=Path, help="Path to an NPZ file containing key 'inputs'.")
@@ -39,7 +38,6 @@ def _ordered_outputs(predictions: np.ndarray | list[np.ndarray]) -> list[np.ndar
     list[numpy.ndarray]
         Ordered prediction arrays for serialization.
     """
-
     if isinstance(predictions, list):
         return [np.asarray(output) for output in predictions]
     return [np.asarray(predictions)]
@@ -52,7 +50,6 @@ def main() -> None:
     -------
     None
     """
-
     args = _parse_args()
     with np.load(args.inputs, allow_pickle=False) as input_archive:
         inputs = np.asarray(input_archive["inputs"], dtype=np.float32)

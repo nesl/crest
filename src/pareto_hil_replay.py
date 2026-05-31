@@ -23,8 +23,12 @@ def positive_int(value: str) -> int:
     -------
     int
         Parsed positive integer.
-    """
 
+    Raises
+    ------
+    ArgumentTypeError
+        If existing validation or execution checks fail.
+    """
     try:
         parsed = int(value)
     except ValueError as exc:
@@ -42,7 +46,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     argparse.ArgumentParser
         Configured parser.
     """
-
     parser = argparse.ArgumentParser(
         description=(
             "Replay source NAS Pareto-front candidates through a target HIL config. "
@@ -121,7 +124,6 @@ def optional_path(value: str | None) -> Path | None:
     pathlib.Path | None
         Path object when provided, otherwise ``None``.
     """
-
     return Path(value) if value else None
 
 
@@ -138,7 +140,6 @@ def namespace_to_replay_config(args: argparse.Namespace) -> ReplayRunConfig:
     ReplayRunConfig
         Typed replay configuration for the library runner.
     """
-
     return ReplayRunConfig(
         source_run_dir=Path(args.source_run_dir),
         target_run_dir=optional_path(args.target_run_dir),
@@ -170,7 +171,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     int
         Process exit code.
     """
-
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     return run_replay(namespace_to_replay_config(args))
