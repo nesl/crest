@@ -67,8 +67,8 @@ nas:
 outputs:
   models_dir: "models"
   candidate_dir: "odom_tcn"
-  artifact_stem: "TinyOdomEx_OxIOD_BLE33"
-  log_file_name: "log_NAS_TinyOdomEx_OxIOD_BLE33.csv"
+  artifact_stem: "CREST_OxIOD_BLE33"
+  log_file_name: "log_NAS_CREST_OxIOD_BLE33.csv"
 
 network:
   host: "127.0.0.1"

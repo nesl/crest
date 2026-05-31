@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay TinyODOM Pareto-front candidates through a target HIL config."""
+"""Replay CREST Pareto-front candidates through a target HIL config."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Sequence
 
-from tinyodom.pareto_replay import DEVICE_OPTION_POLICY_CHOICES, ReplayRunConfig, run_replay
+from crest.pareto_replay import DEVICE_OPTION_POLICY_CHOICES, ReplayRunConfig, run_replay
 
 
 def positive_int(value: str) -> int:

@@ -120,8 +120,8 @@ nas:
 outputs:
   models_dir: "models"
   candidate_dir: "audio_dscnn"
-  artifact_stem: "TinyOdomEx_UrbanSound8K_PORTENTA_M7"
-  log_file_name: "log_NAS_TinyOdomEx_UrbanSound8K_PORTENTA_M7.csv"
+  artifact_stem: "CREST_UrbanSound8K_PORTENTA_M7"
+  log_file_name: "log_NAS_CREST_UrbanSound8K_PORTENTA_M7.csv"
 
 network:
   host: "127.0.0.1"

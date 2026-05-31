@@ -17,7 +17,7 @@ SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from tinyodom import data as data_utils_ex
+from crest import data as crest_data
 
 PREPARE_OXIOD_PATH = ROOT / "data" / "dataset_download_and_splits" / "oxiod" / "prepare_oxiod.py"
 PREPARE_OXIOD_SPEC = importlib.util.spec_from_file_location("prepare_oxiod", PREPARE_OXIOD_PATH)
@@ -114,9 +114,9 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
         self.window_size = 4
         self.stride = 2
         self.expected_windows = ((self.num_samples - self.window_size) // self.stride) + 1
-        self.read_csv_patcher = patch('tinyodom.data.pd.read_csv', side_effect=self.fake_read_csv)
-        self.sliding_patcher = patch('tinyodom.data.SlidingWindow', FakeSlidingWindow)
-        self.tqdm_patcher = patch('tinyodom.data.tqdm', _identity_tqdm)
+        self.read_csv_patcher = patch('crest.data.pd.read_csv', side_effect=self.fake_read_csv)
+        self.sliding_patcher = patch('crest.data.SlidingWindow', FakeSlidingWindow)
+        self.tqdm_patcher = patch('crest.data.tqdm', _identity_tqdm)
         self.read_csv_patcher.start()
         self.sliding_patcher.start()
         self.tqdm_patcher.start()
@@ -170,7 +170,7 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
             Legacy split object returned by ``import_oxiod_dataset``.
         """
         dataset_folder = str(self.dataset_root) + os.sep
-        return data_utils_ex.import_oxiod_dataset(
+        return crest_data.import_oxiod_dataset(
             type_flag=2,
             dataset_folder=dataset_folder,
             sub_folders=self.sub_folders,
@@ -211,7 +211,7 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
             The test passes when verbose mode preserves the processing message
             through the module logger while returning the normal split data.
         """
-        with self.assertLogs("tinyodom.data", level="INFO") as captured:
+        with self.assertLogs("crest.data", level="INFO") as captured:
             subset = self.call_loader(max_windows=1, verbose=True)
 
         self.assertEqual(subset.inputs.shape[0], 1)

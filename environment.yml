@@ -1,14 +1,14 @@
-name: tinyodomex
+name: crest
 channels:
   - conda-forge
 dependencies:
-  # Core runtime shared by data_utils_ex.py, hardware_utils_ex.py, notebooks, and tests
+  # Core runtime shared by CREST data, hardware, notebooks, and tests
   - python=3.11
   - numpy
   - pandas
-  - scikit-learn        # sklearn.metrics + preprocessing in TinyOdomEx_OxIOD.ipynb
+  - scikit-learn        # sklearn.metrics + preprocessing in notebooks
   - matplotlib          # src/data_visualization.ipynb animations/plots
-  - tqdm                # progress bars in src/data_utils_ex.py
+  - tqdm                # progress bars in dataset preparation and loaders
   - ipykernel           # notebook execution
   - ipywidgets          # interactive widgets in notebooks (optional but lightweight)
   - pytest              # ensure test runner shares interpreter with installed deps
@@ -27,7 +27,7 @@ dependencies:
       - addict==2.4.0
       - pyyaml==6.0.2
       # Dataset utilities
-      - giotto-tda==0.6.2         # SlidingWindow in src/data_utils_ex.py
+      - giotto-tda==0.6.2         # SlidingWindow in src/crest/data.py
       - numpy-quaternion==2024.0.12
       - pydometer==2019.2.8
       - soundata==1.0.1

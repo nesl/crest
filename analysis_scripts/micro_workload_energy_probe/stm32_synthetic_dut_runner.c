@@ -1,4 +1,4 @@
-#include "tinyodom_dut_runner.h"
+#include "crest_dut_runner.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -9,7 +9,7 @@
 #include "main.h"
 #include "stm32n6xx_hal_rtc.h"
 #include "stm32n6xx_hal_rtc_ex.h"
-#include "tinyodom_dut_phase_config.h"
+#include "crest_dut_phase_config.h"
 
 enum
 {
@@ -23,12 +23,12 @@ enum
   kBlockIterations = 512,
 };
 
-#define TINYODOM_DUT_TRIGGER_GPIO_PORT   GPIOD
-#define TINYODOM_DUT_TRIGGER_GPIO_PIN    GPIO_PIN_0
-#define TINYODOM_DUT_ARM_GPIO_PORT       GPIOE
-#define TINYODOM_DUT_ARM_GPIO_PIN        GPIO_PIN_9
+#define CREST_DUT_TRIGGER_GPIO_PORT   GPIOD
+#define CREST_DUT_TRIGGER_GPIO_PIN    GPIO_PIN_0
+#define CREST_DUT_ARM_GPIO_PORT       GPIOE
+#define CREST_DUT_ARM_GPIO_PIN        GPIO_PIN_9
 
-#define TINYODOM_DUT_STOP_MODE_VARIANT "system_stop_mainreg_wfi"
+#define CREST_DUT_STOP_MODE_VARIANT "system_stop_mainreg_wfi"
 
 static RTC_HandleTypeDef s_rtc_handle;
 static volatile bool s_rtc_wakeup_fired = false;
@@ -85,21 +85,21 @@ static void print_u64_output(const char *prefix, uint64_t value)
 
 static void set_harness_idle(void)
 {
-  HAL_GPIO_WritePin(TINYODOM_DUT_TRIGGER_GPIO_PORT, TINYODOM_DUT_TRIGGER_GPIO_PIN, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(TINYODOM_DUT_ARM_GPIO_PORT, TINYODOM_DUT_ARM_GPIO_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(CREST_DUT_TRIGGER_GPIO_PORT, CREST_DUT_TRIGGER_GPIO_PIN, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(CREST_DUT_ARM_GPIO_PORT, CREST_DUT_ARM_GPIO_PIN, GPIO_PIN_SET);
 }
 
 static void arm_harness_window(void)
 {
-  HAL_GPIO_WritePin(TINYODOM_DUT_ARM_GPIO_PORT, TINYODOM_DUT_ARM_GPIO_PIN, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(CREST_DUT_ARM_GPIO_PORT, CREST_DUT_ARM_GPIO_PIN, GPIO_PIN_RESET);
   HAL_Delay(kArmHoldMs);
-  HAL_GPIO_WritePin(TINYODOM_DUT_TRIGGER_GPIO_PORT, TINYODOM_DUT_TRIGGER_GPIO_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(CREST_DUT_TRIGGER_GPIO_PORT, CREST_DUT_TRIGGER_GPIO_PIN, GPIO_PIN_SET);
 }
 
 static void disarm_harness_window(void)
 {
-  HAL_GPIO_WritePin(TINYODOM_DUT_TRIGGER_GPIO_PORT, TINYODOM_DUT_TRIGGER_GPIO_PIN, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(TINYODOM_DUT_ARM_GPIO_PORT, TINYODOM_DUT_ARM_GPIO_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(CREST_DUT_TRIGGER_GPIO_PORT, CREST_DUT_TRIGGER_GPIO_PIN, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(CREST_DUT_ARM_GPIO_PORT, CREST_DUT_ARM_GPIO_PIN, GPIO_PIN_SET);
 }
 
 static uint32_t read_cpu_clock_hz(void)
@@ -385,7 +385,7 @@ static bool stop_sleep_for_us(uint32_t sleep_us)
 {
   uint32_t wakeup_counter = 0U;
 
-  if (sleep_us < TINYODOM_DUT_MIN_SLEEP_US)
+  if (sleep_us < CREST_DUT_MIN_SLEEP_US)
   {
     return false;
   }
@@ -544,9 +544,9 @@ static MicroWorkloadTelemetry run_sleep_workload(uint64_t start_us, uint64_t end
   {
     uint64_t now_us = rtc_now_us();
     uint64_t remaining_us = (end_us > now_us) ? (end_us - now_us) : 0ULL;
-    if (remaining_us > (uint64_t)(TINYODOM_DUT_WAKE_MARGIN_US + TINYODOM_DUT_MIN_SLEEP_US))
+    if (remaining_us > (uint64_t)(CREST_DUT_WAKE_MARGIN_US + CREST_DUT_MIN_SLEEP_US))
     {
-      uint32_t request_us = (uint32_t)(remaining_us - (uint64_t)TINYODOM_DUT_WAKE_MARGIN_US);
+      uint32_t request_us = (uint32_t)(remaining_us - (uint64_t)CREST_DUT_WAKE_MARGIN_US);
       if (stop_sleep_for_us(request_us))
       {
         slept_us += (uint64_t)request_us;
@@ -570,22 +570,22 @@ static MicroWorkloadTelemetry run_sleep_workload(uint64_t start_us, uint64_t end
 
 static const char *workload_label(void)
 {
-#if TINYODOM_MICRO_WORKLOAD_MODE == 0
+#if CREST_MICRO_WORKLOAD_MODE == 0
   return "sleep";
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 1
+#elif CREST_MICRO_WORKLOAD_MODE == 1
   return "wait";
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 2
+#elif CREST_MICRO_WORKLOAD_MODE == 2
   return "poll";
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 3
+#elif CREST_MICRO_WORKLOAD_MODE == 3
   return "float";
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 4
+#elif CREST_MICRO_WORKLOAD_MODE == 4
   return "int";
 #else
   return "sleep";
 #endif
 }
 
-void tinyodom_dut_harness_gpio_init(void)
+void crest_dut_harness_gpio_init(void)
 {
   GPIO_InitTypeDef gpio_init = {0};
 
@@ -597,16 +597,16 @@ void tinyodom_dut_harness_gpio_init(void)
   gpio_init.Pull = GPIO_NOPULL;
   gpio_init.Speed = GPIO_SPEED_FREQ_LOW;
 
-  gpio_init.Pin = TINYODOM_DUT_ARM_GPIO_PIN;
-  HAL_GPIO_Init(TINYODOM_DUT_ARM_GPIO_PORT, &gpio_init);
+  gpio_init.Pin = CREST_DUT_ARM_GPIO_PIN;
+  HAL_GPIO_Init(CREST_DUT_ARM_GPIO_PORT, &gpio_init);
 
-  gpio_init.Pin = TINYODOM_DUT_TRIGGER_GPIO_PIN;
-  HAL_GPIO_Init(TINYODOM_DUT_TRIGGER_GPIO_PORT, &gpio_init);
+  gpio_init.Pin = CREST_DUT_TRIGGER_GPIO_PIN;
+  HAL_GPIO_Init(CREST_DUT_TRIGGER_GPIO_PORT, &gpio_init);
 
   set_harness_idle();
 }
 
-void tinyodom_dut_rtc_irq_handler(void)
+void crest_dut_rtc_irq_handler(void)
 {
   HAL_RTCEx_WakeUpTimerIRQHandler(&s_rtc_handle);
 }
@@ -619,7 +619,7 @@ void HAL_RTCEx_WakeUpTimerEventCallback(RTC_HandleTypeDef *hrtc)
   }
 }
 
-int tinyodom_dut_run_once(void)
+int crest_dut_run_once(void)
 {
   uint32_t clock_hz = 0U;
   uint32_t start_cycles = 0U;
@@ -640,14 +640,14 @@ int tinyodom_dut_run_once(void)
   emit_line("STM32_RTC_INIT=OK");
   emit_line("STM32_AI_INIT=OK");
 
-  printf("phase output: %s\r\n", (TINYODOM_MICRO_WORKLOAD_MODE == 0) ? "cadenced" : "back_to_back");
+  printf("phase output: %s\r\n", (CREST_MICRO_WORKLOAD_MODE == 0) ? "cadenced" : "back_to_back");
   printf("rtc clock source output: %s\r\n", s_rtc_clock_source);
   printf("rtc clock hz nominal output: %lu\r\n", (unsigned long)s_rtc_clock_hz_nominal);
   printf("cadence timing quality output: %s\r\n", s_cadence_timing_quality);
-  printf("stop mode variant output: %s\r\n", TINYODOM_DUT_STOP_MODE_VARIANT);
-  printf("cadence budget (ms): %d\r\n", TINYODOM_DUT_LATENCY_BUDGET_MS);
+  printf("stop mode variant output: %s\r\n", CREST_DUT_STOP_MODE_VARIANT);
+  printf("cadence budget (ms): %d\r\n", CREST_DUT_LATENCY_BUDGET_MS);
   printf("workload output: %s\r\n", workload_label());
-  printf("requested window ms: %d\r\n", TINYODOM_MICRO_WINDOW_MS);
+  printf("requested window ms: %d\r\n", CREST_MICRO_WINDOW_MS);
   flush_stdout();
 
   if (!wait_for_start_command())
@@ -658,18 +658,18 @@ int tinyodom_dut_run_once(void)
 
   arm_harness_window();
   start_us = rtc_now_us();
-  end_us = start_us + ((uint64_t)TINYODOM_MICRO_WINDOW_MS * 1000ULL);
+  end_us = start_us + ((uint64_t)CREST_MICRO_WINDOW_MS * 1000ULL);
   start_cycles = DWT->CYCCNT;
 
-#if TINYODOM_MICRO_WORKLOAD_MODE == 0
+#if CREST_MICRO_WORKLOAD_MODE == 0
   workload_telemetry = run_sleep_workload(start_us, end_us);
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 1
+#elif CREST_MICRO_WORKLOAD_MODE == 1
   workload_telemetry = run_wait_workload(end_us);
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 2
+#elif CREST_MICRO_WORKLOAD_MODE == 2
   workload_telemetry = run_poll_workload(end_us);
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 3
+#elif CREST_MICRO_WORKLOAD_MODE == 3
   workload_telemetry = run_float_workload(end_us);
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 4
+#elif CREST_MICRO_WORKLOAD_MODE == 4
   workload_telemetry = run_int_workload(end_us);
 #else
   workload_telemetry = run_sleep_workload(start_us, end_us);

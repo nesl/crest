@@ -8,16 +8,16 @@ from pathlib import Path
 
 from test.test_support import SKETCH_SOURCE_DIR, TinyModelMixin, _cli_exists
 
-from tinyodom.hardware import DEVICE_SPECS, HIL_ERROR_OK, HIL_ERROR_RAM_OVERFLOW, HIL_spec
-from tinyodom.hardware import convert_to_cpp_model, convert_to_tflite_model
-from tinyodom.microcontrollers.arduino_base import _parse_memory_from_compile
+from crest.hardware import DEVICE_SPECS, HIL_ERROR_OK, HIL_ERROR_RAM_OVERFLOW, HIL_spec
+from crest.hardware import convert_to_cpp_model, convert_to_tflite_model
+from crest.microcontrollers.arduino_base import _parse_memory_from_compile
 
 ARDUINO_CLI_AVAILABLE = _cli_exists()
 
 
 @unittest.skipUnless(
     ARDUINO_CLI_AVAILABLE and SKETCH_SOURCE_DIR.exists(),
-    "Arduino CLI and tinyodom sketch are required for compile-only validation.",
+    "Arduino CLI and crest sketch are required for compile-only validation.",
 )
 class HILCompileOnlyTests(TinyModelMixin, unittest.TestCase):
     """Tests covering HIL compile only behavior."""

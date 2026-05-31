@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tinyodom"
+name = "crest"
 version = "0.1.0"
-description = "Hardware-Aware NAS for Inertial Odometry"
+description = "Cross-platform runtime evaluation and search for embedded sensing systems"
 dependencies = [
     "tensorflow",
     "numpy",

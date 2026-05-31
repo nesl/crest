@@ -16,7 +16,7 @@ Use the repository environment:
 
 ```bash
 conda env create -f environment.yml
-conda activate tinyodomex
+conda activate crest
 ```
 
 For plot-only reproduction, the required Python packages are:

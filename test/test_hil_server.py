@@ -19,10 +19,10 @@ if str(SRC_DIR) not in sys.path:
 
 import hil_server as hil_server_module  # noqa: E402
 from hil_server import HILServer  # noqa: E402
-from tinyodom.devices import CandidatePrepareRequest, arduino_staged_sketch_path  # noqa: E402
-from tinyodom.errors import HIL_ERROR_OK  # noqa: E402
-from tinyodom.hil_runtime import CollectMetricsRequest  # noqa: E402
-from tinyodom.pipeline_types import DataSplit, DatasetBundle, TargetSpec, TaskMetricContract  # noqa: E402
+from crest.devices import CandidatePrepareRequest, arduino_staged_sketch_path  # noqa: E402
+from crest.errors import HIL_ERROR_OK  # noqa: E402
+from crest.hil_runtime import CollectMetricsRequest  # noqa: E402
+from crest.pipeline_types import DataSplit, DatasetBundle, TargetSpec, TaskMetricContract  # noqa: E402
 
 
 class FakeDataset:
@@ -367,15 +367,15 @@ class HILServerTestCase(unittest.TestCase):
         self.load_settings_patcher = patch("hil_server.load_config", return_value=self.config)
         self.register_patcher = patch("hil_server.ensure_builtin_components_registered")
         self.dataset_registry_patcher = patch(
-            "tinyodom.runtime_bootstrap.dataset_registry.get",
+            "crest.runtime_bootstrap.dataset_registry.get",
             return_value=FakeDataset,
         )
         self.task_registry_patcher = patch(
-            "tinyodom.runtime_bootstrap.task_registry.get",
+            "crest.runtime_bootstrap.task_registry.get",
             return_value=FakeTask,
         )
         self.model_family_registry_patcher = patch(
-            "tinyodom.runtime_bootstrap.model_family_registry.get",
+            "crest.runtime_bootstrap.model_family_registry.get",
             return_value=FakeModelFamily,
         )
         self.context = MagicMock()
@@ -1679,7 +1679,7 @@ class SketchVariantTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
-            self._write_sketch(sketches / "tinyodom_inference_energy.ino", "uniform_shared")
+            self._write_sketch(sketches / "crest_inference_energy.ino", "uniform_shared")
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server._sync_sketch_variant()
@@ -1693,7 +1693,7 @@ class SketchVariantTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "audio_dscnn"
-            self._write_sketch(sketches / "tinyodom_inference_no_energy.ino", "audio_uniform")
+            self._write_sketch(sketches / "crest_inference_no_energy.ino", "audio_uniform")
             server = self._build_server(sketches, candidate_dir, energy_aware=False, input_mode="uniform")
 
             out_path = server._sync_sketch_variant()
@@ -1708,7 +1708,7 @@ class SketchVariantTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
-            self._write_sketch(sketches / "tinyodom_inference_energy_cadenced.ino", "cadenced_shared")
+            self._write_sketch(sketches / "crest_inference_energy_cadenced.ino", "cadenced_shared")
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server.set_input_mode("uniform", runtime_phase="cadenced")
@@ -1722,7 +1722,7 @@ class SketchVariantTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
-            self._write_sketch(sketches / "tinyodom_inference_energy.ino", "uniform_shared_cm7")
+            self._write_sketch(sketches / "crest_inference_energy.ino", "uniform_shared_cm7")
             server = self._build_server(
                 sketches,
                 candidate_dir,
@@ -1743,7 +1743,7 @@ class SketchVariantTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
-            self._write_sketch(sketches / "tinyodom_inference_no_energy.ino", "no_energy_shared_cm4")
+            self._write_sketch(sketches / "crest_inference_no_energy.ino", "no_energy_shared_cm4")
             server = self._build_server(
                 sketches,
                 candidate_dir,
@@ -1765,7 +1765,7 @@ class SketchVariantTests(unittest.TestCase):
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_inference_representative.ino",
+                sketches / "analysis_sketches/crest_inference_representative.ino",
                 "representative",
             )
             header = sketches / "analysis_sketches/oxiod_input_data.h"
@@ -1776,8 +1776,8 @@ class SketchVariantTests(unittest.TestCase):
 
             self.assertTrue(out_path.exists())
             self.assertIn("representative", out_path.read_text())
-            self.assertTrue((candidate_dir / "tinyodom_input_data.h").exists())
-            self.assertEqual((candidate_dir / "tinyodom_input_data.h").read_text(), "// header\n")
+            self.assertTrue((candidate_dir / "crest_input_data.h").exists())
+            self.assertEqual((candidate_dir / "crest_input_data.h").read_text(), "// header\n")
 
     def test_selects_oxiod_real_variant_and_copies_header(self) -> None:
         """Real-data OxIOD staging should copy the sketch and staged include header."""
@@ -1786,7 +1786,7 @@ class SketchVariantTests(unittest.TestCase):
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_inference_real_data.ino",
+                sketches / "analysis_sketches/crest_inference_real_data.ino",
                 "real",
             )
             header = sketches / "analysis_sketches/oxiod_input_data.h"
@@ -1797,7 +1797,7 @@ class SketchVariantTests(unittest.TestCase):
 
             self.assertTrue(out_path.exists())
             self.assertIn("real", out_path.read_text())
-            self.assertTrue((candidate_dir / "tinyodom_input_data.h").exists())
+            self.assertTrue((candidate_dir / "crest_input_data.h").exists())
 
     def test_selects_urbansound8k_variants_and_copies_audio_header(self) -> None:
         """UrbanSound8K modes should stage the shared sketches with the audio header."""
@@ -1805,11 +1805,11 @@ class SketchVariantTests(unittest.TestCase):
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "audio_dscnn"
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_inference_representative.ino",
+                sketches / "analysis_sketches/crest_inference_representative.ino",
                 "representative",
             )
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_inference_real_data.ino",
+                sketches / "analysis_sketches/crest_inference_real_data.ino",
                 "real",
             )
             header = sketches / "analysis_sketches/urbansound8k_input_data.h"
@@ -1823,11 +1823,11 @@ class SketchVariantTests(unittest.TestCase):
 
             representative_path = server._sync_sketch_variant()
             self.assertIn("representative", representative_path.read_text())
-            self.assertEqual((candidate_dir / "tinyodom_input_data.h").read_text(), "// audio header\n")
+            self.assertEqual((candidate_dir / "crest_input_data.h").read_text(), "// audio header\n")
 
             real_path = server.set_input_mode("urbansound8k_real")
             self.assertIn("real", real_path.read_text())
-            self.assertEqual((candidate_dir / "tinyodom_input_data.h").read_text(), "// audio header\n")
+            self.assertEqual((candidate_dir / "crest_input_data.h").read_text(), "// audio header\n")
 
     def test_missing_header_raises_for_representative(self) -> None:
         """Dataset representative staging should require its input header."""
@@ -1836,7 +1836,7 @@ class SketchVariantTests(unittest.TestCase):
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_inference_representative.ino",
+                sketches / "analysis_sketches/crest_inference_representative.ino",
                 "representative",
             )
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="oxiod_representative")
@@ -1873,7 +1873,7 @@ class SketchVariantTests(unittest.TestCase):
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
-                sketches / "analysis_sketches/tinyodom_inference_representative.ino",
+                sketches / "analysis_sketches/crest_inference_representative.ino",
                 "representative",
             )
             header = sketches / "analysis_sketches/oxiod_input_data.h"
@@ -1907,7 +1907,7 @@ class SketchVariantTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
-            self._write_sketch(sketches / "tinyodom_inference_no_energy.ino", "no_energy_shared")
+            self._write_sketch(sketches / "crest_inference_no_energy.ino", "no_energy_shared")
             server = self._build_server(sketches, candidate_dir, energy_aware=False, input_mode="uniform")
 
             out_path = server._sync_sketch_variant()
@@ -1921,7 +1921,7 @@ class SketchVariantTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             sketches = Path(tmpdir) / "sketches"
             candidate_dir = Path(tmpdir) / "odom_tcn"
-            self._write_sketch(sketches / "tinyodom_inference_energy.ino", "uniform_shared")
+            self._write_sketch(sketches / "crest_inference_energy.ino", "uniform_shared")
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
 
             out_path = server.set_input_mode("uniform")

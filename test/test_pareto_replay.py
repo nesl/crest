@@ -20,7 +20,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 import pareto_hil_replay  # noqa: E402
-from tinyodom import pareto_replay  # noqa: E402
+from crest import pareto_replay  # noqa: E402
 
 
 def source_config() -> dict[str, Any]:
@@ -177,7 +177,7 @@ def make_args(
 
     Returns
     -------
-    tinyodom.pareto_replay.ReplayRunConfig
+    crest.pareto_replay.ReplayRunConfig
         Config compatible with ``pareto_replay.run_replay``.
     """
     return pareto_replay.ReplayRunConfig(
@@ -689,12 +689,12 @@ def test_dry_run_writes_manifest_requests_and_results_without_server(
         """
         raise AssertionError(f"Unexpected HIL server construction for {config_path}")
 
-    with caplog.at_level(logging.INFO, logger="tinyodom.pareto_replay"):
+    with caplog.at_level(logging.INFO, logger="crest.pareto_replay"):
         assert pareto_replay.run_replay(args, server_factory=forbidden_factory) == 0
     manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
     requests = read_request_records(output_dir)
     results = read_results(output_dir)
-    log_messages = [record.getMessage() for record in caplog.records if record.name == "tinyodom.pareto_replay"]
+    log_messages = [record.getMessage() for record in caplog.records if record.name == "crest.pareto_replay"]
     assert "Source rows: 1" in log_messages
     assert "Selected Pareto rows: 1" in log_messages
     assert "Scheduled replay candidates: 1" in log_messages

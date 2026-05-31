@@ -15,7 +15,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from tinyodom.cadence import resolve_batch_period_ms  # noqa: E402
+from crest.cadence import resolve_batch_period_ms  # noqa: E402
 
 
 class CadenceResolutionTests(unittest.TestCase):

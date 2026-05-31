@@ -1,4 +1,4 @@
-"""Pytest collection helpers for the TinyODOM test suite."""
+"""Pytest collection helpers for the CREST test suite."""
 
 import os
 from pathlib import Path

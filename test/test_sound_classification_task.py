@@ -19,11 +19,11 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from tinyodom.datasets.urbansound8k_common import CLASS_NAMES, LABEL_ENCODING  # noqa: E402
-from tinyodom.pipeline_types import DataSplit, DatasetBundle  # noqa: E402
-from tinyodom.runtime_bootstrap import instantiate_task_component  # noqa: E402
-from tinyodom.tasks.odometry_regression import OdometryRegressionTask  # noqa: E402
-from tinyodom.tasks.sound_classification import SoundClassificationTask  # noqa: E402
+from crest.datasets.urbansound8k_common import CLASS_NAMES, LABEL_ENCODING  # noqa: E402
+from crest.pipeline_types import DataSplit, DatasetBundle  # noqa: E402
+from crest.runtime_bootstrap import instantiate_task_component  # noqa: E402
+from crest.tasks.odometry_regression import OdometryRegressionTask  # noqa: E402
+from crest.tasks.sound_classification import SoundClassificationTask  # noqa: E402
 
 
 class PredictOnlyModel:
@@ -394,7 +394,7 @@ class SoundClassificationTaskTests(unittest.TestCase):
         invalid_values = [True, 3.5, "3"]
         for value in invalid_values:
             with self.subTest(value=value), patch(
-                "tinyodom.runtime_bootstrap.task_registry.get",
+                "crest.runtime_bootstrap.task_registry.get",
                 return_value=SoundClassificationTask,
             ):
                 with self.assertRaisesRegex(ValueError, "early_stopping_patience"):
@@ -415,7 +415,7 @@ class SoundClassificationTaskTests(unittest.TestCase):
         """
         config = SimpleNamespace(outputs=SimpleNamespace(checkpoint_path=Path("checkpoint.keras")))
         with patch(
-            "tinyodom.runtime_bootstrap.task_registry.get",
+            "crest.runtime_bootstrap.task_registry.get",
             return_value=OdometryRegressionTask,
         ):
             task = instantiate_task_component(

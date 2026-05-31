@@ -16,7 +16,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from tinyodom.datasets.urbansound8k_common import (  # noqa: E402
+from crest.datasets.urbansound8k_common import (  # noqa: E402
     ALL_FOLDS,
     BATCH_PERIOD_MS,
     CACHE_SCHEMA_VERSION,
@@ -46,7 +46,7 @@ from tinyodom.datasets.urbansound8k_common import (  # noqa: E402
     WINDOW_LENGTH_SAMPLES,
     WINDOW_MS,
 )
-from tinyodom.datasets.urbansound8k_mel import UrbanSound8KMelDataset  # noqa: E402
+from crest.datasets.urbansound8k_mel import UrbanSound8KMelDataset  # noqa: E402
 
 
 def _rotation_split(test_fold: int) -> dict[str, tuple[int, ...]]:

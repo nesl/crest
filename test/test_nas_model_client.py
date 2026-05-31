@@ -28,7 +28,7 @@ if str(SRC_DIR) not in sys.path:
 
 # The NASModelClient is the unit under test for this module.
 from nas_model_client import NASModelClient  # noqa: E402
-from tinyodom.hardware import (
+from crest.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
     HIL_MASTER_FLASH_OVERFLOW,
     HIL_MASTER_RAM_OVERFLOW,
@@ -36,9 +36,9 @@ from tinyodom.hardware import (
     HIL_MASTER_SUCCESS,
     TFLiteSubprocessError,
 )  # noqa: E402
-from tinyodom.model import ScoreConfigEvaluationError, TrialOutcome  # noqa: E402
-from tinyodom.model_metrics import StaticMemoryEstimate  # noqa: E402
-from tinyodom.pipeline_types import (
+from crest.model import ScoreConfigEvaluationError, TrialOutcome  # noqa: E402
+from crest.model_metrics import StaticMemoryEstimate  # noqa: E402
+from crest.pipeline_types import (
     DataSplit,
     DatasetBundle,
     EvaluationResult,
@@ -778,7 +778,7 @@ class ObjectiveTests(unittest.TestCase):
                 return_code=-6,
                 timeout=False,
                 stderr_tail="abort",
-                command=["python", "-m", "tinyodom.tflite_predict_worker"],
+                command=["python", "-m", "crest.tflite_predict_worker"],
             )
         )
         trial = DummyTrial()
@@ -806,7 +806,7 @@ class ObjectiveTests(unittest.TestCase):
                 return_code=1,
                 timeout=False,
                 stderr_tail="worker failed",
-                command=["python", "-m", "tinyodom.tflite_predict_worker"],
+                command=["python", "-m", "crest.tflite_predict_worker"],
             )
         )
         trial = DummyTrial()
@@ -2213,7 +2213,7 @@ class RunNASTests(unittest.TestCase):
         self.assertIs(constraints_func.__self__, client)
         self.assertIs(constraints_func.__func__, client._constraints_func.__func__)
         self.assertEqual(
-            dummy.user_attrs["tinyodom_feasibility_policy_signature"]["rules"][0]["rule"],
+            dummy.user_attrs["crest_feasibility_policy_signature"]["rules"][0]["rule"],
             "latency_budget",
         )
 
@@ -2253,7 +2253,7 @@ class RunNASTests(unittest.TestCase):
                 """Initialize the instance."""
                 self.trials = [trial]
                 self.user_attrs = {
-                    "tinyodom_feasibility_policy_signature": client._feasibility_policy_signature()
+                    "crest_feasibility_policy_signature": client._feasibility_policy_signature()
                 }
                 self.metric_names_calls = []
 
@@ -2292,7 +2292,7 @@ class RunNASTests(unittest.TestCase):
             ],
         )
         dummy = self.DummyStudy([TrialState.COMPLETE])
-        dummy.user_attrs["tinyodom_feasibility_policy_signature"] = {
+        dummy.user_attrs["crest_feasibility_policy_signature"] = {
             "train_if_infeasible": False,
             "rules": [
                 {
@@ -2576,7 +2576,7 @@ class EvaluateCheckpointTests(unittest.TestCase):
                 return_code=-6,
                 timeout=False,
                 stderr_tail="abort",
-                command=["python", "-m", "tinyodom.tflite_predict_worker"],
+                command=["python", "-m", "crest.tflite_predict_worker"],
             )
 
             with patch("nas_model_client.convert_to_tflite_model"), patch(

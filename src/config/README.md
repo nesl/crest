@@ -1,6 +1,6 @@
 # Config Reference
 
-This directory documents the runtime configuration surface for TinyODOM-EX.
+This directory documents the runtime configuration surface for CREST.
 
 For the source architecture and extension map, see
 [`../README.md`](../README.md).
@@ -54,9 +54,9 @@ fold-specific caches live; the task owns whether final reporting rotates
 through those folds.
 
 The runtime loader and validator live in
-[`../tinyodom/model.py`](../tinyodom/model.py), while the task-aware bootstrap
+[`../crest/model.py`](../crest/model.py), while the task-aware bootstrap
 that resolves components and validates NAS policy against the active task lives
-in [`../tinyodom/runtime_bootstrap.py`](../tinyodom/runtime_bootstrap.py).
+in [`../crest/runtime_bootstrap.py`](../crest/runtime_bootstrap.py).
 
 ## Top-Level Blocks
 
@@ -86,7 +86,7 @@ The main top-level blocks are:
   Runtime log level.
 
 Those component blocks are resolved by
-[`../tinyodom/component_selection.py`](../tinyodom/component_selection.py), and
+[`../crest/component_selection.py`](../crest/component_selection.py), and
 they are mandatory. Use `dataset`, `task`, and `model`; the old top-level
 `data` block is not supported.
 
@@ -144,7 +144,7 @@ Per-backend nested blocks include:
 - `device.stm32.*`
 
 STM32 option plumbing is resolved by
-[`../tinyodom/microcontrollers/__init__.py`](../tinyodom/microcontrollers/__init__.py).
+[`../crest/microcontrollers/__init__.py`](../crest/microcontrollers/__init__.py).
 Examples of STM32-owned keys include:
 
 - `template_root`
@@ -238,7 +238,7 @@ Runtime behavior:
 ## `dataset`, `task`, and `model`
 
 The modular component-selection surface is resolved by
-[`../tinyodom/component_selection.py`](../tinyodom/component_selection.py).
+[`../crest/component_selection.py`](../crest/component_selection.py).
 
 Keys:
 
@@ -417,10 +417,10 @@ Valid values are:
 Use these files together:
 
 - [`nas_config_stm32.yaml`](nas_config_stm32.yaml) for the STM32 commented example
-- [`../tinyodom/model.py`](../tinyodom/model.py) for validation and derived
+- [`../crest/model.py`](../crest/model.py) for validation and derived
   runtime behavior
 - [`../README.md`](../README.md) for source architecture
-- [`../tinyodom/model_families/README.md`](../tinyodom/model_families/README.md)
+- [`../crest/model_families/README.md`](../crest/model_families/README.md)
   for model-family selection and extension
-- [`../tinyodom/microcontrollers/README.md`](../tinyodom/microcontrollers/README.md)
+- [`../crest/microcontrollers/README.md`](../crest/microcontrollers/README.md)
   for backend-owned hardware options
