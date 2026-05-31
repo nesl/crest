@@ -72,11 +72,9 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
             "Tcn" + "Dut",
         )
         scoped_prefixes = (
-            "analysis_scripts/audio_stm32_hil_smoke/",
             "sketches/stm32/tinyodom_stm32_lrun/",
             "src/config/",
             "src/tinyodom/microcontrollers/stm32_nucleo_n657x0.py",
-            "test/test_audio_stm32_hil_smoke.py",
             "test/test_model.py",
             "test/test_stm32_",
         )

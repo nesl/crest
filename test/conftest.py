@@ -6,9 +6,6 @@ from pathlib import Path
 
 ANALYSIS_SCRIPT_TESTS = {
     "test_analysis_scripts.py",
-    "test_audio_desktop_smoke.py",
-    "test_audio_portenta_hil_smoke.py",
-    "test_audio_stm32_hil_smoke.py",
     "test_stedgeai_phase0_probe.py",
     "test_stm32_build_wrapper.py",
     "test_stm32_project_portability.py",

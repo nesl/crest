@@ -27,10 +27,6 @@ Case-study run configs for the paper live under
   Pure desktop OxIOD NAS example that optimizes validation RMSE and static
   memory traffic.
 
-Audio analysis runners live under [`../../analysis_scripts`](../../analysis_scripts).
-They measure classifier inference over precomputed log-mel feature tensors; they
-do not include firmware-side microphone capture or audio feature extraction.
-
 ## Supporting Files
 
 - [`stm32_nucleo_mypool.json`](stm32_nucleo_mypool.json)
@@ -49,7 +45,7 @@ Audio configs can optionally run final reporting across UrbanSound8K folds:
 - `dataset.params.fold_rotation_cache_dir`, required only when fold rotation is
   enabled.
 
-The fixed `dataset.params.cache_dir` remains the source for NAS, HIL smoke, and
+The fixed `dataset.params.cache_dir` remains the source for NAS, HIL runs, and
 deployable export. Fold rotation runs after the fixed-split final checkpoint and
 does not export per-fold models.
 `task.params.evaluation.protocol: fold_rotation` is single-objective only;
