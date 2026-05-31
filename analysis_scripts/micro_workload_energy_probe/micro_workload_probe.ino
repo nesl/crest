@@ -1,38 +1,38 @@
-// Synthetic MCU workload probe for TinyODOM HIL energy measurements.
+// Synthetic MCU workload probe for CREST HIL energy measurements.
 //
-// The host runner compiles this sketch with TINYODOM_MICRO_WORKLOAD_MODE and
-// TINYODOM_MICRO_WINDOW_MS. The measured window is one harness run: the DUT
+// The host runner compiles this sketch with CREST_MICRO_WORKLOAD_MODE and
+// CREST_MICRO_WINDOW_MS. The measured window is one harness run: the DUT
 // raises the trigger at the start of the requested window and lowers it at the
 // end so the external harness owns energy/current/voltage telemetry.
 #include <Arduino.h>
 
-#include "common/tinyodom_hil_config.h"
+#include "common/crest_hil_config.h"
 
-#ifndef TINYODOM_AUTOSTART
-#define TINYODOM_AUTOSTART 1
+#ifndef CREST_AUTOSTART
+#define CREST_AUTOSTART 1
 #endif
 
-#ifndef TINYODOM_AUTOSTART_DELAY_MS
-#define TINYODOM_AUTOSTART_DELAY_MS 0
+#ifndef CREST_AUTOSTART_DELAY_MS
+#define CREST_AUTOSTART_DELAY_MS 0
 #endif
 
-#ifndef TINYODOM_SKIP_SERIAL_WAIT
-#define TINYODOM_SKIP_SERIAL_WAIT 0
+#ifndef CREST_SKIP_SERIAL_WAIT
+#define CREST_SKIP_SERIAL_WAIT 0
 #endif
 
-#ifndef TINYODOM_MICRO_WORKLOAD_MODE
-#define TINYODOM_MICRO_WORKLOAD_MODE 0
+#ifndef CREST_MICRO_WORKLOAD_MODE
+#define CREST_MICRO_WORKLOAD_MODE 0
 #endif
 
-#ifndef TINYODOM_MICRO_WINDOW_MS
-#define TINYODOM_MICRO_WINDOW_MS 1000
+#ifndef CREST_MICRO_WINDOW_MS
+#define CREST_MICRO_WINDOW_MS 1000
 #endif
 
 namespace {
 
 constexpr uint32_t kSerialTimeoutMs = 50;
 constexpr uint32_t kStartCommandTimeoutMs = 30000;
-constexpr uint32_t kWindowUs = static_cast<uint32_t>(TINYODOM_MICRO_WINDOW_MS) * 1000UL;
+constexpr uint32_t kWindowUs = static_cast<uint32_t>(CREST_MICRO_WINDOW_MS) * 1000UL;
 constexpr uint32_t kBlockIterations = 512;
 constexpr uint32_t kWaitBlockMs = 1;
 
@@ -66,7 +66,7 @@ void PrintUint64(uint64_t value) {
 void EmitReadyUntilStart() {
   const uint32_t start_ms = millis();
   while (millis() - start_ms < kStartCommandTimeoutMs) {
-    Serial.println(TINYODOM_DUT_READY);
+    Serial.println(CREST_DUT_READY);
     const uint32_t poll_start = millis();
     while (millis() - poll_start < 250) {
       if (!Serial.available()) {
@@ -75,7 +75,7 @@ void EmitReadyUntilStart() {
       }
       String line = Serial.readStringUntil('\n');
       line.trim();
-      if (line.equalsIgnoreCase(TINYODOM_CMD_START)) {
+      if (line.equalsIgnoreCase(CREST_CMD_START)) {
         return;
       }
     }
@@ -145,19 +145,19 @@ WorkloadTelemetry RunSleepWorkload(uint32_t end_us) {
     __WFI();
     ++loops;
   }
-  return {loops, 0, "none", static_cast<float>(TINYODOM_MICRO_WINDOW_MS), "wfi_idle"};
+  return {loops, 0, "none", static_cast<float>(CREST_MICRO_WINDOW_MS), "wfi_idle"};
 }
 
 const char* WorkloadLabel() {
-#if TINYODOM_MICRO_WORKLOAD_MODE == 0
+#if CREST_MICRO_WORKLOAD_MODE == 0
   return "sleep";
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 1
+#elif CREST_MICRO_WORKLOAD_MODE == 1
   return "wait";
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 2
+#elif CREST_MICRO_WORKLOAD_MODE == 2
   return "poll";
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 3
+#elif CREST_MICRO_WORKLOAD_MODE == 3
   return "float";
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 4
+#elif CREST_MICRO_WORKLOAD_MODE == 4
   return "int";
 #else
   return "sleep";
@@ -165,15 +165,15 @@ const char* WorkloadLabel() {
 }
 
 WorkloadTelemetry RunSelectedWorkload(uint32_t end_us) {
-#if TINYODOM_MICRO_WORKLOAD_MODE == 0
+#if CREST_MICRO_WORKLOAD_MODE == 0
   return RunSleepWorkload(end_us);
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 1
+#elif CREST_MICRO_WORKLOAD_MODE == 1
   return RunWaitWorkload(end_us);
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 2
+#elif CREST_MICRO_WORKLOAD_MODE == 2
   return RunPollWorkload(end_us);
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 3
+#elif CREST_MICRO_WORKLOAD_MODE == 3
   return RunFloatWorkload(end_us);
-#elif TINYODOM_MICRO_WORKLOAD_MODE == 4
+#elif CREST_MICRO_WORKLOAD_MODE == 4
   return RunIntWorkload(end_us);
 #else
   return RunSleepWorkload(end_us);
@@ -185,7 +185,7 @@ WorkloadTelemetry RunSelectedWorkload(uint32_t end_us) {
 void setup() {
   Serial.begin(115200);
   Serial.setTimeout(kSerialTimeoutMs);
-#if !TINYODOM_SKIP_SERIAL_WAIT
+#if !CREST_SKIP_SERIAL_WAIT
   while (!Serial && millis() < 2000) {
     delay(10);
   }
@@ -193,30 +193,30 @@ void setup() {
 
   delay(500);
 
-  pinMode(TINYODOM_HARNESS_TRIGGER_PIN, OUTPUT);
-  digitalWrite(TINYODOM_HARNESS_TRIGGER_PIN, LOW);
-  pinMode(TINYODOM_HARNESS_ARM_PIN, OUTPUT);
-  digitalWrite(TINYODOM_HARNESS_ARM_PIN, HIGH);
+  pinMode(CREST_HARNESS_TRIGGER_PIN, OUTPUT);
+  digitalWrite(CREST_HARNESS_TRIGGER_PIN, LOW);
+  pinMode(CREST_HARNESS_ARM_PIN, OUTPUT);
+  digitalWrite(CREST_HARNESS_ARM_PIN, HIGH);
 
-#if TINYODOM_AUTOSTART
-  if (TINYODOM_AUTOSTART_DELAY_MS > 0) {
-    delay(TINYODOM_AUTOSTART_DELAY_MS);
+#if CREST_AUTOSTART
+  if (CREST_AUTOSTART_DELAY_MS > 0) {
+    delay(CREST_AUTOSTART_DELAY_MS);
   }
 #else
   EmitReadyUntilStart();
 #endif
 
-  digitalWrite(TINYODOM_HARNESS_ARM_PIN, LOW);
-  delay(TINYODOM_DUT_ARM_HOLD_MS);
+  digitalWrite(CREST_HARNESS_ARM_PIN, LOW);
+  delay(CREST_DUT_ARM_HOLD_MS);
   delay(100);
 
   const uint32_t start_us = micros();
   const uint32_t end_us = start_us + kWindowUs;
-  digitalWrite(TINYODOM_HARNESS_TRIGGER_PIN, HIGH);
+  digitalWrite(CREST_HARNESS_TRIGGER_PIN, HIGH);
   WorkloadTelemetry telemetry = RunSelectedWorkload(end_us);
   const uint32_t total_latency_us = micros() - start_us;
-  digitalWrite(TINYODOM_HARNESS_TRIGGER_PIN, LOW);
-  digitalWrite(TINYODOM_HARNESS_ARM_PIN, HIGH);
+  digitalWrite(CREST_HARNESS_TRIGGER_PIN, LOW);
+  digitalWrite(CREST_HARNESS_ARM_PIN, HIGH);
 
   Serial.println("runs: 1");
   Serial.print("timer output: ");
@@ -224,7 +224,7 @@ void setup() {
   Serial.print("workload output: ");
   Serial.println(WorkloadLabel());
   Serial.print("requested window ms: ");
-  Serial.println(TINYODOM_MICRO_WINDOW_MS);
+  Serial.println(CREST_MICRO_WINDOW_MS);
   Serial.print("dut iterations output: ");
   PrintUint64(telemetry.iterations);
   Serial.println();

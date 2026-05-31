@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run synthetic MCU workload energy probes through the TinyODOM HIL harness."""
+"""Run synthetic MCU workload energy probes through the CREST HIL harness."""
 
 from __future__ import annotations
 
@@ -661,12 +661,12 @@ def validate_harness_window_duration(attempt: dict[str, Any], requested_window_m
 
 
 def load_config_defaults(config_path: Path) -> dict[str, Any]:
-    """Load optional TinyODOM device defaults.
+    """Load optional CREST device defaults.
 
     Parameters
     ----------
     config_path : Path
-        Candidate TinyODOM config path.
+        Candidate CREST config path.
 
     Returns
     -------
@@ -675,10 +675,10 @@ def load_config_defaults(config_path: Path) -> dict[str, Any]:
     """
     ensure_import_paths()
     try:
-        from tinyodom.model import load_config  # type: ignore
+        from crest.model import load_config  # type: ignore
     except Exception as exc:
         logging.getLogger(__name__).warning(
-            "Unable to import tinyodom.model.load_config; using CLI defaults (%s).",
+            "Unable to import crest.model.load_config; using CLI defaults (%s).",
             exc,
         )
         return {}
@@ -864,7 +864,7 @@ def resolve_settings(args: argparse.Namespace) -> RuntimeSettings:
         raise ValueError("--repeats must be >= 1.")
 
     active_timeout_default = max(5.0, (float(window_ms) / 1000.0) + 5.0)
-    stm32_project_default = REPO_ROOT / "sketches" / "stm32" / "tinyodom_stm32_lrun"
+    stm32_project_default = REPO_ROOT / "sketches" / "stm32" / "crest_stm32_lrun"
     return RuntimeSettings(
         config_path=config_path,
         boards=resolve_board_specs(args.boards),
@@ -921,13 +921,13 @@ def build_harness_defines(settings: RuntimeSettings) -> dict[str, int]:
         Harness compile-time defines.
     """
     return {
-        "TINYODOM_INFERENCE_RUNS": 1,
-        "TINYODOM_HARNESS_ARM_PIN": int(settings.harness_arm_pin),
-        "TINYODOM_HARNESS_TRIGGER_PIN": int(settings.harness_trigger_pin),
-        "TINYODOM_DUT_ARM_HOLD_MS": int(settings.dut_arm_hold_ms),
-        "TINYODOM_HARNESS_STABLE_LOW_MS": int(settings.harness_stable_low_ms),
-        "TINYODOM_HARNESS_ARM_TIMEOUT_MS": max(0, int(round(settings.harness_arm_timeout_s * 1000.0))),
-        "TINYODOM_HARNESS_ACTIVE_TIMEOUT_MS": max(0, int(round(settings.harness_active_timeout_s * 1000.0))),
+        "CREST_INFERENCE_RUNS": 1,
+        "CREST_HARNESS_ARM_PIN": int(settings.harness_arm_pin),
+        "CREST_HARNESS_TRIGGER_PIN": int(settings.harness_trigger_pin),
+        "CREST_DUT_ARM_HOLD_MS": int(settings.dut_arm_hold_ms),
+        "CREST_HARNESS_STABLE_LOW_MS": int(settings.harness_stable_low_ms),
+        "CREST_HARNESS_ARM_TIMEOUT_MS": max(0, int(round(settings.harness_arm_timeout_s * 1000.0))),
+        "CREST_HARNESS_ACTIVE_TIMEOUT_MS": max(0, int(round(settings.harness_active_timeout_s * 1000.0))),
     }
 
 
@@ -949,14 +949,14 @@ def build_dut_defines(settings: RuntimeSettings, workload: str, extra: Mapping[s
         DUT compile-time defines.
     """
     defines = {
-        "TINYODOM_AUTOSTART": 1,
-        "TINYODOM_INFERENCE_RUNS": 1,
-        "TINYODOM_HARNESS_ARM_PIN": int(settings.harness_arm_pin),
-        "TINYODOM_HARNESS_TRIGGER_PIN": int(settings.harness_trigger_pin),
-        "TINYODOM_DUT_ARM_HOLD_MS": int(settings.dut_arm_hold_ms),
-        "TINYODOM_HARNESS_STABLE_LOW_MS": int(settings.harness_stable_low_ms),
-        "TINYODOM_MICRO_WORKLOAD_MODE": int(WORKLOAD_MODE[workload]),
-        "TINYODOM_MICRO_WINDOW_MS": int(settings.window_ms),
+        "CREST_AUTOSTART": 1,
+        "CREST_INFERENCE_RUNS": 1,
+        "CREST_HARNESS_ARM_PIN": int(settings.harness_arm_pin),
+        "CREST_HARNESS_TRIGGER_PIN": int(settings.harness_trigger_pin),
+        "CREST_DUT_ARM_HOLD_MS": int(settings.dut_arm_hold_ms),
+        "CREST_HARNESS_STABLE_LOW_MS": int(settings.harness_stable_low_ms),
+        "CREST_MICRO_WORKLOAD_MODE": int(WORKLOAD_MODE[workload]),
+        "CREST_MICRO_WINDOW_MS": int(settings.window_ms),
     }
     if extra:
         defines.update({str(key): int(value) for key, value in extra.items()})
@@ -1066,7 +1066,7 @@ def required_power_metrics_available(power_metrics: Mapping[str, Any]) -> bool:
     Parameters
     ----------
     power_metrics : Mapping[str, Any]
-        Normalized metrics from existing TinyODOM parsers.
+        Normalized metrics from existing CREST parsers.
 
     Returns
     -------
@@ -1084,7 +1084,7 @@ def fill_metrics_from_power(attempt: dict[str, Any], power_metrics: Mapping[str,
     attempt : dict[str, Any]
         Attempt row to update.
     power_metrics : Mapping[str, Any]
-        Normalized metrics from existing TinyODOM parsers.
+        Normalized metrics from existing CREST parsers.
     """
     harness_latency_s = safe_float(power_metrics.get("harness_latency_s"))
     attempt["measured_harness_window_ms"] = harness_latency_s * 1000.0 if harness_latency_s >= 0.0 else -1.0
@@ -1114,9 +1114,9 @@ def finish_attempt_from_harness_log(
     harness_log : Sequence[str]
         Harness serial lines.
     parse_power_metrics : callable
-        Existing TinyODOM parser for raw harness telemetry.
+        Existing CREST parser for raw harness telemetry.
     normalize_power_metrics : callable
-        Existing TinyODOM normalizer for parsed telemetry.
+        Existing CREST normalizer for parsed telemetry.
     """
     if not harness_done:
         set_attempt_error(attempt, 4)
@@ -1159,11 +1159,11 @@ def run_arduino_attempt(settings: RuntimeSettings, board: BoardSpec, workload: s
     ensure_import_paths()
     if serial is None:
         raise RuntimeError("pyserial is required for hardware attempts.")
-    from tinyodom import hil_protocol  # type: ignore
-    from tinyodom.microcontrollers import arduino_base  # type: ignore
-    from tinyodom.microcontrollers import stm32_runtime  # type: ignore
-    from tinyodom.microcontrollers.arduino_ble33 import ArduinoBLE33Device  # type: ignore
-    from tinyodom.microcontrollers.arduino_portenta_h7 import ArduinoPortentaH7Device  # type: ignore
+    from crest import hil_protocol  # type: ignore
+    from crest.microcontrollers import arduino_base  # type: ignore
+    from crest.microcontrollers import stm32_runtime  # type: ignore
+    from crest.microcontrollers.arduino_ble33 import ArduinoBLE33Device  # type: ignore
+    from crest.microcontrollers.arduino_portenta_h7 import ArduinoPortentaH7Device  # type: ignore
 
     attempt = base_attempt(settings, board, workload, repeat_idx)
     log_stem = f"{board.token}_{workload}_repeat{repeat_idx:02d}"
@@ -1206,7 +1206,7 @@ def run_arduino_attempt(settings: RuntimeSettings, board: BoardSpec, workload: s
 
     extra_defines = dict(device.runtime_mode_build_defines())
     if direct_serial:
-        extra_defines["TINYODOM_AUTOSTART"] = 0
+        extra_defines["CREST_AUTOSTART"] = 0
     dut_defines = build_dut_defines(settings, workload, extra_defines)
     log_header = [
         *runtime_header,
@@ -1374,23 +1374,23 @@ def write_stm32_phase_config(stage_root: Path, *, workload: str, window_ms: int,
     Path
         Generated header path.
     """
-    selected_phase = "TINYODOM_DUT_PHASE_CADENCED" if workload == "sleep" else "TINYODOM_DUT_PHASE_BACK_TO_BACK"
+    selected_phase = "CREST_DUT_PHASE_CADENCED" if workload == "sleep" else "CREST_DUT_PHASE_BACK_TO_BACK"
     header_text = (
-        "#ifndef TINYODOM_DUT_PHASE_CONFIG_H\n"
-        "#define TINYODOM_DUT_PHASE_CONFIG_H\n\n"
-        "#define TINYODOM_DUT_PHASE_BACK_TO_BACK 0\n"
-        "#define TINYODOM_DUT_PHASE_CADENCED 1\n\n"
-        f"#define TINYODOM_DUT_SELECTED_PHASE {selected_phase}\n"
-        f"#define TINYODOM_DUT_LATENCY_BUDGET_MS {max(1, int(window_ms))}\n"
-        "#define TINYODOM_DUT_MEASURED_RUNS 1\n"
-        f"#define TINYODOM_DUT_CPU_CLOCK_MHZ {int(cpu_clock_mhz)}\n"
-        f"#define TINYODOM_DUT_WAKE_MARGIN_US {max(0, int(wake_margin_us))}\n"
-        f"#define TINYODOM_DUT_MIN_SLEEP_US {max(0, int(min_sleep_us))}\n"
-        f"#define TINYODOM_MICRO_WORKLOAD_MODE {int(WORKLOAD_MODE[workload])}\n"
-        f"#define TINYODOM_MICRO_WINDOW_MS {max(1, int(window_ms))}\n\n"
-        "#endif /* TINYODOM_DUT_PHASE_CONFIG_H */\n"
+        "#ifndef CREST_DUT_PHASE_CONFIG_H\n"
+        "#define CREST_DUT_PHASE_CONFIG_H\n\n"
+        "#define CREST_DUT_PHASE_BACK_TO_BACK 0\n"
+        "#define CREST_DUT_PHASE_CADENCED 1\n\n"
+        f"#define CREST_DUT_SELECTED_PHASE {selected_phase}\n"
+        f"#define CREST_DUT_LATENCY_BUDGET_MS {max(1, int(window_ms))}\n"
+        "#define CREST_DUT_MEASURED_RUNS 1\n"
+        f"#define CREST_DUT_CPU_CLOCK_MHZ {int(cpu_clock_mhz)}\n"
+        f"#define CREST_DUT_WAKE_MARGIN_US {max(0, int(wake_margin_us))}\n"
+        f"#define CREST_DUT_MIN_SLEEP_US {max(0, int(min_sleep_us))}\n"
+        f"#define CREST_MICRO_WORKLOAD_MODE {int(WORKLOAD_MODE[workload])}\n"
+        f"#define CREST_MICRO_WINDOW_MS {max(1, int(window_ms))}\n\n"
+        "#endif /* CREST_DUT_PHASE_CONFIG_H */\n"
     )
-    header_path = stage_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h"
+    header_path = stage_root / "Appli" / "Inc" / "crest_dut_phase_config.h"
     header_path.parent.mkdir(parents=True, exist_ok=True)
     header_path.write_text(header_text, encoding="utf-8")
     return header_path
@@ -1482,7 +1482,7 @@ def stage_stm32_workspace(settings: RuntimeSettings, workload: str) -> Path:
     if stage_root.exists():
         return stage_root
     shutil.copytree(settings.stm32_project_root, stage_root)
-    shutil.copy2(STM32_RUNNER_TEMPLATE, stage_root / "Appli" / "Src" / "tinyodom_dut_runner.c")
+    shutil.copy2(STM32_RUNNER_TEMPLATE, stage_root / "Appli" / "Src" / "crest_dut_runner.c")
     write_stm32_phase_config(
         stage_root,
         workload=workload,
@@ -1560,7 +1560,7 @@ def build_stm32_workspace(project_root: Path, *, clean: bool, jobs: int | None) 
     WorkflowError
         If existing validation or execution checks fail.
     """
-    from tinyodom.microcontrollers import stm32_cube_clt  # type: ignore
+    from crest.microcontrollers import stm32_cube_clt  # type: ignore
 
     boot_project_root = project_root / "STM32CubeIDE" / "Boot"
     app_project_root = project_root / "STM32CubeIDE" / "AppS"
@@ -1599,7 +1599,7 @@ def update_stm32_lrun_source_size(
     WorkflowError
         If existing validation or execution checks fail.
     """
-    from tinyodom.microcontrollers import stm32_cube_clt  # type: ignore
+    from crest.microcontrollers import stm32_cube_clt  # type: ignore
 
     header_path = project_root / "FSBL" / "Inc" / "stm32_extmem_conf.h"
     if not header_path.is_file():
@@ -1634,7 +1634,7 @@ def resolve_stm32_external_loader(cubeprog_bin: Path | None) -> Path:
     WorkflowError
         If existing validation or execution checks fail.
     """
-    from tinyodom.microcontrollers import stm32_cube_clt  # type: ignore
+    from crest.microcontrollers import stm32_cube_clt  # type: ignore
 
     cubeprog_dir = cubeprog_bin or stm32_cube_clt.default_cubeprog_bin()
     if cubeprog_dir is None:
@@ -1679,9 +1679,9 @@ def run_stm32_attempt(settings: RuntimeSettings, board: BoardSpec, workload: str
     ensure_import_paths()
     if serial is None:
         raise RuntimeError("pyserial is required for hardware attempts.")
-    from tinyodom import hil_protocol  # type: ignore
-    from tinyodom.microcontrollers import arduino_base, stm32_cube_clt  # type: ignore
-    from tinyodom.microcontrollers import stm32_runtime  # type: ignore
+    from crest import hil_protocol  # type: ignore
+    from crest.microcontrollers import arduino_base, stm32_cube_clt  # type: ignore
+    from crest.microcontrollers import stm32_runtime  # type: ignore
 
     attempt = base_attempt(settings, board, workload, repeat_idx)
     log_stem = f"{board.token}_{workload}_repeat{repeat_idx:02d}"
@@ -2247,7 +2247,7 @@ def build_parser() -> argparse.ArgumentParser:
   python analysis_scripts/micro_workload_energy_probe/run_micro_workload_energy_probe.py --boards ble --workloads wait poll float int --skip-harness-flash --output-json results/probe.json --output-csv results/probe.csv
 """
     parser = argparse.ArgumentParser(
-        description="Run synthetic MCU sleep/wait/poll/float/int energy windows through the TinyODOM HIL harness.",
+        description="Run synthetic MCU sleep/wait/poll/float/int energy windows through the CREST HIL harness.",
         epilog=examples,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -2269,7 +2269,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--harness-active-timeout-s", type=float, default=None, help="Host and harness timeout for the active trigger-high window.")
     parser.add_argument("--harness-done-timeout-s", type=float, default=None, help="Additional host timeout waiting for DONE after the active window.")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD, help="Serial baud rate for DUT and harness sessions.")
-    parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Optional TinyODOM config used as a source of port/tool defaults.")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Optional CREST config used as a source of port/tool defaults.")
     parser.add_argument("--output-json", default=None, help="Final JSON output path, or a directory for a timestamped JSON file; default is analysis_scripts/micro_workload_energy_probe/results/<timestamp>.json.")
     parser.add_argument("--output-csv", default=None, help="Attempt CSV output path, or a directory for a timestamped CSV file; rows are flushed after each attempt.")
     parser.add_argument("--log-level", default="INFO", help="Logging level: DEBUG, INFO, WARNING, or ERROR.")

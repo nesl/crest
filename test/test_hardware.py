@@ -26,7 +26,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from tinyodom.hardware import (  # noqa: E402
+from crest.hardware import (  # noqa: E402
     XXD_BIN,
     DEVICE_SPECS,
     HIL_ERROR_COMPILE,
@@ -62,10 +62,10 @@ from tinyodom.hardware import (  # noqa: E402
     return_hardware_specs,
     TFLiteSubprocessError,
 )
-from tinyodom import hil_protocol  # noqa: E402
-from tinyodom.devices import ArduinoDevice, CandidatePrepareRequest  # noqa: E402
-import tinyodom.microcontrollers.arduino_base as arduino_base_module  # noqa: E402
-from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
+from crest import hil_protocol  # noqa: E402
+from crest.devices import ArduinoDevice, CandidatePrepareRequest  # noqa: E402
+import crest.microcontrollers.arduino_base as arduino_base_module  # noqa: E402
+from crest.microcontrollers.arduino_base import (  # noqa: E402
     ARDUINO_CLI_BIN,
     ARDUINO_CLI_CONFIG,
     CompileResult as ArduinoCompileResult,
@@ -90,7 +90,7 @@ from tinyodom.microcontrollers.arduino_base import (  # noqa: E402
     upload_sketch,
     normalize_power_metrics,
 )
-from tinyodom.microcontrollers import (  # noqa: E402
+from crest.microcontrollers import (  # noqa: E402
     arduino_ble33,
     arduino_portenta_h7,
     get_device,
@@ -124,10 +124,10 @@ COMPILE_SAMPLE_OUTPUT = (
     "Global variables use 98112 bytes (37%) of dynamic memory, leaving 164032 bytes for local variables. Maximum is 262144 bytes."
 )
 FLASH_OVERFLOW_STDERR = (
-    "/home/m202/TinyODOMEx/TinyODOM-EX/tools/arduino-data/packages/arduino/tools/arm-none-eabi-gcc/"
+    "/home/m202/CREST/CREST/tools/arduino-data/packages/arduino/tools/arm-none-eabi-gcc/"
     "7-2017q4/bin/../lib/gcc/arm-none-eabi/7.2.1/../../../../arm-none-eabi/bin/ld: "
     "/tmp/tmplhhgug0i/arduino-build/odom_tcn.ino.elf section `.text' will not fit in region `FLASH'\n"
-    "/home/m202/TinyODOMEx/TinyODOM-EX/tools/arduino-data/packages/arduino/tools/arm-none-eabi-gcc/"
+    "/home/m202/CREST/CREST/tools/arduino-data/packages/arduino/tools/arm-none-eabi-gcc/"
     "7-2017q4/bin/../lib/gcc/arm-none-eabi/7.2.1/../../../../arm-none-eabi/bin/ld: "
     "region `FLASH' overflowed by 3814108 bytes\n"
     "collect2: error: ld returned 1 exit status\n"
@@ -473,7 +473,7 @@ class TFLiteSubprocessPredictionTests(TinyModelMixin, unittest.TestCase):
         """Nonzero worker exits should raise a structured subprocess error."""
         failed_process = _FakeCompletedProcess(returncode=2, stderr="worker failed")
 
-        with patch("tinyodom.hardware.subprocess.run", return_value=failed_process):
+        with patch("crest.hardware.subprocess.run", return_value=failed_process):
             with self.assertRaises(TFLiteSubprocessError) as raised:
                 predict_tflite_model_subprocess("model.tflite", self.train_x[:1], timeout_sec=0.1)
 
@@ -486,7 +486,7 @@ class TFLiteSubprocessPredictionTests(TinyModelMixin, unittest.TestCase):
         stderr = "prefix\n" + ("x" * 4100) + "abort details"
         failed_process = _FakeCompletedProcess(returncode=-6, stderr=stderr)
 
-        with patch("tinyodom.hardware.subprocess.run", return_value=failed_process):
+        with patch("crest.hardware.subprocess.run", return_value=failed_process):
             with self.assertRaises(TFLiteSubprocessError) as raised:
                 predict_tflite_model_subprocess("model.tflite", self.train_x[:1], timeout_sec=0.1)
 
@@ -497,12 +497,12 @@ class TFLiteSubprocessPredictionTests(TinyModelMixin, unittest.TestCase):
     def test_subprocess_timeout_raises_timeout_error(self) -> None:
         """Timed-out workers should be reported as timeout subprocess errors."""
         timeout = subprocess.TimeoutExpired(
-            cmd=["python", "-m", "tinyodom.tflite_predict_worker"],
+            cmd=["python", "-m", "crest.tflite_predict_worker"],
             timeout=0.1,
             stderr="hung inside interpreter",
         )
 
-        with patch("tinyodom.hardware.subprocess.run", side_effect=timeout):
+        with patch("crest.hardware.subprocess.run", side_effect=timeout):
             with self.assertRaises(TFLiteSubprocessError) as raised:
                 predict_tflite_model_subprocess("model.tflite", self.train_x[:1], timeout_sec=0.1)
 
@@ -514,7 +514,7 @@ class TFLiteSubprocessPredictionTests(TinyModelMixin, unittest.TestCase):
         """Zero-exit workers without outputs should raise a subprocess error."""
         completed_process = _FakeCompletedProcess(returncode=0, stderr="no output file")
 
-        with patch("tinyodom.hardware.subprocess.run", return_value=completed_process):
+        with patch("crest.hardware.subprocess.run", return_value=completed_process):
             with self.assertRaises(TFLiteSubprocessError) as raised:
                 predict_tflite_model_subprocess("model.tflite", self.train_x[:1], timeout_sec=0.1)
 
@@ -748,30 +748,30 @@ class SketchHelperTests(unittest.TestCase):
     def test_replace_define_updates_value(self):
         # Define replacement should update the requested constant without disturbing the rest of the file.
         """Validate replace define updates value."""
-        text = "#define TINYODOM_WINDOW_SIZE 100\nvoid loop() {}\n"
-        updated = _replace_define(text, "TINYODOM_WINDOW_SIZE", "256")
-        self.assertIn("TINYODOM_WINDOW_SIZE 256", updated)
+        text = "#define CREST_WINDOW_SIZE 100\nvoid loop() {}\n"
+        updated = _replace_define(text, "CREST_WINDOW_SIZE", "256")
+        self.assertIn("CREST_WINDOW_SIZE 256", updated)
 
     def test_patch_sketch_constants_edits_ino(self):
         # Sketch constant patching should rewrite the `.ino` file in place with the requested values.
         """Validate patch sketch constants edits ino."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
-            ino_path = sketch_dir / "TinyOdom.ino"
+            ino_path = sketch_dir / "crest.ino"
             ino_path.write_text(
                 "\n".join(
                     [
-                        "#define TINYODOM_WINDOW_SIZE 100",
-                        "#define TINYODOM_NUM_CHANNELS 1",
-                        "#define TINYODOM_TENSOR_ARENA_BYTES (10 * 1024)",
+                        "#define CREST_WINDOW_SIZE 100",
+                        "#define CREST_NUM_CHANNELS 1",
+                        "#define CREST_TENSOR_ARENA_BYTES (10 * 1024)",
                     ]
                 )
             )
             _patch_sketch_constants(sketch_dir, arena_kb=42, window_size=256, num_channels=3)
             text = ino_path.read_text()
-            self.assertIn("TINYODOM_WINDOW_SIZE 256", text)
-            self.assertIn("TINYODOM_NUM_CHANNELS 3", text)
-            self.assertIn("TINYODOM_TENSOR_ARENA_BYTES (42 * 1024)", text)
+            self.assertIn("CREST_WINDOW_SIZE 256", text)
+            self.assertIn("CREST_NUM_CHANNELS 3", text)
+            self.assertIn("CREST_TENSOR_ARENA_BYTES (42 * 1024)", text)
 
     def test_patch_sketch_constants_accepts_audio_feature_shape(self):
         """Audio feature tensors should map to Arduino window/channel macros."""
@@ -781,30 +781,30 @@ class SketchHelperTests(unittest.TestCase):
             ino_path.write_text(
                 "\n".join(
                     [
-                        "#define TINYODOM_WINDOW_SIZE 100",
-                        "#define TINYODOM_NUM_CHANNELS 1",
-                        "#define TINYODOM_TENSOR_ARENA_BYTES (10 * 1024)",
+                        "#define CREST_WINDOW_SIZE 100",
+                        "#define CREST_NUM_CHANNELS 1",
+                        "#define CREST_TENSOR_ARENA_BYTES (10 * 1024)",
                     ]
                 )
             )
             _patch_sketch_constants(sketch_dir, arena_kb=96, window_size=201, num_channels=64)
             text = ino_path.read_text()
-            self.assertIn("TINYODOM_WINDOW_SIZE 201", text)
-            self.assertIn("TINYODOM_NUM_CHANNELS 64", text)
+            self.assertIn("CREST_WINDOW_SIZE 201", text)
+            self.assertIn("CREST_NUM_CHANNELS 64", text)
 
     def test_patch_sketch_constants_updates_latency_budget_when_present(self):
         # Sketch patching should update an existing latency-budget constant so generated test firmware matches the requested timing window.
         """Validate patch sketch constants updates latency budget when present."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sketch_dir = Path(tmpdir)
-            ino_path = sketch_dir / "TinyOdom.ino"
+            ino_path = sketch_dir / "crest.ino"
             ino_path.write_text(
                 "\n".join(
                     [
-                        "#define TINYODOM_WINDOW_SIZE 100",
-                        "#define TINYODOM_NUM_CHANNELS 1",
-                        "#define TINYODOM_TENSOR_ARENA_BYTES (10 * 1024)",
-                        "#define TINYODOM_LATENCY_BUDGET_MS 200",
+                        "#define CREST_WINDOW_SIZE 100",
+                        "#define CREST_NUM_CHANNELS 1",
+                        "#define CREST_TENSOR_ARENA_BYTES (10 * 1024)",
+                        "#define CREST_LATENCY_BUDGET_MS 200",
                     ]
                 )
             )
@@ -816,7 +816,7 @@ class SketchHelperTests(unittest.TestCase):
                 latency_budget_ms=75.8,
             )
             text = ino_path.read_text()
-            self.assertIn("TINYODOM_LATENCY_BUDGET_MS 76", text)
+            self.assertIn("CREST_LATENCY_BUDGET_MS 76", text)
 
     def test_parse_memory_from_compile_extracts_numbers(self):
         # Compile-output parsing should recover flash and RAM counts from the standard Arduino summary.
@@ -1027,8 +1027,8 @@ class ArduinoRegistryContractTests(unittest.TestCase):
         self.assertEqual(cm7.runtime_measure_mode(), "direct_serial")
         self.assertEqual(cm7.runtime_mode_build_defines(), {})
         self.assertEqual(cm4.runtime_measure_mode(), "harness_only")
-        self.assertEqual(cm4.runtime_mode_build_defines()["TINYODOM_AUTOSTART"], 1)
-        self.assertEqual(cm4.runtime_mode_build_defines()["TINYODOM_SKIP_SERIAL_WAIT"], 1)
+        self.assertEqual(cm4.runtime_mode_build_defines()["CREST_AUTOSTART"], 1)
+        self.assertEqual(cm4.runtime_mode_build_defines()["CREST_SKIP_SERIAL_WAIT"], 1)
 
     def test_portenta_cm4_prepare_for_runtime_bootstraps_cm7_helper(self):
         # CM4 runtime preparation should bootstrap the CM7 helper image before the CM4 run can start.
@@ -1065,13 +1065,13 @@ class ArduinoCommandOptionTests(unittest.TestCase):
             cm7_build_dir = _resolve_build_dir(
                 sketch_dir,
                 "arduino:mbed_portenta:envie_m7",
-                {"TINYODOM_AUTOSTART": 1},
+                {"CREST_AUTOSTART": 1},
                 board_options={"target_core": "cm7", "split": "75_25", "security": "none"},
             )
             cm4_build_dir = _resolve_build_dir(
                 sketch_dir,
                 "arduino:mbed_portenta:envie_m7",
-                {"TINYODOM_AUTOSTART": 1},
+                {"CREST_AUTOSTART": 1},
                 board_options={"target_core": "cm4", "split": "50_50", "security": "none"},
             )
         self.assertNotEqual(cm7_build_dir, cm4_build_dir)
@@ -1095,13 +1095,13 @@ class ArduinoCommandOptionTests(unittest.TestCase):
                 stderr="",
             )
             with patch(
-                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                "crest.microcontrollers.arduino_base.subprocess.run",
                 return_value=compile_result,
             ) as mock_run:
                 previous_logged = arduino_base_module._ARDUINO_CLI_PATH_LOGGED
                 arduino_base_module._ARDUINO_CLI_PATH_LOGGED = False
                 try:
-                    with self.assertLogs("tinyodom.microcontrollers.arduino_base", level="DEBUG") as captured:
+                    with self.assertLogs("crest.microcontrollers.arduino_base", level="DEBUG") as captured:
                         result = compile_sketch(
                             sketch_path=sketch_dir,
                             fqbn="arduino:mbed_portenta:envie_m7",
@@ -1134,7 +1134,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
             build_dir.mkdir(parents=True, exist_ok=True)
             upload_result = _FakeCompletedProcess(returncode=0, stdout="ok", stderr="")
             with patch(
-                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                "crest.microcontrollers.arduino_base.subprocess.run",
                 return_value=upload_result,
             ) as mock_run:
                 result = upload_sketch(
@@ -1162,13 +1162,13 @@ class ArduinoCommandOptionTests(unittest.TestCase):
             sketch_dir.mkdir()
             compile_result = _FakeCompletedProcess(returncode=0, stdout="compile ok", stderr="")
             with patch(
-                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                "crest.microcontrollers.arduino_base.subprocess.run",
                 return_value=compile_result,
             ), patch(
-                "tinyodom.microcontrollers.arduino_base._parse_memory_from_compile",
+                "crest.microcontrollers.arduino_base._parse_memory_from_compile",
                 return_value=(None, None),
             ), patch(
-                "tinyodom.microcontrollers.arduino_base._parse_memory_from_size_recipe",
+                "crest.microcontrollers.arduino_base._parse_memory_from_size_recipe",
                 return_value=(None, None),
             ):
                 result = compile_sketch(
@@ -1214,13 +1214,13 @@ class ArduinoCommandOptionTests(unittest.TestCase):
                 ".lwip_sec          278528   805306368\n"
             )
             with patch(
-                "tinyodom.microcontrollers.arduino_base._resolve_arm_size_binary",
+                "crest.microcontrollers.arduino_base._resolve_arm_size_binary",
                 return_value="/usr/bin/arm-none-eabi-size",
             ), patch(
-                "tinyodom.microcontrollers.arduino_base._find_compiled_elf",
+                "crest.microcontrollers.arduino_base._find_compiled_elf",
                 return_value=elf_path,
             ), patch(
-                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                "crest.microcontrollers.arduino_base.subprocess.run",
                 return_value=_FakeCompletedProcess(returncode=0, stdout=size_stdout, stderr=""),
             ):
                 flash_bytes, ram_bytes = _parse_memory_from_size_recipe(build_dir)
@@ -1289,13 +1289,13 @@ class ArduinoCommandOptionTests(unittest.TestCase):
             sketch_dir.mkdir()
             compile_result = _FakeCompletedProcess(returncode=0, stdout="compile ok", stderr="")
             with patch(
-                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                "crest.microcontrollers.arduino_base.subprocess.run",
                 return_value=compile_result,
             ), patch(
-                "tinyodom.microcontrollers.arduino_base._parse_memory_from_compile",
+                "crest.microcontrollers.arduino_base._parse_memory_from_compile",
                 return_value=(None, None),
             ), patch(
-                "tinyodom.microcontrollers.arduino_base._parse_memory_from_size_recipe",
+                "crest.microcontrollers.arduino_base._parse_memory_from_size_recipe",
                 return_value=(155_864, 63_304),
             ):
                 result = compile_sketch(
@@ -1401,7 +1401,7 @@ class SerialHelperTests(unittest.TestCase):
             """
             return self._DummySerial(responses)
 
-        with patch("tinyodom.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
+        with patch("crest.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
             latency, arena_line, serial_log = _collect_latency_seconds(
                 "COM1", 115200, timeout_s=0.05
             )
@@ -1433,7 +1433,7 @@ class SerialHelperTests(unittest.TestCase):
             """
             return self._DummySerial(responses)
 
-        with patch("tinyodom.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
+        with patch("crest.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
             latency, arena_line, serial_log = _collect_latency_seconds(
                 "COM2", 115200, timeout_s=0.01
             )
@@ -1445,7 +1445,7 @@ class SerialHelperTests(unittest.TestCase):
         # Serial-port failures should surface immediately instead of being misreported as a valid latency timeout.
         """Validate collect latency invalid port raises."""
         with patch(
-            "tinyodom.microcontrollers.arduino_base.serial.Serial",
+            "crest.microcontrollers.arduino_base.serial.Serial",
             side_effect=serial.SerialException("boom"),
         ):
             with self.assertRaises(RuntimeError):
@@ -1473,7 +1473,7 @@ class SerialHelperTests(unittest.TestCase):
             """
             return self._DummySerial(responses)
 
-        with patch("tinyodom.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
+        with patch("crest.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
             latency, arena_line, serial_log = _collect_latency_seconds(
                 "COM4", 115200, timeout_s=0.01
             )
@@ -1503,7 +1503,7 @@ class SerialHelperTests(unittest.TestCase):
             """
             return self._DummySerial(responses)
 
-        with patch("tinyodom.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
+        with patch("crest.microcontrollers.arduino_base.serial.Serial", side_effect=factory):
             latency, arena_line, serial_log = _collect_latency_seconds(
                 "COM4", 115200, timeout_s=0.01
             )
@@ -1659,9 +1659,9 @@ class ProtocolHandshakeTests(unittest.TestCase):
             raise AssertionError(f"Unexpected port: {port}")
 
         sent_commands: list[str] = []
-        with patch("tinyodom.hil_protocol.serial.Serial", side_effect=serial_factory):
+        with patch("crest.hil_protocol.serial.Serial", side_effect=serial_factory):
             with patch(
-                "tinyodom.hil_protocol._send_line",
+                "crest.hil_protocol._send_line",
                 side_effect=lambda _ser, text: sent_commands.append(text),
             ):
                 result = hil_protocol.run_handshake(
@@ -1776,13 +1776,13 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         upload_result = ArduinoUploadResult(success=True, log="ok")
 
         with patch(
-            "tinyodom.microcontrollers.arduino_base.compile_harness_sketch",
+            "crest.microcontrollers.arduino_base.compile_harness_sketch",
             return_value=compile_result,
         ), patch(
-            "tinyodom.microcontrollers.arduino_base.upload_harness_sketch",
+            "crest.microcontrollers.arduino_base.upload_harness_sketch",
             return_value=upload_result,
         ), patch(
-            "tinyodom.hil_protocol.run_handshake",
+            "crest.hil_protocol.run_handshake",
             return_value=handshake_result,
         ):
             result = measure_serial(
@@ -1824,13 +1824,13 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         upload_result = ArduinoUploadResult(success=True, log="ok")
 
         with patch(
-            "tinyodom.microcontrollers.arduino_base.compile_harness_sketch",
+            "crest.microcontrollers.arduino_base.compile_harness_sketch",
             return_value=compile_result,
         ), patch(
-            "tinyodom.microcontrollers.arduino_base.upload_harness_sketch",
+            "crest.microcontrollers.arduino_base.upload_harness_sketch",
             return_value=upload_result,
         ), patch(
-            "tinyodom.hil_protocol.run_handshake",
+            "crest.hil_protocol.run_handshake",
             return_value=handshake_result,
         ):
             result = measure_serial(
@@ -1867,13 +1867,13 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         upload_result = ArduinoUploadResult(success=True, log="ok")
 
         with patch(
-            "tinyodom.microcontrollers.arduino_base.compile_harness_sketch",
+            "crest.microcontrollers.arduino_base.compile_harness_sketch",
             return_value=compile_result,
         ), patch(
-            "tinyodom.microcontrollers.arduino_base.upload_harness_sketch",
+            "crest.microcontrollers.arduino_base.upload_harness_sketch",
             return_value=upload_result,
         ), patch(
-            "tinyodom.hil_protocol.run_handshake",
+            "crest.hil_protocol.run_handshake",
             return_value=handshake_result,
         ):
             result = measure_serial(
@@ -1921,13 +1921,13 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         upload_result = ArduinoUploadResult(success=True, log="ok")
 
         with patch(
-            "tinyodom.microcontrollers.arduino_base.compile_harness_sketch",
+            "crest.microcontrollers.arduino_base.compile_harness_sketch",
             return_value=compile_result,
         ), patch(
-            "tinyodom.microcontrollers.arduino_base.upload_harness_sketch",
+            "crest.microcontrollers.arduino_base.upload_harness_sketch",
             return_value=upload_result,
         ), patch(
-            "tinyodom.hil_protocol.run_handshake",
+            "crest.hil_protocol.run_handshake",
             return_value=handshake_result,
         ):
             result = measure_serial(
@@ -1967,13 +1967,13 @@ class HarnessMetricSelectionTests(unittest.TestCase):
         upload_result = ArduinoUploadResult(success=True, log="ok")
 
         with patch(
-            "tinyodom.microcontrollers.arduino_base.compile_harness_sketch",
+            "crest.microcontrollers.arduino_base.compile_harness_sketch",
             return_value=compile_result,
         ) as compile_mock, patch(
-            "tinyodom.microcontrollers.arduino_base.upload_harness_sketch",
+            "crest.microcontrollers.arduino_base.upload_harness_sketch",
             return_value=upload_result,
         ), patch(
-            "tinyodom.hil_protocol.run_handshake",
+            "crest.hil_protocol.run_handshake",
             return_value=handshake_result,
         ):
             measure_serial(
@@ -1985,7 +1985,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
                 harness_auto_flash="always",
             )
 
-        self.assertEqual(compile_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"], 7)
+        self.assertEqual(compile_mock.call_args.kwargs["build_defines"]["CREST_INFERENCE_RUNS"], 7)
 
     def test_measure_harness_only_open_session_uses_harness_latency(self):
         # Harness-only open-session measurements should source latency from the harness because the DUT is not reporting directly.
@@ -2004,7 +2004,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
             error=None,
         )
         with patch(
-            "tinyodom.microcontrollers.arduino_base.hil_protocol.wait_for_harness_done",
+            "crest.microcontrollers.arduino_base.hil_protocol.wait_for_harness_done",
             return_value=session,
         ):
             result = measure_harness_only_open_session(harness=object())
@@ -2030,7 +2030,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
             error="harness_done_timeout",
         )
         with patch(
-            "tinyodom.microcontrollers.arduino_base.hil_protocol.wait_for_harness_done",
+            "crest.microcontrollers.arduino_base.hil_protocol.wait_for_harness_done",
             return_value=session,
         ):
             result = measure_harness_only_open_session(harness=object())
@@ -2141,17 +2141,17 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
             return upload_result
 
         with patch.object(device, "compile", return_value=compile_result), patch(
-            "tinyodom.devices.arduino_base.ensure_harness_firmware",
+            "crest.devices.arduino_base.ensure_harness_firmware",
             side_effect=lambda **_kwargs: events.append("ensure_harness"),
         ), patch.object(
             device,
             "prepare_for_runtime",
             side_effect=lambda **_kwargs: events.append("prepare_runtime"),
-        ), patch("tinyodom.devices.serial.Serial", side_effect=_DummyHarness), patch(
-            "tinyodom.devices.hil_protocol.prime_harness_session",
+        ), patch("crest.devices.serial.Serial", side_effect=_DummyHarness), patch(
+            "crest.devices.hil_protocol.prime_harness_session",
             side_effect=lambda **_kwargs: (events.append("prime"), prime_result)[1],
         ), patch.object(device, "upload", side_effect=_upload_side_effect), patch(
-            "tinyodom.devices.arduino_base.measure_harness_only_open_session",
+            "crest.devices.arduino_base.measure_harness_only_open_session",
             side_effect=lambda **_kwargs: (events.append("measure"), measure_result)[1],
         ):
             result = device.evaluate(
@@ -2246,17 +2246,17 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
                 return False
 
         with patch.object(device, "compile", return_value=compile_result), patch(
-            "tinyodom.devices.arduino_base.ensure_harness_firmware",
+            "crest.devices.arduino_base.ensure_harness_firmware",
             return_value=True,
         ), patch.object(
             device,
             "prepare_for_runtime",
             return_value=None,
-        ), patch("tinyodom.devices.serial.Serial", side_effect=_DummyHarness), patch(
-            "tinyodom.devices.hil_protocol.prime_harness_session",
+        ), patch("crest.devices.serial.Serial", side_effect=_DummyHarness), patch(
+            "crest.devices.hil_protocol.prime_harness_session",
             return_value=prime_result,
         ), patch.object(device, "upload", return_value=upload_result), patch(
-            "tinyodom.devices.arduino_base.measure_harness_only_open_session",
+            "crest.devices.arduino_base.measure_harness_only_open_session",
             return_value=measure_result,
         ):
             result = device.evaluate(
@@ -2342,14 +2342,14 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
                 return False
 
         with patch.object(device, "compile", return_value=compile_result), patch(
-            "tinyodom.devices.arduino_base.ensure_harness_firmware",
+            "crest.devices.arduino_base.ensure_harness_firmware",
             return_value=True,
         ), patch.object(
             device,
             "prepare_for_runtime",
             return_value=None,
-        ), patch("tinyodom.devices.serial.Serial", side_effect=_DummyHarness), patch(
-            "tinyodom.devices.hil_protocol.prime_harness_session",
+        ), patch("crest.devices.serial.Serial", side_effect=_DummyHarness), patch(
+            "crest.devices.hil_protocol.prime_harness_session",
             return_value=prime_result,
         ), patch.object(device, "upload") as upload_mock:
             result = device.evaluate(
@@ -2384,13 +2384,13 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
         )
 
         with patch.object(device, "compile", return_value=compile_result), patch(
-            "tinyodom.devices.arduino_base.ensure_harness_firmware",
+            "crest.devices.arduino_base.ensure_harness_firmware",
             side_effect=RuntimeError("Harness compile failed."),
         ), patch.object(
             device,
             "prepare_for_runtime",
             return_value=None,
-        ), patch("tinyodom.devices.serial.Serial") as serial_mock, patch.object(
+        ), patch("crest.devices.serial.Serial") as serial_mock, patch.object(
             device, "upload"
         ) as upload_mock:
             result = device.evaluate(
@@ -2430,8 +2430,8 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
             "prepare_for_runtime",
             side_effect=RuntimeError("CM7 boot helper failed."),
         ), patch(
-            "tinyodom.devices.arduino_base.ensure_harness_firmware"
-        ) as ensure_mock, patch("tinyodom.devices.serial.Serial") as serial_mock, patch.object(
+            "crest.devices.arduino_base.ensure_harness_firmware"
+        ) as ensure_mock, patch("crest.devices.serial.Serial") as serial_mock, patch.object(
             device, "upload"
         ) as upload_mock:
             result = device.evaluate(
@@ -2470,9 +2470,9 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
             )
             device = ArduinoDevice("ARDUINO_NANO_33_BLE_SENSE")
 
-            with patch("tinyodom.hardware.convert_to_tflite_model") as tflite_mock, patch(
-                "tinyodom.hardware.convert_to_cpp_model"
-            ) as cpp_mock, patch("tinyodom.devices._sync_arduino_sketch_variant_for_config") as sync_mock:
+            with patch("crest.hardware.convert_to_tflite_model") as tflite_mock, patch(
+                "crest.hardware.convert_to_cpp_model"
+            ) as cpp_mock, patch("crest.devices._sync_arduino_sketch_variant_for_config") as sync_mock:
                 prepared_dir = device.prepare_candidate(request=request)
 
         self.assertEqual(prepared_dir, artifact_root)
@@ -2492,7 +2492,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
             power_metrics=None,
         )
         with patch(
-            "tinyodom.microcontrollers.arduino_base.measure_serial",
+            "crest.microcontrollers.arduino_base.measure_serial",
             return_value=fake_result,
         ) as mock_measure:
             device.measure(
@@ -2525,7 +2525,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
             power_metrics=None,
         )
         with patch(
-            "tinyodom.microcontrollers.arduino_base.measure_serial",
+            "crest.microcontrollers.arduino_base.measure_serial",
             return_value=fake_result,
         ) as mock_measure:
             device.measure(
@@ -2571,7 +2571,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
                 measured_inference_runs=7,
             )
 
-        self.assertEqual(compile_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"], 7)
+        self.assertEqual(compile_mock.call_args.kwargs["build_defines"]["CREST_INFERENCE_RUNS"], 7)
 
     def test_portenta_cm4_harness_only_compiles_harness_with_measured_inference_runs(self):
         # Portenta CM4 harness-only runs should compile the helper harness with the requested measured-run count.
@@ -2641,14 +2641,14 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
         ), patch.object(
             device, "prepare_for_runtime", return_value=None
         ), patch(
-            "tinyodom.devices.serial.Serial", return_value=_DummyHarness()
+            "crest.devices.serial.Serial", return_value=_DummyHarness()
         ), patch(
-            "tinyodom.devices.hil_protocol.prime_harness_session", return_value=prime_result
+            "crest.devices.hil_protocol.prime_harness_session", return_value=prime_result
         ), patch(
-            "tinyodom.devices.arduino_base.measure_harness_only_open_session",
+            "crest.devices.arduino_base.measure_harness_only_open_session",
             return_value=measure_result,
         ), patch(
-            "tinyodom.devices.arduino_base.ensure_harness_firmware"
+            "crest.devices.arduino_base.ensure_harness_firmware"
         ) as ensure_mock:
             device.evaluate(
                 dirpath=Path("/tmp"),
@@ -2661,7 +2661,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
                 measured_inference_runs=7,
             )
 
-        self.assertEqual(ensure_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"], 7)
+        self.assertEqual(ensure_mock.call_args.kwargs["build_defines"]["CREST_INFERENCE_RUNS"], 7)
 
 
 class HILSpecErrorTests(unittest.TestCase):
@@ -2688,12 +2688,12 @@ class HILSpecErrorTests(unittest.TestCase):
             Sketch directory forwarded to the hardware helper.
         """
         sketch_dir.mkdir(parents=True, exist_ok=True)
-        (sketch_dir / "TinyOdom.ino").write_text(
+        (sketch_dir / "crest.ino").write_text(
             "\n".join(
                 [
-                    "#define TINYODOM_WINDOW_SIZE 100",
-                    "#define TINYODOM_NUM_CHANNELS 1",
-                    "#define TINYODOM_TENSOR_ARENA_BYTES (10 * 1024)",
+                    "#define CREST_WINDOW_SIZE 100",
+                    "#define CREST_NUM_CHANNELS 1",
+                    "#define CREST_TENSOR_ARENA_BYTES (10 * 1024)",
                 ]
             )
         )
@@ -2707,7 +2707,7 @@ class HILSpecErrorTests(unittest.TestCase):
             compile_result = _FakeCompletedProcess(stdout=COMPILE_SAMPLE_OUTPUT)
             upload_result = _FakeCompletedProcess(returncode=1)
             with patch(
-                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                "crest.microcontrollers.arduino_base.subprocess.run",
                 side_effect=[compile_result, upload_result],
             ) as mock_run:
                 ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -2732,11 +2732,11 @@ class HILSpecErrorTests(unittest.TestCase):
             compile_result = _FakeCompletedProcess(stdout=COMPILE_SAMPLE_OUTPUT)
             upload_result = _FakeCompletedProcess(stdout="upload ok")
             with patch(
-                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                "crest.microcontrollers.arduino_base.subprocess.run",
                 side_effect=[compile_result, upload_result],
             ):
                 with patch(
-                    "tinyodom.hil_protocol.run_dut_only",
+                    "crest.hil_protocol.run_dut_only",
                     return_value=["boot ok"],
                 ):
                     ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -2777,7 +2777,7 @@ class HILSpecErrorTests(unittest.TestCase):
                 stderr=FLASH_OVERFLOW_STDERR,
             )
             with patch(
-                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                "crest.microcontrollers.arduino_base.subprocess.run",
                 return_value=compile_result,
             ) as mock_run:
                 ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -2802,7 +2802,7 @@ class HILSpecErrorTests(unittest.TestCase):
                 stderr=RAM_OVERFLOW_STDERR,
             )
             with patch(
-                "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                "crest.microcontrollers.arduino_base.subprocess.run",
                 return_value=compile_result,
             ) as mock_run:
                 ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -2824,11 +2824,11 @@ class HILSpecErrorTests(unittest.TestCase):
             compile_result = _FakeCompletedProcess(stdout=COMPILE_SAMPLE_OUTPUT)
             upload_result = _FakeCompletedProcess(stdout="upload ok")
             with patch(
-                    "tinyodom.microcontrollers.arduino_base.subprocess.run",
+                    "crest.microcontrollers.arduino_base.subprocess.run",
                     side_effect=[compile_result, upload_result],
                 ):
                 with patch(
-                    "tinyodom.hil_protocol.run_dut_only",
+                    "crest.hil_protocol.run_dut_only",
                     return_value=["size is too small for all buffers"],
                 ):
                     ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -2902,7 +2902,7 @@ class HILControllerTests(unittest.TestCase):
         arena_candidates = np.array([10, 20])
         device = self._controller_device(arena_candidates)
         hil_return = (64000, 128000, 0.25, 10 * 1024, HIL_ERROR_OK, None)
-        with patch("tinyodom.hardware.HIL_spec",
+        with patch("crest.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -2942,7 +2942,7 @@ class HILControllerTests(unittest.TestCase):
             arena = arena_candidates[idx] * 1024
             return (50000, 100000, -1.0, arena, HIL_ERROR_LATENCY, None)
 
-        with patch("tinyodom.hardware.HIL_spec",
+        with patch("crest.hardware.HIL_spec",
             side_effect=hil_side_effect,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -2965,7 +2965,7 @@ class HILControllerTests(unittest.TestCase):
         device = self._controller_device(arena_candidates, name="STM32_NUCLEO_N657X0_Q")
 
         with patch(
-            "tinyodom.hardware.HIL_spec",
+            "crest.hardware.HIL_spec",
             return_value=(50000, 100000, -1.0, -1024, HIL_ERROR_LATENCY, None),
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -2987,7 +2987,7 @@ class HILControllerTests(unittest.TestCase):
         arena_candidates = np.array([10, 20])
         device = self._controller_device(arena_candidates)
         hil_return = (72000, 160000, -1.0, 10 * 1024, HIL_ERROR_COMPILE, None)
-        with patch("tinyodom.hardware.HIL_spec",
+        with patch("crest.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -3008,7 +3008,7 @@ class HILControllerTests(unittest.TestCase):
         arena_candidates = np.array([10])
         device = self._controller_device(arena_candidates)
         hil_return = (-1, -1, -1.0, 10 * 1024, HIL_ERROR_FLASH_OVERFLOW, None)
-        with patch("tinyodom.hardware.HIL_spec",
+        with patch("crest.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -3029,7 +3029,7 @@ class HILControllerTests(unittest.TestCase):
         arena_candidates = np.array([10])
         device = self._controller_device(arena_candidates)
         hil_return = (64000, 128000, -1.0, 10 * 1024, HIL_ERROR_UPLOAD, None)
-        with patch("tinyodom.hardware.HIL_spec",
+        with patch("crest.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -3073,7 +3073,7 @@ class HILControllerTests(unittest.TestCase):
             self.assertEqual(idx, 0)
             return (-1, -1, -1.0, arena, HIL_ERROR_UNDER_SIZED, None)
 
-        with patch("tinyodom.hardware.HIL_spec",
+        with patch("crest.hardware.HIL_spec",
             side_effect=hil_side_effect,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -3095,7 +3095,7 @@ class HILControllerTests(unittest.TestCase):
         arena_candidates = np.array([10])
         device = self._controller_device(arena_candidates)
         hil_return = (-1, -1, -1.0, 10 * 1024, HIL_ERROR_RAM_OVERFLOW, None)
-        with patch("tinyodom.hardware.HIL_spec",
+        with patch("crest.hardware.HIL_spec",
             return_value=hil_return,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -3137,7 +3137,7 @@ class HILControllerTests(unittest.TestCase):
             self.assertEqual(idx, 0)
             return (-1, -1, -1.0, arena, HIL_ERROR_RAM_OVERFLOW, None)
 
-        with patch("tinyodom.hardware.HIL_spec",
+        with patch("crest.hardware.HIL_spec",
             side_effect=hil_side_effect,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -3187,7 +3187,7 @@ class HILControllerTests(unittest.TestCase):
             self.assertEqual(idx, 2)
             return (-1, -1, -1.0, arena, HIL_ERROR_UNDER_SIZED, None)
 
-        with patch("tinyodom.hardware.HIL_spec",
+        with patch("crest.hardware.HIL_spec",
             side_effect=hil_side_effect,
         ) as mock_spec:
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -3232,10 +3232,10 @@ class HILControllerTests(unittest.TestCase):
             return (-1, -1, -1.0, arena, HIL_ERROR_UNDER_SIZED, None)
 
         with patch(
-            "tinyodom.hardware.arena_size_candidates",
+            "crest.hardware.arena_size_candidates",
             side_effect=AssertionError("arena_size_candidates should not be used for injected devices"),
         ), patch(
-            "tinyodom.hardware.HIL_spec",
+            "crest.hardware.HIL_spec",
             side_effect=hil_side_effect,
         ):
             ram, flash, latency, arena_bytes, master_error, _power_metrics = HIL_controller(
@@ -3271,18 +3271,18 @@ class IntegrationTests(TinyModelMixin, unittest.TestCase):
 
             sketch_dir = tmp_path / "odom_tcn"
             sketch_dir.mkdir()
-            (sketch_dir / "TinyOdom.ino").write_text(
+            (sketch_dir / "crest.ino").write_text(
                 "\n".join(
                     [
-                        "#define TINYODOM_WINDOW_SIZE 100",
-                        "#define TINYODOM_NUM_CHANNELS 1",
-                        "#define TINYODOM_TENSOR_ARENA_BYTES (10 * 1024)",
+                        "#define CREST_WINDOW_SIZE 100",
+                        "#define CREST_NUM_CHANNELS 1",
+                        "#define CREST_TENSOR_ARENA_BYTES (10 * 1024)",
                     ]
                 )
             )
 
             compile_result = _FakeCompletedProcess(stdout=COMPILE_SAMPLE_OUTPUT)
-            with patch("tinyodom.microcontrollers.arduino_base.subprocess.run", return_value=compile_result) as mock_run:
+            with patch("crest.microcontrollers.arduino_base.subprocess.run", return_value=compile_result) as mock_run:
                     ram, flash, latency, arena_bytes, err, _power = HIL_spec(
                     dirpath=sketch_dir,
                     chosen_device="ARDUINO_NANO_33_BLE_SENSE",

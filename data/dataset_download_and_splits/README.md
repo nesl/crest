@@ -80,8 +80,8 @@ dataset layout remains unchanged.
 
 The built-in UrbanSound8K audio dataset adapter lives in:
 
-- [`src/tinyodom/datasets/urbansound8k_mel.py`](../../src/tinyodom/datasets/urbansound8k_mel.py)
-- [`src/tinyodom/datasets/urbansound8k_common.py`](../../src/tinyodom/datasets/urbansound8k_common.py)
+- [`src/crest/datasets/urbansound8k_mel.py`](../../src/crest/datasets/urbansound8k_mel.py)
+- [`src/crest/datasets/urbansound8k_common.py`](../../src/crest/datasets/urbansound8k_common.py)
 
 It loads the cached log-mel feature tensors produced by
 `prepare_urbansound8k.py` and is selected with `dataset.name:
@@ -89,10 +89,10 @@ urbansound8k_mel`.
 
 The built-in OxIOD dataset adapter lives in:
 
-- [`src/tinyodom/datasets/oxiod.py`](../../src/tinyodom/datasets/oxiod.py)
-- [`src/tinyodom/data.py`](../../src/tinyodom/data.py)
+- [`src/crest/datasets/oxiod.py`](../../src/crest/datasets/oxiod.py)
+- [`src/crest/data.py`](../../src/crest/data.py)
 
-`import_oxiod_dataset(...)` in `src/tinyodom/data.py` reads the split files
+`import_oxiod_dataset(...)` in `src/crest/data.py` reads the split files
 from each activity folder and uses:
 
 - `type_flag=1` for `Train_Valid.txt`

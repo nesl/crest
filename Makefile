@@ -1,7 +1,7 @@
 .PHONY: help install test integration-test test-all start-gpu start-hil smoke env-create arduino-setup stm32-setup prepare-dataset prepare-audio-dataset clean
 
 PYTHON ?= python
-ENV ?= tinyodomex
+ENV ?= crest
 OXIOD_ZIP ?= OxIOD.zip
 URBANSOUND8K_ARGS ?=
 PYTHON_LIB_DIR := $(shell $(PYTHON) -c 'import sys; print(sys.prefix + "/lib")')

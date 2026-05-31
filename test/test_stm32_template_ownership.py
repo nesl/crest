@@ -11,12 +11,12 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-CANONICAL_ROOT = ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun"
+CANONICAL_ROOT = ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun"
 MANIFEST_PATH = CANONICAL_ROOT / "lrun_ownership_manifest.tsv"
 ALLOWED_CATEGORIES = {
     "vendor_copy",
     "vendor_derived",
-    "tinyodom_owned",
+    "crest_owned",
     "generated",
     "build_recipe",
 }
@@ -65,16 +65,16 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
         None
         """
         legacy_tokens = (
-            "tinyodom_" + "tcn_stm32",
-            "tinyodom_" + "tcn_stm32_lrun",
+            "crest_" + "tcn_stm32",
+            "crest_" + "tcn_stm32_lrun",
             "tcn_" + "dut",
             "TCN_" + "DUT",
             "Tcn" + "Dut",
         )
         scoped_prefixes = (
-            "sketches/stm32/tinyodom_stm32_lrun/",
+            "sketches/stm32/crest_stm32_lrun/",
             "src/config/",
-            "src/tinyodom/microcontrollers/stm32_nucleo_n657x0.py",
+            "src/crest/microcontrollers/stm32_nucleo_n657x0.py",
             "test/test_model.py",
             "test/test_stm32_",
         )
@@ -82,8 +82,8 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
             "README.md",
             "setup_stm32.sh",
             "sketches/README.md",
-            "src/tinyodom/microcontrollers/README.md",
-            "src/tinyodom/model.py",
+            "src/crest/microcontrollers/README.md",
+            "src/crest/model.py",
         }
         result = subprocess.run(
             ["git", "ls-files"],
@@ -120,22 +120,22 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
         """
         script_text = (ROOT_DIR / "setup_stm32.sh").read_text(encoding="utf-8")
 
-        self.assertIn("sketches/stm32/tinyodom_stm32_lrun", script_text)
-        self.assertIn('"Appli/Inc/tinyodom_dut_runner.h"', script_text)
-        self.assertIn('"Appli/Src/tinyodom_dut_runner.c"', script_text)
+        self.assertIn("sketches/stm32/crest_stm32_lrun", script_text)
+        self.assertIn('"Appli/Inc/crest_dut_runner.h"', script_text)
+        self.assertIn('"Appli/Src/crest_dut_runner.c"', script_text)
         self.assertIn(
-            'require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/tinyodom_dut_runner.h"',
+            'require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/crest_dut_runner.h"',
             script_text,
         )
         self.assertIn(
-            'require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Src/tinyodom_dut_runner.c"',
+            'require_file "$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Src/crest_dut_runner.c"',
             script_text,
         )
         self.assertIn(
-            '"$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/tinyodom_dut_phase_config.h"',
+            '"$CANONICAL_LRUN_TEMPLATE_ROOT/Appli/Inc/crest_dut_phase_config.h"',
             script_text,
         )
-        self.assertNotIn("tinyodom_" + "tcn_stm32_lrun", script_text)
+        self.assertNotIn("crest_" + "tcn_stm32_lrun", script_text)
         self.assertNotIn("tcn_" + "dut_runner", script_text)
         self.assertNotIn("tcn_" + "dut_phase_config", script_text)
 
@@ -159,7 +159,7 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
         # Files marked as kept in the manifest should still exist in the canonical workspace.
         """Validate manifest kept files exist in canonical workspace."""
         for category, relative_path, _ in _load_manifest_rows():
-            if category in {"vendor_derived", "tinyodom_owned", "build_recipe"}:
+            if category in {"vendor_derived", "crest_owned", "build_recipe"}:
                 self.assertTrue((CANONICAL_ROOT / relative_path).is_file(), relative_path)
 
     def test_vendor_copy_sources_exist_when_cube_checkout_is_available(self) -> None:

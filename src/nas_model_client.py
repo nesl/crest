@@ -1,4 +1,4 @@
-"""Top-level NAS orchestration client for TinyODOM experiments.
+"""Top-level NAS orchestration client for CREST experiments.
 
 This module bridges the modular dataset/task/model-family registry system to
 the current Optuna, HIL RPC, final-training, and artifact-reporting workflow.
@@ -27,7 +27,7 @@ import numpy as np
 import optuna
 import tensorflow as tf
 from optuna.trial import TrialState
-from tinyodom.hardware import (
+from crest.hardware import (
     HIL_MASTER_ARENA_EXHAUSTED,
     HIL_MASTER_DEVICE_NOT_FOUND,
     HIL_MASTER_FATAL,
@@ -39,14 +39,14 @@ from tinyodom.hardware import (
     predict_tflite_model_subprocess,
     return_hardware_specs,
 )
-from tinyodom.microcontrollers import (
+from crest.microcontrollers import (
     get_device as get_microcontroller_device,
     resolve_device_options,
 )
-from tinyodom.builtin_components import ensure_builtin_components_registered
-from tinyodom.component_selection import cfg_get, resolve_component_selection
-from tinyodom.cadence import resolve_batch_period_ms
-from tinyodom.model import (
+from crest.builtin_components import ensure_builtin_components_registered
+from crest.component_selection import cfg_get, resolve_component_selection
+from crest.cadence import resolve_batch_period_ms
+from crest.model import (
     NONNEGATIVE_METRICS,
     ScoreConfigEvaluationError,
     configured_quantization_mode,
@@ -66,10 +66,10 @@ from tinyodom.model import (
     score_config_uses_training_metrics,
     set_error_code,
 )
-from tinyodom.model_metrics import StaticMemoryEstimate
-from tinyodom.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
-from tinyodom.registry import dataset_registry, model_family_registry
-from tinyodom.runtime_bootstrap import bootstrap_pipeline
+from crest.model_metrics import StaticMemoryEstimate
+from crest.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
+from crest.registry import dataset_registry, model_family_registry
+from crest.runtime_bootstrap import bootstrap_pipeline
 
 tf.get_logger().setLevel(logging.ERROR)
 absl.logging.set_verbosity(absl.logging.ERROR)
@@ -93,7 +93,7 @@ RUNTIME_ONLY_METRICS = frozenset(
         "harness_latency_ms",
     }
 )
-FEASIBILITY_POLICY_SIGNATURE_ATTR = "tinyodom_feasibility_policy_signature"
+FEASIBILITY_POLICY_SIGNATURE_ATTR = "crest_feasibility_policy_signature"
 FEASIBILITY_NOT_EVALUATED_CONSTRAINT = 1e12
 
 
@@ -149,7 +149,7 @@ class NASModelClient:
     This class wires together configuration loading, hardware-in-the-loop (HIL)
     measurements, Optuna-based Neural Architecture Search (NAS), model
     training, evaluation, trajectory analysis, and artifact export for the
-    TinyODOM-EX workflow.
+    CREST workflow.
 
     It manages a ZeroMQ REQ socket to a HIL server that compiles and flashes
     candidate models to the target board, returning resource usage (RAM/flash,
@@ -202,7 +202,7 @@ class NASModelClient:
     Full scoring workflow with local SQLite storage:
 
     >>> client = NASModelClient()
-    >>> client.run_scoring_nas(study_name="tinyodom_nas_study")
+    >>> client.run_scoring_nas(study_name="crest_nas_study")
     """
 
     def __init__(self, config_path: Path=DEFAULT_CONFIG_PATH):
@@ -368,7 +368,7 @@ class NASModelClient:
         Any
             Instantiated task component.
         """
-        from tinyodom.runtime_bootstrap import instantiate_task_component
+        from crest.runtime_bootstrap import instantiate_task_component
 
         return instantiate_task_component(
             task_name,
@@ -1422,7 +1422,7 @@ class NASModelClient:
         return split
 
     def objective(self, trial: optuna.Trial) -> float | tuple:
-        """Optimize TinyODOM architecture and training hyperparameters.
+        """Optimize CREST architecture and training hyperparameters.
 
         This objective samples model hyperparameters (e.g., filters, kernel size,
         dilations) via Optuna, builds the corresponding TCN model to estimate
@@ -2495,7 +2495,7 @@ class NASModelClient:
             Dataset bundle to train against.
         target_spec : Any
             Task target specification for ``bundle``.
-        model_build_context : tinyodom.pipeline_types.ModelBuildContext
+        model_build_context : crest.pipeline_types.ModelBuildContext
             Model construction context for ``bundle``.
         model_config : Any
             Model-family configuration subtree.
@@ -2586,7 +2586,7 @@ class NASModelClient:
             Task component used to evaluate the model.
         target_spec : Any
             Task target specification for ``bundle``.
-        model_build_context : tinyodom.pipeline_types.ModelBuildContext
+        model_build_context : crest.pipeline_types.ModelBuildContext
             Model loading context for ``bundle``.
         model_config : Any
             Model-family configuration subtree.
@@ -3507,7 +3507,7 @@ class NASModelClient:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="TinyODOM NAS workflow runner.")
+    parser = argparse.ArgumentParser(description="CREST NAS workflow runner.")
     parser.add_argument(
         "--config",
         type=Path,
@@ -3529,7 +3529,7 @@ if __name__ == "__main__":
         "--study-name",
         type=str,
         help="Name of the Optuna study to use for the NAS pipeline.",
-        default="tinyodom_nas_study",
+        default="crest_nas_study",
     )
     args = parser.parse_args()
 

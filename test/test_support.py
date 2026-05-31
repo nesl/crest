@@ -1,4 +1,4 @@
-"""Shared test helpers used across TinyODOM unit and integration suites."""
+"""Shared test helpers used across CREST unit and integration suites."""
 
 import os
 import shutil
@@ -16,7 +16,7 @@ SKETCH_SOURCE_DIR = TEST_DIR / "odom_tcn"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from tinyodom.microcontrollers.arduino_base import ARDUINO_CLI_BIN  # noqa: E402
+from crest.microcontrollers.arduino_base import ARDUINO_CLI_BIN  # noqa: E402
 
 
 def _cli_exists() -> bool:

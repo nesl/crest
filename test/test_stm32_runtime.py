@@ -15,7 +15,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from tinyodom.microcontrollers import stm32_runtime  # noqa: E402
+from crest.microcontrollers import stm32_runtime  # noqa: E402
 
 
 class _FakeSerial:
@@ -259,7 +259,7 @@ class SerialMonitorTests(unittest.TestCase):
         """Validate serial monitor replays history and writes lines."""
         fake_serial = _FakeSerial("/dev/ttyACM0", 115200, 0.2)
 
-        with patch("tinyodom.microcontrollers.stm32_runtime.serial.Serial", return_value=fake_serial):
+        with patch("crest.microcontrollers.stm32_runtime.serial.Serial", return_value=fake_serial):
             monitor = stm32_runtime.SerialMonitor("/dev/ttyACM0", 115200, "dut")
             try:
                 fake_serial.push_line("STM32_AI_INIT=OK")

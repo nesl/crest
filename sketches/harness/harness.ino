@@ -1,14 +1,14 @@
 // Harness sketch for INA228 power measurement triggered by DUT GPIO.
-#define TINYODOM_USE_INA228 1
+#define CREST_USE_INA228 1
 
-#include "common/tinyodom_hil_config.h"
-#include "common/tinyodom_power.h"
+#include "common/crest_hil_config.h"
+#include "common/crest_power.h"
 
 namespace {
 
-// Timeouts are shared with the host via tinyodom_hil_config.h.
-constexpr uint32_t kArmTimeoutMs = TINYODOM_HARNESS_ARM_TIMEOUT_MS;
-constexpr uint32_t kActiveTimeoutMs = TINYODOM_HARNESS_ACTIVE_TIMEOUT_MS;
+// Timeouts are shared with the host via crest_hil_config.h.
+constexpr uint32_t kArmTimeoutMs = CREST_HARNESS_ARM_TIMEOUT_MS;
+constexpr uint32_t kActiveTimeoutMs = CREST_HARNESS_ACTIVE_TIMEOUT_MS;
 constexpr uint32_t kSerialTimeoutMs = 50;
 
 enum class HarnessState {
@@ -52,7 +52,7 @@ void EnterIdle() {
 void EnterArmed() {
   state = HarnessState::kArmed;
   ResetArmState();
-  Serial.println(TINYODOM_RESP_ARMED);
+  Serial.println(CREST_RESP_ARMED);
 }
 
 // Start an active measurement window.
@@ -60,7 +60,7 @@ void EnterActive() {
   state = HarnessState::kActive;
   active_start_ms = millis();
   active_start_us = micros();
-  tinyodom_power::ResetAccumulators();
+  crest_power::ResetAccumulators();
 }
 
 // Emit run count, energy telemetry, harness timing, and DONE marker.
@@ -68,12 +68,12 @@ void EmitHarnessTelemetry(uint32_t runs_completed, float latency_s, float energy
   ++inference_seq;
   Serial.print("runs: ");
   Serial.println(runs_completed);
-  tinyodom_power::EmitPowerTelemetry(
+  crest_power::EmitPowerTelemetry(
       inference_seq, latency_s, runs_completed,
-      tinyodom_power::GetIdleBaselinePower(), energy_total_j);
+      crest_power::GetIdleBaselinePower(), energy_total_j);
   Serial.print("harness timer output: ");
   Serial.println(latency_s, 6);
-  Serial.println(TINYODOM_RESP_DONE);
+  Serial.println(CREST_RESP_DONE);
 }
 
 }  // namespace
@@ -86,26 +86,26 @@ void setup() {
   }
 
   // Monitor the DUT trigger line and initialize the INA228.
-  pinMode(TINYODOM_HARNESS_ARM_PIN, INPUT_PULLUP);
-  pinMode(TINYODOM_HARNESS_TRIGGER_PIN, INPUT_PULLDOWN);
-  tinyodom_power::InitializePowerMonitor();
+  pinMode(CREST_HARNESS_ARM_PIN, INPUT_PULLUP);
+  pinMode(CREST_HARNESS_TRIGGER_PIN, INPUT_PULLDOWN);
+  crest_power::InitializePowerMonitor();
 
   // Advertise readiness to the host.
-  Serial.println(TINYODOM_HARNESS_READY);
+  Serial.println(CREST_HARNESS_READY);
 }
 
 void loop() {
   // Handle PING commands from the host.
   const String line = ReadLineIfAvailable();
   if (line.length() > 0) {
-    if (line.equalsIgnoreCase(TINYODOM_CMD_PING)) {
-      Serial.println(TINYODOM_HARNESS_READY);
+    if (line.equalsIgnoreCase(CREST_CMD_PING)) {
+      Serial.println(CREST_HARNESS_READY);
     }
   }
 
   // Sample the arm and trigger pins once per loop for edge detection.
-  const int arm_pin_state = digitalRead(TINYODOM_HARNESS_ARM_PIN);
-  const int pin_state = digitalRead(TINYODOM_HARNESS_TRIGGER_PIN);
+  const int arm_pin_state = digitalRead(CREST_HARNESS_ARM_PIN);
+  const int pin_state = digitalRead(CREST_HARNESS_TRIGGER_PIN);
 
   // IDLE: wait for D3 LOW and D2 LOW to remain stable before arming.
   if (state == HarnessState::kIdle) {
@@ -113,7 +113,7 @@ void loop() {
       if (stable_low_start_ms == 0) {
         stable_low_start_ms = millis();
       }
-      if (millis() - stable_low_start_ms >= TINYODOM_HARNESS_STABLE_LOW_MS) {
+      if (millis() - stable_low_start_ms >= CREST_HARNESS_STABLE_LOW_MS) {
         EnterArmed();
       }
     } else {
@@ -139,10 +139,10 @@ void loop() {
       state = HarnessState::kWaitDisarmHigh;
     } else if (pin_state == LOW && last_pin_state == HIGH) {
       const uint32_t total_latency_us = micros() - active_start_us;
-      const uint32_t runs_completed = TINYODOM_INFERENCE_RUNS;
+      const uint32_t runs_completed = CREST_INFERENCE_RUNS;
       const float latency_s =
           (static_cast<float>(total_latency_us) / runs_completed) / 1000000.0f;
-      const float energy_total_j = tinyodom_power::FlushEnergyWindow();
+      const float energy_total_j = crest_power::FlushEnergyWindow();
       EmitHarnessTelemetry(runs_completed, latency_s, energy_total_j);
       state = HarnessState::kWaitDisarmHigh;
     }

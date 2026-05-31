@@ -1,10 +1,11 @@
-# TinyODOM-EX
+# CREST
 
-TinyODOM-EX is a hardware-aware embedded machine learning NAS repo. It combines dataset, task, and
-model-family selection with board-specific hardware-in-the-loop measurement so
-the same training/NAS flow can target odometry and audio-classification models
-on resource-constrained microcontrollers including Nano 33 BLE, Portenta H7,
-and STM32 N6.
+CREST (Cross-platform Runtime Evaluation and Search Tool) is a hardware-aware
+embedded sensing NAS framework. It combines dataset, task, and model-family
+selection with board-specific hardware-in-the-loop measurement so the same
+training/NAS flow can target odometry and audio-classification models on
+resource-constrained microcontrollers including Nano 33 BLE, Portenta H7, and
+STM32 N6.
 
 ## Architecture At A Glance
 
@@ -38,7 +39,7 @@ For the source-level architecture and extension points, see
    for Portenta H7. For the audio DS-CNN path, use
    [src/config/nas_config_audio_portenta.yaml](src/config/nas_config_audio_portenta.yaml).
    Then read
-   [src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md)
+   [src/crest/microcontrollers/README.md](src/crest/microcontrollers/README.md)
    and [sketches/README.md](sketches/README.md).
 
 3. **STM32 HIL**
@@ -46,9 +47,9 @@ For the source-level architecture and extension points, see
    Start from [src/config/nas_config_stm32.yaml](src/config/nas_config_stm32.yaml), then
    use [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
    for the audio DS-CNN HIL path. Then
-   read [src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md)
+   read [src/crest/microcontrollers/README.md](src/crest/microcontrollers/README.md)
    and the committed STM32 workspace notes under
-   [sketches/stm32/tinyodom_stm32_lrun/README.md](sketches/stm32/tinyodom_stm32_lrun/README.md).
+   [sketches/stm32/crest_stm32_lrun/README.md](sketches/stm32/crest_stm32_lrun/README.md).
 
 4. **Analysis scripts / one-off experiments**
    Use this for focused measurement or validation runs outside the main NAS
@@ -68,8 +69,8 @@ For the source-level architecture and extension points, see
 
 2. **Create and activate the Conda environment.**
    ```bash
-   conda env create -f environment.yml -n tinyodomex
-   conda activate tinyodomex
+   conda env create -f environment.yml -n crest
+   conda activate crest
    ```
 
 3. **Install the repo in editable mode.**
@@ -127,7 +128,7 @@ for each activity. The dataset-specific details live in
 All Arduino CLI state is kept inside `tools/` so the repo does not need to
 write into `$HOME` or system directories.
 
-1. Ensure `tinyodomex` is active.
+1. Ensure `crest` is active.
 2. Bootstrap Arduino CLI and repo-local hooks:
    ```bash
    make arduino-setup
@@ -135,7 +136,7 @@ write into `$HOME` or system directories.
 3. Reactivate the environment so the new hooks are loaded:
    ```bash
    conda deactivate
-   conda activate tinyodomex
+   conda activate crest
    ```
 4. Verify the CLI:
    ```bash
@@ -148,7 +149,7 @@ write into `$HOME` or system directories.
 
 If Portenta uploads on Linux fail with `LIBUSB_ERROR_ACCESS`, add the udev
 rules documented in
-[src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md).
+[src/crest/microcontrollers/README.md](src/crest/microcontrollers/README.md).
 
 ## STM32 Setup
 
@@ -218,14 +219,14 @@ see [src/config/README.md](src/config/README.md).
 
 ## Running NAS And HIL
 
-TinyODOM-EX runs a NAS/training client on a training host and talks to the HIL
+CREST runs a NAS/training client on a training host and talks to the HIL
 server running on the board-connected device host.
 
 ### 1. Start the HIL server on the device host
 
 ```bash
-cd /path/to/TinyODOM-EX
-conda activate tinyodomex
+cd /path/to/CREST
+conda activate crest
 python src/hil_server.py
 ```
 
@@ -243,14 +244,14 @@ The default configs expect the HIL server at `127.0.0.1:6001`.
 ### 3. Run the NAS client on the training host
 
 ```bash
-cd /path/to/TinyODOM-EX
-conda activate tinyodomex
+cd /path/to/CREST
+conda activate crest
 
 # Quick smoke pass
 python3 src/nas_model_client.py --smoke-test 3 --study-name smoke_run
 
 # Full NAS run
-python3 src/nas_model_client.py --study-name tinyodom_run
+python3 src/nas_model_client.py --study-name crest_run
 ```
 
 Useful flags:
@@ -276,9 +277,9 @@ Artifacts are written under the configured `outputs.models_dir` and
   Source architecture, shared abstractions, trial logging, and extension seams.
 - [src/config/README.md](src/config/README.md)
   Full config reference and scoring/pruning semantics.
-- [src/tinyodom/microcontrollers/README.md](src/tinyodom/microcontrollers/README.md)
+- [src/crest/microcontrollers/README.md](src/crest/microcontrollers/README.md)
   Backend contracts, bring-up, staging, compile, upload, and runtime flows.
-- [src/tinyodom/model_families/README.md](src/tinyodom/model_families/README.md)
+- [src/crest/model_families/README.md](src/crest/model_families/README.md)
   Model-family-specific extension guide.
 - [sketches/README.md](sketches/README.md)
   Shared Arduino sketch and STM32 workspace layout.

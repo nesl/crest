@@ -1,7 +1,7 @@
 # Source Guide
 
 This directory contains the Python entry points and core library code for the
-TinyODOM-EX training, hardware-in-the-loop, and deployment flow.
+CREST training, hardware-in-the-loop, and deployment flow.
 
 This guide maps the training, HIL, and extension surfaces under `src/`.
 
@@ -12,7 +12,7 @@ Related docs:
 - Config block meanings, NAS policy shape, and runtime config caveats live in
   [`config/README.md`](config/README.md).
 - Microcontroller and hardware-backend bring-up live in
-  [`tinyodom/microcontrollers/README.md`](tinyodom/microcontrollers/README.md).
+  [`crest/microcontrollers/README.md`](crest/microcontrollers/README.md).
 
 ## Top-Level Entry Points
 
@@ -28,52 +28,52 @@ Related docs:
 
 ## Package Map
 
-The `tinyodom/` package holds the reusable implementation behind the entry
+The `crest/` package holds the reusable implementation behind the entry
 points above.
 
-- [`tinyodom/component_selection.py`](tinyodom/component_selection.py)
+- [`crest/component_selection.py`](crest/component_selection.py)
   Resolves the active dataset, task, and model-family selections from config.
-- [`tinyodom/registry.py`](tinyodom/registry.py)
+- [`crest/registry.py`](crest/registry.py)
   Defines the string-keyed registries for datasets, tasks, and model families.
-- [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py)
+- [`crest/builtin_components.py`](crest/builtin_components.py)
   Registers the built-in dataset, task, and model-family implementations.
-- [`tinyodom/interfaces.py`](tinyodom/interfaces.py)
+- [`crest/interfaces.py`](crest/interfaces.py)
   Defines the core abstraction contracts:
   `DatasetABC`, `TaskABC`, and `ModelFamilyABC`.
-- [`tinyodom/pipeline_types.py`](tinyodom/pipeline_types.py)
+- [`crest/pipeline_types.py`](crest/pipeline_types.py)
   Defines shared typed payloads passed between the modular pipeline layers.
-- [`tinyodom/datasets/`](tinyodom/datasets)
-  Dataset adapters. Built-ins include [`oxiod.py`](tinyodom/datasets/oxiod.py)
-  and [`urbansound8k_mel.py`](tinyodom/datasets/urbansound8k_mel.py).
-- [`tinyodom/tasks/`](tinyodom/tasks)
+- [`crest/datasets/`](crest/datasets)
+  Dataset adapters. Built-ins include [`oxiod.py`](crest/datasets/oxiod.py)
+  and [`urbansound8k_mel.py`](crest/datasets/urbansound8k_mel.py).
+- [`crest/tasks/`](crest/tasks)
   Task adapters. Built-ins include
-  [`odometry_regression.py`](tinyodom/tasks/odometry_regression.py) and
-  [`sound_classification.py`](tinyodom/tasks/sound_classification.py).
-- [`tinyodom/model_families/`](tinyodom/model_families)
+  [`odometry_regression.py`](crest/tasks/odometry_regression.py) and
+  [`sound_classification.py`](crest/tasks/sound_classification.py).
+- [`crest/model_families/`](crest/model_families)
   Model-family implementations. Built-ins include
-  [`odom_tcn.py`](tinyodom/model_families/odom_tcn.py) and
-  [`audio_dscnn.py`](tinyodom/model_families/audio_dscnn.py).
-- [`tinyodom/microcontrollers/`](tinyodom/microcontrollers)
+  [`odom_tcn.py`](crest/model_families/odom_tcn.py) and
+  [`audio_dscnn.py`](crest/model_families/audio_dscnn.py).
+- [`crest/microcontrollers/`](crest/microcontrollers)
   Hardware backends and backend registry/factory logic. See
-  [`tinyodom/microcontrollers/README.md`](tinyodom/microcontrollers/README.md)
+  [`crest/microcontrollers/README.md`](crest/microcontrollers/README.md)
   for bring-up details.
-- [`tinyodom/model.py`](tinyodom/model.py)
+- [`crest/model.py`](crest/model.py)
   Shared runtime helpers for config loading, score evaluation, and generic
   metric normalization.
-- [`tinyodom/runtime_bootstrap.py`](tinyodom/runtime_bootstrap.py)
+- [`crest/runtime_bootstrap.py`](crest/runtime_bootstrap.py)
   Shared task-aware bootstrap path used by both `nas_model_client.py` and
   `hil_server.py` to resolve component selection, instantiate dataset/task/
   family components, and validate NAS policy against the active task contract.
-- [`tinyodom/hil_runtime.py`](tinyodom/hil_runtime.py)
+- [`crest/hil_runtime.py`](crest/hil_runtime.py)
   Runtime-owned HIL request construction and metric collection helpers used by
   the HIL server and related tests.
-- [`tinyodom/pareto_replay.py`](tinyodom/pareto_replay.py)
+- [`crest/pareto_replay.py`](crest/pareto_replay.py)
   Reusable Pareto replay selection, request reconstruction, resume, manifest,
   and result-writing logic behind `pareto_hil_replay.py`.
-- [`tinyodom/devices.py`](tinyodom/devices.py)
+- [`crest/devices.py`](crest/devices.py)
   Shared device dataclasses and the `DeviceInterface` contract used by
   hardware backends.
-- [`tinyodom/hardware.py`](tinyodom/hardware.py)
+- [`crest/hardware.py`](crest/hardware.py)
   Legacy/shared hardware utility layer used by the current HIL/NAS flow.
 
 ## Shared Abstractions
@@ -81,16 +81,16 @@ points above.
 The modular runtime is built around three main interfaces plus a small set of
 typed payloads shared across orchestration code.
 
-- `DatasetABC` in [`tinyodom/interfaces.py`](tinyodom/interfaces.py)
-  Loads raw data and returns a normalized [`DatasetBundle`](tinyodom/pipeline_types.py)
+- `DatasetABC` in [`crest/interfaces.py`](crest/interfaces.py)
+  Loads raw data and returns a normalized [`DatasetBundle`](crest/pipeline_types.py)
   with train/validation/test/calibration splits plus dataset metadata.
-- `TaskABC` in [`tinyodom/interfaces.py`](tinyodom/interfaces.py)
+- `TaskABC` in [`crest/interfaces.py`](crest/interfaces.py)
   Defines the target/output contract, task-owned fitting behavior, evaluation
   behavior, and the metric contract that shared NAS/scoring code consumes.
-- `ModelFamilyABC` in [`tinyodom/interfaces.py`](tinyodom/interfaces.py)
+- `ModelFamilyABC` in [`crest/interfaces.py`](crest/interfaces.py)
   Samples hyperparameters, builds models, validates family-local config, and
   materializes the export variant passed into HIL.
-- Shared typed payloads in [`tinyodom/pipeline_types.py`](tinyodom/pipeline_types.py)
+- Shared typed payloads in [`crest/pipeline_types.py`](crest/pipeline_types.py)
   carry the normalized information exchanged between those layers:
   `DatasetBundle`, `TargetSpec`, `ModelBuildContext`, `FitPlan`,
   `EvaluationResult`, and `TaskMetricContract`.
@@ -101,13 +101,13 @@ At a high level, the source tree is wired like this:
 
 1. `nas_model_client.py` or `hil_server.py` loads
    [`config/nas_config_stm32.yaml`](config/nas_config_stm32.yaml) through shared helpers in
-   [`tinyodom/model.py`](tinyodom/model.py).
+   [`crest/model.py`](crest/model.py).
 2. The entry point calls
    `ensure_builtin_components_registered()` from
-   [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py) so the
+   [`crest/builtin_components.py`](crest/builtin_components.py) so the
    default dataset, task, and model family are available by name.
 3. The entry point runs the shared bootstrap in
-   [`tinyodom/runtime_bootstrap.py`](tinyodom/runtime_bootstrap.py), which
+   [`crest/runtime_bootstrap.py`](crest/runtime_bootstrap.py), which
    resolves component selection, instantiates the selected dataset/task/model
    family, derives the target spec, and validates `nas.score`, `nas.prune`,
    and `nas.feasibility` against the task metric contract.
@@ -118,7 +118,7 @@ At a high level, the source tree is wired like this:
 6. The selected model family samples hyperparameters, builds models, and
    materializes export variants.
 7. When hardware metrics are needed, the HIL path builds a normalized request
-   through [`tinyodom/hil_runtime.py`](tinyodom/hil_runtime.py), then the
+   through [`crest/hil_runtime.py`](crest/hil_runtime.py), then the
    selected microcontroller backend stages, compiles, uploads, and measures
    one candidate.
 8. Shared scoring, pruning, and result-shaping code combines task metrics and
@@ -137,7 +137,7 @@ training/NAS behavior or board/backend behavior.
 ## Component Selection
 
 The current modular selection surface is resolved in
-[`tinyodom/component_selection.py`](tinyodom/component_selection.py).
+[`crest/component_selection.py`](crest/component_selection.py).
 
 The main config knobs are:
 
@@ -163,12 +163,12 @@ See [`config/README.md`](config/README.md) for the current shipped config shape.
 
 ## Registration Model
 
-TinyODOM-EX does not currently auto-discover components from the filesystem.
+CREST does not currently auto-discover components from the filesystem.
 The registry model is explicit:
 
-- [`tinyodom/registry.py`](tinyodom/registry.py) defines
+- [`crest/registry.py`](crest/registry.py) defines
   `dataset_registry`, `task_registry`, and `model_family_registry`.
-- [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py) registers
+- [`crest/builtin_components.py`](crest/builtin_components.py) registers
   the built-in components under their stable string keys.
 - The entry points call `ensure_builtin_components_registered()` before they
   resolve component names from config.
@@ -178,12 +178,12 @@ something registers it under the name you intend to use in config.
 
 ## Shared Scoring And Trial Outputs
 
-The shared score/logging path no longer assumes one fixed TinyODOM model shape
+The shared score/logging path no longer assumes one fixed model shape
 or one fixed metric schema.
 
 ### Task Metric Declaration
 
-[`TaskMetricContract`](tinyodom/pipeline_types.py) is the task-owned
+[`TaskMetricContract`](crest/pipeline_types.py) is the task-owned
 declaration shared with orchestration code. It tells the shared pipeline:
 
 - which metrics the task can produce
@@ -210,7 +210,7 @@ hardcoding them into the shared NAS/logging layer.
 
 ### Score Resolution
 
-[`ScoreEvaluationResult`](tinyodom/model.py) is the shared representation of
+[`ScoreEvaluationResult`](crest/model.py) is the shared representation of
 the resolved score/objective values for one trial.
 
 - Scalar runs set `score` and leave the objective lists as the configured
@@ -220,7 +220,7 @@ the resolved score/objective values for one trial.
 
 ### Generic Trial Outcome
 
-[`TrialOutcome`](tinyodom/model.py) is the generic payload written to CSV and
+[`TrialOutcome`](crest/model.py) is the generic payload written to CSV and
 mirrored into Optuna trial attributes. It carries:
 
 - resolved scalar/objective values
@@ -233,7 +233,7 @@ produced those values.
 
 ### CSV And Optuna Logging
 
-[`log_trial(...)`](tinyodom/model.py) writes a stable infrastructure column set
+[`log_trial(...)`](crest/model.py) writes a stable infrastructure column set
 plus dynamic task/hyperparameter columns.
 
 Stable shared columns include:
@@ -281,16 +281,16 @@ extension path in the current codebase.
 
 Key files:
 
-- [`tinyodom/interfaces.py`](tinyodom/interfaces.py)
+- [`crest/interfaces.py`](crest/interfaces.py)
   `ModelFamilyABC` defines the contract.
-- [`tinyodom/model_families/odom_tcn.py`](tinyodom/model_families/odom_tcn.py)
+- [`crest/model_families/odom_tcn.py`](crest/model_families/odom_tcn.py)
   Concrete example of the built-in odometry TCN family.
-- [`tinyodom/model_families/audio_dscnn.py`](tinyodom/model_families/audio_dscnn.py)
+- [`crest/model_families/audio_dscnn.py`](crest/model_families/audio_dscnn.py)
   Concrete example of a built-in classification family over cached log-mel
   tensors.
-- [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py)
+- [`crest/builtin_components.py`](crest/builtin_components.py)
   Built-in registration.
-- [`tinyodom/component_selection.py`](tinyodom/component_selection.py)
+- [`crest/component_selection.py`](crest/component_selection.py)
   Explicit config selection for dataset, task, and model-family components.
 - [`hil_server.py`](hil_server.py) and
   [`nas_model_client.py`](nas_model_client.py)
@@ -298,11 +298,11 @@ Key files:
 
 Typical steps:
 
-1. Add a new module under [`tinyodom/model_families/`](tinyodom/model_families).
+1. Add a new module under [`crest/model_families/`](crest/model_families).
 2. Implement a `ModelFamilyABC` subclass.
 3. Register it in the appropriate registry path.
    The built-in pattern today is
-   [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py).
+   [`crest/builtin_components.py`](crest/builtin_components.py).
 4. Set `model.family` in config to the registered name.
 5. Put family-local knobs under `model.params` and `model.search` when needed.
 6. Verify export/materialization semantics if the family needs custom model
@@ -318,16 +318,16 @@ Important boundary:
 
 Key files:
 
-- [`tinyodom/interfaces.py`](tinyodom/interfaces.py) for `DatasetABC`
-- [`tinyodom/datasets/oxiod.py`](tinyodom/datasets/oxiod.py) and
-  [`tinyodom/datasets/urbansound8k_mel.py`](tinyodom/datasets/urbansound8k_mel.py)
+- [`crest/interfaces.py`](crest/interfaces.py) for `DatasetABC`
+- [`crest/datasets/oxiod.py`](crest/datasets/oxiod.py) and
+  [`crest/datasets/urbansound8k_mel.py`](crest/datasets/urbansound8k_mel.py)
   as built-in examples
-- [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py) for the
+- [`crest/builtin_components.py`](crest/builtin_components.py) for the
   current registration pattern
 
 Typical steps:
 
-1. Add a new dataset adapter under [`tinyodom/datasets/`](tinyodom/datasets).
+1. Add a new dataset adapter under [`crest/datasets/`](crest/datasets).
 2. Implement `DatasetABC`.
 3. Register it under a stable string key.
 4. Select it with `dataset.name`.
@@ -337,16 +337,16 @@ Typical steps:
 
 Key files:
 
-- [`tinyodom/interfaces.py`](tinyodom/interfaces.py) for `TaskABC`
-- [`tinyodom/tasks/odometry_regression.py`](tinyodom/tasks/odometry_regression.py)
-  and [`tinyodom/tasks/sound_classification.py`](tinyodom/tasks/sound_classification.py)
+- [`crest/interfaces.py`](crest/interfaces.py) for `TaskABC`
+- [`crest/tasks/odometry_regression.py`](crest/tasks/odometry_regression.py)
+  and [`crest/tasks/sound_classification.py`](crest/tasks/sound_classification.py)
   as built-in examples
-- [`tinyodom/builtin_components.py`](tinyodom/builtin_components.py) for the
+- [`crest/builtin_components.py`](crest/builtin_components.py) for the
   current registration pattern
 
 Typical steps:
 
-1. Add a new task adapter under [`tinyodom/tasks/`](tinyodom/tasks).
+1. Add a new task adapter under [`crest/tasks/`](crest/tasks).
 2. Implement `TaskABC`.
 3. Register it under a stable string key.
 4. Select it with `task.name`.
@@ -357,10 +357,10 @@ Typical steps:
 
 Key files:
 
-- [`tinyodom/microcontrollers/README.md`](tinyodom/microcontrollers/README.md)
+- [`crest/microcontrollers/README.md`](crest/microcontrollers/README.md)
   for the bring-up guide
-- [`tinyodom/devices.py`](tinyodom/devices.py) for `DeviceInterface`
-- [`tinyodom/microcontrollers/__init__.py`](tinyodom/microcontrollers/__init__.py)
+- [`crest/devices.py`](crest/devices.py) for `DeviceInterface`
+- [`crest/microcontrollers/__init__.py`](crest/microcontrollers/__init__.py)
   for backend registration/factory plumbing
 
 That path is intentionally separate from model-family work. Board bring-up,
@@ -371,7 +371,7 @@ device options belong to the microcontroller backend layer, not to
 Important caveat:
 
 - a new non-Arduino backend must be wired into the registry metadata in
-  [`tinyodom/microcontrollers/__init__.py`](tinyodom/microcontrollers/__init__.py)
+  [`crest/microcontrollers/__init__.py`](crest/microcontrollers/__init__.py)
   or it is unreachable except through the Arduino FQBN fallback path
 
 ## NAS Policy And HIL Details
@@ -380,7 +380,7 @@ For the current scoring, pruning, and runtime knobs, use:
 
 - [`config/README.md`](config/README.md) for the config reference
 - [`config/nas_config_stm32.yaml`](config/nas_config_stm32.yaml) for the STM32 config shape
-- [`tinyodom/model.py`](tinyodom/model.py) for score/prune/feasibility
+- [`crest/model.py`](crest/model.py) for score/prune/feasibility
   evaluation and HIL request construction
 - [`hil_server.py`](hil_server.py) for the HIL-side request handling and
   backend failure shaping

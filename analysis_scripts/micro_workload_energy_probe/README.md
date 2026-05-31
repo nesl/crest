@@ -1,7 +1,7 @@
 # Micro Workload Energy Probe
 
-Synthetic phase-energy probes for TinyODOM-compatible MCU targets. The probe
-uses the existing TinyODOM hardware-in-the-loop harness and INA228 telemetry
+Synthetic phase-energy probes for CREST-compatible MCU targets. The probe
+uses the existing CREST hardware-in-the-loop harness and INA228 telemetry
 path to measure fixed-duration deployment windows occupied by simple phases:
 sleep/idle, light wait, tight polling, floating-point compute, and integer
 compute.
@@ -53,7 +53,7 @@ phase.
 
 ## Hardware Setup
 
-The probe reuses the standard TinyODOM HIL harness contract:
+The probe reuses the standard CREST HIL harness contract:
 
 - Arduino DUT trigger: D2
 - Arduino DUT arm: D3, active-low
@@ -71,7 +71,7 @@ The harness emits the normal INA228 telemetry lines, including:
 - `harness timer output:`
 - `DONE`
 
-The host parses these lines through the existing TinyODOM helpers rather than a
+The host parses these lines through the existing CREST helpers rather than a
 separate measurement protocol.
 
 ## Quick Start
@@ -173,21 +173,21 @@ cycles, and sleep residency. Derived aggregate fields subtract the board-local
 `sleep` mean for phase/residency cost and the board-local `wait` mean for
 payload diagnostics.
 
-## Reused TinyODOM Code
+## Reused CREST Code
 
 This analysis script reuses:
 
-- `src/tinyodom/hil_protocol.py` for harness priming and DONE waits.
-- `src/tinyodom/microcontrollers/arduino_base.py` for Arduino compile/upload,
+- `src/crest/hil_protocol.py` for harness priming and DONE waits.
+- `src/crest/microcontrollers/arduino_base.py` for Arduino compile/upload,
   harness compile/upload, and INA228 telemetry parsing.
-- `src/tinyodom/microcontrollers/arduino_portenta_h7.py` for Portenta board
+- `src/crest/microcontrollers/arduino_portenta_h7.py` for Portenta board
   options and CM4 boot-helper behavior.
-- `src/tinyodom/microcontrollers/arduino_ble33.py` for BLE FQBN/device
+- `src/crest/microcontrollers/arduino_ble33.py` for BLE FQBN/device
   metadata.
-- `src/tinyodom/microcontrollers/stm32_cube_clt.py` plus script-local wrappers
+- `src/crest/microcontrollers/stm32_cube_clt.py` plus script-local wrappers
   for STM32 LRUN workspace build, signing, FSBL copy-window update, and
   external image programming.
-- `sketches/stm32/tinyodom_stm32_lrun/` as the staged STM32 production
+- `sketches/stm32/crest_stm32_lrun/` as the staged STM32 production
   template.
-- `sketches/common/tinyodom_hil_config.h` and the existing harness sketch
+- `sketches/common/crest_hil_config.h` and the existing harness sketch
   protocol.

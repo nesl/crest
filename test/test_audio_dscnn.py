@@ -15,13 +15,13 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from tinyodom.model_families.audio_dscnn import (  # noqa: E402
+from crest.model_families.audio_dscnn import (  # noqa: E402
     AUDIO_DSCNN_SEARCH_CHOICES,
     DEFAULT_AUDIO_DSCNN_SEED,
     AudioDSCNNFamily,
     resolve_stride_schedule,
 )
-from tinyodom.pipeline_types import ModelBuildContext, TargetSpec  # noqa: E402
+from crest.pipeline_types import ModelBuildContext, TargetSpec  # noqa: E402
 
 DEFAULT_TARGET_SENTINEL = object()
 

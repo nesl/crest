@@ -1,7 +1,7 @@
 # Analysis Scripts
 
 This folder contains public-facing analysis utilities and paper-figure
-generators that sit outside the core TinyODOM runtime.
+generators that sit outside the core CREST runtime.
 
 ## Folders
 
@@ -14,7 +14,7 @@ generators that sit outside the core TinyODOM runtime.
   - Case Study 3 post-hoc score-sensitivity analysis over audio NAS logs.
 
 - `micro_workload_energy_probe/`
-  - Synthetic phase-energy probe for TinyODOM-compatible MCU targets, reusing
+  - Synthetic phase-energy probe for CREST-compatible MCU targets, reusing
     the existing HIL harness and INA228 telemetry path.
 
 - `paper_plots/`

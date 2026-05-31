@@ -17,7 +17,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from tinyodom.errors import (  # noqa: E402
+from crest.errors import (  # noqa: E402
     HIL_ERROR_COMPILE,
     HIL_ERROR_FLASH_OVERFLOW,
     HIL_ERROR_LATENCY,
@@ -25,12 +25,12 @@ from tinyodom.errors import (  # noqa: E402
     HIL_ERROR_RAM_OVERFLOW,
     HIL_ERROR_UPLOAD,
 )
-from tinyodom.devices import CandidatePrepareRequest, DeviceMetrics  # noqa: E402
-from tinyodom.microcontrollers import get_device, list_device_specs, resolve_device_options  # noqa: E402
-from tinyodom.microcontrollers import stm32_cube_clt  # noqa: E402
-from tinyodom.microcontrollers import stm32_nucleo_n657x0 as stm32_n657_backend  # noqa: E402
-from tinyodom.microcontrollers import stm32_runtime  # noqa: E402
-from tinyodom.microcontrollers.stm32_nucleo_n657x0 import (  # noqa: E402
+from crest.devices import CandidatePrepareRequest, DeviceMetrics  # noqa: E402
+from crest.microcontrollers import get_device, list_device_specs, resolve_device_options  # noqa: E402
+from crest.microcontrollers import stm32_cube_clt  # noqa: E402
+from crest.microcontrollers import stm32_nucleo_n657x0 as stm32_n657_backend  # noqa: E402
+from crest.microcontrollers import stm32_runtime  # noqa: E402
+from crest.microcontrollers.stm32_nucleo_n657x0 import (  # noqa: E402
     BOARD_NAME,
     DEFAULT_WEIGHTS_EXTERNAL_LOADER_NAME,
     DEFAULT_MAX_EXTERNAL_FLASH_BYTES,
@@ -91,7 +91,7 @@ def _build_lrun_project_tree(root: Path) -> Path:
     _write_text(root / "Appli" / "Inc" / "stm32n6xx_hal_conf.h", "#pragma once\n")
     _write_text(root / "Appli" / "Inc" / "stm32n6xx_nucleo_conf.h", "#pragma once\n")
     _write_text(root / "Appli" / "Inc" / "partition_stm32n657xx.h", "#pragma once\n")
-    _write_text(root / "Appli" / "Inc" / "tinyodom_dut_runner.h", "#pragma once\n")
+    _write_text(root / "Appli" / "Inc" / "crest_dut_runner.h", "#pragma once\n")
     _write_text(
         root / "Appli" / "Inc" / "network_data_params.h",
         "#define AI_NETWORK_DATA_ACTIVATIONS_SIZE (16384)\n",
@@ -414,7 +414,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         """Ensure default STM option resolution does not require setup-generated paths."""
         # LRUN option resolution should synthesize defaults even before the workspace exists on disk.
         with tempfile.TemporaryDirectory() as tmpdir:
-            missing_root = Path(tmpdir) / "tinyodom_stm32_lrun"
+            missing_root = Path(tmpdir) / "crest_stm32_lrun"
             with patch.object(stm32_n657_backend, "DEFAULT_TEMPLATE_ROOT", missing_root):
                 resolved = resolve_device_options(
                     "STM32_NUCLEO_N657X0_Q",
@@ -599,16 +599,16 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         )
 
         with patch.object(device, "compile", return_value=compile_result), patch(
-            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
+            "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
             return_value=Path("/tmp/stm/Debug/app.elf"),
         ), patch(
-            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+            "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
             _FakeSerialMonitor,
         ), patch(
-            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+            "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
             return_value="upload ok",
         ) as load_mock, patch(
-            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+            "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
             return_value=telemetry,
         ) as runtime_mock:
             metrics = device.evaluate(
@@ -816,16 +816,16 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         )
 
         with patch.object(device, "compile", return_value=compile_result), patch(
-            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
+            "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
             return_value=Path("/tmp/stm/Debug/app.elf"),
         ), patch(
-            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+            "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
             _FakeSerialMonitor,
         ), patch(
-            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+            "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
             return_value="upload ok",
         ), patch(
-            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+            "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
             side_effect=protocol_error,
         ):
             metrics = device.evaluate(
@@ -865,13 +865,13 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         )()
 
         with patch.object(device, "compile", return_value=compile_result), patch(
-            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
+            "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
             return_value=Path("/tmp/stm/Debug/app.elf"),
         ), patch(
-            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+            "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
             _FakeSerialMonitor,
         ), patch(
-            "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+            "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
             side_effect=stm32_cube_clt.WorkflowError("ST-LINK failed"),
         ):
             metrics = device.evaluate(
@@ -927,7 +927,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         # LRUN candidate staging should copy the workspace and stage generated outputs into the candidate root.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            template_root = _build_lrun_project_tree(tmp_path / "tinyodom_stm32_lrun")
+            template_root = _build_lrun_project_tree(tmp_path / "crest_stm32_lrun")
             _write_text(template_root / "STM32CubeIDE" / "AppS" / "Debug" / "Src" / "stale.d", "old dep\n")
             _write_text(template_root / "STM32CubeIDE" / "Boot" / "Debug" / "Src" / "stale.o", "old obj\n")
             outputs_dir = tmp_path / "outputs"
@@ -976,11 +976,11 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             fake_training_data = type("TrainingData", (), {"inputs": [[[0.0] * 6] * 4]})()
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._ensure_staging_tools"
+                "crest.microcontrollers.stm32_nucleo_n657x0._ensure_staging_tools"
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_analyze"
+                "crest.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_analyze"
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_generate",
+                "crest.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_generate",
                 side_effect=_fake_generate,
             ):
                 def _write_tflite(*, output_name, **kwargs):
@@ -996,7 +996,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                     del kwargs
                     Path(output_name).write_bytes(b"tflite")
 
-                with patch("tinyodom.hardware.convert_to_tflite_model", side_effect=_write_tflite):
+                with patch("crest.hardware.convert_to_tflite_model", side_effect=_write_tflite):
                     staged_root = device.prepare_candidate(
                         request=_make_prepare_request(
                             config=type(
@@ -1017,15 +1017,15 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             self.assertEqual(staged_root.name, template_root.name)
             self.assertTrue((staged_root / "Appli" / "Src" / "network.c").is_file())
             self.assertTrue((staged_root / "Appli" / "Inc" / "network_data_params.h").is_file())
-            self.assertTrue((staged_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h").is_file())
+            self.assertTrue((staged_root / "Appli" / "Inc" / "crest_dut_phase_config.h").is_file())
             self.assertFalse((staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Src" / "stale.d").exists())
             self.assertFalse((staged_root / "STM32CubeIDE" / "Boot" / "Debug" / "Src" / "stale.o").exists())
             manifest = json.loads((staged_root / STAGED_MANIFEST_NAME).read_text(encoding="utf-8"))
             self.assertEqual(manifest["staged_workspace_root"], str(staged_root.resolve()))
             header_text = (
-                staged_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h"
+                staged_root / "Appli" / "Inc" / "crest_dut_phase_config.h"
             ).read_text(encoding="utf-8")
-            self.assertIn("TINYODOM_DUT_MEASURED_RUNS 9", header_text)
+            self.assertIn("CREST_DUT_MEASURED_RUNS 9", header_text)
 
     def test_prepare_candidate_runs_analyze_before_generate(self) -> None:
         """Ensure ST Edge AI analyze preflights compatibility before generate.
@@ -1116,15 +1116,15 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                 Path(output_name).write_bytes(b"tflite")
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._ensure_staging_tools"
+                "crest.microcontrollers.stm32_nucleo_n657x0._ensure_staging_tools"
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_analyze",
+                "crest.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_analyze",
                 side_effect=_fake_analyze,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_generate",
+                "crest.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_generate",
                 side_effect=_fake_generate,
             ), patch(
-                "tinyodom.hardware.convert_to_tflite_model",
+                "crest.hardware.convert_to_tflite_model",
                 side_effect=_write_tflite,
             ):
                 staged_root = device.prepare_candidate(
@@ -1153,7 +1153,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         # Candidate cleanup should remove the staged root so repeated runs do not accumulate stale workspaces.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            project_root = _build_lrun_project_tree(tmp_path / "candidate" / "tinyodom_stm32_lrun")
+            project_root = _build_lrun_project_tree(tmp_path / "candidate" / "crest_stm32_lrun")
             _write_text(
                 project_root / STAGED_MANIFEST_NAME,
                 "{}\n",
@@ -1193,14 +1193,14 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                 Path(output_name).write_bytes(b"tflite")
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._ensure_staging_tools"
+                "crest.microcontrollers.stm32_nucleo_n657x0._ensure_staging_tools"
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_analyze"
+                "crest.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_analyze"
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_generate",
+                "crest.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_generate",
                 side_effect=stm32_cube_clt.WorkflowError("generate failed"),
             ), patch(
-                "tinyodom.hardware.convert_to_tflite_model",
+                "crest.hardware.convert_to_tflite_model",
                 side_effect=_write_tflite,
             ):
                 with self.assertRaisesRegex(stm32_cube_clt.WorkflowError, "generate failed"):
@@ -1253,10 +1253,10 @@ class STM32HelperTests(unittest.TestCase):
         # ELF-path resolution should not assume a blink example name when locating staged runtime images.
         with tempfile.TemporaryDirectory() as tmpdir:
             debug_dir = Path(tmpdir)
-            elf_path = debug_dir / "tinyodom_phase2.elf"
+            elf_path = debug_dir / "crest_phase2.elf"
             elf_path.write_bytes(b"elf")
             resolved = stm32_cube_clt.resolve_elf_path(debug_dir)
-        self.assertEqual(resolved, elf_path)
+        self.assertEqual(resolved, elf_path.resolve())
 
     def test_parse_size_output_raises_workflow_error_when_size_tool_is_missing(self) -> None:
         """Ensure missing ``arm-none-eabi-size`` becomes ``WorkflowError``.
@@ -1267,10 +1267,10 @@ class STM32HelperTests(unittest.TestCase):
         """
         # Missing size tools should raise a workflow error so the backend reports a setup problem instead of bogus memory numbers.
         with tempfile.TemporaryDirectory() as tmpdir:
-            elf_path = Path(tmpdir) / "tinyodom_phase2.elf"
+            elf_path = Path(tmpdir) / "crest_phase2.elf"
             elf_path.write_bytes(b"elf")
             with patch(
-                "tinyodom.microcontrollers.stm32_cube_clt.resolve_required_tool_path",
+                "crest.microcontrollers.stm32_cube_clt.resolve_required_tool_path",
                 side_effect=stm32_cube_clt.WorkflowError("arm-none-eabi-size was not provided."),
             ):
                 with self.assertRaises(stm32_cube_clt.WorkflowError):
@@ -1311,7 +1311,7 @@ class STM32HelperTests(unittest.TestCase):
         """
         # Host OS command failures should be wrapped in workflow errors so backend logs keep a stable failure type.
         with patch(
-            "tinyodom.microcontrollers.stm32_cube_clt.subprocess.run",
+            "crest.microcontrollers.stm32_cube_clt.subprocess.run",
             side_effect=FileNotFoundError("make not found"),
         ):
             with self.assertRaises(stm32_cube_clt.WorkflowError):
@@ -1355,7 +1355,7 @@ class STM32HelperTests(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0, "", "")
 
             with patch.dict(os.environ, {"LD_LIBRARY_PATH": "/conda/lib:/usr/lib"}), patch(
-                "tinyodom.microcontrollers.stm32_cube_clt.subprocess.run",
+                "crest.microcontrollers.stm32_cube_clt.subprocess.run",
                 side_effect=_fake_run,
             ):
                 stm32_cube_clt._run_command([str(programmer), "-q"])
@@ -1434,17 +1434,17 @@ class STM32HelperTests(unittest.TestCase):
                         target.write_text("/* generated */\n", encoding="utf-8")
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._ensure_staging_tools"
+                "crest.microcontrollers.stm32_nucleo_n657x0._ensure_staging_tools"
             ) as staging_tools_mock, patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_analyze"
+                "crest.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_analyze"
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_generate",
+                "crest.microcontrollers.stm32_nucleo_n657x0._run_stedgeai_generate",
                 side_effect=_fake_generate,
             ), patch(
-                "tinyodom.hardware.convert_to_tflite_model",
+                "crest.hardware.convert_to_tflite_model",
                 side_effect=_write_tflite,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_required_tool_path"
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_required_tool_path"
             ) as tool_mock:
                 staged_root = device.prepare_candidate(
                     request=_make_prepare_request(
@@ -1474,12 +1474,12 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
+                project_root / "Appli" / "Inc" / "crest_dut_phase_config.h",
                 "\n".join(
                     [
-                        "#ifndef TINYODOM_DUT_PHASE_CONFIG_H",
-                        "#define TINYODOM_DUT_PHASE_CONFIG_H",
-                        "#define TINYODOM_DUT_MEASURED_RUNS 5",
+                        "#ifndef CREST_DUT_PHASE_CONFIG_H",
+                        "#define CREST_DUT_PHASE_CONFIG_H",
+                        "#define CREST_DUT_MEASURED_RUNS 5",
                         "#endif",
                         "",
                     ]
@@ -1633,27 +1633,27 @@ class STM32HelperTests(unittest.TestCase):
                     "external_flash_bytes": 4096.0,
                 },
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
                 return_value=project_root / "STM32CubeIDE" / "Boot" / "Debug" / "Template_LRUN_FSBL.elf",
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
+                "crest.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
             ) as harness_mock, patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
                 _TracingMonitor,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
+                "crest.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
                 side_effect=_open_harness,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
                 side_effect=_prime_harness,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
+                "crest.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
                 side_effect=_wait_done,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
                 side_effect=lambda **kwargs: trace.append("debug_load") or "upload ok",
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
                 side_effect=lambda *args, **kwargs: trace.append("runtime_session") or telemetry,
             ):
                 metrics = device.evaluate(
@@ -1680,7 +1680,7 @@ class STM32HelperTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(
-                harness_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"],
+                harness_mock.call_args.kwargs["build_defines"]["CREST_INFERENCE_RUNS"],
                 5,
             )
             self.assertEqual(metrics.error_code, HIL_ERROR_OK)
@@ -1714,8 +1714,8 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
-                "#define TINYODOM_DUT_MEASURED_RUNS 1\n",
+                project_root / "Appli" / "Inc" / "crest_dut_phase_config.h",
+                "#define CREST_DUT_MEASURED_RUNS 1\n",
             )
             device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0", device_options={"project_root": str(project_root)})
             compile_result = type(
@@ -1742,18 +1742,18 @@ class STM32HelperTests(unittest.TestCase):
                 "_program_runtime_images",
                 return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
                 return_value=project_root / "STM32CubeIDE" / "Boot" / "Debug" / "Template_LRUN_FSBL.elf",
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
+                "crest.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
                 _FakeSerialMonitor,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
+                "crest.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
                 return_value=_FakeHarnessSerial(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
                 return_value=type(
                     "PrimeResult",
                     (),
@@ -1784,8 +1784,8 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
-                "#define TINYODOM_DUT_MEASURED_RUNS 5\n",
+                project_root / "Appli" / "Inc" / "crest_dut_phase_config.h",
+                "#define CREST_DUT_MEASURED_RUNS 5\n",
             )
             device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0", device_options={"project_root": str(project_root)})
             compile_result = type(
@@ -1822,31 +1822,31 @@ class STM32HelperTests(unittest.TestCase):
                 "_program_runtime_images",
                 return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
                 return_value=project_root / "STM32CubeIDE" / "Boot" / "Debug" / "Template_LRUN_FSBL.elf",
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
+                "crest.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
                 _FakeSerialMonitor,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
+                "crest.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
                 return_value=_FakeHarnessSerial(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
                 return_value=type(
                     "PrimeResult",
                     (),
                     {"harness_ready": True, "harness_log": ["HARNESS READY"], "error": None},
                 )(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
                 return_value="upload ok",
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
                 return_value=telemetry,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
+                "crest.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
                 return_value=type(
                     "DoneResult",
                     (),
@@ -1881,7 +1881,7 @@ class STM32HelperTests(unittest.TestCase):
         # External-flash overflows should still surface as flash failures for pruning and reporting.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            project_root = _build_lrun_project_tree(tmp_path / "tinyodom_stm32_lrun")
+            project_root = _build_lrun_project_tree(tmp_path / "crest_stm32_lrun")
             manifest_path = project_root / STAGED_MANIFEST_NAME
             manifest_path.write_text(
                 "{\n"
@@ -1981,13 +1981,13 @@ class STM32HelperTests(unittest.TestCase):
                 return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
                 side_effect=_fake_build,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
                 side_effect=_fake_size,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
                 side_effect=_fake_sign,
             ):
                 result = device.compile(
@@ -2000,18 +2000,18 @@ class STM32HelperTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.heap_bytes, 0x2000)
         self.assertEqual(result.stack_bytes, 0x4000)
-        self.assertEqual(result.build_dir, staged_root / "STM32CubeIDE" / "Boot" / "Debug")
+        self.assertEqual(result.build_dir, (staged_root / "STM32CubeIDE" / "Boot" / "Debug").resolve())
         self.assertEqual(
             result.boot_elf_path,
-            staged_root / "STM32CubeIDE" / "Boot" / "Debug" / "Template_LRUN_FSBL.elf",
+            (staged_root / "STM32CubeIDE" / "Boot" / "Debug" / "Template_LRUN_FSBL.elf").resolve(),
         )
         self.assertEqual(
             result.app_elf_path,
-            staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS.elf",
+            (staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS.elf").resolve(),
         )
         self.assertEqual(
             result.signed_app_bin_path,
-            staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS-trusted.bin",
+            (staged_root / "STM32CubeIDE" / "AppS" / "Debug" / "Template_LRUN_AppS-trusted.bin").resolve(),
         )
         self.assertEqual(result.flash_bytes, 130321)
         self.assertEqual(result.fsbl_copy_window_bytes, 131072)
@@ -2100,13 +2100,13 @@ class STM32HelperTests(unittest.TestCase):
                 return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
                 side_effect=_fake_build,
             ) as build_mock, patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
                 side_effect=_fake_size,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
                 side_effect=_fake_sign,
             ) as sign_mock:
                 first = device.compile(
@@ -2121,13 +2121,13 @@ class STM32HelperTests(unittest.TestCase):
             self.assertEqual(sign_mock.call_count, 1)
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
                 side_effect=AssertionError("build should be reused"),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
                 side_effect=_fake_size,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
                 side_effect=AssertionError("sign should be reused"),
             ):
                 second = device.compile(
@@ -2247,13 +2247,13 @@ class STM32HelperTests(unittest.TestCase):
                 return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
                 side_effect=_fake_build,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
                 side_effect=_fake_size,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
                 side_effect=_fake_sign,
             ):
                 first = device.compile(
@@ -2299,13 +2299,13 @@ class STM32HelperTests(unittest.TestCase):
                 )
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
                 side_effect=_second_build,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
                 side_effect=_fake_size,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
                 side_effect=AssertionError("sign should be reused"),
             ):
                 second = device.compile(
@@ -2390,13 +2390,13 @@ class STM32HelperTests(unittest.TestCase):
                 return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
                 side_effect=_fake_build,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
                 side_effect=_fake_size,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
                 side_effect=_fake_sign,
             ):
                 result = device.compile(
@@ -2479,13 +2479,13 @@ class STM32HelperTests(unittest.TestCase):
                 return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
                 side_effect=_fake_build,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
                 side_effect=_fake_size,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
                 side_effect=_fake_sign,
             ):
                 result = device.compile(
@@ -2573,13 +2573,13 @@ class STM32HelperTests(unittest.TestCase):
                 return stm32_cube_clt.SignedBinaryResult(log="sign ok", output_bin=output_bin)
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.build_project",
                 side_effect=_fake_build,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.parse_size_output",
                 side_effect=_fake_size,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.sign_binary",
                 side_effect=_fake_sign,
             ):
                 result = device.compile(
@@ -2683,10 +2683,10 @@ class STM32HelperTests(unittest.TestCase):
             paths = device._resolve_paths(staged_root)
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_image",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_image",
                 return_value="app programmed",
             ) as app_program_mock, patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_flash_blob",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_flash_blob",
                 return_value="weights programmed",
             ) as weight_program_mock:
                 first = device._program_runtime_images(paths, compile_result=compile_result)
@@ -2697,10 +2697,10 @@ class STM32HelperTests(unittest.TestCase):
             self.assertEqual(weight_program_mock.call_count, 1)
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_image",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_image",
                 side_effect=AssertionError("signed app should not be reprogrammed"),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_flash_blob",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_flash_blob",
                 side_effect=AssertionError("weights should not be reprogrammed"),
             ):
                 second = device._program_runtime_images(paths, compile_result=compile_result)
@@ -2761,7 +2761,7 @@ class STM32HelperTests(unittest.TestCase):
             paths = device._resolve_paths(staged_root)
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._resolve_weights_external_loader",
+                "crest.microcontrollers.stm32_nucleo_n657x0._resolve_weights_external_loader",
                 side_effect=AssertionError("loader resolution should be skipped"),
             ):
                 metrics = device._program_runtime_images(paths, compile_result=compile_result)
@@ -2815,10 +2815,10 @@ class STM32HelperTests(unittest.TestCase):
             paths = device._resolve_paths(staged_root)
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0._resolve_weights_external_loader",
+                "crest.microcontrollers.stm32_nucleo_n657x0._resolve_weights_external_loader",
                 side_effect=AssertionError("manifest loader should be used directly"),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_image",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_image",
                 return_value="app programmed",
             ) as app_program_mock:
                 metrics = device._program_runtime_images(paths, compile_result=compile_result)
@@ -2886,19 +2886,19 @@ class STM32HelperTests(unittest.TestCase):
             trace: list[str] = []
 
             with patch.object(device, "compile", return_value=compile_result), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_image",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_image",
                 side_effect=lambda **kwargs: trace.append("app") or "app programmed",
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_flash_blob",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_flash_blob",
                 side_effect=lambda **kwargs: trace.append("weights") or "weights programmed",
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
                 _FakeSerialMonitor,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
                 side_effect=lambda **kwargs: trace.append("boot") or "upload ok",
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
                 side_effect=lambda *args, **kwargs: trace.append("runtime") or telemetry,
             ):
                 metrics = device.evaluate(
@@ -2970,8 +2970,8 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
-                "#define TINYODOM_DUT_MEASURED_RUNS 1\n",
+                project_root / "Appli" / "Inc" / "crest_dut_phase_config.h",
+                "#define CREST_DUT_MEASURED_RUNS 1\n",
             )
             device = STM32NucleoN657X0QDevice(
                 serial_port="/dev/ttyACM0",
@@ -3036,13 +3036,13 @@ class STM32HelperTests(unittest.TestCase):
                 "_program_runtime_images",
                 return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
                 _FakeSerialMonitor,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
                 return_value="upload ok",
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
                 side_effect=_runtime_session,
             ):
                 metrics = device.evaluate(
@@ -3064,8 +3064,8 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
-                "#define TINYODOM_DUT_MEASURED_RUNS 1\n",
+                project_root / "Appli" / "Inc" / "crest_dut_phase_config.h",
+                "#define CREST_DUT_MEASURED_RUNS 1\n",
             )
             device = STM32NucleoN657X0QDevice(
                 serial_port="/dev/ttyACM0",
@@ -3115,22 +3115,22 @@ class STM32HelperTests(unittest.TestCase):
                 "_program_runtime_images",
                 return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
+                "crest.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
             ) as harness_mock, patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
                 _FakeSerialMonitor,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
+                "crest.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
                 return_value=_FakeHarnessSerial(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
                 return_value=type(
                     "PrimeResult",
                     (),
                     {"harness_ready": True, "harness_log": ["HARNESS READY"], "error": None},
                 )(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
+                "crest.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
                 return_value=type(
                     "DoneResult",
                     (),
@@ -3152,10 +3152,10 @@ class STM32HelperTests(unittest.TestCase):
                     },
                 )(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
                 return_value="upload ok",
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
                 return_value=telemetry,
             ):
                 metrics = device.evaluate(
@@ -3170,13 +3170,13 @@ class STM32HelperTests(unittest.TestCase):
                 )
 
             header_text = (
-                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h"
+                project_root / "Appli" / "Inc" / "crest_dut_phase_config.h"
             ).read_text(encoding="utf-8")
 
         self.assertEqual(metrics.error_code, HIL_ERROR_OK)
-        self.assertIn("TINYODOM_DUT_MEASURED_RUNS 7", header_text)
+        self.assertIn("CREST_DUT_MEASURED_RUNS 7", header_text)
         self.assertEqual(
-            harness_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"],
+            harness_mock.call_args.kwargs["build_defines"]["CREST_INFERENCE_RUNS"],
             7,
         )
 
@@ -3186,15 +3186,15 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
+                project_root / "Appli" / "Inc" / "crest_dut_phase_config.h",
                 "\n".join(
                     [
-                        "#ifndef TINYODOM_DUT_PHASE_CONFIG_H",
-                        "#define TINYODOM_DUT_PHASE_CONFIG_H",
-                        "#define TINYODOM_DUT_PHASE_BACK_TO_BACK 0",
-                        "#define TINYODOM_DUT_PHASE_CADENCED 1",
-                        "#define TINYODOM_DUT_SELECTED_PHASE TINYODOM_DUT_PHASE_BACK_TO_BACK",
-                        "#define TINYODOM_DUT_MEASURED_RUNS 4",
+                        "#ifndef CREST_DUT_PHASE_CONFIG_H",
+                        "#define CREST_DUT_PHASE_CONFIG_H",
+                        "#define CREST_DUT_PHASE_BACK_TO_BACK 0",
+                        "#define CREST_DUT_PHASE_CADENCED 1",
+                        "#define CREST_DUT_SELECTED_PHASE CREST_DUT_PHASE_BACK_TO_BACK",
+                        "#define CREST_DUT_MEASURED_RUNS 4",
                         "#endif",
                         "",
                     ]
@@ -3248,22 +3248,22 @@ class STM32HelperTests(unittest.TestCase):
                 "_program_runtime_images",
                 return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
+                "crest.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
             ) as harness_mock, patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
                 _FakeSerialMonitor,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
+                "crest.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
                 return_value=_FakeHarnessSerial(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
                 return_value=type(
                     "PrimeResult",
                     (),
                     {"harness_ready": True, "harness_log": ["HARNESS READY"], "error": None},
                 )(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
+                "crest.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
                 return_value=type(
                     "DoneResult",
                     (),
@@ -3285,10 +3285,10 @@ class STM32HelperTests(unittest.TestCase):
                     },
                 )(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
                 return_value="upload ok",
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
                 return_value=telemetry,
             ):
                 metrics = device.evaluate(
@@ -3302,13 +3302,13 @@ class STM32HelperTests(unittest.TestCase):
                 )
 
             header_text = (
-                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h"
+                project_root / "Appli" / "Inc" / "crest_dut_phase_config.h"
             ).read_text(encoding="utf-8")
 
         self.assertEqual(metrics.error_code, HIL_ERROR_OK)
-        self.assertIn("TINYODOM_DUT_MEASURED_RUNS 4", header_text)
+        self.assertIn("CREST_DUT_MEASURED_RUNS 4", header_text)
         self.assertEqual(
-            harness_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"],
+            harness_mock.call_args.kwargs["build_defines"]["CREST_INFERENCE_RUNS"],
             4,
         )
 
@@ -3318,23 +3318,23 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = _build_lrun_project_tree(Path(tmpdir) / "stm")
             _write_text(
-                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h",
+                project_root / "Appli" / "Inc" / "crest_dut_phase_config.h",
                 "\n".join(
                     [
-                        "#ifndef TINYODOM_DUT_PHASE_CONFIG_H",
-                        "#define TINYODOM_DUT_PHASE_CONFIG_H",
+                        "#ifndef CREST_DUT_PHASE_CONFIG_H",
+                        "#define CREST_DUT_PHASE_CONFIG_H",
                         "",
-                        "#define TINYODOM_DUT_PHASE_BACK_TO_BACK 0",
-                        "#define TINYODOM_DUT_PHASE_CADENCED 1",
+                        "#define CREST_DUT_PHASE_BACK_TO_BACK 0",
+                        "#define CREST_DUT_PHASE_CADENCED 1",
                         "",
-                        "#define TINYODOM_DUT_SELECTED_PHASE TINYODOM_DUT_PHASE_BACK_TO_BACK",
-                        "#define TINYODOM_DUT_LATENCY_BUDGET_MS 999",
-                        "#define TINYODOM_DUT_MEASURED_RUNS 4",
-                        "#define TINYODOM_DUT_CPU_CLOCK_MHZ 200",
-                        "#define TINYODOM_DUT_WAKE_MARGIN_US 111",
-                        "#define TINYODOM_DUT_MIN_SLEEP_US 222",
+                        "#define CREST_DUT_SELECTED_PHASE CREST_DUT_PHASE_BACK_TO_BACK",
+                        "#define CREST_DUT_LATENCY_BUDGET_MS 999",
+                        "#define CREST_DUT_MEASURED_RUNS 4",
+                        "#define CREST_DUT_CPU_CLOCK_MHZ 200",
+                        "#define CREST_DUT_WAKE_MARGIN_US 111",
+                        "#define CREST_DUT_MIN_SLEEP_US 222",
                         "",
-                        "#endif /* TINYODOM_DUT_PHASE_CONFIG_H */",
+                        "#endif /* CREST_DUT_PHASE_CONFIG_H */",
                         "",
                     ]
                 ),
@@ -3393,22 +3393,22 @@ class STM32HelperTests(unittest.TestCase):
                 "_program_runtime_images",
                 return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
+                "crest.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
             ) as harness_mock, patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
                 _FakeSerialMonitor,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
+                "crest.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
                 return_value=_FakeHarnessSerial(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
                 return_value=type(
                     "PrimeResult",
                     (),
                     {"harness_ready": True, "harness_log": ["HARNESS READY"], "error": None},
                 )(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
+                "crest.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
                 return_value=type(
                     "DoneResult",
                     (),
@@ -3430,10 +3430,10 @@ class STM32HelperTests(unittest.TestCase):
                     },
                 )(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
                 return_value="upload ok",
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
                 return_value=telemetry,
             ):
                 metrics = device.evaluate(
@@ -3447,17 +3447,17 @@ class STM32HelperTests(unittest.TestCase):
                 )
 
             header_text = (
-                project_root / "Appli" / "Inc" / "tinyodom_dut_phase_config.h"
+                project_root / "Appli" / "Inc" / "crest_dut_phase_config.h"
             ).read_text(encoding="utf-8")
 
         self.assertEqual(metrics.error_code, HIL_ERROR_OK)
-        self.assertIn("#define TINYODOM_DUT_MEASURED_RUNS 4", header_text)
-        self.assertIn("#define TINYODOM_DUT_LATENCY_BUDGET_MS 321", header_text)
-        self.assertIn("#define TINYODOM_DUT_CPU_CLOCK_MHZ 400", header_text)
-        self.assertIn("#define TINYODOM_DUT_WAKE_MARGIN_US 4321", header_text)
-        self.assertIn("#define TINYODOM_DUT_MIN_SLEEP_US 5432", header_text)
+        self.assertIn("#define CREST_DUT_MEASURED_RUNS 4", header_text)
+        self.assertIn("#define CREST_DUT_LATENCY_BUDGET_MS 321", header_text)
+        self.assertIn("#define CREST_DUT_CPU_CLOCK_MHZ 400", header_text)
+        self.assertIn("#define CREST_DUT_WAKE_MARGIN_US 4321", header_text)
+        self.assertIn("#define CREST_DUT_MIN_SLEEP_US 5432", header_text)
         self.assertEqual(
-            harness_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"],
+            harness_mock.call_args.kwargs["build_defines"]["CREST_INFERENCE_RUNS"],
             4,
         )
 
@@ -3508,22 +3508,22 @@ class STM32HelperTests(unittest.TestCase):
                 "_storage_power_metrics",
                 return_value={"weight_storage_mode": "embedded", "external_flash_bytes": -1.0},
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
+                "crest.microcontrollers.stm32_nucleo_n657x0.arduino_base.ensure_harness_firmware"
             ) as harness_mock, patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
                 _FakeSerialMonitor,
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
+                "crest.microcontrollers.stm32_nucleo_n657x0.serial.Serial",
                 return_value=_FakeHarnessSerial(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.hil_protocol.prime_harness_session",
                 return_value=type(
                     "PrimeResult",
                     (),
                     {"harness_ready": True, "harness_log": ["HARNESS READY"], "error": None},
                 )(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
+                "crest.microcontrollers.stm32_nucleo_n657x0.hil_protocol.wait_for_harness_done",
                 return_value=type(
                     "DoneResult",
                     (),
@@ -3545,10 +3545,10 @@ class STM32HelperTests(unittest.TestCase):
                     },
                 )(),
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.debug_load_elf",
                 return_value="upload ok",
             ), patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.execute_runtime_session",
                 return_value=telemetry,
             ):
                 metrics = device.evaluate(
@@ -3563,7 +3563,7 @@ class STM32HelperTests(unittest.TestCase):
 
         self.assertEqual(metrics.error_code, HIL_ERROR_OK)
         self.assertEqual(
-            harness_mock.call_args.kwargs["build_defines"]["TINYODOM_INFERENCE_RUNS"],
+            harness_mock.call_args.kwargs["build_defines"]["CREST_INFERENCE_RUNS"],
             10,
         )
 
@@ -3571,10 +3571,10 @@ class STM32HelperTests(unittest.TestCase):
         """Ensure the checked-in canonical LRUN linkers reserve safe heap/stack floors."""
         # Canonical LRUN linker templates should keep the checked-in minimum heap and stack floors.
         app_reservations = stm32_n657_backend._parse_linker_reservations(
-            ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun" / "STM32CubeIDE" / "AppS" / "STM32N657XX_LRUN.ld"
+            ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun" / "STM32CubeIDE" / "AppS" / "STM32N657XX_LRUN.ld"
         )
         boot_reservations = stm32_n657_backend._parse_linker_reservations(
-            ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun" / "STM32CubeIDE" / "Boot" / "STM32N657XX_AXISRAM2_fsbl.ld"
+            ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun" / "STM32CubeIDE" / "Boot" / "STM32N657XX_AXISRAM2_fsbl.ld"
         )
         self.assertEqual(app_reservations["heap_bytes"], 0x2000)
         self.assertEqual(app_reservations["stack_bytes"], 0x4000)
@@ -3584,7 +3584,7 @@ class STM32HelperTests(unittest.TestCase):
     def test_real_lrun_template_parsers_match_checked_in_files(self) -> None:
         """Ensure LRUN path resolution and parser expectations match the checked-in workspace."""
         # Template parsers should still match the checked-in LRUN files shipped with the repository.
-        canonical_root = ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun"
+        canonical_root = ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun"
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = Path(tmpdir) / canonical_root.name
             shutil.copytree(canonical_root, staged_root)
@@ -3622,7 +3622,7 @@ class STM32HelperTests(unittest.TestCase):
             ROOT_DIR
             / "sketches"
             / "stm32"
-            / "tinyodom_stm32_lrun"
+            / "crest_stm32_lrun"
             / "STM32CubeIDE"
             / "AppS"
             / "Debug"
@@ -3639,7 +3639,7 @@ class STM32HelperTests(unittest.TestCase):
             ROOT_DIR
             / "sketches"
             / "stm32"
-            / "tinyodom_stm32_lrun"
+            / "crest_stm32_lrun"
             / "Appli"
             / "Src"
             / "stm32n6xx_it.c"
@@ -3654,10 +3654,10 @@ class STM32HelperTests(unittest.TestCase):
             ROOT_DIR
             / "sketches"
             / "stm32"
-            / "tinyodom_stm32_lrun"
+            / "crest_stm32_lrun"
             / "Appli"
             / "Src"
-            / "tinyodom_dut_runner.c"
+            / "crest_dut_runner.c"
         ).read_text(encoding="utf-8")
         self.assertIn('emit_line("STM32_AI_INIT=FAIL reason=rtc_wakeup_selftest");', runner_text)
 
@@ -3671,7 +3671,7 @@ class STM32HelperTests(unittest.TestCase):
         # Weight programming should autodiscover a loader when the manifest leaves that field unset.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            project_root = _build_lrun_project_tree(tmp_path / "tinyodom_stm32_lrun")
+            project_root = _build_lrun_project_tree(tmp_path / "crest_stm32_lrun")
             weights_blob = tmp_path / "network_data.bin"
             cubeprog_bin = tmp_path / "cubeprog" / "bin"
             loader_path = cubeprog_bin / "ExternalLoader" / DEFAULT_WEIGHTS_EXTERNAL_LOADER_NAME
@@ -3700,7 +3700,7 @@ class STM32HelperTests(unittest.TestCase):
             )
 
             with patch(
-                "tinyodom.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_flash_blob",
+                "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.program_external_flash_blob",
                 return_value="program ok",
             ) as program_mock:
                 metrics = device._program_weight_blob_if_needed(project_root)
@@ -3717,13 +3717,13 @@ class STM32HelperTests(unittest.TestCase):
         """
         # Host OS failures from the size parser should still surface as workflow errors.
         with tempfile.TemporaryDirectory() as tmpdir:
-            elf_path = Path(tmpdir) / "tinyodom_phase2.elf"
+            elf_path = Path(tmpdir) / "crest_phase2.elf"
             elf_path.write_bytes(b"elf")
             with patch(
-                "tinyodom.microcontrollers.stm32_cube_clt.resolve_required_tool_path",
+                "crest.microcontrollers.stm32_cube_clt.resolve_required_tool_path",
                 return_value=Path("/usr/bin/arm-none-eabi-size"),
             ), patch(
-                "tinyodom.microcontrollers.stm32_cube_clt.subprocess.run",
+                "crest.microcontrollers.stm32_cube_clt.subprocess.run",
                 side_effect=OSError("exec format error"),
             ):
                 with self.assertRaises(stm32_cube_clt.WorkflowError):

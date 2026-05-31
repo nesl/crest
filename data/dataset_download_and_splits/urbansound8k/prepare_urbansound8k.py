@@ -18,7 +18,7 @@ SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from tinyodom.datasets.urbansound8k_common import (  # noqa: E402
+from crest.datasets.urbansound8k_common import (  # noqa: E402
     ALL_FOLDS,
     BATCH_PERIOD_MS,
     CACHE_SCHEMA_VERSION,
@@ -407,7 +407,7 @@ def require_librosa() -> Any:
     except ImportError as exc:
         raise ImportError(
             "librosa is required to build UrbanSound8K feature caches. "
-            "Update the tinyodomex environment from environment.yml."
+            "Update the crest environment from environment.yml."
         ) from exc
     return librosa
 
@@ -1187,7 +1187,7 @@ def require_soundata() -> Any:
     except ImportError as exc:
         raise ImportError(
             "soundata is required to prepare UrbanSound8K. "
-            "Update the tinyodomex environment from environment.yml."
+            "Update the crest environment from environment.yml."
         ) from exc
     return soundata
 

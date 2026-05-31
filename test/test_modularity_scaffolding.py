@@ -15,15 +15,15 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from tinyodom.interfaces import DatasetABC, ModelFamilyABC, TaskABC  # noqa: E402
-from tinyodom.builtin_components import (  # noqa: E402
+from crest.interfaces import DatasetABC, ModelFamilyABC, TaskABC  # noqa: E402
+from crest.builtin_components import (  # noqa: E402
     ensure_audio_components_registered,
     ensure_builtin_components_registered,
 )
-from tinyodom.datasets.urbansound8k_mel import UrbanSound8KMelDataset  # noqa: E402
-from tinyodom import model_families  # noqa: E402
-from tinyodom.model_families import AudioDSCNNFamily  # noqa: E402
-from tinyodom.pipeline_types import (  # noqa: E402
+from crest.datasets.urbansound8k_mel import UrbanSound8KMelDataset  # noqa: E402
+from crest import model_families  # noqa: E402
+from crest.model_families import AudioDSCNNFamily  # noqa: E402
+from crest.pipeline_types import (  # noqa: E402
     DataSplit,
     DatasetBundle,
     EvaluationResult,
@@ -32,8 +32,8 @@ from tinyodom.pipeline_types import (  # noqa: E402
     TargetSpec,
     TaskMetricContract,
 )
-from tinyodom.registry import ComponentRegistry, dataset_registry, model_family_registry, task_registry  # noqa: E402
-from tinyodom.tasks.sound_classification import SoundClassificationTask  # noqa: E402
+from crest.registry import ComponentRegistry, dataset_registry, model_family_registry, task_registry  # noqa: E402
+from crest.tasks.sound_classification import SoundClassificationTask  # noqa: E402
 
 
 class DummyDataset(DatasetABC):
@@ -516,16 +516,16 @@ class PurityTests(unittest.TestCase):
         # The modular scaffold should keep new modules free of the forbidden runtime imports.
         """Validate new modules do not import forbidden runtime modules."""
         forbidden_modules = {
-            "tinyodom.data",
-            "tinyodom.model",
+            "crest.data",
+            "crest.model",
             "nas_model_client",
             "hil_server",
         }
         module_paths = [
-            SRC_DIR / "tinyodom" / "interfaces.py",
-            SRC_DIR / "tinyodom" / "model_metrics.py",
-            SRC_DIR / "tinyodom" / "pipeline_types.py",
-            SRC_DIR / "tinyodom" / "registry.py",
+            SRC_DIR / "crest" / "interfaces.py",
+            SRC_DIR / "crest" / "model_metrics.py",
+            SRC_DIR / "crest" / "pipeline_types.py",
+            SRC_DIR / "crest" / "registry.py",
         ]
 
         for module_path in module_paths:

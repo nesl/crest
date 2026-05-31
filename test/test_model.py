@@ -20,7 +20,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from tinyodom.model import (
+from crest.model import (
     CADENCED_CSV_FIELDS,
     DROP_RATE_CHOICES,
     TRIAL_LOG_STABLE_COLUMNS,
@@ -42,13 +42,13 @@ from tinyodom.model import (
     validate_model_input_shape,
     validate_loaded_model_input_shape,
 )  # noqa: E402
-from tinyodom.component_selection import resolve_component_selection  # noqa: E402
-from tinyodom.hardware import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
-from tinyodom.hil_runtime import CollectMetricsRequest, HarnessConfig, build_collect_metrics_request, collect_metrics  # noqa: E402, E501
-from tinyodom.microcontrollers import resolve_device_options  # noqa: E402
-import tinyodom.model_families.odom_tcn as odom_tcn_module  # noqa: E402
-from tinyodom.model_families.odom_tcn import OdomTCNFamily  # noqa: E402
-from tinyodom.pipeline_types import ModelBuildContext, TargetSpec  # noqa: E402
+from crest.component_selection import resolve_component_selection  # noqa: E402
+from crest.hardware import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
+from crest.hil_runtime import CollectMetricsRequest, HarnessConfig, build_collect_metrics_request, collect_metrics  # noqa: E402, E501
+from crest.microcontrollers import resolve_device_options  # noqa: E402
+import crest.model_families.odom_tcn as odom_tcn_module  # noqa: E402
+from crest.model_families.odom_tcn import OdomTCNFamily  # noqa: E402
+from crest.pipeline_types import ModelBuildContext, TargetSpec  # noqa: E402
 
 
 class CountFlopsTests(unittest.TestCase):
@@ -280,7 +280,7 @@ class ModelVariantHelperTests(unittest.TestCase):
 
 
 class OdomTCNFamilyExportTests(unittest.TestCase):
-    """Validate TinyODOM-family export materialization behavior."""
+    """Validate model-family export materialization behavior."""
 
     def setUp(self) -> None:
         """Prepare test fixtures."""
@@ -370,7 +370,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["chosen_device"], "ARDUINO_NANO_33_BLE_SENSE")
             return (None, 4096, None, 2048, 0, None)
 
-        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=False,
                 energy_aware=False,
@@ -416,7 +416,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["serial_port"], "ttyACM0")
             return (1024, 8192, 25.0, 4096, 0, None)
 
-        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -459,7 +459,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["measured_inference_runs"], 7)
             return (1024, 8192, 0.025, 4096, 0, None)
 
-        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -513,7 +513,7 @@ class CollectMetricsTests(unittest.TestCase):
                 },
             )
 
-        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -575,7 +575,7 @@ class CollectMetricsTests(unittest.TestCase):
                 },
             )
 
-        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -621,7 +621,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertTrue(run_hil)
             return (1024, 8192, 0.025, 4096, 0, {"runtime_mode": "back_to_back"})
 
-        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -674,7 +674,7 @@ class CollectMetricsTests(unittest.TestCase):
                     self.assertTrue(run_hil)
                     return (1024, 8192, 0.025, 4096, 0, {"runtime_mode": raw_runtime_mode})
 
-                with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
+                with patch("crest.hil_runtime.HIL_controller", fake_controller):
                     request = CollectMetricsRequest(
                         hil_enabled=True,
                         energy_aware=False,
@@ -738,7 +738,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["harness_done_timeout_s"], 3.6)
             return (1024, 8192, 0.025, 4096, 0, None)
 
-        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=True,
@@ -801,7 +801,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["device_options"]["split"], "75_25")
             return (1024, 2048, None, 4096, 0, None)
 
-        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=False,
                 energy_aware=False,
@@ -836,7 +836,7 @@ class CollectMetricsTests(unittest.TestCase):
             device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
         )
 
-        with patch("tinyodom.hil_runtime.HIL_controller") as controller_mock:
+        with patch("crest.hil_runtime.HIL_controller") as controller_mock:
             with self.assertRaises(RuntimeError) as context:
                 collect_metrics(request)
 
@@ -880,7 +880,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["harness_done_timeout_s"], 3.6)
             return (1024, 2048, 0.01, 4096, 0, None)
 
-        with patch("tinyodom.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil_runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -1058,7 +1058,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 hil=True,
                 name="STM32_NUCLEO_N657X0_Q",
                 serial_port="ttyACM0",
-                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun")),
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun")),
             ),
             dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(candidate_dir=Path("odom_tcn")),
@@ -1068,7 +1068,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         request = self._build_request(
             config,
             hyperparams,
-            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun"},
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun"},
         )
 
         self.assertEqual(request.serial_timeout_s, 30.0)
@@ -1085,7 +1085,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 serial_port="ttyACM0",
                 measured_inference_runs=100,
                 latency_budget_ms=2000.0,
-                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun")),
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun")),
             ),
             dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(candidate_dir=Path("odom_tcn")),
@@ -1096,7 +1096,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
             config,
             hyperparams,
             latency_budget_ms=2000.0,
-            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun"},
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun"},
         )
 
         self.assertEqual(request.serial_timeout_s, 210.0)
@@ -1112,7 +1112,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
                 runtime_mode="back_to_back",
                 serial_port="ttyACM0",
                 serial_timeout_s=120.0,
-                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun")),
+                stm32=Dict(project_root=str(ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun")),
             ),
             dataset=Dict(params=Dict(window_size=128)),
             outputs=Dict(candidate_dir=Path("odom_tcn")),
@@ -1122,7 +1122,7 @@ class BuildCollectMetricsRequestTests(unittest.TestCase):
         request = self._build_request(
             config,
             hyperparams,
-            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "tinyodom_stm32_lrun"},
+            device_options={"project_root": ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun"},
         )
 
         self.assertEqual(request.serial_timeout_s, 120.0)
@@ -1433,7 +1433,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         )
 
         self.assertEqual(request.device_name, "STM32_NUCLEO_N657X0_Q")
-        self.assertEqual(request.dirpath, Path("/tmp/stm32_fsbl"))
+        self.assertEqual(request.dirpath, Path("/tmp/stm32_fsbl").resolve())
         self.assertFalse(request.energy_aware)
         self.assertIsNone(request.harness)
         self.assertEqual(request.device_options["cpu_clock_mhz"], 400)
@@ -1536,7 +1536,7 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         # Custom LRUN roots should normalize cleanly even before the standard folder layout exists on disk.
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            project_root = tmp_path / "tinyodom_stm32_lrun"
+            project_root = tmp_path / "crest_stm32_lrun"
             for required_dir in (
                 project_root / "FSBL",
                 project_root / "Appli",
@@ -1841,7 +1841,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{models_dir}\"",
                         f"  candidate_dir: \"{candidate_dir}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -1849,10 +1849,10 @@ class LoadSettingsTests(unittest.TestCase):
             settings = load_config(config_path=config_path)
 
             self.assertEqual(
-                settings.outputs.model_name, "TinyOdomEx_Test_TEST_DEVICE.tflite"
+                settings.outputs.model_name, "CREST_Test_TEST_DEVICE.tflite"
             )
             self.assertEqual(
-                settings.outputs.checkpoint_name, "TinyOdomEx_Test_TEST_DEVICE.keras"
+                settings.outputs.checkpoint_name, "CREST_Test_TEST_DEVICE.keras"
             )
             self.assertTrue(settings.outputs.models_dir.is_dir())
             self.assertTrue(settings.outputs.candidate_dir.is_dir())
@@ -1886,7 +1886,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -1928,7 +1928,7 @@ class LoadSettingsTests(unittest.TestCase):
                                 "outputs:",
                                 f"  models_dir: \"{tmp_path / 'models'}\"",
                                 f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
-                                "  artifact_stem: \"TinyOdomEx_Test\"",
+                                "  artifact_stem: \"CREST_Test\"",
                             ]
                         )
                     )
@@ -1974,7 +1974,7 @@ class LoadSettingsTests(unittest.TestCase):
                                 "outputs:",
                                 f"  models_dir: \"{tmp_path / 'models'}\"",
                                 f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
-                                "  artifact_stem: \"TinyOdomEx_Test\"",
+                                "  artifact_stem: \"CREST_Test\"",
                             ]
                         )
                     )
@@ -2043,7 +2043,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                         "  model_name: \"manual.tflite\"",
                     ]
                 )
@@ -2068,7 +2068,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                         "  checkpoint_name: \"manual.keras\"",
                     ]
                 )
@@ -2123,7 +2123,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
-                        "  artifact_stem: \"nested/TinyOdomEx_Test\"",
+                        "  artifact_stem: \"nested/CREST_Test\"",
                     ]
                 )
             )
@@ -2196,11 +2196,11 @@ class LoadSettingsTests(unittest.TestCase):
         self.assertEqual(settings.model.params.export_variant, "untrained")
         self.assertEqual(
             settings.outputs.model_name,
-            "TinyOdomEx_UrbanSound8K_STM32_NUCLEO_N657X0_Q.tflite",
+            "CREST_UrbanSound8K_STM32_NUCLEO_N657X0_Q.tflite",
         )
         self.assertEqual(
             settings.outputs.checkpoint_name,
-            "TinyOdomEx_UrbanSound8K_STM32_NUCLEO_N657X0_Q.keras",
+            "CREST_UrbanSound8K_STM32_NUCLEO_N657X0_Q.keras",
         )
         self.assertEqual(settings.training.quantization.mode, "int8_ptq")
         self.assertFalse(settings.training.quantization.search)
@@ -2252,7 +2252,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2309,7 +2309,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2370,7 +2370,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                         *self._score_lines(),
                     ]
                 )
@@ -2407,7 +2407,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                         *self._score_lines(),
                     ]
                 )
@@ -2437,7 +2437,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2466,7 +2466,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2496,7 +2496,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2538,7 +2538,7 @@ class LoadSettingsTests(unittest.TestCase):
                                 "outputs:",
                                 f"  models_dir: \"{tmp_path / 'models'}\"",
                                 f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                                "  artifact_stem: \"TinyOdomEx_Test\"",
+                                "  artifact_stem: \"CREST_Test\"",
                             ]
                         )
                     )
@@ -2569,7 +2569,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2596,7 +2596,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2624,7 +2624,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2655,7 +2655,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2688,7 +2688,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2727,7 +2727,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2768,7 +2768,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2816,7 +2816,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2866,7 +2866,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2901,7 +2901,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2946,7 +2946,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -2986,7 +2986,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3041,7 +3041,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3096,7 +3096,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3138,7 +3138,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3181,7 +3181,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3222,7 +3222,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3259,7 +3259,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3312,7 +3312,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'audio'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3360,7 +3360,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3407,7 +3407,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3450,7 +3450,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3479,7 +3479,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3508,7 +3508,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3556,7 +3556,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3610,7 +3610,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3661,7 +3661,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3714,7 +3714,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3767,7 +3767,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3821,7 +3821,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3880,7 +3880,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3920,7 +3920,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -3966,7 +3966,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -4005,7 +4005,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -4051,7 +4051,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -4097,7 +4097,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -4143,7 +4143,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -4211,7 +4211,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -4254,7 +4254,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -4290,7 +4290,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -4321,7 +4321,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -4351,7 +4351,7 @@ class LoadSettingsTests(unittest.TestCase):
                         "outputs:",
                         f"  models_dir: \"{tmp_path / 'models'}\"",
                         f"  candidate_dir: \"{tmp_path / 'tcn'}\"",
-                        "  artifact_stem: \"TinyOdomEx_Test\"",
+                        "  artifact_stem: \"CREST_Test\"",
                     ]
                 )
             )
@@ -4612,8 +4612,8 @@ class LogTrialTests(unittest.TestCase):
                 artifact_summary={"plot_path": "plots/demo.png"}
             )
 
-            with patch("tinyodom.model.time.time", return_value=123.0), patch(
-                "tinyodom.model.time.strftime", return_value="01-02-1970 00:02:03"
+            with patch("crest.model.time.time", return_value=123.0), patch(
+                "crest.model.time.strftime", return_value="01-02-1970 00:02:03"
             ):
                 log_trial(
                     trial_outcome=trial_outcome,

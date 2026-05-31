@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CANONICAL_ROOT = REPO_ROOT / "sketches" / "stm32" / "tinyodom_stm32_lrun"
+CANONICAL_ROOT = REPO_ROOT / "sketches" / "stm32" / "crest_stm32_lrun"
 
 
 class Stm32ProjectPortabilityTests(unittest.TestCase):
@@ -47,9 +47,9 @@ class Stm32ProjectPortabilityTests(unittest.TestCase):
             CANONICAL_ROOT / "STM32CubeIDE" / "AppS" / "Debug" / "objects.list"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("../../../Appli/Src/tinyodom_dut_runner.c", subdir_text)
-        self.assertIn("./Src/tinyodom_dut_runner.o", subdir_text)
-        self.assertIn('"./Src/tinyodom_dut_runner.o"', objects_text)
+        self.assertIn("../../../Appli/Src/crest_dut_runner.c", subdir_text)
+        self.assertIn("./Src/crest_dut_runner.o", subdir_text)
+        self.assertIn('"./Src/crest_dut_runner.o"', objects_text)
         self.assertNotIn("tcn_" + "dut_runner", subdir_text)
         self.assertNotIn("tcn_" + "dut_runner", objects_text)
 

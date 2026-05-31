@@ -1,4 +1,4 @@
-"""Describe zeroMQ REP server entry point for TinyODOM HIL metric requests.
+"""Describe zeroMQ REP server entry point for CREST HIL metric requests.
 
 This module owns the host-side HIL server surface, including import-time
 TensorFlow/absl logging suppression, exported sketch-variant name constants,
@@ -22,30 +22,30 @@ import zmq
 from addict import Dict
 import numpy as np
 
-from tinyodom.builtin_components import ensure_builtin_components_registered
-from tinyodom.cadence import resolve_batch_period_ms
-from tinyodom.component_selection import cfg_get, resolve_component_selection
-from tinyodom.devices import (
+from crest.builtin_components import ensure_builtin_components_registered
+from crest.cadence import resolve_batch_period_ms
+from crest.component_selection import cfg_get, resolve_component_selection
+from crest.devices import (
     CandidatePrepareRequest,
     arduino_staged_sketch_path,
     _sync_arduino_sketch_variant_for_config,
 )
-from tinyodom.hardware import (
+from crest.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
     describe_error_code,
 )
-from tinyodom.hil_runtime import build_collect_metrics_request, collect_metrics
-from tinyodom.errors import HIL_ERROR_OK, HIL_MASTER_FATAL
-from tinyodom.microcontrollers import (
+from crest.hil_runtime import build_collect_metrics_request, collect_metrics
+from crest.errors import HIL_ERROR_OK, HIL_MASTER_FATAL
+from crest.microcontrollers import (
     get_device as get_microcontroller_device,
     resolve_device_options,
 )
-from tinyodom.microcontrollers.stm32_nucleo_n657x0 import (
+from crest.microcontrollers.stm32_nucleo_n657x0 import (
     BOARD_NAME as STM32_BOARD_NAME,
     classify_stm32_backend_error,
 )
-from tinyodom.microcontrollers import stm32_cube_clt, stm32_runtime
-from tinyodom.model import (
+from crest.microcontrollers import stm32_cube_clt, stm32_runtime
+from crest.model import (
     DEFAULT_CONFIG_PATH,
     VALID_QUANTIZATION_MODES,
     configured_quantization_mode,
@@ -55,9 +55,9 @@ from tinyodom.model import (
     set_error_code,
     validate_model_input_shape,
 )
-from tinyodom.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
-from tinyodom.registry import dataset_registry, model_family_registry
-from tinyodom.runtime_bootstrap import bootstrap_pipeline, instantiate_task_component
+from crest.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
+from crest.registry import dataset_registry, model_family_registry
+from crest.runtime_bootstrap import bootstrap_pipeline, instantiate_task_component
 
 # Reduce noisy TensorFlow / absl logging at import time for CLI and server use.
 tf.get_logger().setLevel(logging.ERROR)
@@ -1303,7 +1303,7 @@ class HILServer:
         Selection depends on ``device.name``, optional Portenta
         ``device.portenta.target_core``, ``training.energy_aware``, and
         ``training.input_mode`` in the loaded config. Uniform sketches use the
-        shared root ``sketches/tinyodom_inference_*.ino`` assets, while
+        shared root ``sketches/crest_inference_*.ino`` assets, while
         dataset-specific representative/real analysis variants continue to use
         ``sketches/analysis_sketches``.
 
@@ -1358,7 +1358,7 @@ class HILServer:
         return self.active_sketch_path
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the TinyODOM HIL server.")
+    parser = argparse.ArgumentParser(description="Run the CREST HIL server.")
     parser.add_argument(
         "--config",
         default=str(DEFAULT_CONFIG_PATH),

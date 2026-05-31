@@ -16,10 +16,10 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from tinyodom.datasets.oxiod import OxIODDataset  # noqa: E402
-from tinyodom.model_families.odom_tcn import DILATION_CANDIDATES, OdomTCNFamily  # noqa: E402
-from tinyodom.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext, TargetSpec  # noqa: E402
-from tinyodom.tasks.odometry_regression import OdometryRegressionTask  # noqa: E402
+from crest.datasets.oxiod import OxIODDataset  # noqa: E402
+from crest.model_families.odom_tcn import DILATION_CANDIDATES, OdomTCNFamily  # noqa: E402
+from crest.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext, TargetSpec  # noqa: E402
+from crest.tasks.odometry_regression import OdometryRegressionTask  # noqa: E402
 
 
 def _make_legacy_split(
@@ -87,7 +87,7 @@ class OxIODDatasetTests(unittest.TestCase):
         test_split = _make_legacy_split()
 
         with patch(
-            "tinyodom.datasets.oxiod.import_oxiod_dataset",
+            "crest.datasets.oxiod.import_oxiod_dataset",
             side_effect=[train_split, val_split, test_split],
         ) as load_mock:
             bundle = self.dataset.load(self.config)
@@ -109,7 +109,7 @@ class OxIODDatasetTests(unittest.TestCase):
         test_split = _make_legacy_split()
 
         with patch(
-            "tinyodom.datasets.oxiod.import_oxiod_dataset",
+            "crest.datasets.oxiod.import_oxiod_dataset",
             side_effect=[train_split, val_split, test_split],
         ) as load_mock:
             self.dataset.load(self.config)
@@ -135,7 +135,7 @@ class OxIODDatasetTests(unittest.TestCase):
         # Missing calibration windows should leave the bundle calibration split empty instead of fabricating one.
         """Validate missing calibration windows keeps bundle calibration empty."""
         with patch(
-            "tinyodom.datasets.oxiod.import_oxiod_dataset",
+            "crest.datasets.oxiod.import_oxiod_dataset",
             side_effect=[_make_legacy_split(), _make_legacy_split(), _make_legacy_split()],
         ):
             bundle = self.dataset.load(self.config)
@@ -159,7 +159,7 @@ class OxIODDatasetTests(unittest.TestCase):
         calibration_split = _make_legacy_split(num_windows=2)
 
         with patch(
-            "tinyodom.datasets.oxiod.import_oxiod_dataset",
+            "crest.datasets.oxiod.import_oxiod_dataset",
             side_effect=[train_split, val_split, test_split, calibration_split],
         ) as load_mock:
             bundle = self.dataset.load(config)
@@ -466,7 +466,7 @@ class OdomTCNFamilyTests(unittest.TestCase):
         self.assertEqual(hparams["dilations"], DILATION_CANDIDATES[2])
 
     def test_dilation_candidates_preserve_legacy_search_surface(self) -> None:
-        # The family-owned dilation table should preserve the original TinyODOM search surface exactly.
+        # The family-owned dilation table should preserve the original CREST search surface exactly.
         """Validate dilation candidates preserve legacy search surface."""
         self.assertEqual(len(DILATION_CANDIDATES), 465)
         self.assertEqual(DILATION_CANDIDATES[0], [1, 2, 4])
@@ -485,7 +485,7 @@ class OdomTCNFamilyTests(unittest.TestCase):
         }
 
         with patch(
-            "tinyodom.model_families.odom_tcn.build_tinyodom_model",
+            "crest.model_families.odom_tcn.build_odom_tcn_model",
             return_value=MagicMock(),
         ) as build_mock:
             self.family.build_model(hparams, self.ctx, {})
@@ -497,7 +497,7 @@ class OdomTCNFamilyTests(unittest.TestCase):
         self.assertEqual(build_hparams["input_dim"], 6)
 
     def test_build_model_preserves_legacy_output_names(self) -> None:
-        # Model construction should preserve the legacy output names expected by the original TinyOdom heads.
+        # Model construction should preserve the legacy output names expected by the original CREST heads.
         """Validate build model preserves legacy output names."""
         hparams = {
             "nb_filters": 8,
