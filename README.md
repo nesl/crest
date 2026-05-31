@@ -1,34 +1,65 @@
-# CREST
+# CREST: Cross-platform Runtime Evaluation and Search Tool
 
-CREST (Cross-platform Runtime Evaluation and Search Tool) is a hardware-aware
-embedded sensing NAS framework. It combines dataset, task, and model-family
-selection with board-specific hardware-in-the-loop measurement so the same
-training/NAS flow can target odometry and audio-classification models on
-resource-constrained microcontrollers including Nano 33 BLE, Portenta H7, and
-STM32 N6.
+CREST is a deployment-realistic hardware-in-the-loop (HIL) neural architecture
+search framework for embedded sensing systems on resource-constrained
+microcontrollers. It keeps the optimizer, HIL measurement boundary, logging,
+and replay workflow fixed while users vary workload, model family, target
+backend, runtime schedule, quantization mode, and selection policy.
 
-## Architecture At A Glance
+CREST currently includes built-in support for OxIOD inertial odometry and
+UrbanSound8K prepared-feature audio classification, with target backends for
+Arduino Nano 33 BLE Sense, Arduino Portenta H7, and STM32 NUCLEO-N657X0-Q.
 
-- A dataset adapter loads and normalizes data.
-- A task adapter defines targets, fitting/evaluation behavior, and task-owned
-  metrics.
-- A model family samples hyperparameters, builds models, and materializes the
-  export variant used for HIL.
-- A microcontroller backend stages, compiles, uploads, runs, and measures one
-  candidate on the selected target.
-- Shared scoring, pruning, and trial logging operate on the generic trial
-  outcome produced by those layers.
+![CREST framework structure](assets/crest_stack_diagram.png)
 
-For the source-level architecture and extension points, see
-[src/README.md](src/README.md).
+## What CREST Provides
+
+- Configurable studies that bind dataset, task, model family, target backend,
+  runtime mode, quantization, and scoring policy through YAML.
+- Hardware-in-the-loop measurement paths for deployment metrics such as memory,
+  latency, energy, cadence telemetry, and status.
+- Continuous-inference and cadenced sensing-window runtime modes.
+- Search policies for scalar scoring, multi-objective Pareto exploration,
+  pruning, and feasibility constraints.
+- Replay utilities for remeasuring selected candidates across targets,
+  schedules, and policies.
+- Analysis scripts for reproducing paper-style plots and claim calculations
+  from existing NAS and replay artifacts.
+
+CREST is designed for controlled comparisons. A study can change the board,
+runtime schedule, workload, or policy while keeping the search loop, metric
+schema, HIL path, and replay machinery consistent. That makes it possible to
+ask whether a candidate was selected because of the deployment condition being
+tested rather than because a different script or measurement path was used.
+
+## Hardware-in-the-Loop Measurement
+
+CREST separates workload semantics from target-specific deployment mechanics.
+The NAS client samples and evaluates candidates, while the HIL server prepares
+target-specific artifacts, invokes the selected backend, and returns normalized
+metrics to the same scoring and logging path.
+
+![CREST HIL power measurement setup](assets/hil_power_measurement_setup.png)
+
+For board-level power measurement, the device under test is powered through an
+INA228 monitor. A separate harness microcontroller reads INA228 telemetry over
+I2C while observing DUT GPIO markers that delimit the measurement window.
+Continuous runs mark the repeated inference interval. Cadenced runs mark the
+scheduled window that includes active inference and the following sleep or wait
+interval.
+
+The HIL harness lets CREST attach each energy value to a concrete candidate,
+runtime schedule, and trial outcome without oscilloscope inspection or manual
+trace segmentation.
 
 ## Choose Your Workflow
 
 1. **Training only**
-   Use this when you want to run NAS/training without talking to hardware.
-   Start from `src/config/nas_config_stm32.yaml`, set `device.hil: false`, and read
-   [src/config/README.md](src/config/README.md) plus [src/README.md](src/README.md).
-   For the UrbanSound8K audio DS-CNN path, start from
+   Use this when you want to run NAS or training without talking to hardware.
+   Start from `src/config/nas_config_stm32.yaml`, set `device.hil: false`, and
+   read [src/config/README.md](src/config/README.md) plus
+   [src/README.md](src/README.md). For the UrbanSound8K audio DS-CNN path,
+   start from
    [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml).
 
 2. **Arduino HIL**
@@ -43,11 +74,11 @@ For the source-level architecture and extension points, see
    and [sketches/README.md](sketches/README.md).
 
 3. **STM32 HIL**
-   Use this for the current STM32 N6 backend.
-   Start from [src/config/nas_config_stm32.yaml](src/config/nas_config_stm32.yaml), then
+   Use this for the STM32 N657 backend. Start from
+   [src/config/nas_config_stm32.yaml](src/config/nas_config_stm32.yaml), then
    use [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
-   for the audio DS-CNN HIL path. Then
-   read [src/crest/microcontrollers/README.md](src/crest/microcontrollers/README.md)
+   for the audio DS-CNN HIL path. Then read
+   [src/crest/microcontrollers/README.md](src/crest/microcontrollers/README.md)
    and the committed STM32 workspace notes under
    [sketches/stm32/crest_stm32_lrun/README.md](sketches/stm32/crest_stm32_lrun/README.md).
 
@@ -59,26 +90,32 @@ For the source-level architecture and extension points, see
 ## Environment Setup
 
 1. **Clone with submodules.**
+
    ```bash
    git clone --recurse-submodules <url>
    ```
+
    If you already cloned without submodules:
+
    ```bash
    git submodule update --init --recursive
    ```
 
 2. **Create and activate the Conda environment.**
+
    ```bash
    conda env create -f environment.yml -n crest
    conda activate crest
    ```
 
 3. **Install the repo in editable mode.**
+
    ```bash
    make install
    ```
 
 4. **If you are using GPUs, install the repo-tested TensorFlow CUDA wheel set.**
+
    ```bash
    pip install --upgrade pip
    pip install tensorflow[and-cuda]==2.20.0
@@ -105,13 +142,16 @@ make prepare-audio-dataset
 ```
 
 Use `URBANSOUND8K_ARGS="--download --accept-license"` when you want the
-preparation script to download the dataset through soundata, or
-`URBANSOUND8K_ARGS="--fold-rotation"` when you also need the Phase 9
-fold-rotation reporting caches.
+preparation script to download the dataset through `soundata`, or
+`URBANSOUND8K_ARGS="--fold-rotation"` when you also need the fold-rotation
+reporting caches.
+
+For OxIOD:
 
 1. Download the OxIOD "Complete Dataset" zip from `http://deepio.cs.ox.ac.uk/`.
 2. Rename it to `OxIOD.zip` or pass an explicit path.
 3. Prepare the dataset from the repo root:
+
    ```bash
    make prepare-dataset
    # or:
@@ -120,7 +160,7 @@ fold-rotation reporting caches.
 
 This extracts the dataset into `data/oxiod`, normalizes folder names such as
 `slow walking -> slow_walking`, and restores the curated tracked split files
-for each activity. The dataset-specific details live in
+for each activity. Dataset-specific details live in
 [data/dataset_download_and_splits/README.md](data/dataset_download_and_splits/README.md).
 
 ## Arduino Tooling Setup
@@ -130,19 +170,26 @@ write into `$HOME` or system directories.
 
 1. Ensure `crest` is active.
 2. Bootstrap Arduino CLI and repo-local hooks:
+
    ```bash
    make arduino-setup
    ```
+
 3. Reactivate the environment so the new hooks are loaded:
+
    ```bash
    conda deactivate
    conda activate crest
    ```
+
 4. Verify the CLI:
+
    ```bash
    arduino-cli --config-file tools/arduino-cli.yaml version
    ```
+
 5. Install the board package you need. Example for Nano 33 BLE:
+
    ```bash
    arduino-cli core install arduino:mbed_nano --config-file tools/arduino-cli.yaml
    ```
@@ -184,9 +231,9 @@ refreshes the repo-local STM32 vendor subsets.
 The shipped starting points are:
 
 - [src/config/nas_config_stm32.yaml](src/config/nas_config_stm32.yaml)
-  STM32-oriented config for the current `STM32_NUCLEO_N657X0_Q`
-  backend. This is the main starting point for STM32 runs and the most
-  complete commented example config in the repo.
+  STM32-oriented config for the current `STM32_NUCLEO_N657X0_Q` backend. This
+  is the main starting point for STM32 runs and the most complete commented
+  example config in the repo.
 - [src/config/nas_config_ble.yaml](src/config/nas_config_ble.yaml)
   BLE-focused starting point for `ARDUINO_NANO_33_BLE_SENSE`.
 - [src/config/nas_config_portenta.yaml](src/config/nas_config_portenta.yaml)
@@ -219,8 +266,8 @@ see [src/config/README.md](src/config/README.md).
 
 ## Running NAS And HIL
 
-CREST runs a NAS/training client on a training host and talks to the HIL
-server running on the board-connected device host.
+CREST runs a NAS/training client on a training host and talks to the HIL server
+running on the board-connected device host.
 
 ### 1. Start the HIL server on the device host
 
@@ -271,20 +318,36 @@ Artifacts are written under the configured `outputs.models_dir` and
 - `models/<study_name>/summary.json`
 - generated TFLite and `.keras` artifacts
 
-## Docs Map
+## Reproducing Case-Study Analyses
+
+Paper-oriented run configs live in
+[src/config/case_study_configs/](src/config/case_study_configs/). They cover:
+
+- Case Study 1: OxIOD/TCN proxy-vs-measured-energy selection across targets.
+- Case Study 2: STM32/OxIOD continuous-vs-cadenced schedule comparison.
+- Case Study 3: UrbanSound8K/DS-CNN application-level scoring on two targets.
+
+Plotting and calculation utilities live under [analysis_scripts/](analysis_scripts/).
+Those scripts consume existing NAS and replay artifacts; they do not rerun NAS
+or touch hardware unless their package README says so.
+
+## Documentation Map
 
 - [src/README.md](src/README.md)
-  Source architecture, shared abstractions, trial logging, and extension seams.
+  Source architecture, shared abstractions, trial logging, replay, and
+  extension paths.
 - [src/config/README.md](src/config/README.md)
   Full config reference and scoring/pruning semantics.
+- [src/config/case_study_configs/README.md](src/config/case_study_configs/README.md)
+  Paper case-study config index.
 - [src/crest/microcontrollers/README.md](src/crest/microcontrollers/README.md)
   Backend contracts, bring-up, staging, compile, upload, and runtime flows.
 - [src/crest/model_families/README.md](src/crest/model_families/README.md)
-  Model-family-specific extension guide.
+  Model-family extension guide.
 - [sketches/README.md](sketches/README.md)
   Shared Arduino sketch and STM32 workspace layout.
 - [analysis_scripts/README.md](analysis_scripts/README.md)
-  One-off analysis and validation utilities.
+  Analysis and validation utilities.
 - [data/dataset_download_and_splits/README.md](data/dataset_download_and_splits/README.md)
   OxIOD preparation plus UrbanSound8K audio cache preparation.
 
@@ -297,5 +360,11 @@ Artifacts are written under the configured `outputs.models_dir` and
   `PATH` before rerunning `make stm32-setup`.
 - If OxIOD preparation fails, confirm the zip exists and that the repo still
   contains the tracked split templates under `data/oxiod/<activity>/`.
-- If audio runs fail while loading data, run `make prepare-audio-dataset`
-  and confirm the UrbanSound8K cache path in the selected config exists.
+- If audio runs fail while loading data, run `make prepare-audio-dataset` and
+  confirm the UrbanSound8K cache path in the selected config exists.
+
+## Anonymous Review Note
+
+Citation, acknowledgments, and identifying project metadata are intentionally
+omitted from this README while the artifact is prepared for double-blind
+review. They can be added back for a public release.
