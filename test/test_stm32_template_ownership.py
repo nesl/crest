@@ -1,15 +1,9 @@
 """Tests for the checked-in STM32 LRUN template ownership manifest."""
 
-import os
 import subprocess
 import sys
 import unittest
 from pathlib import Path
-
-import pytest
-
-if os.environ.get("RUN_ANALYSIS_SCRIPT_TESTS") != "1":
-    pytest.skip("analysis-script tests are opt-in", allow_module_level=True)
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]

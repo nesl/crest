@@ -2,14 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import unittest
 from pathlib import Path
-
-import pytest
-
-if os.environ.get("RUN_ANALYSIS_SCRIPT_TESTS") != "1":
-    pytest.skip("analysis-script tests are opt-in", allow_module_level=True)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
