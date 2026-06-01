@@ -1,9 +1,14 @@
-# Paper Plot Scripts
+# Publication Figure Scripts
 
-This directory contains the Python scripts used to generate the figures for the
-paper. The plotting entry points are intentionally command-line driven: input
-CSV paths, replay directories, output directories, and output filename stems are
-provided explicitly instead of being inferred from local workstation paths.
+This directory contains the Python scripts used to generate CREST publication
+figures. The plotting entry points are intentionally command-line driven:
+input CSV paths, replay directories, output directories, and output filename
+stems are provided explicitly instead of being inferred from local workstation
+paths.
+
+Hardware requirement: no hardware required. These scripts consume existing NAS
+and replay artifacts; they do not run NAS, retrain models, replay hardware, or
+start a HIL server.
 
 The scripts write publication figures plus small sidecar files, such as plotted
 points and summaries, that make it easier to audit what was drawn. Rendering
@@ -15,7 +20,7 @@ without changing font sizes, marker sizes, spacing, axis limits, or DPI.
 Use the repository environment:
 
 ```bash
-conda env create -f environment.yml
+conda env create -f environment.yml -n crest
 conda activate crest
 ```
 
@@ -26,6 +31,9 @@ For plot-only reproduction, the required Python packages are:
 - `pandas`
 
 Run commands from the repository root unless noted otherwise.
+Plot-only use does not require `make install` because the scripts use
+repository-relative imports and explicit input paths. Run the full root setup
+when you also need NAS, HIL, or package import behavior outside these scripts.
 
 ## Scripts
 
@@ -41,7 +49,7 @@ Run commands from the repository root unless noted otherwise.
 ## Output Convention
 
 Every script takes an explicit output directory and filename stem. A typical
-run writes a PNG, a PDF, and one or more CSV or text sidecars:
+run writes one or more image files plus CSV or text sidecars:
 
 ```bash
 mkdir -p outputs/paper_plots

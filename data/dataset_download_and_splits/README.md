@@ -1,5 +1,9 @@
 # Dataset Preparation
 
+These preparation steps are software-only. They do not require a development
+board or HIL harness, but they do require local storage for the downloaded raw
+datasets and generated caches.
+
 ## UrbanSound8K Audio Cache
 
 UrbanSound8K is used for the first audio backend path. The dataset license is
@@ -21,9 +25,9 @@ cache:
 make prepare-audio-dataset
 ```
 
-Phase 9 uses schema-2 caches. If an older schema-1 cache is present, regenerate
-it with the same command. To also build the full train-8/validate-1/test-1
-fold-rotation caches for final reporting:
+The current audio pipeline uses schema-2 caches. If an older schema-1 cache is
+present, regenerate it with the same command. To also build the full
+train-8/validate-1/test-1 fold-rotation caches used for cross-fold reporting:
 
 ```bash
 make prepare-audio-dataset URBANSOUND8K_ARGS="--fold-rotation"
@@ -48,7 +52,8 @@ The script lives at:
 ## OxIOD Dataset Preparation
 
 Download the OxIOD "Complete Dataset" zip from `http://deepio.cs.ox.ac.uk/`,
-rename it to `OxIOD.zip`, then run the preparation step from the repo root:
+rename it to `OxIOD.zip`, then run the preparation step from the repo root.
+The raw archive is not stored in this repository:
 
 ```bash
 make prepare-dataset
@@ -64,8 +69,9 @@ The preparation script does four things:
 4. Writes the curated `Train.txt`, `Valid.txt`, `Test.txt`, and
    `Train_Valid.txt` files back into each activity folder.
 
-The split files in this repo are not placeholders. They are the curated
-tracked splits used by the built-in OxIOD path.
+The split files in this repo are not placeholders. They are curated tracked
+splits included so the built-in OxIOD path can be reproduced after extracting a
+fresh copy of the upstream archive.
 
 Dataset-specific preparation files now live under:
 

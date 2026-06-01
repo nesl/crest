@@ -6,6 +6,15 @@ path to measure fixed-duration deployment windows occupied by simple phases:
 sleep/idle, light wait, tight polling, floating-point compute, and integer
 compute.
 
+Hardware requirement: target development board and CREST HIL harness required.
+Run commands from the repository root with the `crest` Conda environment
+active.
+
+For general HIL setup and backend details, see
+[`../../src/crest/microcontrollers/README.md`](../../src/crest/microcontrollers/README.md).
+For the STM32 LRUN workspace used by the STM32 probe path, see
+[`../../sketches/stm32/crest_stm32_lrun/README.md`](../../sketches/stm32/crest_stm32_lrun/README.md).
+
 ## Contents
 
 - `run_micro_workload_energy_probe.py`
@@ -15,7 +24,7 @@ compute.
 - `micro_workload_probe.ino`
   Arduino DUT sketch used for Nano 33 BLE and Portenta H7 targets.
 - `stm32_synthetic_dut_runner.c`
-  STM32 LRUN DUT runner staged into the production STM32 template for the
+  STM32 LRUN DUT runner staged into the shipped STM32 template for the
   synthetic workloads.
 - `results/`
   Generated local outputs. This directory is intentionally ignored by git.
@@ -24,7 +33,7 @@ compute.
 
 Board tokens are selected with `--boards`:
 
-- `stm32`: STM32 NUCLEO-N657X0-Q using the production STM32 LRUN template,
+- `stm32`: STM32 NUCLEO-N657X0-Q using the shipped STM32 LRUN template,
   clock setup, RTC setup, signing, external-flash App programming, and debug
   load path.
 - `portenta_m4`: Arduino Portenta H7 M4 core, internally `target_core=cm4`,
@@ -73,6 +82,18 @@ The harness emits the normal INA228 telemetry lines, including:
 
 The host parses these lines through the existing CREST helpers rather than a
 separate measurement protocol.
+
+Before running a probe, confirm:
+
+- the target board is connected and visible at the serial port used by the
+  selected board token;
+- the HIL harness is connected at the harness serial port;
+- Arduino CLI setup has been completed for Arduino targets;
+- STM32CubeCLT, the repo-local STM32 setup, signing tools, and CubeProgrammer
+  path have been completed for the `stm32` target. The synthetic STM32 probe
+  patches out ST Edge AI runtime-library dependencies and does not require
+  `stedgeai` code generation;
+- the harness wiring matches the DUT arm/trigger pins listed above.
 
 ## Quick Start
 
@@ -187,7 +208,7 @@ This analysis script reuses:
 - `src/crest/microcontrollers/stm32_cube_clt.py` plus script-local wrappers
   for STM32 LRUN workspace build, signing, FSBL copy-window update, and
   external image programming.
-- `sketches/stm32/crest_stm32_lrun/` as the staged STM32 production
+- `sketches/stm32/crest_stm32_lrun/` as the staged shipped STM32
   template.
 - `sketches/common/crest_hil_config.h` and the existing harness sketch
   protocol.

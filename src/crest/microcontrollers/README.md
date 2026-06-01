@@ -1,105 +1,58 @@
 # Microcontroller Backends
 
-This package contains CREST hardware backends.
+Microcontroller backends turn one trained/model-candidate export into
+something CREST can compile, upload, run on a board, and measure.
 
-A backend is the code that turns one trained/model-candidate export into
-something CREST can compile, upload, run on a board, and measure. The
-backend boundary is important because Arduino boards, STM32 Cube projects, and
-future non-Arduino vendors do not all use the same build and runtime flow.
+For the broader source map, see [`../../README.md`](../../README.md). If you
+are working on dataset loading, task semantics, or model architecture, use the
+neighboring component-layer READMEs instead.
 
-This README is the bring-up guide for:
+## What This Layer Owns
+
+This layer owns:
+
+- target/device metadata and arena limits;
+- candidate staging for board-specific build systems;
+- compile/upload/load tooling;
+- runtime telemetry parsing and error classification;
+- power/energy measurement integration through the HIL harness;
+- normalized `DeviceMetrics` returned to the shared HIL controller.
+
+The backend boundary is important because Arduino boards, STM32 Cube projects,
+and future non-Arduino vendors do not all use the same build and runtime flow.
+
+This README covers:
 
 1. Adding a new Arduino board.
-2. Adding another STM32 board that is similar to the current STM32 flow.
+2. Adding another STM32 board that is similar to the shipped STM32 flow.
 3. Adding a new non-Arduino vendor backend such as NXP or Nordic.
 
-## Start Here
+### Hardware Requirements
 
-Choose the path that matches your board.
+Reading or extending backend code is software-only. Compile-only checks require
+the target toolchain but do not require a connected board. Uploading or runtime
+measurement requires the target development board. Energy measurement requires
+the CREST HIL harness and INA228 telemetry path.
 
-### Use the Arduino path when:
+## Contents
 
-1. The board has an Arduino FQBN.
-2. The board builds with `arduino-cli compile`.
-3. The board uploads with `arduino-cli upload`.
+- [What This Layer Owns](#what-this-layer-owns)
+- [Shipped Implementations](#shipped-implementations)
+- [Key Files](#key-files)
+- [Runtime Flow](#runtime-flow)
+- [Add A New Hardware Backend](#add-a-new-hardware-backend)
+- [Contract In Practice](#contract-in-practice)
+- [Registration And Config Selection](#registration-and-config-selection)
+- [Arduino Bring-Up Guide](#arduino-bring-up-guide)
+- [STM32 Bring-Up Guide](#stm32-bring-up-guide)
+- [New-Vendor Bring-Up Guide](#new-vendor-bring-up-guide)
+- [Runtime Measurement Notes](#runtime-measurement-notes)
+- [Test Plan](#test-plan)
+- [Contributor Checklist](#contributor-checklist)
+- [Definition Of Done](#definition-of-done)
+- [Troubleshooting](#troubleshooting)
 
-### Use the STM32 path when:
-
-1. The board uses the STM32 Cube / ST Edge AI / ST-LINK workflow already used
-   in this repo.
-2. The board can be staged as a project directory, built with the generated
-   `Debug/makefile`, loaded with ST-LINK tooling, and measured through the
-   current runtime protocol.
-
-### Use the new-vendor path when:
-
-1. The board does not use Arduino CLI.
-2. The board does not fit the current STM32 Cube flow.
-3. You need a new toolchain, flash/load method, or runtime telemetry contract.
-
-## MCU Backend Contract
-
-All microcontroller backends must satisfy the `DeviceInterface` contract in
-[`../devices.py`](../devices.py).
-
-In plain English, a backend owns these responsibilities:
-
-1. `spec`
-   Returns the device limits and arena search space exposed to the rest of the
-   system through `DeviceSpec`.
-2. `prepare_candidate(...)`
-   Creates the board-specific build directory or project for one model
-   candidate.
-3. `compile(...)`
-   Builds that candidate and returns normalized flash/RAM diagnostics through
-   `CompileResult`.
-4. `upload(...)`
-   Flashes or loads the built image onto the device and returns `UploadResult`.
-5. `measure(...)`
-   Captures runtime telemetry and returns normalized latency / power / error
-   data through `MeasureResult`.
-6. `evaluate(...)`
-   Orchestrates compile, upload, and runtime measurement, then translates
-   backend-specific behavior into CREST `DeviceMetrics`.
-
-Backends also declare behavior through capability flags:
-
-1. `requires_candidate_model()`
-   Whether the backend consumes generated model artifacts.
-2. `requires_training_data()`
-   Whether candidate preparation needs calibration/training data.
-3. `requires_arena_validation()`
-   Whether arena search should treat runtime arena validation as required.
-4. `supports_energy_measurement()`
-   Whether real power/energy telemetry is supported.
-5. `supports_runtime_measurement()`
-   Whether upload/runtime HIL passes are supported.
-6. `runtime_measure_mode()`
-   Whether runtime is measured via direct DUT serial or via a harness-led flow.
-
-If you are adding a new backend family, start by understanding this contract.
-
-## File Map
-
-These files are the main integration points in this package.
-
-1. [`../devices.py`](../devices.py)
-   Defines the shared dataclasses and the `DeviceInterface` contract. Also
-   contains the shared Arduino bridge class `ArduinoDevice`.
-2. [`__init__.py`](__init__.py)
-   Registry, factory, and config-option resolution for known devices.
-3. [`arduino_base.py`](arduino_base.py)
-   Shared Arduino CLI compile/upload/measurement helpers.
-4. `arduino_<board>.py`
-   One concrete Arduino-backed board wrapper per board family.
-5. [`stm32_nucleo_n657x0.py`](stm32_nucleo_n657x0.py)
-   The concrete STM32 backend currently shipped in this repo.
-6. [`stm32_cube_clt.py`](stm32_cube_clt.py)
-   STM32 Cube / build / ELF / ST-LINK / CubeProgrammer helper layer.
-7. [`stm32_runtime.py`](stm32_runtime.py)
-   STM32 runtime serial protocol parser and runtime error classifier.
-
-## Backend Types In This Repo
+## Shipped Implementations
 
 ### Arduino CLI Backends
 
@@ -152,7 +105,7 @@ Important current limitation:
 
 ### Other-Vendor Backends
 
-For NXP, Nordic, RP2040 SDK, Zephyr, or any other non-Arduino/non-current-STM
+For NXP, Nordic, RP2040 SDK, Zephyr, or any other non-Arduino/non-STM32-Cube
 target, you should treat the work as a new backend implementation.
 
 That usually means:
@@ -165,49 +118,27 @@ That usually means:
    when needed.
 4. Provide your own build, flash/load, and runtime telemetry path.
 
-## Registry And Config Plumbing
+## Key Files
 
-All backends, regardless of family, need to integrate with the shared factory
-and config plumbing.
+These files are the main integration points in this package.
 
-### Registry
+1. [`../devices.py`](../devices.py)
+   Defines the shared dataclasses and the `DeviceInterface` contract. Also
+   contains the shared Arduino bridge class `ArduinoDevice`.
+2. [`__init__.py`](__init__.py)
+   Registry, factory, and config-option resolution for known devices.
+3. [`arduino_base.py`](arduino_base.py)
+   Shared Arduino CLI compile/upload/measurement helpers.
+4. `arduino_<board>.py`
+   One concrete Arduino-backed board wrapper per board family.
+5. [`stm32_nucleo_n657x0.py`](stm32_nucleo_n657x0.py)
+   The concrete STM32 backend currently shipped in this repo.
+6. [`stm32_cube_clt.py`](stm32_cube_clt.py)
+   STM32 Cube / build / ELF / ST-LINK / CubeProgrammer helper layer.
+7. [`stm32_runtime.py`](stm32_runtime.py)
+   STM32 runtime serial protocol parser and runtime error classifier.
 
-Update [`__init__.py`](__init__.py).
-
-Required work:
-
-1. Add an entry to `_registry_entries()`.
-2. Add lazy export support in `__getattr__` if the backend class should be
-   importable from the package root.
-3. Add the class name to `__all__`.
-
-Why this matters:
-
-1. `get_device(...)` instantiates backend wrappers.
-2. `list_device_specs()` projects default specs for compatibility paths.
-3. `devices.DEVICE_SPECS` is rebuilt from this registry plus legacy entries.
-
-### Device Options
-
-If the board has no custom options:
-
-1. Set `device.name` in config.
-2. Set `device.serial_port`.
-
-If the board has custom options:
-
-1. Add a nested config block such as `device.portenta.*` or `device.stm32.*`.
-2. Parse it in
-   [`resolve_device_options(...)`](__init__.py).
-3. Ensure those options flow through
-   [`build_collect_metrics_request(...)`](../hil_runtime.py)
-   and the HIL server path in
-   [`../../hil_server.py`](../../hil_server.py).
-
-Do not bypass `collect_metrics(...)` or `HIL_controller(...)`. Device options
-must flow through the shared controller path.
-
-## Runtime Sketch And Candidate Staging
+## Runtime Flow
 
 CREST has two major candidate-prep families today.
 
@@ -270,6 +201,114 @@ Important boundary:
 2. STM32 does not use the Arduino sketch variant sync path.
 3. Arduino and STM32 candidate prep already follow separate backend-owned paths
    under the shared HIL server flow.
+
+## Add A New Hardware Backend
+
+Choose the path that matches your board.
+
+### Use the Arduino path when:
+
+1. The board has an Arduino FQBN.
+2. The board builds with `arduino-cli compile`.
+3. The board uploads with `arduino-cli upload`.
+
+### Use the STM32 path when:
+
+1. The board uses the STM32 Cube / ST Edge AI / ST-LINK workflow already used
+   in this repo.
+2. The board can be staged as a project directory, built with the generated
+   `Debug/makefile`, loaded with ST-LINK tooling, and measured through the
+   shipped runtime protocol.
+
+### Use the new-vendor path when:
+
+1. The board does not use Arduino CLI.
+2. The board does not fit the shipped STM32 Cube flow.
+3. You need a new toolchain, flash/load method, or runtime telemetry contract.
+
+## Contract In Practice
+
+All microcontroller backends must satisfy the `DeviceInterface` contract in
+[`../devices.py`](../devices.py).
+
+In plain English, a backend owns these responsibilities:
+
+1. `spec`
+   Returns the device limits and arena search space exposed to the rest of the
+   system through `DeviceSpec`.
+2. `prepare_candidate(...)`
+   Creates the board-specific build directory or project for one model
+   candidate.
+3. `compile(...)`
+   Builds that candidate and returns normalized flash/RAM diagnostics through
+   `CompileResult`.
+4. `upload(...)`
+   Flashes or loads the built image onto the device and returns `UploadResult`.
+5. `measure(...)`
+   Captures runtime telemetry and returns normalized latency / power / error
+   data through `MeasureResult`.
+6. `evaluate(...)`
+   Orchestrates compile, upload, and runtime measurement, then translates
+   backend-specific behavior into CREST `DeviceMetrics`.
+
+Backends also declare behavior through capability flags:
+
+1. `requires_candidate_model()`
+   Whether the backend consumes generated model artifacts.
+2. `requires_training_data()`
+   Whether candidate preparation needs calibration/training data.
+3. `requires_arena_validation()`
+   Whether arena search should treat runtime arena validation as required.
+4. `supports_energy_measurement()`
+   Whether real power/energy telemetry is supported.
+5. `supports_runtime_measurement()`
+   Whether upload/runtime HIL passes are supported.
+6. `runtime_measure_mode()`
+   Whether runtime is measured via direct DUT serial or via a harness-led flow.
+
+If you are adding a new backend family, start by understanding this contract.
+
+## Registration And Config Selection
+
+All backends, regardless of family, need to integrate with the shared factory
+and config plumbing.
+
+### Registry
+
+Update [`__init__.py`](__init__.py).
+
+Required work:
+
+1. Add an entry to `_registry_entries()`.
+2. Add lazy export support in `__getattr__` if the backend class should be
+   importable from the package root.
+3. Add the class name to `__all__`.
+
+Why this matters:
+
+1. `get_device(...)` instantiates backend wrappers.
+2. `list_device_specs()` projects default specs for compatibility paths.
+3. `devices.DEVICE_SPECS` is rebuilt from this registry plus legacy entries.
+
+### Device Options
+
+If the board has no custom options:
+
+1. Set `device.name` in config.
+2. Set `device.serial_port`.
+
+If the board has custom options:
+
+1. Add a nested config block such as `device.portenta.*` or `device.stm32.*`.
+2. Parse it in
+   [`resolve_device_options(...)`](__init__.py).
+3. Ensure those options flow through
+   [`build_collect_metrics_request(...)`](../hil_runtime.py)
+   and the HIL server path in
+   [`../../hil_server.py`](../../hil_server.py).
+
+Do not bypass `collect_metrics(...)` or `HIL_controller(...)`. Device options
+must flow through the shared controller path.
 
 ## Arduino Bring-Up Guide
 
@@ -420,10 +459,10 @@ If your board uses DFU on Linux:
 
 ## STM32 Bring-Up Guide
 
-This section documents the current production `STM32_NUCLEO_N657X0_Q` backend
+This section documents the shipped `STM32_NUCLEO_N657X0_Q` backend
 and the starting point for adding a second STM32 backend.
 
-### Current Production Config Shape
+### Shipped Config Shape
 
 Example config block:
 
@@ -447,8 +486,8 @@ Current default behavior:
 
 1. If `device.stm32.project_root` is omitted, the backend defaults to
    `sketches/stm32/crest_stm32_lrun`.
-2. LRUN `dev_boot` is the only supported production layout for this board and
-   is implied automatically.
+2. LRUN `dev_boot` is the only supported layout shipped for this board and is
+   implied automatically.
 
 Supported STM options today:
 
@@ -498,7 +537,12 @@ Important current caveats:
 1. `ST-LINK_gdbserver`
 2. `arm-none-eabi-gdb`
 3. `STM32_Programmer_CLI`
-4. ST Edge AI CLI/install reachable from the host build environment
+4. `arm-none-eabi-gcc`
+5. `arm-none-eabi-size`
+6. `arm-none-eabi-objdump`
+7. `STM32_SigningTool_CLI` or `STM32TrustedPackageCreator_CLI`
+8. ST Edge AI CLI (`stedgeai`) reachable from the host build environment for
+   normal STM32 NAS/HIL candidate generation
 
 `STM32_Programmer_CLI` is required both for external-flash programming and for
 the current ST-LINK debug-load helper flow, because the GDB server is launched
@@ -544,7 +588,7 @@ There is no generic `stm_base.py` yet.
 ## New-Vendor Bring-Up Guide
 
 Use this path for NXP, Nordic, Zephyr-based targets, or any board that does not
-fit the Arduino path or the current STM32 path.
+fit the Arduino path or the shipped STM32 path.
 
 ### Mindset
 
@@ -618,7 +662,13 @@ Practical implication:
 2. Deterministic CM4 runtime-fault classification would require a separate
    fault channel and is out of scope for the current backend.
 
-## Required Tests
+## Test Plan
+
+Most backend work should have a hardware-free preflight path first. Use
+connected hardware only after config resolution, request construction, staging,
+and parser behavior are covered locally.
+
+### Software Tests
 
 Add or update tests in the backend-specific and orchestration test surfaces,
 not just the older `test/test_hardware.py` and `test/test_model.py` pair.
@@ -652,18 +702,26 @@ For a new STM or non-Arduino backend, cover:
 5. Runtime protocol success and error parsing.
 6. End-to-end `evaluate(...)` normalization into CREST metrics and error
    codes.
+7. Compile-only smoke (`run_hil=False`) on the new board/backend config when
+   the required toolchain is available.
 
-## Quick Smoke Checklist
+## Contributor Checklist
 
 Before opening a PR:
 
-1. Compile-only smoke (`run_hil=False`) on the new board/backend config.
-2. Upload smoke on connected hardware.
-3. Runtime smoke on connected hardware when HIL is supported.
-4. Confirm serial port defaults in config are correct.
-5. Confirm harness pins/settings when energy-aware mode or harness-only mode is
+1. Keep board/toolchain code in the microcontroller backend.
+2. Keep architecture/search logic in model families.
+3. Keep task metrics and evaluation logic in task adapters.
+4. Add or update NumPy-style docstrings for changed functions, classes,
+   dataclasses, and tests.
+5. Toolchain preflight: compile-only smoke (`run_hil=False`) on the new
+   board/backend config.
+6. Upload smoke on connected hardware.
+7. Runtime smoke on connected hardware when HIL is supported.
+8. Confirm serial port defaults in config are correct.
+9. Confirm harness pins/settings when energy-aware mode or harness-only mode is
    enabled.
-6. Confirm generated output filenames and staging layout are what the backend
+10. Confirm generated output filenames and staging layout are what the backend
    expects.
 
 ## Definition Of Done

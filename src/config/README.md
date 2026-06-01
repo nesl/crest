@@ -5,20 +5,27 @@ This directory documents the runtime configuration surface for CREST.
 For the source architecture and extension map, see
 [`../README.md`](../README.md).
 
-Case-study run configs for the paper live under
+Case-study reproducibility configs live under
 [`case_study_configs/`](case_study_configs/).
 
 ## Example Configs
 
+| If You Want To... | Start With | Hardware Requirement |
+|-------------------|------------|----------------------|
+| Train or search OxIOD models without hardware energy metrics | [`nas_config_flops_rmse.yaml`](nas_config_flops_rmse.yaml) | No hardware required |
+| Run STM32 OxIOD HIL experiments | [`nas_config_stm32.yaml`](nas_config_stm32.yaml) | NUCLEO-N657X0-Q board required; HIL harness required for energy measurement |
+| Run Arduino OxIOD HIL experiments | [`nas_config_ble.yaml`](nas_config_ble.yaml) or [`nas_config_portenta.yaml`](nas_config_portenta.yaml) | Target board required; HIL harness required for energy measurement |
+| Run UrbanSound8K audio HIL experiments | [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml) or [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml) | Target board and HIL harness required as shipped; use these as templates with HIL/measured scoring disabled for hardware-free training |
+
 - [`nas_config_stm32.yaml`](nas_config_stm32.yaml)
-  STM32 N657 OxIOD measured-energy NAS example and the most complete commented
-  reference for score/prune policy shapes.
+  NUCLEO-N657X0-Q OxIOD measured-energy NAS example and the most complete
+  commented reference for score/prune policy shapes.
 - [`nas_config_ble.yaml`](nas_config_ble.yaml)
   Arduino Nano 33 BLE Sense OxIOD measured-energy NAS example.
 - [`nas_config_portenta.yaml`](nas_config_portenta.yaml)
   Portenta H7 CM7 OxIOD measured-energy NAS example.
 - [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml)
-  STM32 N657 UrbanSound8K / DS-CNN audio NAS example.
+  NUCLEO-N657X0-Q UrbanSound8K / DS-CNN audio NAS example.
 - [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml)
   Portenta H7 CM7 UrbanSound8K / DS-CNN audio NAS example.
 - [`nas_config_flops_rmse.yaml`](nas_config_flops_rmse.yaml)
@@ -206,7 +213,7 @@ Runtime behavior:
   `mode`, `search`, and non-empty `choices`. The main measured-board configs
   search `choices: [float, int8_ptq]` so float32 and int8 PTQ exports can be
   compared on the same backend.
-- Supported v1 quantization modes are `float` and `int8_ptq`. Enabling
+- Supported quantization modes are `float` and `int8_ptq`. Enabling
   `training.quantization.search: true` samples `quantization_mode` from
   `choices`; this expands the effective NAS search space and usually needs a
   larger trial budget. Mixed `float`/`int8_ptq` studies also conflate

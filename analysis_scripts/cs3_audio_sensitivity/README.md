@@ -5,6 +5,10 @@ CSV-derived NAS candidates. It consumes existing run logs and writes
 reproducibility artifacts; it does not train models, run NAS, export models, or
 touch hardware.
 
+The utility was used for the Case Study 3 audio-selection analysis, but the
+formula and CLI are generic for CSV logs that contain quality and
+energy-per-inference columns.
+
 The scoring rule is:
 
 ```text
@@ -16,7 +20,7 @@ energy ascending, then trial ID as a string ascending.
 
 ## Requirements
 
-- Python with `pandas` installed.
+- The `crest` Conda environment, or Python with `pandas` installed.
 - Existing CSV artifacts from a NAS or replay run.
 - No hardware access. This tool only reads CSV files and writes summary
   artifacts.

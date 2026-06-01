@@ -3,6 +3,11 @@
 This directory contains the repo-owned Arduino and STM32 sketch/workspace
 sources used by CREST runtime, HIL, and analysis flows.
 
+Hardware requirement depends on the workflow. Reading or modifying these
+sources is software-only; compiling, uploading, or measuring them requires the
+matching development board, and harness-assisted energy measurement requires
+the CREST HIL harness.
+
 For board bring-up details, see
 [`../src/crest/microcontrollers/README.md`](../src/crest/microcontrollers/README.md).
 For config semantics, see
@@ -28,12 +33,12 @@ For config semantics, see
 - [`boot_m4_helper/`](boot_m4_helper)
   Portenta CM7 helper sketch used to bring up CM4 in the harness-only path.
 - [`stm32/`](stm32)
-  STM32 workspaces. The current committed production workspace is
+  STM32 workspaces. The committed LRUN workspace is
   [`stm32/crest_stm32_lrun/README.md`](stm32/crest_stm32_lrun/README.md).
 
 ## Runtime Sketch Selection
 
-The current Arduino runtime-selection path described in
+The Arduino runtime-selection path described in
 [`../src/crest/microcontrollers/README.md`](../src/crest/microcontrollers/README.md)
 uses this layout:
 
@@ -70,3 +75,10 @@ The current committed workspace is:
 
 See that README for the LRUN workspace internals, staged/generated file
 layout, and STM32-specific workflow details.
+
+## Generated Candidate Workspaces
+
+CREST stages candidate-specific sketches and build products outside these
+source templates during NAS, replay, and probe runs. Treat this directory as
+the committed template and support-code layout; generated candidate workspaces
+and measurement outputs should remain local artifacts.

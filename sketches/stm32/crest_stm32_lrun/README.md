@@ -1,14 +1,14 @@
-# STM32 LRUN Production Workspace
+# STM32 LRUN Workspace
 
 This is the repo-local LRUN `dev_boot` workspace for the STM32
-NUCLEO-N657X0-Q production backend.
+NUCLEO-N657X0-Q backend.
 
 ## Upstream Base And Local Modifications
 
 This workspace is derived from the ST `Template_FSBL_LRUN` project for the
 STM32 NUCLEO-N657X0-Q board.
 
-Modifications Copyright (c) 2026 Joseph Zales.
+Modifications Copyright (c) 2026 `<Anonymous Authors>`.
 
 Local changes in this repo-owned README:
 
@@ -41,7 +41,7 @@ Compiled outputs are intentionally ignored by the repo.
 ## Runtime Model
 
 This workspace supports only the unattended `dev_boot` flow used by the
-production CREST STM32 backend. Its value is the LRUN `AppS` memory layout,
+shipped CREST STM32 backend. Its value is the LRUN `AppS` memory layout,
 which exposes about `2047K` of linker-visible runtime RAM at `0x34000400` for
 the CREST app. It does not provide a deployment-style boot-from-flash flow.
 
