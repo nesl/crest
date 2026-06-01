@@ -307,7 +307,7 @@ def test_namespace_to_replay_config_maps_all_cli_fields() -> None:
             "--model-variant",
             "float_model",
             "--checkpoint-path",
-            "/tmp/model.keras",
+            "checkpoints/model.keras",
         ]
     )
     config = pareto_hil_replay.namespace_to_replay_config(args)
@@ -325,7 +325,7 @@ def test_namespace_to_replay_config_maps_all_cli_fields() -> None:
         allow_gpu=True,
         device_option_policy="target-default",
         model_variant="float_model",
-        checkpoint_path="/tmp/model.keras",
+        checkpoint_path="checkpoints/model.keras",
     )
 
 
@@ -471,13 +471,13 @@ def test_build_candidate_preserves_cpu_clock_and_runtime_payload() -> None:
         row=base_row(cpu_clock_mhz_requested="160.0"),
         objectives=(pareto_replay.ObjectiveSpec("metric__rmse_total", "minimize", "rmse_total"),),
         model_variant="float_model",
-        checkpoint_path="/tmp/checkpoint.keras",
+        checkpoint_path="checkpoints/checkpoint.keras",
     )
     assert candidate.family_hparams == {"num_layers": 2, "kernel_sizes": [3, 5]}
     assert candidate.runtime_metadata == {"batch_size": 1, "timesteps": 8, "input_dim": 6, "flops": 1000}
     assert candidate.device_options_overrides == {"cpu_clock_mhz": 160}
     assert candidate.model_variant == "float_model"
-    assert candidate.checkpoint_path == "/tmp/checkpoint.keras"
+    assert candidate.checkpoint_path == "checkpoints/checkpoint.keras"
 
 
 def test_build_candidate_rejects_missing_runtime_metadata() -> None:
@@ -758,7 +758,7 @@ def test_non_dry_run_invokes_metrics_callback_with_full_request(tmp_path: Path) 
         output_dir=output_dir,
         dry_run=False,
         model_variant="int8_model",
-        checkpoint_path="/tmp/model.keras",
+        checkpoint_path="checkpoints/model.keras",
     )
     calls: list[dict[str, Any]] = []
 
@@ -812,7 +812,7 @@ def test_non_dry_run_invokes_metrics_callback_with_full_request(tmp_path: Path) 
             "runtime_metadata": {"batch_size": 1, "timesteps": 8, "input_dim": 6, "flops": 1000},
             "quantization_mode": "int8_ptq",
             "device_options_overrides": {"cpu_clock_mhz": 80},
-            "checkpoint_path": "/tmp/model.keras",
+            "checkpoint_path": "checkpoints/model.keras",
             "model_variant": "int8_model",
         }
     ]

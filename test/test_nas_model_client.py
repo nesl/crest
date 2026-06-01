@@ -1157,7 +1157,7 @@ class ObjectiveTests(unittest.TestCase):
             "latency_ms": 10.0,
         }
         self.client.config.device.name = "STM32_NUCLEO_N657X0_Q"
-        self.client.config.device.stm32 = SimpleNamespace(project_root="/tmp/stm_fsbl")
+        self.client.config.device.stm32 = SimpleNamespace(project_root="stm_fsbl")
         self.client._hil_request = MagicMock(return_value=metrics)
         trial = DummyTrial()
 
@@ -1194,7 +1194,7 @@ class ObjectiveTests(unittest.TestCase):
             "hil_enabled": False,
         }
         self.client.config.device.name = "STM32_NUCLEO_N657X0_Q"
-        self.client.config.device.stm32 = SimpleNamespace(project_root="/tmp/stm_fsbl")
+        self.client.config.device.stm32 = SimpleNamespace(project_root="stm_fsbl")
         self.client.config.training.energy_aware = True
         self.client.config.nas.score = Dict(
             type="multi-objective",

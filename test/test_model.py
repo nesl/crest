@@ -1407,35 +1407,37 @@ class Stm32TimeoutHelperTests(unittest.TestCase):
         None
         """
         # STM request construction should preserve caller-supplied staging paths and board options instead of recomputing them.
-        config = Dict(
-            training=Dict(energy_aware=True, latency_proxy_max_flops=20_000_000),
-            device=Dict(
-                hil=True,
-                name="STM32_NUCLEO_N657X0_Q",
-                serial_port="ttyACM0",
-                stm32=Dict(
-                    project_root=Path("/tmp/stm32_fsbl"),
-                    gdb_port=61234,
-                    apid=1,
-                    server_ready_timeout_s=15.0,
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "stm32_fsbl"
+            config = Dict(
+                training=Dict(energy_aware=True, latency_proxy_max_flops=20_000_000),
+                device=Dict(
+                    hil=True,
+                    name="STM32_NUCLEO_N657X0_Q",
+                    serial_port="ttyACM0",
+                    stm32=Dict(
+                        project_root=project_root,
+                        gdb_port=61234,
+                        apid=1,
+                        server_ready_timeout_s=15.0,
+                    ),
                 ),
-            ),
-            dataset=Dict(params=Dict(window_size=128)),
-            outputs=Dict(candidate_dir=Path("odom_tcn")),
-        )
-        hyperparams = Dict(flops=123, input_dim=6)
+                dataset=Dict(params=Dict(window_size=128)),
+                outputs=Dict(candidate_dir=Path("odom_tcn")),
+            )
+            hyperparams = Dict(flops=123, input_dim=6)
 
-        request = self._build_request(
-            config,
-            hyperparams,
-            dirpath=Path("/tmp/stm32_fsbl"),
-            device_options={"project_root": Path("/tmp/stm32_fsbl"), "cpu_clock_mhz": 400},
-            energy_aware=False,
-            hil_enabled=False,
-        )
+            request = self._build_request(
+                config,
+                hyperparams,
+                dirpath=project_root,
+                device_options={"project_root": project_root, "cpu_clock_mhz": 400},
+                energy_aware=False,
+                hil_enabled=False,
+            )
 
         self.assertEqual(request.device_name, "STM32_NUCLEO_N657X0_Q")
-        self.assertEqual(request.dirpath, Path("/tmp/stm32_fsbl").resolve())
+        self.assertEqual(request.dirpath, project_root.resolve())
         self.assertFalse(request.energy_aware)
         self.assertIsNone(request.harness)
         self.assertEqual(request.device_options["cpu_clock_mhz"], 400)

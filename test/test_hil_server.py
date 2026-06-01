@@ -1341,16 +1341,16 @@ class InitializationTests(HILServerTestCase):
         """
         # STM32 runtime backends should keep HIL enabled when the backend can measure on real hardware instead of silently downgrading to proxy mode.
         self.config.device.name = "STM32_NUCLEO_N657X0_Q"
-        self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
+        self.config.device.stm32 = SimpleNamespace(project_root=Path("stm_fsbl"))
         server = self.build_server()
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
         fake_device.supports_energy_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = Path("/tmp/stm_fsbl")
+        fake_device.prepare_candidate.return_value = Path("stm_fsbl")
 
-        with patch("hil_server.resolve_device_options", return_value={"project_root": Path("/tmp/stm_fsbl")}), patch(
+        with patch("hil_server.resolve_device_options", return_value={"project_root": Path("stm_fsbl")}), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
         ), patch("hil_server.build_collect_metrics_request") as request_mock, patch(
@@ -1364,7 +1364,7 @@ class InitializationTests(HILServerTestCase):
                 device_name="STM32_NUCLEO_N657X0_Q",
                 window_size=32,
                 input_dim=6,
-                dirpath=Path("/tmp/stm_fsbl"),
+                dirpath=Path("stm_fsbl"),
                 latency_proxy_max_flops=5_000_000,
                 serial_port="ttyACM0",
                 latency_budget_ms=40.0,
@@ -1381,7 +1381,7 @@ class InitializationTests(HILServerTestCase):
         self.assertEqual(result, {"ok": True, "cpu_clock_mhz_requested": -1, "latency_budget_ms": 40.0})
         self.assertEqual(len(FakeModelFamily.materialize_calls), 1)
         fake_device.prepare_candidate.assert_called_once()
-        fake_device.cleanup_prepared_candidate.assert_called_once_with(Path("/tmp/stm_fsbl"))
+        fake_device.cleanup_prepared_candidate.assert_called_once_with(Path("stm_fsbl"))
         collect_mock.assert_called_once()
         self.assertTrue(request_mock.call_args.kwargs["hil_enabled"])
         self.assertIsNone(server.active_sketch_path)
@@ -1396,18 +1396,18 @@ class InitializationTests(HILServerTestCase):
         # STM32 backends that support energy measurement should preserve energy-aware requests instead of downgrading them.
         self.config.training.energy_aware = True
         self.config.device.name = "STM32_NUCLEO_N657X0_Q"
-        self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
+        self.config.device.stm32 = SimpleNamespace(project_root=Path("stm_fsbl"))
         server = self.build_server()
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
         fake_device.requires_training_data.return_value = True
         fake_device.supports_runtime_measurement.return_value = True
         fake_device.supports_energy_measurement.return_value = True
-        fake_device.prepare_candidate.return_value = Path("/tmp/stm_fsbl")
+        fake_device.prepare_candidate.return_value = Path("stm_fsbl")
 
         with patch(
             "hil_server.resolve_device_options",
-            return_value={"project_root": Path("/tmp/stm_fsbl")},
+            return_value={"project_root": Path("stm_fsbl")},
         ), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
@@ -1424,7 +1424,7 @@ class InitializationTests(HILServerTestCase):
                 device_name="STM32_NUCLEO_N657X0_Q",
                 window_size=32,
                 input_dim=6,
-                dirpath=Path("/tmp/stm_fsbl"),
+                dirpath=Path("stm_fsbl"),
                 latency_proxy_max_flops=5_000_000,
                 serial_port="ttyACM0",
                 latency_budget_ms=40.0,
@@ -1538,7 +1538,7 @@ class InitializationTests(HILServerTestCase):
         """STM staging failures should become metrics-shaped backend errors."""
         # Backend staging failures should come back as structured metrics so callers can surface the exact hardware-side failure without crashing the request.
         self.config.device.name = "STM32_NUCLEO_N657X0_Q"
-        self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
+        self.config.device.stm32 = SimpleNamespace(project_root=Path("stm_fsbl"))
         server = self.build_server()
         fake_device = MagicMock()
         fake_device.requires_candidate_model.return_value = True
@@ -1549,7 +1549,7 @@ class InitializationTests(HILServerTestCase):
             "ST Edge AI generation failed: unsupported operator"
         )
 
-        with patch("hil_server.resolve_device_options", return_value={"project_root": Path("/tmp/stm_fsbl")}), patch(
+        with patch("hil_server.resolve_device_options", return_value={"project_root": Path("stm_fsbl")}), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
         ):
@@ -1600,18 +1600,18 @@ class InitializationTests(HILServerTestCase):
         """
         # STM32 phase-one input-mode changes should delegate to the backend so sketch generation stays backend-owned.
         self.config.device.name = "STM32_NUCLEO_N657X0_Q"
-        self.config.device.stm32 = SimpleNamespace(project_root=Path("/tmp/stm_fsbl"))
+        self.config.device.stm32 = SimpleNamespace(project_root=Path("stm_fsbl"))
         server = self.build_server()
         fake_device = MagicMock()
-        fake_device.set_input_mode.return_value = Path("/tmp/stm_fsbl")
+        fake_device.set_input_mode.return_value = Path("stm_fsbl")
 
-        with patch("hil_server.resolve_device_options", return_value={"project_root": Path("/tmp/stm_fsbl")}), patch(
+        with patch("hil_server.resolve_device_options", return_value={"project_root": Path("stm_fsbl")}), patch(
             "hil_server.get_microcontroller_device",
             return_value=fake_device,
         ):
             out_path = server.set_input_mode("uniform")
 
-        self.assertEqual(out_path, Path("/tmp/stm_fsbl"))
+        self.assertEqual(out_path, Path("stm_fsbl"))
 
 
 class SketchVariantTests(unittest.TestCase):
