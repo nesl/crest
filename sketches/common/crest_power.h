@@ -1,3 +1,5 @@
+// Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+// SPDX-License-Identifier: BSD-3-Clause
 // Shared power-telemetry helpers for CREST sketches.
 //
 // The same interface supports both INA228-enabled harness builds and lighter

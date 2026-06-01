@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Plot Case 3 audio score-selection tradeoffs."""
 
 from __future__ import annotations

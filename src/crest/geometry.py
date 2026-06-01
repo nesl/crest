@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Quaternion and Euler-angle conversion helpers used by CREST.
 
 Most of this module is adapted from the ``transforms3d`` tait-bryan helpers

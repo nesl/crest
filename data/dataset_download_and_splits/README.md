@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
+
 # Dataset Preparation
 
 These preparation steps are software-only. They do not require a development

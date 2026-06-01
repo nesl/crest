@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 # Validates STM32CubeCLT tools on PATH and bootstraps a repo-local STM32CubeN6 checkout.
 set -euo pipefail
 

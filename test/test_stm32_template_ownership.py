@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Tests for the checked-in STM32 LRUN template ownership manifest."""
 
 import subprocess

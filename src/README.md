@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
+
 # Source Guide
 
 This directory contains the Python entry points and core library code for the

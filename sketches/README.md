@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
+
 # Sketches
 
 This directory contains the repo-owned Arduino and STM32 sketch/workspace

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Shared runtime bootstrap helpers for modular dataset/task/model-family wiring."""
 
 from __future__ import annotations

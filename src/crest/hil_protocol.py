@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Serial-line protocol helpers for DUT and harness HIL coordination.
 
 This module centralizes the small protocol tokens, parsing helpers, and

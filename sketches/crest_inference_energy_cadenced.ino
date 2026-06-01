@@ -1,3 +1,5 @@
+// Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+// SPDX-License-Identifier: BSD-3-Clause
 // CREST Arduino cadenced runtime sketch.
 // This variant keeps INA228 energy telemetry enabled and spreads invokes across
 // a fixed cadence so the reported window includes both inference work and the

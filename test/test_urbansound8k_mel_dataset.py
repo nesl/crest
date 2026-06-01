@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Tests for the UrbanSound8K cached log-mel dataset adapter."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Runtime-owned HIL request construction and metric collection helpers."""
 
 from __future__ import annotations

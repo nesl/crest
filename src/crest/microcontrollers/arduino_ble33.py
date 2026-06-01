@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Static board wrapper for the Arduino Nano 33 BLE Sense backend.
 
 The BLE33 path is intentionally thin: it contributes a fixed ``DeviceSpec``

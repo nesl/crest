@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 # Pure desktop OxIOD NAS example: minimize validation RMSE and model FLOPs.
 
 device:

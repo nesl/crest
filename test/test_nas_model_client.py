@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Regression tests for the legacy NASModelClient orchestration surface.
 
 This module covers bootstrap helpers, objective/pruning branches, smoke-test

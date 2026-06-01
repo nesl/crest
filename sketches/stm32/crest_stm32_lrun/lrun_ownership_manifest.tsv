@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 # category	relative_path	vendor_source_relative_to_STM32CubeN6
 # This manifest describes the committed LRUN overlay plus a small set of named
 # vendor-copy files that must be materialized deterministically. The broader

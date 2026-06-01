@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 # Case 1.4: Portenta H7 CM4 OxIOD measured-energy NAS, back-to-back runtime.
 #
 # Intended launch on the GPU host:

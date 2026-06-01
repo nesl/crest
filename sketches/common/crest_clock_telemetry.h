@@ -1,3 +1,5 @@
+// Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+// SPDX-License-Identifier: BSD-3-Clause
 // Helpers for emitting board clock and DWT cycle-counter telemetry.
 //
 // These helpers keep the host-facing telemetry keys stable even when boards

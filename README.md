@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
+
 # CREST: Cross-platform Runtime Evaluation and Search Tool
 
 CREST is a deployment-realistic hardware-in-the-loop (HIL) neural architecture
@@ -51,6 +56,31 @@ interval.
 The HIL harness lets CREST attach each energy value to a concrete candidate,
 runtime schedule, and trial outcome without oscilloscope inspection or manual
 trace segmentation.
+
+## License
+
+Repo-owned CREST code, documentation, configuration, and tests are licensed
+under the BSD 3-Clause License unless otherwise noted. See [LICENSE](LICENSE)
+for the full license text.
+
+This public repository state is not safe for double-blind review because it
+contains the UCLA Networked & Embedded Systems Laboratory copyright holder.
+Reviewer-facing bundles must be produced with a separate redaction step that
+removes or replaces identifying copyright and provenance text.
+
+Important exceptions and separately governed materials:
+
+- STM32/ST/CMSIS material under
+  [`sketches/stm32/crest_stm32_lrun/`](sketches/stm32/crest_stm32_lrun/)
+  remains subject to the upstream STMicroelectronics, CMSIS, and related
+  license terms documented in that directory.
+- STM32 vendor-derived and tool-generated build recipe files in the LRUN
+  workspace are not relicensed by CREST headers.
+- OxIOD split metadata and upstream OxIOD readme snippets are dataset-related
+  materials; raw OxIOD data is downloaded separately and is not stored in this
+  repository.
+- UrbanSound8K downloaded audio and generated feature caches are governed by
+  the UrbanSound8K dataset terms and are not stored in this repository.
 
 ## Choose Your Workflow
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 # Cleans up Arduino CLI env variables when the Conda env deactivates.
 
 CREST_ROOT=${CREST_ROOT:-"__PROJECT_ROOT__"}

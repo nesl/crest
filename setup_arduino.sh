@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 # Sets up a project-local Arduino CLI plus Conda activation hooks.
 set -euo pipefail
 

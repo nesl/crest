@@ -1,3 +1,5 @@
+// Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+// SPDX-License-Identifier: BSD-3-Clause
 // CREST Arduino sketch that mirrors the original Mbed latency harness.
 // It seeds the TensorFlow Lite Micro interpreter, populates the windowed
 // sensor buffer with synthetic data, runs one inference, and prints the
