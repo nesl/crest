@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Describe zeroMQ REP server entry point for CREST HIL metric requests.
 
 This module owns the host-side HIL server surface, including import-time

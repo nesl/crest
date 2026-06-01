@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Device contracts and Arduino bridge helpers for CREST HIL execution.
 
 This module defines the shared device result types used across HIL backends,

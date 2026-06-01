@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Top-level CREST package exports.
 
 This package lazily exposes the major CREST submodules so callers can

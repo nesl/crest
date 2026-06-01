@@ -1,3 +1,5 @@
+// Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+// SPDX-License-Identifier: BSD-3-Clause
 // Synthetic MCU workload probe for CREST HIL energy measurements.
 //
 // The host runner compiles this sketch with CREST_MICRO_WORKLOAD_MODE and

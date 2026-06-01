@@ -8,7 +8,7 @@ NUCLEO-N657X0-Q backend.
 This workspace is derived from the ST `Template_FSBL_LRUN` project for the
 STM32 NUCLEO-N657X0-Q board.
 
-Modifications Copyright (c) 2026 `<Anonymous Authors>`.
+Modifications Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory.
 
 Local changes in this repo-owned README:
 

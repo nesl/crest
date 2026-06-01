@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 # Case 2.1: STM32 N657 OxIOD measured-energy NAS, back-to-back runtime,
 # with post-HIL latency feasibility constraints.
 #

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
@@ -6,6 +8,10 @@ build-backend = "setuptools.build_meta"
 name = "crest"
 version = "0.1.0"
 description = "Cross-platform runtime evaluation and search for embedded sensing systems"
+license = { text = "BSD-3-Clause" }
+classifiers = [
+    "License :: OSI Approved :: BSD License",
+]
 dependencies = [
     "tensorflow",
     "numpy",

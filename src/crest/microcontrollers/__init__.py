@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Lazy registry helpers for CREST microcontroller backends.
 
 This package surface keeps board wrapper imports lightweight for callers that

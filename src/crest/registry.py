@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Explicit registries for dataset, task, and model-family components.
 
 This module centralizes the small registration helpers that let CREST map

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+// SPDX-License-Identifier: BSD-3-Clause
 // CREST Arduino sketch variant without INA228 energy telemetry.
 // Keeps the latency harness identical while skipping I2C sensor setup so
 // larger tensor arenas/models fit on constrained boards.

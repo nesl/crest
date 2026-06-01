@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Tests that guard portability of the canonical STM32 project templates."""
 
 from __future__ import annotations

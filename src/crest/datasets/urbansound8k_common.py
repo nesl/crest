@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Shared UrbanSound8K constants for the audio backend.
 
 Phase 3 dataset-loader code must import class names and cache constants from

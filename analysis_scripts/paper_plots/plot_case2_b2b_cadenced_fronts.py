@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Render the Case Study 2 B2B/cadenced cross-runtime front figure."""
 
 from __future__ import annotations

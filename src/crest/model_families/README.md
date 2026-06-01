@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
+
 # Model Families
 
 Model families define trainable and exportable model architectures for CREST.

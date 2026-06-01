@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Shared Arduino CLI helpers for CREST board backends.
 
 This module owns the common compile, upload, harness-management, and serial

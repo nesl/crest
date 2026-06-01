@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Shared CREST scoring, config-validation, and model helpers.
 
 This module carries the shared NAS scoring DSL, YAML config validation,

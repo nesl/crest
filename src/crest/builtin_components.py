@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Built-in component registration for the modular CREST pipeline.
 
 This module centralizes registration of the repository-owned dataset, task,

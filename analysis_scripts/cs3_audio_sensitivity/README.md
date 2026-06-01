@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
+
 # CS3 Audio Score Sensitivity
 
 This folder contains a calculation-only score-sensitivity utility for

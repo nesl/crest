@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Helpers for resolving explicit component choices from runtime config."""
 
 from __future__ import annotations

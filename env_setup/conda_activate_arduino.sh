@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 # Adds project-local Arduino CLI paths when the Conda env activates.
 
 export CREST_ROOT="__PROJECT_ROOT__"

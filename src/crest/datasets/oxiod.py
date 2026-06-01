@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Describe oxIOD dataset adapter built on top of the legacy split loader.
 
 This module wraps :func:`import_oxiod_dataset`, normalizes the returned legacy

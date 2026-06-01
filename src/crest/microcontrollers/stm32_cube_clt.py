@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Describe sTM32CubeCLT and GDB helper workflows for the STM32 backend.
 
 These helpers wrap STM32CubeCLT build, sign, and program steps plus the

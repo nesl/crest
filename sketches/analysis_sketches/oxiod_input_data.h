@@ -1,3 +1,5 @@
+// Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+// SPDX-License-Identifier: BSD-3-Clause
 #pragma once
 
 // Contains OxIOD dataset statistics and representative windows for firmware input.

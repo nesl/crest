@@ -33,7 +33,7 @@
 
 /*
  * Local modifications for CREST:
- * Modifications Copyright (c) 2026 Joseph Zales.
+ * Modifications Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory.
  *
  * Upstream base:
  *   STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_LRUN/

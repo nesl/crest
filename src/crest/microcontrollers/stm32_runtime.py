@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Direct-serial runtime protocol helpers for the STM32 backend.
 
 This module parses the UART protocol emitted by the STM32 CREST runtime and

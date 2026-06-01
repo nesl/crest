@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Unit tests for STM32 runtime parsing and serial-session helpers."""
 
 from __future__ import annotations

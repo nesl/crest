@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Shared payload contracts passed between dataset, task, and model code.
 
 This module centralizes the lightweight dataclasses that move structured

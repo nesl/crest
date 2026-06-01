@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Legacy HIL orchestration helpers and export utilities for CREST.
 
 This module still owns the compatibility path that exports Keras models to

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+// SPDX-License-Identifier: BSD-3-Clause
 // Harness sketch for INA228 power measurement triggered by DUT GPIO.
 #define CREST_USE_INA228 1
 

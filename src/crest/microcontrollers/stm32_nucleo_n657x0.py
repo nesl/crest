@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Describe sTM32 Nucleo N657X0-Q backend for staged CREST evaluation.
 
 This module owns the LRUN workspace contract, ST Edge AI code-generation flow,

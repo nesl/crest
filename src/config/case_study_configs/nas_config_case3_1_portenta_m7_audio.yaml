@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 # Case 3.1: Portenta H7 CM7 UrbanSound8K DS-CNN scalar-score NAS.
 #
 # This is the Portenta M7 counterpart to the STM32 Case 3.2 scalar-score run.
