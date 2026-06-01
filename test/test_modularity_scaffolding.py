@@ -405,7 +405,7 @@ class InterfaceDefaultsTests(unittest.TestCase):
                 self.bundle,
                 {"ok": True},
                 self.target_spec,
-                output_dir=Path("/tmp"),
+                output_dir=Path("artifacts"),
             ),
             {},
         )
@@ -472,16 +472,17 @@ class InterfaceDefaultsTests(unittest.TestCase):
     def test_default_materialize_export_model_rejects_missing_trained_checkpoint(self) -> None:
         # Default export materialization should reject trained variants that omit a checkpoint.
         """Validate default materialize export model rejects missing trained checkpoint."""
-        missing_checkpoint = Path("/tmp/does-not-exist-trained.keras")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing_checkpoint = Path(tmpdir) / "does-not-exist-trained.keras"
 
-        with self.assertRaises(FileNotFoundError):
-            self.model_family.materialize_export_model(
-                {"width": 4},
-                self.ctx,
-                {},
-                model_variant="trained",
-                checkpoint_path=missing_checkpoint,
-            )
+            with self.assertRaises(FileNotFoundError):
+                self.model_family.materialize_export_model(
+                    {"width": 4},
+                    self.ctx,
+                    {},
+                    model_variant="trained",
+                    checkpoint_path=missing_checkpoint,
+                )
 
     def test_default_count_flops_uses_generic_keras_estimator(self) -> None:
         # The default model-family FLOP hook should use the shared generic Keras profiler when an input shape is available.

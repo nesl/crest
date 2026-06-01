@@ -318,7 +318,7 @@ class UrbanSound8KMelDatasetTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "cache_version"):
             dataset.validate_config(
-                Dict(cache_dir="/tmp/cache", batch_period_ms=BATCH_PERIOD_MS, cache_version=CACHE_VERSION)
+                Dict(cache_dir="cache", batch_period_ms=BATCH_PERIOD_MS, cache_version=CACHE_VERSION)
             )
 
     def test_missing_split_file_fails(self) -> None:

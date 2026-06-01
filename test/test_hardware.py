@@ -126,17 +126,17 @@ COMPILE_SAMPLE_OUTPUT = (
     "Global variables use 98112 bytes (37%) of dynamic memory, leaving 164032 bytes for local variables. Maximum is 262144 bytes."
 )
 FLASH_OVERFLOW_STDERR = (
-    "/home/m202/CREST/CREST/tools/arduino-data/packages/arduino/tools/arm-none-eabi-gcc/"
+    "toolchains/arduino-data/packages/arduino/tools/arm-none-eabi-gcc/"
     "7-2017q4/bin/../lib/gcc/arm-none-eabi/7.2.1/../../../../arm-none-eabi/bin/ld: "
-    "/tmp/tmplhhgug0i/arduino-build/odom_tcn.ino.elf section `.text' will not fit in region `FLASH'\n"
-    "/home/m202/CREST/CREST/tools/arduino-data/packages/arduino/tools/arm-none-eabi-gcc/"
+    "build/arduino/odom_tcn.ino.elf section `.text' will not fit in region `FLASH'\n"
+    "toolchains/arduino-data/packages/arduino/tools/arm-none-eabi-gcc/"
     "7-2017q4/bin/../lib/gcc/arm-none-eabi/7.2.1/../../../../arm-none-eabi/bin/ld: "
     "region `FLASH' overflowed by 3814108 bytes\n"
     "collect2: error: ld returned 1 exit status\n"
     "Error during build: exit status 1\n"
 )
 RAM_OVERFLOW_STDERR = (
-    "/tmp/arduino-build-p1g96nx6/linker_script.ld:138 cannot move location counter backwards "
+    "build/arduino/linker_script.ld:138 cannot move location counter backwards "
     "(from 0000000020091d48 to 000000002003fc00)\n"
     "collect2: error: ld returned 1 exit status\n"
     "Error during build: exit status 1\n"
@@ -1207,6 +1207,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
             )
             elf_path = build_dir / "sketch.ino.elf"
             elf_path.write_bytes(b"ELF")
+            size_binary = Path(tmpdir) / "toolchain" / "bin" / "arm-none-eabi-size"
             size_stdout = (
                 "section              size        addr\n"
                 ".text              149680   134479872\n"
@@ -1217,7 +1218,7 @@ class ArduinoCommandOptionTests(unittest.TestCase):
             )
             with patch(
                 "crest.microcontrollers.arduino_base._resolve_arm_size_binary",
-                return_value="/usr/bin/arm-none-eabi-size",
+                return_value=str(size_binary),
             ), patch(
                 "crest.microcontrollers.arduino_base._find_compiled_elf",
                 return_value=elf_path,
@@ -1773,7 +1774,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
             flash_bytes=None,
             ram_bytes=None,
             overflow_kind=None,
-            build_dir=Path("/tmp"),
+            build_dir=Path("build"),
         )
         upload_result = ArduinoUploadResult(success=True, log="ok")
 
@@ -1821,7 +1822,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
             flash_bytes=None,
             ram_bytes=None,
             overflow_kind=None,
-            build_dir=Path("/tmp"),
+            build_dir=Path("build"),
         )
         upload_result = ArduinoUploadResult(success=True, log="ok")
 
@@ -1864,7 +1865,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
             flash_bytes=None,
             ram_bytes=None,
             overflow_kind=None,
-            build_dir=Path("/tmp"),
+            build_dir=Path("build"),
         )
         upload_result = ArduinoUploadResult(success=True, log="ok")
 
@@ -1918,7 +1919,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
             flash_bytes=None,
             ram_bytes=None,
             overflow_kind=None,
-            build_dir=Path("/tmp"),
+            build_dir=Path("build"),
         )
         upload_result = ArduinoUploadResult(success=True, log="ok")
 
@@ -1964,7 +1965,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
             flash_bytes=None,
             ram_bytes=None,
             overflow_kind=None,
-            build_dir=Path("/tmp"),
+            build_dir=Path("build"),
         )
         upload_result = ArduinoUploadResult(success=True, log="ok")
 
@@ -2059,7 +2060,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
             flash_bytes=123,
             ram_bytes=456,
             overflow_kind=None,
-            build_dir=Path("/tmp/fake_build"),
+            build_dir=Path("fake_build"),
         )
         upload_result = ArduinoUploadResult(success=True, log="ok")
         measure_result = ArduinoMeasureResult(
@@ -2157,7 +2158,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
             side_effect=lambda **_kwargs: (events.append("measure"), measure_result)[1],
         ):
             result = device.evaluate(
-                dirpath=Path("/tmp"),
+                dirpath=Path("candidate"),
                 arena_kb=32,
                 window_size=128,
                 num_channels=6,
@@ -2186,7 +2187,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
             flash_bytes=123,
             ram_bytes=456,
             overflow_kind=None,
-            build_dir=Path("/tmp/fake_build"),
+            build_dir=Path("fake_build"),
         )
         upload_result = ArduinoUploadResult(success=True, log="ok")
         measure_result = ArduinoMeasureResult(
@@ -2262,7 +2263,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
             return_value=measure_result,
         ):
             result = device.evaluate(
-                dirpath=Path("/tmp"),
+                dirpath=Path("candidate"),
                 arena_kb=32,
                 window_size=128,
                 num_channels=6,
@@ -2289,7 +2290,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
             flash_bytes=123,
             ram_bytes=456,
             overflow_kind=None,
-            build_dir=Path("/tmp/fake_build"),
+            build_dir=Path("fake_build"),
         )
         prime_result = hil_protocol.HarnessSessionResult(
             harness_log=["noise"],
@@ -2355,7 +2356,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
             return_value=prime_result,
         ), patch.object(device, "upload") as upload_mock:
             result = device.evaluate(
-                dirpath=Path("/tmp"),
+                dirpath=Path("candidate"),
                 arena_kb=32,
                 window_size=128,
                 num_channels=6,
@@ -2382,7 +2383,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
             flash_bytes=123,
             ram_bytes=456,
             overflow_kind=None,
-            build_dir=Path("/tmp/fake_build"),
+            build_dir=Path("fake_build"),
         )
 
         with patch.object(device, "compile", return_value=compile_result), patch(
@@ -2396,7 +2397,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
             device, "upload"
         ) as upload_mock:
             result = device.evaluate(
-                dirpath=Path("/tmp"),
+                dirpath=Path("candidate"),
                 arena_kb=32,
                 window_size=128,
                 num_channels=6,
@@ -2424,7 +2425,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
             flash_bytes=123,
             ram_bytes=456,
             overflow_kind=None,
-            build_dir=Path("/tmp/fake_build"),
+            build_dir=Path("fake_build"),
         )
 
         with patch.object(device, "compile", return_value=compile_result), patch.object(
@@ -2437,7 +2438,7 @@ class HarnessOnlyOrderingTests(unittest.TestCase):
             device, "upload"
         ) as upload_mock:
             result = device.evaluate(
-                dirpath=Path("/tmp"),
+                dirpath=Path("candidate"),
                 arena_kb=32,
                 window_size=128,
                 num_channels=6,
@@ -2549,7 +2550,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
             flash_bytes=123,
             ram_bytes=456,
             overflow_kind=None,
-            build_dir=Path("/tmp/fake_build"),
+            build_dir=Path("fake_build"),
         )
         upload_result = ArduinoUploadResult(success=True, log="ok")
         measure_result = ArduinoMeasureResult(
@@ -2564,7 +2565,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
             device, "measure", return_value=measure_result
         ):
             device.evaluate(
-                dirpath=Path("/tmp"),
+                dirpath=Path("candidate"),
                 arena_kb=32,
                 window_size=128,
                 num_channels=6,
@@ -2589,7 +2590,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
             flash_bytes=123,
             ram_bytes=456,
             overflow_kind=None,
-            build_dir=Path("/tmp/fake_build"),
+            build_dir=Path("fake_build"),
         )
         upload_result = ArduinoUploadResult(success=True, log="ok")
         measure_result = ArduinoMeasureResult(
@@ -2653,7 +2654,7 @@ class DeviceTimeoutPassThroughTests(unittest.TestCase):
             "crest.devices.arduino_base.ensure_harness_firmware"
         ) as ensure_mock:
             device.evaluate(
-                dirpath=Path("/tmp"),
+                dirpath=Path("candidate"),
                 arena_kb=32,
                 window_size=128,
                 num_channels=6,

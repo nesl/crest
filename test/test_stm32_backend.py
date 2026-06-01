@@ -501,7 +501,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         # Runtime upload should require a staged build directory so it cannot program an undefined workspace.
         device = STM32NucleoN657X0QDevice()
         result = device.upload(
-            sketch_path=Path("/tmp/ignored"),
+            sketch_path=Path("ignored"),
             build_dir=None,
             serial_port="ttyACM0",
         )
@@ -517,6 +517,8 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         """
         # Compile-only evaluation should only report real arena bytes when the backend actually knows them.
         device = STM32NucleoN657X0QDevice()
+        project_root = Path("stm")
+        build_dir = project_root / "Debug"
         with patch.object(
             device,
             "compile",
@@ -529,13 +531,13 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                     "flash_bytes": 2222,
                     "ram_bytes": 1111,
                     "overflow_kind": None,
-                    "build_dir": Path("/tmp/stm/Debug"),
+                    "build_dir": build_dir,
                     "arena_bytes": 4096,
                 },
             )(),
         ):
             metrics = device.evaluate(
-                dirpath=Path("/tmp/stm"),
+                dirpath=project_root,
                 arena_kb=-1,
                 window_size=200,
                 num_channels=6,
@@ -581,6 +583,8 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         """
         # Successful STM32 HIL runs should use the runtime session path instead of falling back to proxy behavior.
         device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0")
+        project_root = Path("stm")
+        build_dir = project_root / "Debug"
         compile_result = type(
             "CompileResultDouble",
             (),
@@ -590,7 +594,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                 "flash_bytes": 2222,
                 "ram_bytes": 1111,
                 "overflow_kind": None,
-                "build_dir": Path("/tmp/stm/Debug"),
+                "build_dir": build_dir,
                 "arena_bytes": 4096,
             },
         )()
@@ -602,7 +606,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
         with patch.object(device, "compile", return_value=compile_result), patch(
             "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
-            return_value=Path("/tmp/stm/Debug/app.elf"),
+            return_value=build_dir / "app.elf",
         ), patch(
             "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
             _FakeSerialMonitor,
@@ -614,7 +618,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             return_value=telemetry,
         ) as runtime_mock:
             metrics = device.evaluate(
-                dirpath=Path("/tmp/stm"),
+                dirpath=project_root,
                 arena_kb=-1,
                 window_size=200,
                 num_channels=6,
@@ -651,7 +655,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
         with patch.object(device, "_evaluate_single_phase", return_value=base_result) as phase_mock:
             metrics = device.evaluate(
-                dirpath=Path("/tmp/stm"),
+                dirpath=Path("stm"),
                 arena_kb=-1,
                 window_size=200,
                 num_channels=6,
@@ -712,7 +716,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             side_effect=[base_result, cadenced_result],
         ) as phase_mock:
             metrics = device.evaluate(
-                dirpath=Path("/tmp/stm"),
+                dirpath=Path("stm"),
                 arena_kb=-1,
                 window_size=200,
                 num_channels=6,
@@ -754,7 +758,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             return_value=failed_base_result,
         ) as phase_mock:
             metrics = device.evaluate(
-                dirpath=Path("/tmp/stm"),
+                dirpath=Path("stm"),
                 arena_kb=-1,
                 window_size=200,
                 num_channels=6,
@@ -798,6 +802,8 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         """
         # Runtime-session failures after bring-up should classify as latency errors rather than upload failures.
         device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0")
+        project_root = Path("stm")
+        build_dir = project_root / "Debug"
         compile_result = type(
             "CompileResultDouble",
             (),
@@ -807,7 +813,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                 "flash_bytes": 2222,
                 "ram_bytes": 1111,
                 "overflow_kind": None,
-                "build_dir": Path("/tmp/stm/Debug"),
+                "build_dir": build_dir,
                 "arena_bytes": 4096,
             },
         )()
@@ -819,7 +825,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
 
         with patch.object(device, "compile", return_value=compile_result), patch(
             "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
-            return_value=Path("/tmp/stm/Debug/app.elf"),
+            return_value=build_dir / "app.elf",
         ), patch(
             "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
             _FakeSerialMonitor,
@@ -831,7 +837,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             side_effect=protocol_error,
         ):
             metrics = device.evaluate(
-                dirpath=Path("/tmp/stm"),
+                dirpath=project_root,
                 arena_kb=-1,
                 window_size=200,
                 num_channels=6,
@@ -852,6 +858,8 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         """
         # Failures before runtime execution should stay in the upload bucket so callers can distinguish staging from timing issues.
         device = STM32NucleoN657X0QDevice(serial_port="/dev/ttyACM0")
+        project_root = Path("stm")
+        build_dir = project_root / "Debug"
         compile_result = type(
             "CompileResultDouble",
             (),
@@ -861,14 +869,14 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                 "flash_bytes": 2222,
                 "ram_bytes": 1111,
                 "overflow_kind": None,
-                "build_dir": Path("/tmp/stm/Debug"),
+                "build_dir": build_dir,
                 "arena_bytes": 4096,
             },
         )()
 
         with patch.object(device, "compile", return_value=compile_result), patch(
             "crest.microcontrollers.stm32_nucleo_n657x0.stm32_cube_clt.resolve_elf_path",
-            return_value=Path("/tmp/stm/Debug/app.elf"),
+            return_value=build_dir / "app.elf",
         ), patch(
             "crest.microcontrollers.stm32_nucleo_n657x0.stm32_runtime.SerialMonitor",
             _FakeSerialMonitor,
@@ -877,7 +885,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             side_effect=stm32_cube_clt.WorkflowError("ST-LINK failed"),
         ):
             metrics = device.evaluate(
-                dirpath=Path("/tmp/stm"),
+                dirpath=project_root,
                 arena_kb=-1,
                 window_size=200,
                 num_channels=6,
@@ -897,6 +905,8 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         """
         # Overflow classification should map backend-specific failure kinds onto the stable HIL error codes.
         device = STM32NucleoN657X0QDevice()
+        project_root = Path("stm")
+        build_dir = project_root / "Debug"
         for overflow_kind, expected_error in (
             ("flash", HIL_ERROR_FLASH_OVERFLOW),
             ("ram", HIL_ERROR_RAM_OVERFLOW),
@@ -910,13 +920,13 @@ class STM32BackendBehaviorTests(unittest.TestCase):
                     "flash_bytes": 100,
                     "ram_bytes": 200,
                     "overflow_kind": overflow_kind,
-                    "build_dir": Path("/tmp/stm/Debug"),
+                    "build_dir": build_dir,
                     "arena_bytes": 4096,
                 },
             )()
             with patch.object(device, "compile", return_value=compile_result):
                 metrics = device.evaluate(
-                    dirpath=Path("/tmp/stm"),
+                    dirpath=project_root,
                     arena_kb=-1,
                     window_size=200,
                     num_channels=6,
@@ -1329,7 +1339,8 @@ class STM32HelperTests(unittest.TestCase):
         # The Python process may need CONDA_PREFIX/lib, but the Qt-based ST
         # programmer must load its own bundled Qt libraries before Conda's.
         with tempfile.TemporaryDirectory() as tmpdir:
-            cubeprog_root = Path(tmpdir) / "STM32CubeProgrammer"
+            tmp_path = Path(tmpdir)
+            cubeprog_root = tmp_path / "STM32CubeProgrammer"
             cubeprog_bin = cubeprog_root / "bin"
             cubeprog_lib = cubeprog_root / "lib"
             cubeprog_bin.mkdir(parents=True)
@@ -1337,6 +1348,11 @@ class STM32HelperTests(unittest.TestCase):
             programmer = cubeprog_bin / "STM32_Programmer_CLI"
             programmer.touch()
             captured_env = {}
+            inherited_conda_lib = tmp_path / "inherited" / "conda" / "lib"
+            inherited_usr_lib = tmp_path / "inherited" / "usr" / "lib"
+            inherited_ld_library_path = os.pathsep.join(
+                [str(inherited_conda_lib), str(inherited_usr_lib)]
+            )
 
             def _fake_run(argv, **kwargs):
                 """Capture the subprocess environment for assertions.
@@ -1356,7 +1372,7 @@ class STM32HelperTests(unittest.TestCase):
                 captured_env.update(kwargs.get("env") or {})
                 return subprocess.CompletedProcess(argv, 0, "", "")
 
-            with patch.dict(os.environ, {"LD_LIBRARY_PATH": "/conda/lib:/usr/lib"}), patch(
+            with patch.dict(os.environ, {"LD_LIBRARY_PATH": inherited_ld_library_path}), patch(
                 "crest.microcontrollers.stm32_cube_clt.subprocess.run",
                 side_effect=_fake_run,
             ):
@@ -1364,7 +1380,7 @@ class STM32HelperTests(unittest.TestCase):
 
             search_path = captured_env["LD_LIBRARY_PATH"].split(os.pathsep)
             self.assertEqual(search_path[0], str(cubeprog_lib))
-            self.assertIn("/conda/lib", search_path)
+            self.assertIn(str(inherited_conda_lib), search_path)
 
     def test_prepare_candidate_only_requires_staging_tools(self) -> None:
         """Ensure Phase 2 candidate prep does not demand upload/debug tools.
@@ -1884,13 +1900,14 @@ class STM32HelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             project_root = _build_lrun_project_tree(tmp_path / "crest_stm32_lrun")
+            weights_blob_path = tmp_path / "network_data.bin"
             manifest_path = project_root / STAGED_MANIFEST_NAME
             manifest_path.write_text(
                 "{\n"
                 f'  "staged_workspace_root": "{project_root.resolve()}",\n'
                 '  "weight_storage_mode": "external_flash",\n'
                 '  "weights_blob_size": 4097,\n'
-                '  "weights_blob_path": "/tmp/network_data.bin"\n'
+                f'  "weights_blob_path": "{weights_blob_path}"\n'
                 "}\n",
                 encoding="utf-8",
             )
@@ -2947,7 +2964,7 @@ class STM32HelperTests(unittest.TestCase):
         # LRUN-specific backend failures should collapse into stable public error kinds.
         self.assertEqual(
             stm32_n657_backend.classify_stm32_backend_error(
-                "Could not update EXTMEM_LRUN_SOURCE_SIZE in /tmp/stm32_extmem_conf.h"
+                "Could not update EXTMEM_LRUN_SOURCE_SIZE in staged/stm32_extmem_conf.h"
             ),
             "boot_copy_window_update",
         )
@@ -3719,11 +3736,13 @@ class STM32HelperTests(unittest.TestCase):
         """
         # Host OS failures from the size parser should still surface as workflow errors.
         with tempfile.TemporaryDirectory() as tmpdir:
-            elf_path = Path(tmpdir) / "crest_phase2.elf"
+            tmp_path = Path(tmpdir)
+            elf_path = tmp_path / "crest_phase2.elf"
+            size_binary = tmp_path / "toolchain" / "bin" / "arm-none-eabi-size"
             elf_path.write_bytes(b"elf")
             with patch(
                 "crest.microcontrollers.stm32_cube_clt.resolve_required_tool_path",
-                return_value=Path("/usr/bin/arm-none-eabi-size"),
+                return_value=size_binary,
             ), patch(
                 "crest.microcontrollers.stm32_cube_clt.subprocess.run",
                 side_effect=OSError("exec format error"),

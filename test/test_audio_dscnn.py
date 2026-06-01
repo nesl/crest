@@ -489,6 +489,7 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             checkpoint_path = Path(tmpdir) / "trained.keras"
+            missing_checkpoint_path = Path(tmpdir) / "audio-dscnn-missing.keras"
             checkpoint_path.write_text("placeholder", encoding="utf-8")
             with patch.object(self.family, "load_model", return_value="loaded") as load_mock:
                 loaded = self.family.materialize_export_model(
@@ -509,7 +510,7 @@ class AudioDSCNNFamilyTests(unittest.TestCase):
                 self.ctx,
                 self.config,
                 model_variant="trained",
-                checkpoint_path=Path("/tmp/audio-dscnn-missing.keras"),
+                checkpoint_path=missing_checkpoint_path,
             )
         with self.assertRaises(ValueError):
             self.family.materialize_export_model(hparams, self.ctx, self.config, model_variant="approx_trained")
