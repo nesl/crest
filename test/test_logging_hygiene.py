@@ -27,7 +27,7 @@ HOST_PATH_ROOTS = (
 HOST_FILESYSTEM_PATH_RE = re.compile(
     "|".join(
         tuple(re.escape("/" + root) + r"(?:/|['\"]|\b)" for root in HOST_PATH_ROOTS)
-        + (re.escape("Documents" + "/" + "Projects"), r"[A-Za-z]:\\\\")
+        + (re.escape("Documents" + "/" + "Projects"), r"(?<![A-Za-z])[A-Za-z]:[\\/]")
     )
 )
 
@@ -85,3 +85,22 @@ def test_python_sources_do_not_embed_host_filesystem_paths() -> None:
                     offenders.append(f"{rel_path}:{line_number}: {line.strip()}")
 
     assert not offenders, "Hardcoded host filesystem paths remain:\n" + "\n".join(offenders)
+
+
+def test_host_filesystem_path_regex_covers_common_absolute_paths() -> None:
+    """Host path detection should catch POSIX and Windows absolute roots."""
+    positive_samples = [
+        "/" + "home" + "/developer/project",
+        "/" + "Users" + "/developer/project",
+        "C:" + "\\" + "Users" + "\\" + "developer" + "\\" + "project",
+        "D:" + "/" + "Users" + "/" + "developer" + "/" + "project",
+    ]
+    negative_samples = [
+        "https://github.com/nesl/tinyodom-ex",
+        "sqlite:///optuna.db",
+    ]
+
+    for sample in positive_samples:
+        assert HOST_FILESYSTEM_PATH_RE.search(sample), sample
+    for sample in negative_samples:
+        assert not HOST_FILESYSTEM_PATH_RE.search(sample), sample
