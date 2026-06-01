@@ -4,12 +4,15 @@ This folder contains calculation-only scripts for comparing CSV-derived Pareto
 fronts. They consume existing NAS or replay artifacts; they do not run NAS,
 retrain models, or replay hardware.
 
+Hardware requirement: no hardware required. Run commands from the repository
+root with the `crest` Conda environment active.
+
 ## Generic Front Comparison
 
 `compare_pareto_fronts.py` compares two CSV-derived Pareto fronts using explicit
 column names and matching semantics. It is intended for users who rerun NAS or
 replay experiments and want to compare the resulting fronts without relying on
-paper-specific paths.
+hard-coded study paths.
 
 ```bash
 python -B analysis_scripts/compare_pareto_front_calcs/compare_pareto_fronts.py \

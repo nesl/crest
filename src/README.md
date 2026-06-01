@@ -14,6 +14,17 @@ Related docs:
 - Microcontroller and hardware-backend bring-up live in
   [`crest/microcontrollers/README.md`](crest/microcontrollers/README.md).
 
+## Where To Start
+
+| Goal | Start Here | Hardware Requirement |
+|------|------------|----------------------|
+| Run or modify NAS/training orchestration | [`nas_model_client.py`](nas_model_client.py) and [`crest/runtime_bootstrap.py`](crest/runtime_bootstrap.py) | No hardware required when `device.hil: false` |
+| Run or modify HIL server behavior | [`hil_server.py`](hil_server.py) and [`crest/hil_runtime.py`](crest/hil_runtime.py) | Development board required for execution; HIL harness required for energy measurement |
+| Add a dataset | [`crest/datasets/README.md`](crest/datasets/README.md) | No hardware required for adapter development |
+| Add a task | [`crest/tasks/README.md`](crest/tasks/README.md) | No hardware required for adapter development |
+| Add a model family | [`crest/model_families/README.md`](crest/model_families/README.md) | No hardware required for model construction; hardware needed for backend validation |
+| Add board support | [`crest/microcontrollers/README.md`](crest/microcontrollers/README.md) | Matching board and toolchain required |
+
 ## Top-Level Entry Points
 
 - [`nas_model_client.py`](nas_model_client.py)
@@ -44,15 +55,20 @@ points above.
   Defines shared typed payloads passed between the modular pipeline layers.
 - [`crest/datasets/`](crest/datasets)
   Dataset adapters. Built-ins include [`oxiod.py`](crest/datasets/oxiod.py)
-  and [`urbansound8k_mel.py`](crest/datasets/urbansound8k_mel.py).
+  and [`urbansound8k_mel.py`](crest/datasets/urbansound8k_mel.py). See
+  [`crest/datasets/README.md`](crest/datasets/README.md) for the contributor
+  guide.
 - [`crest/tasks/`](crest/tasks)
   Task adapters. Built-ins include
   [`odometry_regression.py`](crest/tasks/odometry_regression.py) and
-  [`sound_classification.py`](crest/tasks/sound_classification.py).
+  [`sound_classification.py`](crest/tasks/sound_classification.py). See
+  [`crest/tasks/README.md`](crest/tasks/README.md) for the contributor guide.
 - [`crest/model_families/`](crest/model_families)
   Model-family implementations. Built-ins include
   [`odom_tcn.py`](crest/model_families/odom_tcn.py) and
-  [`audio_dscnn.py`](crest/model_families/audio_dscnn.py).
+  [`audio_dscnn.py`](crest/model_families/audio_dscnn.py). See
+  [`crest/model_families/README.md`](crest/model_families/README.md) for the
+  contributor guide.
 - [`crest/microcontrollers/`](crest/microcontrollers)
   Hardware backends and backend registry/factory logic. See
   [`crest/microcontrollers/README.md`](crest/microcontrollers/README.md)
@@ -274,6 +290,23 @@ hardware replay with `--resume` unless skipping those candidates is intentional.
 
 ## Extension Paths
 
+Contributor standards for new implementation work:
+
+- Make breaking config or API changes explicit in the relevant README and
+  config examples.
+- Avoid temporary compatibility paths unless they have a tracked owner and
+  removal point.
+- Keep new helpers small, readable, locally validated, and documented with
+  NumPy-style docstrings for changed functions, classes, dataclasses, and
+  tests.
+- Keep non-obvious logic commented, especially feature caching, score/cadence
+  derivation, export/materialization, and hardware staging decisions.
+- Keep code testable without hardware where possible; hardware flows should
+  expose non-hardware preflight checks for config, model construction, export,
+  and generated requests.
+- Pin or justify dependency additions in the implementation plan that adds
+  them.
+
 ### Add A New Model Family
 
 If you mean a new trainable/exportable model family, this is the primary
@@ -318,6 +351,8 @@ Important boundary:
 
 Key files:
 
+- [`crest/datasets/README.md`](crest/datasets/README.md)
+  for the full contributor guide
 - [`crest/interfaces.py`](crest/interfaces.py) for `DatasetABC`
 - [`crest/datasets/oxiod.py`](crest/datasets/oxiod.py) and
   [`crest/datasets/urbansound8k_mel.py`](crest/datasets/urbansound8k_mel.py)
@@ -337,6 +372,8 @@ Typical steps:
 
 Key files:
 
+- [`crest/tasks/README.md`](crest/tasks/README.md)
+  for the full contributor guide
 - [`crest/interfaces.py`](crest/interfaces.py) for `TaskABC`
 - [`crest/tasks/odometry_regression.py`](crest/tasks/odometry_regression.py)
   and [`crest/tasks/sound_classification.py`](crest/tasks/sound_classification.py)
@@ -370,9 +407,9 @@ device options belong to the microcontroller backend layer, not to
 
 Important caveat:
 
-- a new non-Arduino backend must be wired into the registry metadata in
+- A new non-Arduino backend must be wired into the registry metadata in
   [`crest/microcontrollers/__init__.py`](crest/microcontrollers/__init__.py)
-  or it is unreachable except through the Arduino FQBN fallback path
+  or it is unreachable except through the Arduino FQBN fallback path.
 
 ## NAS Policy And HIL Details
 

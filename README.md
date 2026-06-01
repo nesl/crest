@@ -23,7 +23,7 @@ Arduino Nano 33 BLE Sense, Arduino Portenta H7, and STM32 NUCLEO-N657X0-Q.
   pruning, and feasibility constraints.
 - Replay utilities for remeasuring selected candidates across targets,
   schedules, and policies.
-- Analysis scripts for reproducing paper-style plots and claim calculations
+- Analysis scripts for reproducing publication-style plots and claim calculations
   from existing NAS and replay artifacts.
 
 CREST is designed for controlled comparisons. A study can change the board,
@@ -55,15 +55,22 @@ trace segmentation.
 ## Choose Your Workflow
 
 1. **Training only**
-   Use this when you want to run NAS or training without talking to hardware.
-   Start from `src/config/nas_config_stm32.yaml`, set `device.hil: false`, and
-   read [src/config/README.md](src/config/README.md) plus
-   [src/README.md](src/README.md). For the UrbanSound8K audio DS-CNN path,
-   start from
-   [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml).
+   **Hardware requirement: no hardware required.** Use this when you want to
+   run NAS or training without talking to hardware. For OxIOD, start from
+   [src/config/nas_config_flops_rmse.yaml](src/config/nas_config_flops_rmse.yaml)
+   or [src/config/nas_config_memory_proxy.yaml](src/config/nas_config_memory_proxy.yaml).
+   For UrbanSound8K audio DS-CNN training, use
+   [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
+   as a template with `device.hil: false` and score/prune terms that do not
+   require measured hardware metrics. Read
+   [src/config/README.md](src/config/README.md) plus
+   [src/README.md](src/README.md) before adapting HIL configs for
+   hardware-free runs.
 
 2. **Arduino HIL**
-   Use this for Arduino CLI-backed DUTs and harness-backed measurement flows.
+   **Hardware requirement: development board required; HIL harness required for
+   harness-assisted or harness-only measurement.** Use this for Arduino
+   CLI-backed DUTs and harness-backed measurement flows.
    Start from [src/config/nas_config_ble.yaml](src/config/nas_config_ble.yaml)
    for Nano 33 BLE or
    [src/config/nas_config_portenta.yaml](src/config/nas_config_portenta.yaml)
@@ -74,7 +81,9 @@ trace segmentation.
    and [sketches/README.md](sketches/README.md).
 
 3. **STM32 HIL**
-   Use this for the STM32 N657 backend. Start from
+   **Hardware requirement: NUCLEO-N657X0-Q board required; HIL harness required
+   for energy-measured runs.** Use this for the STM32 NUCLEO-N657X0-Q backend.
+   Start from
    [src/config/nas_config_stm32.yaml](src/config/nas_config_stm32.yaml), then
    use [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
    for the audio DS-CNN HIL path. Then read
@@ -83,9 +92,12 @@ trace segmentation.
    [sketches/stm32/crest_stm32_lrun/README.md](sketches/stm32/crest_stm32_lrun/README.md).
 
 4. **Analysis scripts / one-off experiments**
-   Use this for focused measurement or validation runs outside the main NAS
-   loop. Start with [analysis_scripts/README.md](analysis_scripts/README.md),
-   then open the package-specific README for the script family you need.
+   **Hardware requirement: script-dependent.** Use this for focused
+   measurement or validation runs outside the main NAS loop. Most analysis
+   scripts consume existing artifacts and do not touch hardware; the
+   micro-workload probe uses the CREST HIL harness. Start with
+   [analysis_scripts/README.md](analysis_scripts/README.md), then open the
+   package-specific README for the script family you need.
 
 ## Environment Setup
 
@@ -216,6 +228,10 @@ Before running the bootstrap, ensure these tools are on your shell `PATH`:
 - `arm-none-eabi-objdump`
 - `STM32_SigningTool_CLI` or `STM32TrustedPackageCreator_CLI`
 
+For normal STM32 NAS/HIL candidate generation, also ensure `stedgeai` is on
+`PATH`. The synthetic micro-workload probe documents its narrower STM32
+requirements separately.
+
 Then run:
 
 ```bash
@@ -231,7 +247,7 @@ refreshes the repo-local STM32 vendor subsets.
 The shipped starting points are:
 
 - [src/config/nas_config_stm32.yaml](src/config/nas_config_stm32.yaml)
-  STM32-oriented config for the current `STM32_NUCLEO_N657X0_Q` backend. This
+  STM32-oriented config for the `STM32_NUCLEO_N657X0_Q` backend. This
   is the main starting point for STM32 runs and the most complete commented
   example config in the repo.
 - [src/config/nas_config_ble.yaml](src/config/nas_config_ble.yaml)
@@ -239,8 +255,8 @@ The shipped starting points are:
 - [src/config/nas_config_portenta.yaml](src/config/nas_config_portenta.yaml)
   Portenta H7-focused starting point.
 - [src/config/nas_config_audio_stm32.yaml](src/config/nas_config_audio_stm32.yaml)
-  UrbanSound8K audio DS-CNN starting point for desktop training and STM32 N657
-  HIL work.
+  UrbanSound8K audio DS-CNN starting point for desktop training and
+  NUCLEO-N657X0-Q HIL work.
 - [src/config/nas_config_audio_portenta.yaml](src/config/nas_config_audio_portenta.yaml)
   UrbanSound8K audio DS-CNN starting point for Arduino-backed Portenta H7 work.
 
@@ -277,8 +293,8 @@ conda activate crest
 python src/hil_server.py
 ```
 
-For STM32, install `STM32CubeCLT`, ensure its tools are on `PATH`, and run
-`make stm32-setup` on that same host before starting the server.
+For STM32, complete the STM32 setup section above on the board-connected host
+before starting the HIL server.
 
 ### 2. Open a reverse SSH tunnel from the device host to the training host
 
@@ -286,7 +302,9 @@ For STM32, install `STM32CubeCLT`, ensure its tools are on `PATH`, and run
 ssh -R "6001:127.0.0.1:6001" <gpu_server>
 ```
 
-The default configs expect the HIL server at `127.0.0.1:6001`.
+The default configs expect the HIL server at `127.0.0.1:6001`. If the NAS
+client and HIL server run on the same machine, the reverse SSH tunnel is not
+needed.
 
 ### 3. Run the NAS client on the training host
 
@@ -320,7 +338,7 @@ Artifacts are written under the configured `outputs.models_dir` and
 
 ## Reproducing Case-Study Analyses
 
-Paper-oriented run configs live in
+Case-study run configs live in
 [src/config/case_study_configs/](src/config/case_study_configs/). They cover:
 
 - Case Study 1: OxIOD/TCN proxy-vs-measured-energy selection across targets.
@@ -339,7 +357,11 @@ or touch hardware unless their package README says so.
 - [src/config/README.md](src/config/README.md)
   Full config reference and scoring/pruning semantics.
 - [src/config/case_study_configs/README.md](src/config/case_study_configs/README.md)
-  Paper case-study config index.
+  Case-study config index.
+- [src/crest/datasets/README.md](src/crest/datasets/README.md)
+  Dataset adapter contributor guide.
+- [src/crest/tasks/README.md](src/crest/tasks/README.md)
+  Task adapter contributor guide.
 - [src/crest/microcontrollers/README.md](src/crest/microcontrollers/README.md)
   Backend contracts, bring-up, staging, compile, upload, and runtime flows.
 - [src/crest/model_families/README.md](src/crest/model_families/README.md)
@@ -353,11 +375,14 @@ or touch hardware unless their package README says so.
 
 ## Troubleshooting
 
-- If training-only runs should not touch hardware, set `device.hil: false`.
+- If training-only runs should not touch hardware, start from a desktop-safe
+  config or set `device.hil: false` and remove score/prune terms that require
+  measured hardware metrics.
 - If Arduino uploads fail on Linux with `LIBUSB_ERROR_ACCESS`, apply the udev
   rules documented in the MCU README.
-- If STM32 bootstrap fails, confirm the full `STM32CubeCLT` toolchain is on
-  `PATH` before rerunning `make stm32-setup`.
+- If STM32 bootstrap, HIL startup, or candidate generation fails, re-check the
+  STM32 setup section above, then consult the MCU README for backend-specific
+  diagnostics.
 - If OxIOD preparation fails, confirm the zip exists and that the repo still
   contains the tracked split templates under `data/oxiod/<activity>/`.
 - If audio runs fail while loading data, run `make prepare-audio-dataset` and
