@@ -63,11 +63,6 @@ Repo-owned CREST code, documentation, configuration, and tests are licensed
 under the BSD 3-Clause License unless otherwise noted. See [LICENSE](LICENSE)
 for the full license text.
 
-This public repository state is not safe for double-blind review because it
-contains the UCLA Networked & Embedded Systems Laboratory copyright holder.
-Reviewer-facing bundles must be produced with a separate redaction step that
-removes or replaces identifying copyright and provenance text.
-
 Important exceptions and separately governed materials:
 
 - STM32/ST/CMSIS material under
@@ -76,6 +71,10 @@ Important exceptions and separately governed materials:
   license terms documented in that directory.
 - STM32 vendor-derived and tool-generated build recipe files in the LRUN
   workspace are not relicensed by CREST headers.
+- The Arduino TensorFlow Lite Micro dependency tracked as the
+  [`tools/arduino-user/libraries/Arduino_TensorFlowLite`](tools/arduino-user/libraries/Arduino_TensorFlowLite)
+  submodule remains governed by its upstream Apache-2.0 license and is not
+  relicensed by CREST.
 - OxIOD split metadata and upstream OxIOD readme snippets are dataset-related
   materials; raw OxIOD data is downloaded separately and is not stored in this
   repository.
@@ -134,7 +133,7 @@ Important exceptions and separately governed materials:
 1. **Clone with submodules.**
 
    ```bash
-   git clone --recurse-submodules <url>
+   git clone --recurse-submodules https://github.com/nesl/crest.git
    ```
 
    If you already cloned without submodules:
@@ -417,9 +416,3 @@ or touch hardware unless their package README says so.
   contains the tracked split templates under `data/oxiod/<activity>/`.
 - If audio runs fail while loading data, run `make prepare-audio-dataset` and
   confirm the UrbanSound8K cache path in the selected config exists.
-
-## Anonymous Review Note
-
-Citation, acknowledgments, and identifying project metadata are intentionally
-omitted from this README while the artifact is prepared for double-blind
-review. They can be added back for a public release.
