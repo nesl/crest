@@ -1803,6 +1803,70 @@ class SmokeTestTests(unittest.TestCase):
         self.assertEqual(client.config.training.nas_epochs, 10)
         self.assertEqual(client.config.nas.score.type, "scoring-function")
 
+    def test_llm_smoke_test_persists_three_hil_disabled_trials_and_ledgers(self) -> None:
+        """A real file-backed fake-provider study keeps all sources of truth aligned."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = _build_test_client(base_dir=Path(tmpdir))
+            client.config.device.hil = False
+            client.config.device.compile_when_hil_disabled = "false"
+            client.config.training.train = False
+            client.config.nas.score = Dict(
+                type="scoring-function",
+                metrics=Dict(),
+                params=Dict(terms=[Dict(type="weighted", metric="flops", weight=-1.0)]),
+            )
+            client.config.optimizer = Dict(
+                type="llm_generator",
+                llm=Dict(
+                    provider="fake",
+                    responses=[
+                        {
+                            "candidates": [
+                                {"width": 3},
+                                {"width": 5},
+                                {"width": 7},
+                            ]
+                        }
+                    ],
+                    batch_size=3,
+                    max_repair_attempts=0,
+                    prompt_version="v1",
+                    random_seed=0,
+                ),
+            )
+            client.model_family.trial_search_space = MagicMock(
+                return_value=[SearchParam("width", "int", low=2, high=8)]
+            )
+
+            def objective(trial):
+                width = trial.suggest_int("width", 2, 8)
+                return -float(width)
+
+            client.objective = objective
+            client.smoke_test(
+                train=False,
+                hil=False,
+                trials=3,
+                epochs=1,
+                study_name="llm-hil-disabled-smoke",
+            )
+
+            root = Path(tmpdir) / "models/llm-hil-disabled-smoke"
+            storage = f"sqlite:///{root / 'optuna_smoke_test.db'}"
+            persisted = optuna.load_study(
+                study_name="llm-hil-disabled-smoke",
+                storage=storage,
+            )
+            trials_csv = root / "trials.csv"
+            accepted_path = root / "llm_optimizer/accepted_candidates.jsonl"
+
+            self.assertEqual(len(persisted.trials), 3)
+            self.assertEqual([trial.params["width"] for trial in persisted.trials], [3, 5, 7])
+            self.assertEqual(len(trials_csv.read_text().splitlines()) - 1, 3)
+            self.assertEqual(len(accepted_path.read_text().splitlines()), 3)
+            self.assertFalse(client.config.device.hil)
+            self.assertFalse(client.config.training.train)
+
     def test_smoke_test_uses_loaded_multiobjective_config(self) -> None:
         """Smoke test should honor multi-objective mode from the loaded config."""
         # Smoke tests should honor a loaded multi-objective config instead of forcing a scalar study shape.

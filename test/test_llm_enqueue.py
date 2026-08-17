@@ -114,6 +114,8 @@ class EnqueueTests(unittest.TestCase):
             )
             self.assertEqual(rejected["code"], "out_of_range")
             self.assertEqual(len(provider.requests), 2)
+            repaired_payload = json.loads(provider.requests[1].user_prompt)
+            self.assertIn("out_of_range", repaired_payload["repair_feedback"])
 
     def test_invalid_provider_output_triggers_logged_random_fallback(self) -> None:
         """Exhausted invalid responses still produce one locally valid trial."""

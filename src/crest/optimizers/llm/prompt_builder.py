@@ -90,11 +90,18 @@ class PromptContext:
         }
 
 
-def build_candidate_request(context: PromptContext, *, prompt_version: str) -> LLMRequest:
+def build_candidate_request(
+    context: PromptContext,
+    *,
+    prompt_version: str,
+    repair_feedback: str | None = None,
+) -> LLMRequest:
     """Build a deterministic JSON-only provider request."""
     if not prompt_version.strip():
         raise ValueError("prompt_version must be a non-empty string.")
     payload = context.as_prompt_payload()
+    if repair_feedback:
+        payload["repair_feedback"] = repair_feedback
     return LLMRequest(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=json.dumps(payload, sort_keys=True, separators=(",", ":")),
@@ -103,5 +110,6 @@ def build_candidate_request(context: PromptContext, *, prompt_version: str) -> L
             "study_name": context.study_name,
             "phase": context.phase().name,
             "batch_size": context.batch_size,
+            "repair": bool(repair_feedback),
         },
     )

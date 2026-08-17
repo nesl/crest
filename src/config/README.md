@@ -96,6 +96,10 @@ The main top-level blocks are:
   HIL server/client socket settings.
 - `logging`
   Runtime log level.
+- `optimizer`
+  Optional candidate source selection. Omit it, or set `type: optuna`, to use
+  the existing Optuna sampler path. Set `type: llm_generator` to validate and
+  enqueue exact candidates before the unchanged CREST objective runs.
 
 Those component blocks are resolved by
 [`../crest/component_selection.py`](../crest/component_selection.py), and
@@ -275,7 +279,46 @@ Validation notes:
 - task classes are expected to use the explicit keyword-only constructor
   contract `__init__(*, checkpoint_path, early_stopping_patience)`; the runtime
   does not probe constructor signatures or provide compatibility shims for
-  older task classes
+  older task classes.
+
+## `optimizer`
+
+The default remains the existing Optuna path:
+
+```yaml
+optimizer:
+  type: optuna
+```
+
+The LLM generator uses an OpenRouter/OpenAI-compatible endpoint:
+
+```yaml
+optimizer:
+  type: llm_generator
+  llm:
+    provider: openrouter
+    model: openai/gpt-5-mini
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    batch_size: 5
+    temperature: 0.4
+    timeout_s: 60
+    max_repair_attempts: 1
+    prompt_version: v1
+    random_seed: 0
+    extra_headers: {}
+```
+
+The generator emits raw Optuna parameters such as `dilations_index` and
+`cpu_clock_mhz_index`; decoded fields are not accepted. `quantization_mode`
+and CPU clock search appear only when their corresponding runtime paths are
+active. Provider output is validated locally before `study.enqueue_trial(...)`.
+If all configured attempts fail, CREST logs and enqueues one random candidate
+from the same descriptor.
+
+Every request, response, prompt context, candidate decision, and fallback is
+stored under `models/<study_name>/llm_optimizer/`. API keys are read from the
+configured environment variable and are never written to this ledger.
 
 Minimal example:
 

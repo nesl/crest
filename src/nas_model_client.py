@@ -1992,6 +1992,8 @@ class NASModelClient:
         _previous_hil = self.config.device.hil
         _previous_train = self.config.training.train
         _previous_epochs = self.config.training.nas_epochs
+        _previous_nas_trials = self.config.training.nas_trials
+        _previous_max_total_trials = self.config.training.max_total_trials
         try:
             if hil is not None:
                 self.config.device.hil = hil
@@ -2025,7 +2027,29 @@ class NASModelClient:
             self._validate_or_store_feasibility_signature(single_trial_study)
             single_trial_study.set_metric_names(self._study_metric_names())
             try:
-                single_trial_study.optimize(self.objective, n_trials=trials)
+                optimizer_config = self._cfg_get(self.config, "optimizer", None)
+                optimizer_type = str(
+                    self._cfg_get(optimizer_config, "type", "optuna")
+                ).strip().lower()
+                if optimizer_type == "llm_generator":
+                    if self._feasibility_enabled():
+                        existing_feasible = sum(
+                            1
+                            for trial in single_trial_study.trials
+                            if (
+                                trial.state == TrialState.COMPLETE
+                                and trial.user_attrs.get("feasibility_status") == "feasible"
+                            )
+                        )
+                    else:
+                        existing_feasible = sum(
+                            1 for trial in single_trial_study.trials if trial.state == TrialState.COMPLETE
+                        )
+                    self.config.training.nas_trials = existing_feasible + trials
+                    self.config.training.max_total_trials = len(single_trial_study.trials) + trials
+                    single_trial_study = self.run_nas(study_name=study_name, storage=storage_uri)
+                else:
+                    single_trial_study.optimize(self.objective, n_trials=trials)
             except Exception as exc:
                 completed = sum(1 for t in single_trial_study.trials if t.state == TrialState.COMPLETE)
                 pruned = sum(1 for t in single_trial_study.trials if t.state == TrialState.PRUNED)
@@ -2044,6 +2068,12 @@ class NASModelClient:
             self.config.device.hil = _previous_hil
             self.config.training.train = _previous_train
             self.config.training.nas_epochs = _previous_epochs
+            self.config.training.nas_trials = _previous_nas_trials
+            self.config.training.max_total_trials = _previous_max_total_trials
+
+        trials_dataframe = getattr(single_trial_study, "trials_dataframe", None)
+        if callable(trials_dataframe):
+            trials_dataframe().to_csv(artifacts_dir / "trials.csv", index=False)
 
         complete_trials = [t for t in single_trial_study.trials if t.state == TrialState.COMPLETE]
         if not complete_trials:

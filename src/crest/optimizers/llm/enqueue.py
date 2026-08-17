@@ -60,10 +60,15 @@ def enqueue_llm_batch(
     """Request candidates, reject invalid output, and guarantee one fallback."""
     completed = _study_candidates(study, context.descriptor, "COMPLETE")
     queued = _study_candidates(study, context.descriptor, "WAITING")
+    repair_feedback = None
 
     for attempt in range(max_repair_attempts + 1):
         request_id = ledger.next_request_id()
-        request = build_candidate_request(context, prompt_version=prompt_version)
+        request = build_candidate_request(
+            context,
+            prompt_version=prompt_version,
+            repair_feedback=repair_feedback,
+        )
         prompt_payload = context.as_prompt_payload()
         prompt_payload.update({"request_id": request_id, "repair_attempt": attempt})
         ledger.record_prompt_context(prompt_payload)
@@ -78,6 +83,7 @@ def enqueue_llm_batch(
             ledger.record_event(
                 {"event": "provider_error", "request_id": request_id, "repair_attempt": attempt}
             )
+            repair_feedback = f"The prior provider call failed with {type(exc).__name__}. Return valid JSON."
             continue
         ledger.write_response(request_id, response)
 
@@ -92,6 +98,7 @@ def enqueue_llm_batch(
                     "raw_content": response.content,
                 }
             )
+            repair_feedback = "The prior response was not valid JSON. Return only the required JSON envelope."
             continue
         try:
             batch = CandidateBatch.model_validate(raw_envelope)
@@ -104,6 +111,7 @@ def enqueue_llm_batch(
                     "raw_content": response.content,
                 }
             )
+            repair_feedback = "The prior JSON did not match the required CandidateBatch envelope."
             continue
 
         validation = validate_candidate_batch(
@@ -116,6 +124,9 @@ def enqueue_llm_batch(
         for rejection in validation.rejected:
             ledger.record_rejected({"request_id": request_id, **rejection.__dict__})
         if not validation.accepted:
+            repair_feedback = "The prior candidates were rejected: " + "; ".join(
+                f"{item.code}: {item.message}" for item in validation.rejected
+            )
             continue
 
         for candidate in validation.accepted:
