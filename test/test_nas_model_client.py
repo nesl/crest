@@ -39,6 +39,7 @@ from crest.hardware import (
     TFLiteSubprocessError,
 )  # noqa: E402
 from crest.model import ScoreConfigEvaluationError, TrialOutcome  # noqa: E402
+from crest.model_families.odom_tcn import OdomTCNFamily  # noqa: E402
 from crest.model_metrics import StaticMemoryEstimate  # noqa: E402
 from crest.optimizers.llm.provider import FakeProvider  # noqa: E402
 from crest.optimizers.llm.search_space import SearchParam  # noqa: E402
@@ -51,6 +52,7 @@ from crest.pipeline_types import (
     TargetSpec,
     TaskMetricContract,
 )  # noqa: E402
+from crest.tasks.odometry_regression import OdometryRegressionTask  # noqa: E402
 
 
 def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
@@ -1803,8 +1805,8 @@ class SmokeTestTests(unittest.TestCase):
         self.assertEqual(client.config.training.nas_epochs, 10)
         self.assertEqual(client.config.nas.score.type, "scoring-function")
 
-    def test_llm_smoke_test_persists_three_hil_disabled_trials_and_ledgers(self) -> None:
-        """A real file-backed fake-provider study keeps all sources of truth aligned."""
+    def test_llm_smoke_uses_real_odom_family_and_objective_without_hardware(self) -> None:
+        """A built-in Odom candidate runs through the real desktop objective path."""
         with tempfile.TemporaryDirectory() as tmpdir:
             client = _build_test_client(base_dir=Path(tmpdir))
             client.config.device.hil = False
@@ -1822,48 +1824,81 @@ class SmokeTestTests(unittest.TestCase):
                     responses=[
                         {
                             "candidates": [
-                                {"width": 3},
-                                {"width": 5},
-                                {"width": 7},
+                                {
+                                    "dilations_index": 0,
+                                    "nb_filters": 2,
+                                    "kernel_size": 2,
+                                    "dropout_rate": 0.0,
+                                    "use_skip_connections": False,
+                                    "norm_flag": False,
+                                }
                             ]
                         }
                     ],
-                    batch_size=3,
+                    batch_size=1,
                     max_repair_attempts=0,
                     prompt_version="v1",
                     random_seed=0,
                 ),
             )
-            client.model_family.trial_search_space = MagicMock(
-                return_value=[SearchParam("width", "int", low=2, high=8)]
+            client.model_family = OdomTCNFamily()
+            client.model_family_name = "odom_tcn"
+            client.task = OdometryRegressionTask(
+                checkpoint_path=client.config.outputs.checkpoint_path,
             )
+            client.task_name = "odometry_regression"
 
-            def objective(trial):
-                width = trial.suggest_int("width", 2, 8)
-                return -float(width)
+            with patch.object(
+                client,
+                "_hil_request",
+                side_effect=AssertionError("HIL must not run in this smoke test"),
+            ) as hil_request:
+                client.smoke_test(
+                    train=False,
+                    hil=False,
+                    trials=1,
+                    epochs=1,
+                    study_name="llm-real-odom-smoke",
+                )
 
-            client.objective = objective
-            client.smoke_test(
-                train=False,
-                hil=False,
-                trials=3,
-                epochs=1,
-                study_name="llm-hil-disabled-smoke",
-            )
-
-            root = Path(tmpdir) / "models/llm-hil-disabled-smoke"
+            root = Path(tmpdir) / "models/llm-real-odom-smoke"
             storage = f"sqlite:///{root / 'optuna_smoke_test.db'}"
             persisted = optuna.load_study(
-                study_name="llm-hil-disabled-smoke",
+                study_name="llm-real-odom-smoke",
                 storage=storage,
             )
             trials_csv = root / "trials.csv"
             accepted_path = root / "llm_optimizer/accepted_candidates.jsonl"
+            request_path = root / "llm_optimizer/requests/000001.request.json"
+            response_path = root / "llm_optimizer/requests/000001.response.json"
 
-            self.assertEqual(len(persisted.trials), 3)
-            self.assertEqual([trial.params["width"] for trial in persisted.trials], [3, 5, 7])
-            self.assertEqual(len(trials_csv.read_text().splitlines()) - 1, 3)
-            self.assertEqual(len(accepted_path.read_text().splitlines()), 3)
+            self.assertEqual(len(persisted.trials), 1)
+            trial = persisted.trials[0]
+            self.assertEqual(trial.state, TrialState.COMPLETE)
+            self.assertEqual(trial.params["dilations_index"], 0)
+            self.assertNotIn("dilations", trial.params)
+            self.assertEqual(
+                set(trial.params),
+                {
+                    "dilations_index",
+                    "nb_filters",
+                    "kernel_size",
+                    "dropout_rate",
+                    "use_skip_connections",
+                    "norm_flag",
+                },
+            )
+            self.assertGreater(trial.user_attrs["flops"], 0)
+            self.assertEqual(trial.value, -float(trial.user_attrs["flops"]))
+            self.assertEqual(trial.user_attrs["latency_ms"], -1.0)
+            self.assertEqual(trial.user_attrs["ram_bytes"], -1)
+            self.assertEqual(trial.user_attrs["flash_bytes"], -1)
+            self.assertEqual(trial.user_attrs["quantization_mode"], "float")
+            self.assertEqual(len(trials_csv.read_text().splitlines()) - 1, 1)
+            self.assertEqual(len(accepted_path.read_text().splitlines()), 1)
+            self.assertTrue(request_path.is_file())
+            self.assertTrue(response_path.is_file())
+            hil_request.assert_not_called()
             self.assertFalse(client.config.device.hil)
             self.assertFalse(client.config.training.train)
 
