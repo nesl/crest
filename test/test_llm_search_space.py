@@ -15,6 +15,7 @@ if str(SRC_DIR) not in sys.path:
 
 from crest.model_families.audio_dscnn import (  # noqa: E402
     AUDIO_DSCNN_SEARCH_CHOICES,
+    AUDIO_DSCNN_SEARCH_SEMANTICS,
     AudioDSCNNFamily,
 )
 from crest.model_families.odom_tcn import (  # noqa: E402
@@ -210,6 +211,38 @@ class SearchSpaceDescriptorTests(unittest.TestCase):
 
         self.assertEqual(param.suggest(trial), 0.25)
         self.assertEqual(trial.call, ("learning_rate", 0.0, 1.0))
+
+    def test_builtin_descriptors_expose_semantic_metadata(self) -> None:
+        """Every built-in family parameter explains its architectural role."""
+        odom = OdomTCNFamily().trial_search_space(odom_context(), {})
+        self.assertEqual(
+            {param.name for param in odom},
+            {
+                "dilations_index",
+                "nb_filters",
+                "kernel_size",
+                "dropout_rate",
+                "use_skip_connections",
+                "norm_flag",
+            },
+        )
+        self.assertTrue(all(param.description for param in odom))
+        self.assertTrue(all(param.typical_effects for param in odom))
+
+        audio_config = Dict(family="audio_dscnn", params=Dict(), search=Dict())
+        audio = AudioDSCNNFamily().trial_search_space(audio_context(), audio_config)
+        self.assertEqual({param.name for param in audio}, set(AUDIO_DSCNN_SEARCH_SEMANTICS))
+        self.assertEqual(set(AUDIO_DSCNN_SEARCH_SEMANTICS), set(AUDIO_DSCNN_SEARCH_CHOICES))
+        self.assertTrue(all(param.description for param in audio))
+        self.assertTrue(all(param.typical_effects for param in audio))
+
+    def test_third_party_descriptor_metadata_remains_optional(self) -> None:
+        """Existing declarations remain valid without semantic fields."""
+        param = SearchParam("legacy_width", "int", low=1, high=4)
+
+        self.assertEqual(param.description, "")
+        self.assertIsNone(param.units)
+        self.assertEqual(param.typical_effects, ())
 
 
 if __name__ == "__main__":

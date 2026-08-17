@@ -406,12 +406,66 @@ class OdomTCNFamily(ModelFamilyABC):
         """Describe the raw Optuna parameters for Odom TCN sampling."""
         del ctx, config
         return [
-            SearchParam("dilations_index", "int", low=0, high=len(DILATION_CANDIDATES) - 1),
-            SearchParam("nb_filters", "int", low=2, high=63),
-            SearchParam("kernel_size", "int", low=2, high=15),
-            SearchParam("dropout_rate", "categorical", choices=tuple(DROP_RATE_CHOICES)),
-            SearchParam("use_skip_connections", "categorical", choices=(True, False)),
-            SearchParam("norm_flag", "categorical", choices=(True, False)),
+            SearchParam(
+                "dilations_index",
+                "int",
+                low=0,
+                high=len(DILATION_CANDIDATES) - 1,
+                description="Selects a predefined temporal dilation schedule for the TCN blocks.",
+                typical_effects=(
+                    "Different schedules typically change temporal coverage and convolution structure.",
+                ),
+            ),
+            SearchParam(
+                "nb_filters",
+                "int",
+                low=2,
+                high=63,
+                description="Controls the channel width of the temporal convolution blocks.",
+                units="channels",
+                typical_effects=(
+                    "Wider blocks typically increase representational capacity, parameters, compute, and tensor memory.",
+                ),
+            ),
+            SearchParam(
+                "kernel_size",
+                "int",
+                low=2,
+                high=15,
+                description="Controls the temporal extent of each convolution kernel.",
+                units="timesteps",
+                typical_effects=(
+                    "Larger kernels typically use more neighboring timesteps per convolution and more compute.",
+                ),
+            ),
+            SearchParam(
+                "dropout_rate",
+                "categorical",
+                choices=tuple(DROP_RATE_CHOICES),
+                description="Controls the training-time dropout probability in TCN blocks.",
+                units="probability",
+                typical_effects=(
+                    "Dropout typically changes regularization during training without changing the raw input window.",
+                ),
+            ),
+            SearchParam(
+                "use_skip_connections",
+                "categorical",
+                choices=(True, False),
+                description="Controls whether residual skip connections are enabled across TCN blocks.",
+                typical_effects=(
+                    "Skip connections typically affect feature reuse, gradient flow, and graph structure.",
+                ),
+            ),
+            SearchParam(
+                "norm_flag",
+                "categorical",
+                choices=(True, False),
+                description="Controls whether batch normalization is used in the TCN blocks.",
+                typical_effects=(
+                    "Normalization typically affects training dynamics and adds normalization operations and state.",
+                ),
+            ),
         ]
 
     def decode_trial_hparams(

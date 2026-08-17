@@ -27,11 +27,24 @@ class SearchParam:
     low: int | float | None = None
     high: int | float | None = None
     choices: tuple[Any, ...] | None = None
+    description: str = ""
+    units: str | None = None
+    typical_effects: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Reject malformed descriptor declarations."""
         if not isinstance(self.name, str) or not self.name:
             raise ValueError("Search parameter names must be non-empty strings.")
+        if not isinstance(self.description, str):
+            raise ValueError(f"Search parameter '{self.name}' description must be a string.")
+        if self.units is not None and not isinstance(self.units, str):
+            raise ValueError(f"Search parameter '{self.name}' units must be a string or None.")
+        if not isinstance(self.typical_effects, tuple) or not all(
+            isinstance(effect, str) for effect in self.typical_effects
+        ):
+            raise ValueError(
+                f"Search parameter '{self.name}' typical_effects must be a tuple of strings."
+            )
         if self.kind == "categorical":
             if self.low is not None or self.high is not None:
                 raise ValueError(f"Categorical parameter '{self.name}' cannot define bounds.")
@@ -133,6 +146,10 @@ def build_search_space_descriptor(
                 name="quantization_mode",
                 kind="categorical",
                 choices=tuple(_cfg_get(quantization, "choices", ())),
+                description="Controls the numeric representation used for deployment export.",
+                typical_effects=(
+                    "The selected representation typically affects model size, arithmetic, and calibration requirements.",
+                ),
             )
         )
 
@@ -149,6 +166,10 @@ def build_search_space_descriptor(
                 kind="int",
                 low=0,
                 high=len(cpu_clock_mhz_options) - 1,
+                description="Selects an index into the configured target-MCU CPU clock choices.",
+                typical_effects=(
+                    "The selected clock typically affects measured latency, power, and energy tradeoffs.",
+                ),
             )
         )
 
