@@ -1064,6 +1064,13 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
                 "generic openai_compatible providers require it explicitly."
             )
         llm.api_key_env = api_key_env.strip()
+        raw_json_response_mode = llm.get(
+            "json_response_mode",
+            provider == "openrouter",
+        )
+        if not isinstance(raw_json_response_mode, bool):
+            raise ValueError("optimizer.llm.json_response_mode must be a boolean.")
+        llm.json_response_mode = raw_json_response_mode
         for field_name, default, minimum in (
             ("temperature", 0.4, 0.0),
             ("timeout_s", 60.0, 0.001),

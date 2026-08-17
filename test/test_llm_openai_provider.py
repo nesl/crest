@@ -65,6 +65,7 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
             model="openai/test-model",
             temperature=0.25,
             timeout_s=12,
+            json_response_mode=True,
             extra_headers={"HTTP-Referer": "https://example.test", "X-Title": "CREST"},
         )
         with patch.dict(os.environ, {"TEST_LLM_KEY": "secret-value"}):
@@ -80,6 +81,21 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
         self.assertEqual(payload["messages"], request().messages())
         self.assertEqual(payload["temperature"], 0.25)
         self.assertEqual(payload["response_format"], {"type": "json_object"})
+
+    def test_generic_provider_can_omit_json_response_format(self) -> None:
+        """Compatibility mode avoids an option unsupported by some models."""
+        provider = OpenAICompatibleProvider(
+            provider_name="openai_compatible",
+            base_url="https://llm.example/v1",
+            api_key_env="TEST_LLM_KEY",
+            model="example-model",
+            json_response_mode=False,
+        )
+        with patch.dict(os.environ, {"TEST_LLM_KEY": "secret-value"}):
+            http_request = provider.build_http_request(request())
+
+        payload = json.loads(http_request.data)
+        self.assertNotIn("response_format", payload)
 
     def test_response_content_usage_and_provider_metadata_are_normalized(self) -> None:
         """Provider-specific response shape stays isolated behind LLMResponse."""
@@ -141,6 +157,7 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
                 model="openai/test-model",
                 temperature=0.4,
                 timeout_s=60.0,
+                json_response_mode=True,
                 extra_headers=Dict(),
             )
         )
@@ -148,6 +165,7 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
         self.assertIsInstance(provider, OpenAICompatibleProvider)
         self.assertEqual(provider.provider_name, "openrouter")
         self.assertEqual(provider.model, "openai/test-model")
+        self.assertTrue(provider.json_response_mode)
 
 
 if __name__ == "__main__":

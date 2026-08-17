@@ -95,6 +95,7 @@ class OpenAICompatibleProvider:
         model: str,
         temperature: float = 0.4,
         timeout_s: float = 60.0,
+        json_response_mode: bool = True,
         extra_headers: dict[str, str] | None = None,
         urlopen: Any = urllib.request.urlopen,
     ) -> None:
@@ -105,6 +106,7 @@ class OpenAICompatibleProvider:
         self.model = model
         self.temperature = float(temperature)
         self.timeout_s = float(timeout_s)
+        self.json_response_mode = bool(json_response_mode)
         self.extra_headers = dict(extra_headers or {})
         self._urlopen = urlopen
 
@@ -117,8 +119,9 @@ class OpenAICompatibleProvider:
             "model": self.model,
             "messages": request.messages(),
             "temperature": self.temperature,
-            "response_format": {"type": "json_object"},
         }
+        if self.json_response_mode:
+            payload["response_format"] = {"type": "json_object"}
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -165,6 +168,7 @@ class OpenAICompatibleProvider:
                 "base_url": self.base_url,
                 "temperature": self.temperature,
                 "timeout_s": self.timeout_s,
+                "json_response_mode": self.json_response_mode,
             },
         )
 
@@ -189,6 +193,9 @@ def build_provider(config: Any) -> LLMProvider:
             model=str(cfg_get("model")),
             temperature=float(cfg_get("temperature", 0.4)),
             timeout_s=float(cfg_get("timeout_s", 60.0)),
+            json_response_mode=bool(
+                cfg_get("json_response_mode", provider_name == "openrouter")
+            ),
             extra_headers=dict(cfg_get("extra_headers", {})),
         )
     raise ValueError(f"Unsupported LLM provider: {provider_name!r}.")

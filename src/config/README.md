@@ -303,6 +303,7 @@ optimizer:
     batch_size: 5
     temperature: 0.4
     timeout_s: 60
+    json_response_mode: true
     max_repair_attempts: 1
     prompt_version: v1
     random_seed: 0
@@ -323,6 +324,11 @@ configured environment variable and are never written to this ledger.
 `provider: openrouter` defaults `api_key_env` to `OPENROUTER_API_KEY`.
 Generic `provider: openai_compatible` endpoints require `api_key_env` to be
 set explicitly so they never inherit an OpenRouter credential name silently.
+The MVP transport is `/chat/completions`. OpenRouter defaults
+`json_response_mode` to `true`, which sends
+`response_format: {type: json_object}`. Generic `openai_compatible` providers
+default it to `false` because that option is not universally supported; set it
+to `true` only when the selected endpoint and model accept JSON response mode.
 `recent_trial_window` bounds compact records read directly from recent Optuna
 trials and included in the next prompt. It defaults to 10; set it to 0 to
 disable history. Anchors and evidence-compaction knowledge bases are not part

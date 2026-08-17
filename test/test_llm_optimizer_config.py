@@ -65,6 +65,16 @@ class OptimizerConfigTests(unittest.TestCase):
                     llm=Dict(provider="fake", responses=[{}], recent_trial_window=-1),
                 )
             ),
+            Dict(
+                optimizer=Dict(
+                    type="llm_generator",
+                    llm=Dict(
+                        provider="openrouter",
+                        model="openai/test-model",
+                        json_response_mode="true",
+                    ),
+                )
+            ),
         ]
         for config in invalid:
             with self.subTest(config=config):
@@ -92,6 +102,7 @@ class OptimizerConfigTests(unittest.TestCase):
         self.assertEqual(optimizer.llm.api_key_env, "OPENROUTER_API_KEY")
         self.assertEqual(optimizer.llm.temperature, 0.2)
         self.assertEqual(optimizer.llm.timeout_s, 15.0)
+        self.assertTrue(optimizer.llm.json_response_mode)
         self.assertEqual(optimizer.llm.extra_headers["X-Title"], "CREST")
 
     def test_openai_compatible_requires_explicit_api_key_environment_variable(self) -> None:
@@ -113,6 +124,13 @@ class OptimizerConfigTests(unittest.TestCase):
 
         self.assertEqual(optimizer.llm.api_key_env, "GENERIC_LLM_API_KEY")
         self.assertEqual(optimizer.llm.base_url, "https://llm.example/v1")
+        self.assertFalse(optimizer.llm.json_response_mode)
+
+        base_llm.json_response_mode = True
+        overridden = _normalize_optimizer_config(
+            Dict(optimizer=Dict(type="llm_generator", llm=base_llm))
+        )
+        self.assertTrue(overridden.llm.json_response_mode)
 
 
 if __name__ == "__main__":
