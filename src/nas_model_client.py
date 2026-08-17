@@ -76,6 +76,7 @@ from crest.optimizers.llm.ledger import LLMLedger
 from crest.optimizers.llm.prompt_builder import PromptContext
 from crest.optimizers.llm.provider import build_provider
 from crest.optimizers.llm.search_space import build_search_space_descriptor
+from crest.optimizers.llm.semantic_context import build_semantic_context
 from crest.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
 from crest.registry import dataset_registry, model_family_registry
 from crest.runtime_bootstrap import bootstrap_pipeline
@@ -2272,6 +2273,23 @@ class NASModelClient:
                         next_batch,
                         int(self._cfg_get(llm_config, "batch_size", 5)),
                     )
+                    semantic_context = build_semantic_context(
+                        enabled=bool(self._cfg_get(llm_config, "semantic_context", True)),
+                        dataset_name=self.dataset_name,
+                        dataset_config=self.dataset_config,
+                        dataset_bundle=self.dataset_bundle,
+                        model_build_context=self.model_build_context,
+                        task_name=self.task_name,
+                        target_spec=self.target_spec,
+                        metric_contract=self.metric_contract,
+                        score_config=self.config.nas.score,
+                        feasibility_config=self._feasibility_config(),
+                        model_family_name=self.model_family_name,
+                        descriptor=llm_descriptor,
+                        device_config=self.config.device,
+                        training_config=self.config.training,
+                        collect_compile_metrics=collect_compile_metrics,
+                    )
                     context = PromptContext(
                         study_name=study_name,
                         model_family=self.model_family_name,
@@ -2286,18 +2304,13 @@ class NASModelClient:
                         target_feasible_trials=target_completions,
                         max_total_attempts=max_total_trials,
                         batch_size=request_batch_size,
-                        task_context={"name": self.task_name},
-                        device_context={"name": str(self.config.device.name)},
-                        runtime_context={
-                            "hil": bool(self.config.device.hil),
-                            "train": bool(self.config.training.train),
-                        },
                         recent_trials=build_recent_trial_history(
                             study,
                             window_size=int(
                                 self._cfg_get(llm_config, "recent_trial_window", 10)
                             ),
                         ),
+                        semantic_context=semantic_context,
                     )
                     accepted = enqueue_llm_batch(
                         study,

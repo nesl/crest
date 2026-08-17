@@ -15,6 +15,7 @@ from .provider import (
     build_provider,
 )
 from .search_space import SearchParam, SearchSpaceDescriptor, build_search_space_descriptor
+from .semantic_context import SEMANTIC_CONTEXT_VERSION, build_semantic_context
 from .schemas import (
     CandidateBatch,
     CandidateRejection,
@@ -36,10 +37,12 @@ __all__ = [
     "PromptContext",
     "SearchParam",
     "SearchSpaceDescriptor",
+    "SEMANTIC_CONTEXT_VERSION",
     "build_search_space_descriptor",
     "build_candidate_request",
     "build_provider",
     "build_recent_trial_history",
+    "build_semantic_context",
     "resolve_phase",
     "enqueue_llm_batch",
     "sample_random_candidate",

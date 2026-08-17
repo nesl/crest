@@ -1038,6 +1038,11 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
             raise ValueError(f"optimizer.llm.{field_name} must be an integer >= {minimum}.")
         llm[field_name] = raw_value
 
+    raw_semantic_context = llm.get("semantic_context", True)
+    if not isinstance(raw_semantic_context, bool):
+        raise ValueError("optimizer.llm.semantic_context must be a boolean.")
+    llm.semantic_context = raw_semantic_context
+
     prompt_version = str(llm.get("prompt_version", "v1")).strip()
     if not prompt_version:
         raise ValueError("optimizer.llm.prompt_version must be a non-empty string.")

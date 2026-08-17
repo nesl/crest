@@ -1898,6 +1898,27 @@ class SmokeTestTests(unittest.TestCase):
             self.assertEqual(len(accepted_path.read_text().splitlines()), 1)
             self.assertTrue(request_path.is_file())
             self.assertTrue(response_path.is_file())
+            request_record = json.loads(request_path.read_text())
+            prompt_payload = json.loads(request_record["messages"][1]["content"])
+            self.assertTrue(request_record["metadata"]["semantic_context_enabled"])
+            self.assertEqual(
+                request_record["metadata"]["semantic_context_version"],
+                "v1",
+            )
+            self.assertEqual(
+                len(request_record["metadata"]["semantic_context_hash"]),
+                64,
+            )
+            self.assertEqual(
+                prompt_payload["dataset_context"]["modality"],
+                "inertial_measurement_unit",
+            )
+            self.assertEqual(prompt_payload["dataset_context"]["window_size"], 16)
+            self.assertEqual(prompt_payload["task_context"]["type"], "regression")
+            self.assertIn(
+                "description",
+                prompt_payload["search_space"]["dilations_index"],
+            )
             hil_request.assert_not_called()
             self.assertFalse(client.config.device.hil)
             self.assertFalse(client.config.training.train)

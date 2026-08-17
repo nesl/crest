@@ -308,6 +308,7 @@ optimizer:
     prompt_version: v1
     random_seed: 0
     recent_trial_window: 10
+    semantic_context: true
     extra_headers: {}
 ```
 
@@ -333,6 +334,17 @@ to `true` only when the selected endpoint and model accept JSON response mode.
 trials and included in the next prompt. It defaults to 10; set it to 0 to
 disable history. Anchors and evidence-compaction knowledge bases are not part
 of the MVP history path.
+
+`semantic_context` defaults to `true`. It adds a deterministic, versioned,
+hashed summary of the normalized dataset/input contract, task outputs and
+metrics, objective and feasibility policy, model family, known device
+capacities and deployment choices, and runtime flags. Parameter descriptions,
+units, and typical architectural effects augment the existing search-space
+schema; those effects are priors, and measured CREST/HIL observations take
+precedence. Set `semantic_context: false` for an ablation that retains legal
+parameter names/ranges/choices, recent trial history, and trial-budget state.
+Paths, serial ports, credential values, dataset examples, and unfiltered config
+trees are not included.
 
 Minimal example:
 

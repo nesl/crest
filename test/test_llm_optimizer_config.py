@@ -45,6 +45,7 @@ class OptimizerConfigTests(unittest.TestCase):
         self.assertEqual(optimizer.llm.prompt_version, "v1")
         self.assertEqual(optimizer.llm.random_seed, 0)
         self.assertEqual(optimizer.llm.recent_trial_window, 10)
+        self.assertTrue(optimizer.llm.semantic_context)
 
     def test_invalid_optimizer_configs_are_rejected(self) -> None:
         """Malformed selection and fake-provider shapes fail during config load."""
@@ -75,11 +76,30 @@ class OptimizerConfigTests(unittest.TestCase):
                     ),
                 )
             ),
+            Dict(
+                optimizer=Dict(
+                    type="llm_generator",
+                    llm=Dict(provider="fake", responses=[{}], semantic_context="true"),
+                )
+            ),
         ]
         for config in invalid:
             with self.subTest(config=config):
                 with self.assertRaises(ValueError):
                     _normalize_optimizer_config(config)
+
+    def test_semantic_context_can_be_disabled_for_ablation(self) -> None:
+        """The semantic ablation flag is retained as a validated boolean."""
+        optimizer = _normalize_optimizer_config(
+            Dict(
+                optimizer=Dict(
+                    type="llm_generator",
+                    llm=Dict(provider="fake", responses=[{}], semantic_context=False),
+                )
+            )
+        )
+
+        self.assertFalse(optimizer.llm.semantic_context)
 
     def test_openrouter_defaults_and_live_fields_are_normalized(self) -> None:
         """OpenRouter receives its standard URL and validated provider settings."""

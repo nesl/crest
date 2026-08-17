@@ -18,7 +18,10 @@ SYSTEM_PROMPT = (
 )
 
 
-def _param_schema(param: SearchParam) -> dict[str, Any]:
+def _param_schema(
+    param: SearchParam,
+    semantics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Convert one declaration to a JSON-safe prompt schema."""
     schema: dict[str, Any] = {"kind": param.kind}
     if param.kind == "categorical":
@@ -26,6 +29,8 @@ def _param_schema(param: SearchParam) -> dict[str, Any]:
     else:
         schema["low"] = param.low
         schema["high"] = param.high
+    if semantics:
+        schema.update(semantics)
     return schema
 
 
@@ -48,6 +53,7 @@ class PromptContext:
     recent_trials: tuple[dict[str, Any], ...] = ()
     anchors: tuple[dict[str, Any], ...] = ()
     knowledge_base: dict[str, Any] = field(default_factory=dict)
+    semantic_context: dict[str, Any] = field(default_factory=dict)
 
     def phase(self) -> PhaseState:
         """Resolve the deterministic current budget phase."""
@@ -56,17 +62,20 @@ class PromptContext:
     def as_prompt_payload(self) -> dict[str, Any]:
         """Return the complete JSON-safe prompt and ledger context."""
         phase = self.phase()
-        return {
+        semantic_record = self.semantic_context
+        semantic_payload = semantic_record.get("payload", {}) if semantic_record else {}
+        parameter_semantics = semantic_payload.get("parameter_semantics", {})
+        payload = {
             "study_name": self.study_name,
             "model_family": self.model_family,
             "search_space": {
-                name: _param_schema(self.descriptor[name])
+                name: _param_schema(
+                    self.descriptor[name],
+                    parameter_semantics.get(name),
+                )
                 for name in self.descriptor
             },
             "objective_summary": self.objective_summary,
-            "task_context": self.task_context,
-            "device_context": self.device_context,
-            "runtime_context": self.runtime_context,
             "trial_budget": {
                 "attempted": self.attempted_trials,
                 "feasible_completed": self.feasible_completed_trials,
@@ -88,6 +97,32 @@ class PromptContext:
                 "json_only": True,
             },
         }
+        if semantic_record:
+            payload["semantic_context"] = {
+                "enabled": bool(semantic_record["enabled"]),
+                "version": str(semantic_record["version"]),
+                "hash": str(semantic_record["hash"]),
+            }
+            if semantic_record["enabled"]:
+                payload["semantic_context"]["guidance"] = list(
+                    semantic_payload.get("guidance", [])
+                )
+                for field_name in (
+                    "dataset_context",
+                    "task_context",
+                    "model_context",
+                    "device_context",
+                    "runtime_context",
+                ):
+                    context_value = semantic_payload.get(field_name)
+                    if context_value:
+                        payload[field_name] = context_value
+        else:
+            # Preserve the direct PromptContext API for existing callers.
+            payload["task_context"] = self.task_context
+            payload["device_context"] = self.device_context
+            payload["runtime_context"] = self.runtime_context
+        return payload
 
 
 def build_candidate_request(
@@ -102,14 +137,23 @@ def build_candidate_request(
     payload = context.as_prompt_payload()
     if repair_feedback:
         payload["repair_feedback"] = repair_feedback
+    metadata = {
+        "study_name": context.study_name,
+        "phase": context.phase().name,
+        "batch_size": context.batch_size,
+        "repair": bool(repair_feedback),
+    }
+    if context.semantic_context:
+        metadata.update(
+            {
+                "semantic_context_enabled": bool(context.semantic_context["enabled"]),
+                "semantic_context_version": str(context.semantic_context["version"]),
+                "semantic_context_hash": str(context.semantic_context["hash"]),
+            }
+        )
     return LLMRequest(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=json.dumps(payload, sort_keys=True, separators=(",", ":")),
         prompt_version=prompt_version,
-        metadata={
-            "study_name": context.study_name,
-            "phase": context.phase().name,
-            "batch_size": context.batch_size,
-            "repair": bool(repair_feedback),
-        },
+        metadata=metadata,
     )
