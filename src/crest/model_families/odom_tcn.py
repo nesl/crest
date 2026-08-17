@@ -25,6 +25,7 @@ from ..model_metrics import (
     tensor_shape_elements,
     unique_weight_bytes,
 )
+from ..optimizers.llm.search_space import SearchParam
 from ..pipeline_types import ModelBuildContext
 
 logger = logging.getLogger(__name__)
@@ -384,16 +385,34 @@ class OdomTCNFamily(ModelFamilyABC):
         dict[str, Any]
             Sampled family hyperparameters without runner-owned fields.
         """
-        del ctx, config
-        dilations_index = trial.suggest_int("dilations_index", 0, len(DILATION_CANDIDATES) - 1)
+        search_space = {
+            param.name: param for param in self.trial_search_space(ctx, config)
+        }
+        dilations_index = search_space["dilations_index"].suggest(trial)
         return {
-            "nb_filters": trial.suggest_int("nb_filters", 2, 63),
-            "kernel_size": trial.suggest_int("kernel_size", 2, 15),
-            "dropout_rate": trial.suggest_categorical("dropout_rate", DROP_RATE_CHOICES),
-            "use_skip_connections": trial.suggest_categorical("use_skip_connections", [True, False]),
-            "norm_flag": trial.suggest_categorical("norm_flag", [True, False]),
+            "nb_filters": search_space["nb_filters"].suggest(trial),
+            "kernel_size": search_space["kernel_size"].suggest(trial),
+            "dropout_rate": search_space["dropout_rate"].suggest(trial),
+            "use_skip_connections": search_space["use_skip_connections"].suggest(trial),
+            "norm_flag": search_space["norm_flag"].suggest(trial),
             "dilations": DILATION_CANDIDATES[dilations_index],
         }
+
+    def trial_search_space(
+        self,
+        ctx: ModelBuildContext,
+        config: Any,
+    ) -> list[SearchParam]:
+        """Describe the raw Optuna parameters for Odom TCN sampling."""
+        del ctx, config
+        return [
+            SearchParam("dilations_index", "int", low=0, high=len(DILATION_CANDIDATES) - 1),
+            SearchParam("nb_filters", "int", low=2, high=63),
+            SearchParam("kernel_size", "int", low=2, high=15),
+            SearchParam("dropout_rate", "categorical", choices=tuple(DROP_RATE_CHOICES)),
+            SearchParam("use_skip_connections", "categorical", choices=(True, False)),
+            SearchParam("norm_flag", "categorical", choices=(True, False)),
+        ]
 
     def decode_trial_hparams(
         self,

@@ -22,6 +22,8 @@ from .pipeline_types import (
 if TYPE_CHECKING:
     import tensorflow as tf
 
+    from .optimizers.llm.search_space import SearchParam
+
 
 class DatasetABC(ABC):
     """Abstract dataset contract for modular pipeline implementations.
@@ -413,6 +415,21 @@ class ModelFamilyABC(ABC):
             Normalized hyperparameter dictionary produced by the model-family
             implementation.
         """
+    def trial_search_space(
+        self,
+        ctx: ModelBuildContext,
+        config: Any,
+    ) -> list[SearchParam]:
+        """Describe the raw Optuna parameters sampled by this family.
+
+        Model families that support declarative candidate generation override
+        this hook. It is intentionally non-abstract so existing third-party
+        families remain instantiable until they opt into the descriptor seam.
+        """
+        del ctx, config
+        raise NotImplementedError(
+            f"Model family '{self.name}' does not expose a trial search-space descriptor."
+        )
     @abstractmethod
     def build_model(
         self,

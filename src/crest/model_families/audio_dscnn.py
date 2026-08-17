@@ -22,6 +22,7 @@ from tensorflow.keras.layers import (
 )
 from ..interfaces import ModelFamilyABC
 from ..model_metrics import count_flops_keras
+from ..optimizers.llm.search_space import SearchParam
 from ..pipeline_types import ModelBuildContext, TargetSpec
 
 BASE_CHANNELS_CHOICES = (4, 8, 12, 16, 20, 24, 32)
@@ -490,12 +491,23 @@ class AudioDSCNNFamily(ModelFamilyABC):
         dict[str, Any]
             Sampled family hyperparameters.
         """
+        return {
+            param.name: param.suggest(trial)
+            for param in self.trial_search_space(ctx, config)
+        }
+
+    def trial_search_space(
+        self,
+        ctx: ModelBuildContext,
+        config: Any,
+    ) -> list[SearchParam]:
+        """Describe the ordered raw categorical surface for audio DS-CNN."""
         self.validate_config(config)
         self._validate_target_spec(ctx.target_spec)
-        return {
-            name: trial.suggest_categorical(name, self._choices_for(name, config))
+        return [
+            SearchParam(name, "categorical", choices=self._choices_for(name, config))
             for name in AUDIO_DSCNN_SEARCH_CHOICES
-        }
+        ]
 
     def decode_trial_hparams(
         self,
