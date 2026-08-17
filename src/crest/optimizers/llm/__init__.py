@@ -5,7 +5,7 @@
 from .ledger import LLMLedger
 from .phase_policy import PhaseState, resolve_phase
 from .prompt_builder import PromptContext, build_candidate_request
-from .provider import FakeProvider, LLMProvider, LLMRequest, LLMResponse
+from .provider import FakeProvider, LLMProvider, LLMRequest, LLMResponse, build_provider
 from .search_space import SearchParam, SearchSpaceDescriptor, build_search_space_descriptor
 from .schemas import (
     CandidateBatch,
@@ -29,6 +29,10 @@ __all__ = [
     "SearchSpaceDescriptor",
     "build_search_space_descriptor",
     "build_candidate_request",
+    "build_provider",
     "resolve_phase",
+    "enqueue_llm_batch",
+    "sample_random_candidate",
     "validate_candidate_batch",
 ]
+from .enqueue import enqueue_llm_batch, sample_random_candidate

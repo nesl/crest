@@ -75,3 +75,18 @@ class FakeProvider:
             raw_response={"content": content},
             finish_reason="stop",
         )
+
+
+def build_provider(config: Any) -> LLMProvider:
+    """Build the configured provider while keeping choices out of the NAS loop."""
+    getter = getattr(config, "get", None)
+
+    def cfg_get(key: str, default: Any = None) -> Any:
+        if callable(getter):
+            return getter(key, default)
+        return getattr(config, key, default)
+
+    provider_name = str(cfg_get("provider", "")).strip().lower()
+    if provider_name == "fake":
+        return FakeProvider(list(cfg_get("responses", [])), model=str(cfg_get("model", "fake-model")))
+    raise ValueError(f"Unsupported LLM provider: {provider_name!r}.")

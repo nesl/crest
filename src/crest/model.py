@@ -62,6 +62,7 @@ logger = logging.getLogger(__name__)
 VALID_SCORE_TYPES = {"scoring-function", "multi-objective"}
 VALID_QUANTIZATION_MODES = {"float", "int8_ptq"}
 VALID_COMPILE_WHEN_HIL_DISABLED = {"auto", "true", "false"}
+VALID_OPTIMIZER_TYPES = {"optuna", "llm_generator"}
 BOARD_QUANTIZATION_CAPABILITIES = {
     "STM32_NUCLEO_N657X0_Q": {"float", "int8_ptq"},
     "PORTENTA_H7": {"float", "int8_ptq"},
@@ -999,6 +1000,51 @@ def configured_quantization_mode(config_or_training: Any) -> str:
     if normalized not in VALID_QUANTIZATION_MODES:
         raise ValueError("training.quantization.mode must be one of: float, int8_ptq.")
     return normalized
+
+
+def _normalize_optimizer_config(config: Dict) -> Dict:
+    """Normalize the optional top-level Optuna/LLM optimizer selection."""
+    raw_optimizer = config.get("optimizer", {})
+    if raw_optimizer is None or not isinstance(raw_optimizer, (dict, Dict)):
+        raise ValueError("optimizer must be a mapping when provided.")
+    optimizer = Dict(raw_optimizer)
+    optimizer_type = str(optimizer.get("type", "optuna")).strip().lower()
+    if optimizer_type not in VALID_OPTIMIZER_TYPES:
+        raise ValueError("optimizer.type must be one of: optuna, llm_generator.")
+    optimizer.type = optimizer_type
+    if optimizer_type == "optuna":
+        optimizer.llm = Dict(optimizer.get("llm", {}))
+        return optimizer
+
+    raw_llm = optimizer.get("llm", None)
+    if not isinstance(raw_llm, (dict, Dict)):
+        raise ValueError("optimizer.llm must be a mapping for optimizer.type=llm_generator.")
+    llm = Dict(raw_llm)
+    provider = str(llm.get("provider", "")).strip().lower()
+    if not provider:
+        raise ValueError("optimizer.llm.provider must be a non-empty string.")
+    llm.provider = provider
+
+    for field_name, default, minimum in (
+        ("batch_size", 5, 1),
+        ("max_repair_attempts", 1, 0),
+        ("random_seed", 0, 0),
+    ):
+        raw_value = llm.get(field_name, default)
+        if isinstance(raw_value, bool) or not isinstance(raw_value, int) or raw_value < minimum:
+            raise ValueError(f"optimizer.llm.{field_name} must be an integer >= {minimum}.")
+        llm[field_name] = raw_value
+
+    prompt_version = str(llm.get("prompt_version", "v1")).strip()
+    if not prompt_version:
+        raise ValueError("optimizer.llm.prompt_version must be a non-empty string.")
+    llm.prompt_version = prompt_version
+    if provider == "fake":
+        responses = llm.get("responses", None)
+        if not isinstance(responses, list) or not responses:
+            raise ValueError("optimizer.llm.responses must be a non-empty list for provider=fake.")
+    optimizer.llm = llm
+    return optimizer
 
 
 def _resolve_metric_value(
@@ -2376,6 +2422,7 @@ def load_config(
         training,
         normalized_device_name,
     )
+    config.optimizer = _normalize_optimizer_config(config)
     # Input mode selects which Arduino sketch variant is used during HIL runs.
     training.input_mode = str(training.get("input_mode", "uniform")).lower()
     config.training.drop_rate_choices = DROP_RATE_CHOICES

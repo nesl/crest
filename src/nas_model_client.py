@@ -13,6 +13,7 @@ import csv
 from dataclasses import dataclass
 import json
 import logging
+import random
 import shutil
 import socket
 import time
@@ -69,6 +70,11 @@ from crest.model import (
     set_error_code,
 )
 from crest.model_metrics import StaticMemoryEstimate
+from crest.optimizers.llm.enqueue import enqueue_llm_batch
+from crest.optimizers.llm.ledger import LLMLedger
+from crest.optimizers.llm.prompt_builder import PromptContext
+from crest.optimizers.llm.provider import build_provider
+from crest.optimizers.llm.search_space import build_search_space_descriptor
 from crest.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
 from crest.registry import dataset_registry, model_family_registry
 from crest.runtime_bootstrap import bootstrap_pipeline
@@ -2126,6 +2132,31 @@ class NASModelClient:
         # Make sure we never shrink the total budget when resuming an existing study.
         max_total_trials = max(max_total_trials, len(study.trials))
 
+        optimizer_config = self._cfg_get(self.config, "optimizer", None)
+        optimizer_type = str(self._cfg_get(optimizer_config, "type", "optuna")).strip().lower()
+        llm_config = self._cfg_get(optimizer_config, "llm", None)
+        llm_provider = None
+        llm_descriptor = None
+        llm_ledger = None
+        llm_rng = None
+        if optimizer_type == "llm_generator":
+            metric_dependencies = self._classify_nas_metric_dependencies()
+            collect_compile_metrics = self._should_collect_compile_metrics(metric_dependencies)
+            llm_descriptor = build_search_space_descriptor(
+                self.model_family,
+                self.model_build_context,
+                self.model_config,
+                self.config,
+                collect_compile_metrics=collect_compile_metrics,
+            )
+            llm_provider = getattr(self, "_llm_provider_override", None)
+            if llm_provider is None:
+                llm_provider = build_provider(llm_config)
+            llm_ledger = LLMLedger(self._artifacts_dir() / "llm_optimizer")
+            llm_rng = random.Random(int(self._cfg_get(llm_config, "random_seed", 0)))
+        elif optimizer_type != "optuna":
+            raise ValueError("optimizer.type must be one of: optuna, llm_generator.")
+
         def _trial_counts():
             """Count complete/pruned/failed trials plus feasibility outcomes.
 
@@ -2205,7 +2236,46 @@ class NASModelClient:
                 else:
                     next_batch = min(remaining_needed, remaining_budget)
                 logger.info("[NAS] Launching round %s for %s additional trial(s).", round_idx, next_batch)
-                study.optimize(self.objective, n_trials=next_batch)
+                if optimizer_type == "llm_generator":
+                    request_batch_size = min(
+                        next_batch,
+                        int(self._cfg_get(llm_config, "batch_size", 5)),
+                    )
+                    context = PromptContext(
+                        study_name=study_name,
+                        model_family=self.model_family_name,
+                        descriptor=llm_descriptor,
+                        objective_summary=json.dumps(
+                            self.config.nas.score,
+                            sort_keys=True,
+                            default=str,
+                        ),
+                        attempted_trials=total,
+                        feasible_completed_trials=feasible,
+                        target_feasible_trials=target_completions,
+                        max_total_attempts=max_total_trials,
+                        batch_size=request_batch_size,
+                        task_context={"name": self.task_name},
+                        device_context={"name": str(self.config.device.name)},
+                        runtime_context={
+                            "hil": bool(self.config.device.hil),
+                            "train": bool(self.config.training.train),
+                        },
+                    )
+                    accepted = enqueue_llm_batch(
+                        study,
+                        llm_provider,
+                        context,
+                        llm_ledger,
+                        prompt_version=str(self._cfg_get(llm_config, "prompt_version", "v1")),
+                        max_repair_attempts=int(
+                            self._cfg_get(llm_config, "max_repair_attempts", 1)
+                        ),
+                        rng=llm_rng,
+                    )
+                    study.optimize(self.objective, n_trials=len(accepted))
+                else:
+                    study.optimize(self.objective, n_trials=next_batch)
         except Exception as exc:
             completed, feasible, infeasible, pruned, failed = _trial_counts()
             logger.exception(

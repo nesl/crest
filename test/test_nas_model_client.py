@@ -40,6 +40,8 @@ from crest.hardware import (
 )  # noqa: E402
 from crest.model import ScoreConfigEvaluationError, TrialOutcome  # noqa: E402
 from crest.model_metrics import StaticMemoryEstimate  # noqa: E402
+from crest.optimizers.llm.provider import FakeProvider  # noqa: E402
+from crest.optimizers.llm.search_space import SearchParam  # noqa: E402
 from crest.pipeline_types import (
     DataSplit,
     DatasetBundle,
@@ -2159,6 +2161,34 @@ class RunNASTests(unittest.TestCase):
         self.assertEqual(len(dummy.trials), 3)
         self.assertEqual(dummy.optimize_calls, [2, 1])
         self.assertEqual(dummy.enqueue_calls, [])
+
+    def test_run_nas_llm_generator_enqueues_fake_provider_batch(self) -> None:
+        """The opt-in path enqueues raw candidates before unchanged optimization."""
+        client = _build_test_client()
+        client.config.training.nas_trials = 2
+        client.config.training.max_total_trials = 2
+        client.config.optimizer = Dict(
+            type="llm_generator",
+            llm=Dict(batch_size=2, max_repair_attempts=0, prompt_version="v1", random_seed=0),
+        )
+        client.model_family.trial_search_space = MagicMock(
+            return_value=[SearchParam("width", "int", low=2, high=8)]
+        )
+        client._llm_provider_override = FakeProvider(
+            [{"candidates": [{"width": 3}, {"width": 7}]}]
+        )
+        client.objective = MagicMock()
+        dummy = self.DummyStudy([TrialState.COMPLETE, TrialState.COMPLETE])
+
+        with patch("nas_model_client.optuna.create_study", return_value=dummy):
+            study = client.run_nas(study_name="llm-demo", storage="sqlite:///dummy.db")
+
+        self.assertIs(study, dummy)
+        self.assertEqual(dummy.enqueue_calls, [{"width": 3}, {"width": 7}])
+        self.assertEqual(dummy.optimize_calls, [2])
+        ledger_root = Path(client.config.outputs.models_dir) / "llm-demo/llm_optimizer"
+        self.assertTrue((ledger_root / "requests/000001.request.json").is_file())
+        self.assertEqual(len((ledger_root / "accepted_candidates.jsonl").read_text().splitlines()), 2)
 
     def test_run_nas_sets_multiobjective_metric_names(self) -> None:
         """Multi-objective studies should expose configured objective names."""

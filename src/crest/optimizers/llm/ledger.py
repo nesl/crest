@@ -54,6 +54,20 @@ class LLMLedger:
 
     def write_exchange(self, request_id: int, request: LLMRequest, response: LLMResponse) -> None:
         """Persist one numbered request/response pair."""
+        self.write_request(request_id, request)
+        self.write_response(request_id, response)
+
+    def next_request_id(self) -> int:
+        """Return the next unused monotonically increasing request number."""
+        existing = [
+            int(path.name.split(".", 1)[0])
+            for path in self.requests_dir.glob("*.request.json")
+            if path.name.split(".", 1)[0].isdigit()
+        ]
+        return max(existing, default=0) + 1
+
+    def write_request(self, request_id: int, request: LLMRequest) -> None:
+        """Persist one numbered request before the provider call."""
         if request_id < 1:
             raise ValueError("request_id must be greater than or equal to 1.")
         stem = f"{request_id:06d}"
@@ -63,6 +77,12 @@ class LLMLedger:
             "metadata": request.metadata,
         }
         self._write_json(self.requests_dir / f"{stem}.request.json", request_payload)
+
+    def write_response(self, request_id: int, response: Any) -> None:
+        """Persist one numbered normalized response or provider-error payload."""
+        if request_id < 1:
+            raise ValueError("request_id must be greater than or equal to 1.")
+        stem = f"{request_id:06d}"
         self._write_json(self.requests_dir / f"{stem}.response.json", response)
 
     def record_prompt_context(self, context: dict[str, Any]) -> None:

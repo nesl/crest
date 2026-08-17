@@ -1,0 +1,69 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
+"""Tests for optimizer selection normalization."""
+
+import sys
+import unittest
+from pathlib import Path
+
+from addict import Dict
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from crest.model import _normalize_optimizer_config  # noqa: E402
+
+
+class OptimizerConfigTests(unittest.TestCase):
+    """Validate the opt-in boundary and compact LLM defaults."""
+
+    def test_missing_optimizer_defaults_to_existing_optuna_path(self) -> None:
+        """Legacy configurations retain Optuna behavior without edits."""
+        optimizer = _normalize_optimizer_config(Dict())
+
+        self.assertEqual(optimizer.type, "optuna")
+
+    def test_llm_generator_config_is_normalized(self) -> None:
+        """The fake provider path receives deterministic MVP defaults."""
+        optimizer = _normalize_optimizer_config(
+            Dict(
+                optimizer=Dict(
+                    type="llm_generator",
+                    llm=Dict(
+                        provider="fake",
+                        responses=[{"candidates": [{"width": 4}]}],
+                    ),
+                )
+            )
+        )
+
+        self.assertEqual(optimizer.type, "llm_generator")
+        self.assertEqual(optimizer.llm.batch_size, 5)
+        self.assertEqual(optimizer.llm.max_repair_attempts, 1)
+        self.assertEqual(optimizer.llm.prompt_version, "v1")
+        self.assertEqual(optimizer.llm.random_seed, 0)
+
+    def test_invalid_optimizer_configs_are_rejected(self) -> None:
+        """Malformed selection and fake-provider shapes fail during config load."""
+        invalid = [
+            Dict(optimizer="llm_generator"),
+            Dict(optimizer=Dict(type="unknown")),
+            Dict(optimizer=Dict(type="llm_generator", llm=Dict())),
+            Dict(optimizer=Dict(type="llm_generator", llm=Dict(provider="fake", responses=[]))),
+            Dict(
+                optimizer=Dict(
+                    type="llm_generator",
+                    llm=Dict(provider="fake", responses=[{}], batch_size=0),
+                )
+            ),
+        ]
+        for config in invalid:
+            with self.subTest(config=config):
+                with self.assertRaises(ValueError):
+                    _normalize_optimizer_config(config)
+
+
+if __name__ == "__main__":
+    unittest.main()
