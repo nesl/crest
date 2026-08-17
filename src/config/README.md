@@ -319,6 +319,9 @@ from the same descriptor.
 Every request, response, prompt context, candidate decision, and fallback is
 stored under `models/<study_name>/llm_optimizer/`. API keys are read from the
 configured environment variable and are never written to this ledger.
+`provider: openrouter` defaults `api_key_env` to `OPENROUTER_API_KEY`.
+Generic `provider: openai_compatible` endpoints require `api_key_env` to be
+set explicitly so they never inherit an OpenRouter credential name silently.
 
 Minimal example:
 

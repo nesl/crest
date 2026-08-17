@@ -87,6 +87,26 @@ class OptimizerConfigTests(unittest.TestCase):
         self.assertEqual(optimizer.llm.timeout_s, 15.0)
         self.assertEqual(optimizer.llm.extra_headers["X-Title"], "CREST")
 
+    def test_openai_compatible_requires_explicit_api_key_environment_variable(self) -> None:
+        """Generic endpoints must not silently inherit OpenRouter credentials."""
+        base_llm = Dict(
+            provider="openai_compatible",
+            base_url="https://llm.example/v1",
+            model="example-model",
+        )
+        with self.assertRaisesRegex(ValueError, "require it explicitly"):
+            _normalize_optimizer_config(
+                Dict(optimizer=Dict(type="llm_generator", llm=base_llm))
+            )
+
+        base_llm.api_key_env = "GENERIC_LLM_API_KEY"
+        optimizer = _normalize_optimizer_config(
+            Dict(optimizer=Dict(type="llm_generator", llm=base_llm))
+        )
+
+        self.assertEqual(optimizer.llm.api_key_env, "GENERIC_LLM_API_KEY")
+        self.assertEqual(optimizer.llm.base_url, "https://llm.example/v1")
+
 
 if __name__ == "__main__":
     unittest.main()

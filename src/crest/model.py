@@ -1055,9 +1055,13 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
         if not isinstance(model, str) or not model.strip():
             raise ValueError("optimizer.llm.model must be a non-empty string.")
         llm.model = model.strip()
-        api_key_env = llm.get("api_key_env", "OPENROUTER_API_KEY")
+        default_api_key_env = "OPENROUTER_API_KEY" if provider == "openrouter" else None
+        api_key_env = llm.get("api_key_env", default_api_key_env)
         if not isinstance(api_key_env, str) or not api_key_env.strip():
-            raise ValueError("optimizer.llm.api_key_env must be a non-empty string.")
+            raise ValueError(
+                "optimizer.llm.api_key_env must be a non-empty string; "
+                "generic openai_compatible providers require it explicitly."
+            )
         llm.api_key_env = api_key_env.strip()
         for field_name, default, minimum in (
             ("temperature", 0.4, 0.0),
