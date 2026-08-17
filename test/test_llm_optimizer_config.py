@@ -64,6 +64,29 @@ class OptimizerConfigTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     _normalize_optimizer_config(config)
 
+    def test_openrouter_defaults_and_live_fields_are_normalized(self) -> None:
+        """OpenRouter receives its standard URL and validated provider settings."""
+        optimizer = _normalize_optimizer_config(
+            Dict(
+                optimizer=Dict(
+                    type="llm_generator",
+                    llm=Dict(
+                        provider="openrouter",
+                        model="openai/test-model",
+                        temperature=0.2,
+                        timeout_s=15,
+                        extra_headers=Dict(**{"X-Title": "CREST"}),
+                    ),
+                )
+            )
+        )
+
+        self.assertEqual(optimizer.llm.base_url, "https://openrouter.ai/api/v1")
+        self.assertEqual(optimizer.llm.api_key_env, "OPENROUTER_API_KEY")
+        self.assertEqual(optimizer.llm.temperature, 0.2)
+        self.assertEqual(optimizer.llm.timeout_s, 15.0)
+        self.assertEqual(optimizer.llm.extra_headers["X-Title"], "CREST")
+
 
 if __name__ == "__main__":
     unittest.main()

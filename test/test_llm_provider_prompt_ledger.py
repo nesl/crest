@@ -126,7 +126,9 @@ class ProviderPromptLedgerTests(unittest.TestCase):
             rejected_payload = json.loads((root / "rejected_candidates.jsonl").read_text())
 
             self.assertEqual(request_payload["prompt_version"], "v1")
+            self.assertEqual(len(request_payload["request_hash"]), 64)
             self.assertEqual(response_payload["provider"], "fake")
+            self.assertEqual(len(response_payload["response_hash"]), 64)
             self.assertEqual(rejected_payload["code"], "out_of_range")
             for filename in (
                 "accepted_candidates.jsonl",

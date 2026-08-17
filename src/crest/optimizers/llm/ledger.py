@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,9 @@ class LLMLedger:
             "prompt_version": request.prompt_version,
             "metadata": request.metadata,
         }
+        request_payload["request_hash"] = hashlib.sha256(
+            json.dumps(request_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
         self._write_json(self.requests_dir / f"{stem}.request.json", request_payload)
 
     def write_response(self, request_id: int, response: Any) -> None:
@@ -83,7 +87,14 @@ class LLMLedger:
         if request_id < 1:
             raise ValueError("request_id must be greater than or equal to 1.")
         stem = f"{request_id:06d}"
-        self._write_json(self.requests_dir / f"{stem}.response.json", response)
+        response_payload = _json_safe(response)
+        response_hash = hashlib.sha256(
+            json.dumps(response_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        self._write_json(
+            self.requests_dir / f"{stem}.response.json",
+            {**response_payload, "response_hash": response_hash},
+        )
 
     def record_prompt_context(self, context: dict[str, Any]) -> None:
         """Append the bounded context supplied for one request."""

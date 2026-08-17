@@ -1021,8 +1021,10 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
         raise ValueError("optimizer.llm must be a mapping for optimizer.type=llm_generator.")
     llm = Dict(raw_llm)
     provider = str(llm.get("provider", "")).strip().lower()
-    if not provider:
-        raise ValueError("optimizer.llm.provider must be a non-empty string.")
+    if provider not in {"fake", "openrouter", "openai_compatible"}:
+        raise ValueError(
+            "optimizer.llm.provider must be one of: fake, openrouter, openai_compatible."
+        )
     llm.provider = provider
 
     for field_name, default, minimum in (
@@ -1043,6 +1045,38 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
         responses = llm.get("responses", None)
         if not isinstance(responses, list) or not responses:
             raise ValueError("optimizer.llm.responses must be a non-empty list for provider=fake.")
+    else:
+        default_base_url = "https://openrouter.ai/api/v1" if provider == "openrouter" else None
+        base_url = llm.get("base_url", default_base_url)
+        if not isinstance(base_url, str) or not base_url.strip():
+            raise ValueError("optimizer.llm.base_url must be a non-empty URL string.")
+        llm.base_url = base_url.strip().rstrip("/")
+        model = llm.get("model", None)
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("optimizer.llm.model must be a non-empty string.")
+        llm.model = model.strip()
+        api_key_env = llm.get("api_key_env", "OPENROUTER_API_KEY")
+        if not isinstance(api_key_env, str) or not api_key_env.strip():
+            raise ValueError("optimizer.llm.api_key_env must be a non-empty string.")
+        llm.api_key_env = api_key_env.strip()
+        for field_name, default, minimum in (
+            ("temperature", 0.4, 0.0),
+            ("timeout_s", 60.0, 0.001),
+        ):
+            raw_value = llm.get(field_name, default)
+            if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+                raise ValueError(f"optimizer.llm.{field_name} must be a number >= {minimum}.")
+            normalized_value = float(raw_value)
+            if not np.isfinite(normalized_value) or normalized_value < minimum:
+                raise ValueError(f"optimizer.llm.{field_name} must be a number >= {minimum}.")
+            llm[field_name] = normalized_value
+        extra_headers = llm.get("extra_headers", {})
+        if not isinstance(extra_headers, (dict, Dict)) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in extra_headers.items()
+        ):
+            raise ValueError("optimizer.llm.extra_headers must map strings to strings.")
+        llm.extra_headers = Dict(extra_headers)
     optimizer.llm = llm
     return optimizer
 
