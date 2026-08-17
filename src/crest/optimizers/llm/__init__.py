@@ -3,5 +3,19 @@
 """LLM candidate-generator foundations."""
 
 from .search_space import SearchParam, SearchSpaceDescriptor, build_search_space_descriptor
+from .schemas import (
+    CandidateBatch,
+    CandidateRejection,
+    CandidateValidationResult,
+    validate_candidate_batch,
+)
 
-__all__ = ["SearchParam", "SearchSpaceDescriptor", "build_search_space_descriptor"]
+__all__ = [
+    "CandidateBatch",
+    "CandidateRejection",
+    "CandidateValidationResult",
+    "SearchParam",
+    "SearchSpaceDescriptor",
+    "build_search_space_descriptor",
+    "validate_candidate_batch",
+]
