@@ -2289,6 +2289,70 @@ class RunNASTests(unittest.TestCase):
         self.assertTrue((ledger_root / "requests/000001.request.json").is_file())
         self.assertEqual(len((ledger_root / "accepted_candidates.jsonl").read_text().splitlines()), 2)
 
+    def test_run_nas_feeds_completed_measurements_to_later_bounded_prompt(self) -> None:
+        """The first request is empty and the next reads evidence from Optuna."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = _build_test_client(base_dir=Path(tmpdir))
+            client.config.device.hil = False
+            client.config.device.compile_when_hil_disabled = "false"
+            client.config.training.train = False
+            client.config.training.nas_trials = 2
+            client.config.training.max_total_trials = 2
+            client.config.nas.score = Dict(
+                type="scoring-function",
+                metrics=Dict(),
+                params=Dict(terms=[Dict(type="weighted", metric="flops", weight=-1.0)]),
+            )
+            client.config.optimizer = Dict(
+                type="llm_generator",
+                llm=Dict(
+                    batch_size=1,
+                    max_repair_attempts=0,
+                    prompt_version="v1",
+                    random_seed=0,
+                    recent_trial_window=1,
+                ),
+            )
+            client.model_family.trial_search_space = MagicMock(
+                return_value=[SearchParam("width", "int", low=2, high=8)]
+            )
+            provider = FakeProvider(
+                [
+                    {"candidates": [{"width": 3}]},
+                    {"candidates": [{"width": 5}]},
+                ]
+            )
+            client._llm_provider_override = provider
+
+            def objective(trial):
+                width = trial.suggest_int("width", 2, 8)
+                trial.set_user_attr("feasibility_status", "feasible")
+                trial.set_user_attr("latency_ms", 4.25)
+                trial.set_user_attr("energy_mj_per_inference", 0.8)
+                trial.set_user_attr("ram_bytes", 1024)
+                trial.set_user_attr("flash_bytes", 2048)
+                trial.set_user_attr("quantization_mode", "int8_ptq")
+                trial.set_user_attr("task_metrics", {"rmse_total": 0.3})
+                return -float(width)
+
+            client.objective = objective
+            client.run_nas(
+                study_name="history-demo",
+                storage=f"sqlite:///{Path(tmpdir) / 'history.db'}",
+            )
+
+            self.assertEqual(len(provider.requests), 2)
+            first_payload = json.loads(provider.requests[0].user_prompt)
+            second_payload = json.loads(provider.requests[1].user_prompt)
+            self.assertEqual(first_payload["recent_trials"], [])
+            self.assertEqual(len(second_payload["recent_trials"]), 1)
+            evidence = second_payload["recent_trials"][0]
+            self.assertEqual(evidence["params"], {"width": 3})
+            self.assertEqual(evidence["latency_ms"], 4.25)
+            self.assertEqual(evidence["energy_mj_per_inference"], 0.8)
+            self.assertEqual(evidence["task_metrics"], {"rmse_total": 0.3})
+            self.assertEqual(evidence["state"], "complete")
+
     def test_run_nas_sets_multiobjective_metric_names(self) -> None:
         """Multi-objective studies should expose configured objective names."""
         client = _build_test_client()

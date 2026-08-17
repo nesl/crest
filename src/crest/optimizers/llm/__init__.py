@@ -3,6 +3,7 @@
 """LLM candidate-generator foundations."""
 
 from .ledger import LLMLedger
+from .history import build_recent_trial_history
 from .phase_policy import PhaseState, resolve_phase
 from .prompt_builder import PromptContext, build_candidate_request
 from .provider import (
@@ -38,6 +39,7 @@ __all__ = [
     "build_search_space_descriptor",
     "build_candidate_request",
     "build_provider",
+    "build_recent_trial_history",
     "resolve_phase",
     "enqueue_llm_batch",
     "sample_random_candidate",

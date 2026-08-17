@@ -44,6 +44,7 @@ class OptimizerConfigTests(unittest.TestCase):
         self.assertEqual(optimizer.llm.max_repair_attempts, 1)
         self.assertEqual(optimizer.llm.prompt_version, "v1")
         self.assertEqual(optimizer.llm.random_seed, 0)
+        self.assertEqual(optimizer.llm.recent_trial_window, 10)
 
     def test_invalid_optimizer_configs_are_rejected(self) -> None:
         """Malformed selection and fake-provider shapes fail during config load."""
@@ -56,6 +57,12 @@ class OptimizerConfigTests(unittest.TestCase):
                 optimizer=Dict(
                     type="llm_generator",
                     llm=Dict(provider="fake", responses=[{}], batch_size=0),
+                )
+            ),
+            Dict(
+                optimizer=Dict(
+                    type="llm_generator",
+                    llm=Dict(provider="fake", responses=[{}], recent_trial_window=-1),
                 )
             ),
         ]

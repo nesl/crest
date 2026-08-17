@@ -71,6 +71,7 @@ from crest.model import (
 )
 from crest.model_metrics import StaticMemoryEstimate
 from crest.optimizers.llm.enqueue import enqueue_llm_batch
+from crest.optimizers.llm.history import build_recent_trial_history
 from crest.optimizers.llm.ledger import LLMLedger
 from crest.optimizers.llm.prompt_builder import PromptContext
 from crest.optimizers.llm.provider import build_provider
@@ -2291,6 +2292,12 @@ class NASModelClient:
                             "hil": bool(self.config.device.hil),
                             "train": bool(self.config.training.train),
                         },
+                        recent_trials=build_recent_trial_history(
+                            study,
+                            window_size=int(
+                                self._cfg_get(llm_config, "recent_trial_window", 10)
+                            ),
+                        ),
                     )
                     accepted = enqueue_llm_batch(
                         study,
