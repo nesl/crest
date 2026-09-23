@@ -12,9 +12,16 @@ Run these scripts from the repository root with the `crest` Conda environment
 active unless a package README says otherwise. Most scripts consume existing
 NAS, replay, or measurement artifacts and do not run NAS or touch hardware.
 The micro-workload energy probe is the exception: it stages a synthetic
-workload and uses the CREST HIL harness.
+workload and uses the CREST HIL harness. The CS1 epoch pilot can train models
+when explicitly invoked with `run --execute`, but never accesses hardware.
 
 ## Folders
+
+- `cs1_epoch_sensitivity/`
+  - **Hardware requirement: no hardware required. Training is opt-in.**
+    Four-point original-Pareto-front OxIOD training-budget pilot, reusing
+    CREST's model/task/evaluation code and holding historical energy fixed.
+    See its README for the limited within-front interpretation.
 
 - `compare_pareto_front_calcs/`
   - **Hardware requirement: no hardware required.** Generic CSV-derived
