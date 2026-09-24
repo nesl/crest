@@ -76,6 +76,46 @@ def test_too_small_front_fails_without_silent_panel_change(source):
         pilot.select_front(source, count=8)
 
 
+def test_explicit_rows_include_dominated_and_preserve_order(source):
+    selected, _, _, _, front_count, valid_count = pilot.select_front(source, source_rows=[8, 4, 2])
+    assert [c["source_row_index"] for c in selected] == [8, 4, 2]
+    assert front_count == 7 and valid_count == 8
+    assert selected[0]["historical_rmse_total"] == 8
+    assert selected[0]["historical_energy_mj"] == 8
+
+
+@pytest.mark.parametrize("rows", [[], [1, 1], [-1], [7], [99], [0, 8]])
+def test_explicit_rows_reject_invalid_or_duplicate_candidates(source, rows):
+    with pytest.raises(ValueError):
+        pilot.select_front(source, source_rows=rows)
+
+
+def test_explicit_preparation_hash_guard_and_metadata(source, tmp_path):
+    args = SimpleNamespace(source_run_dir=source, source_csv=None, source_config=None,
+                           output_dir=tmp_path / "explicit", count=4,
+                           source_rows=[8, 4, 2], budgets=[15, 55, 300], seeds=[17],
+                           expected_source_sha256="wrong")
+    with pytest.raises(ValueError, match="hash differs"):
+        pilot.prepare(args)
+    assert not args.output_dir.exists()
+    args.expected_source_sha256 = pilot.sha256(source / "log_NAS_test.csv")
+    pilot.prepare(args)
+    manifest = pilot.load_manifest(args.output_dir)
+    assert manifest["requested_source_rows"] == [8, 4, 2]
+    assert [c["source_row_index"] for c in manifest["candidates"]] == [8, 4, 2]
+    assert manifest["limitation"] == pilot.EXPLICIT_LIMITATION
+    assert "explicit" in manifest["selection"]
+    with pytest.raises(FileExistsError):
+        pilot.prepare(args)
+
+
+def test_cli_disallows_count_with_explicit_rows(source, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        pilot.main(["prepare", "--source-run-dir", str(source), "--output-dir", str(tmp_path / "out"),
+                    "--count", "4", "--source-rows", "1", "2"])
+    assert exc.value.code == 2
+
+
 def test_reject_proxy_source(source):
     path = source / "nas_config.yaml"
     cfg = yaml.safe_load(path.read_text())

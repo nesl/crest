@@ -1,4 +1,53 @@
-# CS1 epoch sensitivity: four-point original-front pilot
+# CS1 epoch sensitivity: front-only or explicit candidate panels
+
+## Revised 11-candidate expansion
+
+The default remains the original front-only pilot described below. To select
+exact source CSV rows, including historically dominated candidates, use
+`--source-rows` instead of `--count`. These are zero-based data-row indices, not
+Optuna trial numbers. Selection preserves the supplied order and rejects missing,
+invalid or repeated rows and duplicate candidate payloads.
+
+The revised 11 additions (R6 replaced with row 82, R9 with row 91) are:
+`112 60 93 96 118 82 122 77 91 137 87`.
+The already completed rows `74 116 103 128` are deliberately excluded from this
+new experiment. Existing results remain untouched. This new directory's automatic
+analysis covers only its 11 candidates; a later combined analysis must compare
+all 15 with matched split, seed, budget and training/evaluation semantics.
+
+After committing the code and pulling the same revision on the GPU, prepare:
+
+```bash
+python analysis_scripts/cs1_epoch_sensitivity/epoch_front_pilot.py prepare \
+  --source-run-dir models/OxIOD_PORTENTA_M7_B2B_case1_3_t1 \
+  --output-dir experiments/cs1_epoch_next11 \
+  --source-rows 112 60 93 96 118 82 122 77 91 137 87 \
+  --expected-source-sha256 73ef386c3b55d40ecc4bd4e8d7fda049f9b3e3a449dd3f2f62f86cbaeddddc6c \
+  --budgets 15,30,55,100,200,300 --seeds 17
+```
+
+Preparation performs no training or HIL. It refuses an existing output directory.
+Inspect the selected rows before running. The training path is unchanged, and
+the manifest must match the committed checkout revision at execution time.
+
+In the GPU's `tinyodomex` environment, from the project root, launch separately:
+
+```bash
+set -o pipefail
+LD_PRELOAD=/home/joseph/miniforge3/envs/tinyodomex/lib/libstdc++.so.6 \
+TF_FORCE_GPU_ALLOW_GROWTH=true \
+python -u analysis_scripts/cs1_epoch_sensitivity/epoch_front_pilot.py run \
+  --experiment-dir experiments/cs1_epoch_next11 \
+  --dataset-dir data/oxiod --execute \
+  2>&1 | tee -a experiments/cs1_epoch_next11/console.log
+```
+
+The `LD_PRELOAD` setting is the previously verified GPU environment workaround
+for the ZeroMQ/libstdc++ import error. Do not change Python packages to run this.
+This command trains only the new 11 trajectories at seed 17, retains original
+quantization modes and fixed historical energy, and never runs HIL.
+
+## Original four-point protocol
 
 This is a deliberately small **within-front pilot**, not a fresh NAS search or
 proof that 55 epochs preserves the best candidates from the entire search space.

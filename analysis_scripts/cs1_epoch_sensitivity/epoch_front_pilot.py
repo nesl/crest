@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Front-only CS1 epoch pilot; prepare/analyze never train or access hardware.
+"""CS1 epoch pilot; prepare/analyze never train or access hardware.
 
 Reuses CREST's Pareto reconstruction, OxIOD loader, task/model contracts, fit
 callbacks, TFLite conversion and evaluation. Historical energy is held fixed:
@@ -28,9 +28,15 @@ import yaml
 from crest import pareto_replay as replay
 
 LIMITATION = (
-    "Four-point original-front-only pilot; cannot detect slow starters outside "
+    "Original-front-only pilot; cannot detect slow starters outside "
     "the panel. Energy is historical and fixed, not remeasured at checkpoints. "
     "Report reversals and negative results as well as supporting evidence."
+)
+EXPLICIT_LIMITATION = (
+    "Explicitly selected CS1 candidate panel; conclusions are conditional on "
+    "this panel, not the entire search space. Energy is historical and fixed, "
+    "not remeasured at checkpoints. Report reversals and negative results as "
+    "well as supporting evidence."
 )
 OBJECTIVES = (
     replay.ObjectiveSpec("rmse_total", "minimize", "rmse_total"),
@@ -72,8 +78,8 @@ def budgets_arg(value):
     return budgets
 
 
-def select_front(source_dir, source_csv=None, source_config=None, count=4):
-    """Reconstruct valid original front, then select energy-spaced positions."""
+def select_front(source_dir, source_csv=None, source_config=None, count=4, source_rows=None):
+    """Select energy-spaced front points, or exact valid CSV rows in given order."""
     config_path = source_config or replay.find_config_path(source_dir)
     if config_path is None:
         raise ValueError("A saved source config is required")
@@ -113,12 +119,25 @@ def select_front(source_dir, source_csv=None, source_config=None, count=4):
     ])
     candidates.sort(key=lambda c: (c.objective_values[energy_col],
                                    c.objective_values[rmse_col], c.source_row_index))
-    if count < 2 or len(candidates) < count:
-        raise ValueError(f"Need at least {count} unique valid front points; found {len(candidates)}")
-    positions = [round(i * (len(candidates) - 1) / (count - 1)) for i in range(count)]
+    if source_rows is None:
+        if count < 2 or len(candidates) < count:
+            raise ValueError(f"Need at least {count} unique valid front points; found {len(candidates)}")
+        positions = [round(i * (len(candidates) - 1) / (count - 1)) for i in range(count)]
+        chosen = [candidates[pos] for pos in positions]
+    else:
+        if not source_rows or len(set(source_rows)) != len(source_rows):
+            raise ValueError("Explicit source rows must be nonempty and unique")
+        eligible_by_index = dict(zip(original_indices, eligible))
+        invalid = [i for i in source_rows if i not in eligible_by_index]
+        if invalid:
+            raise ValueError(f"Ineligible or missing source rows: {invalid}")
+        chosen = [replay.build_replay_candidate(
+            source_row_index=i, row=eligible_by_index[i], objectives=specs
+        ) for i in source_rows]
+        if len(replay.dedupe_candidates(chosen)) != len(chosen):
+            raise ValueError("Explicit source rows contain duplicate candidate payloads")
     selected = []
-    for pos in positions:
-        candidate = candidates[pos]
+    for candidate in chosen:
         record = asdict(candidate)
         record.update({
             "candidate_id": f"row_{candidate.source_row_index:04d}",
@@ -133,9 +152,16 @@ def select_front(source_dir, source_csv=None, source_config=None, count=4):
 
 
 def prepare(args):
+    source_rows = getattr(args, "source_rows", None)
     selected, config, config_path, csv_path, front_count, valid_count = select_front(
-        args.source_run_dir.resolve(), args.source_csv, args.source_config, args.count
+        args.source_run_dir.resolve(), args.source_csv, args.source_config, args.count,
+        source_rows=source_rows,
     )
+    source_hash = sha256(csv_path)
+    expected_hash = getattr(args, "expected_source_sha256", None)
+    if expected_hash is not None and source_hash != expected_hash.lower():
+        raise ValueError("Source CSV hash differs from the approved selection source")
+    limitation = LIMITATION if source_rows is None else EXPLICIT_LIMITATION
     out = args.output_dir.resolve()
     if out.exists():
         raise FileExistsError(f"Refusing to overwrite experiment directory: {out}")
@@ -143,17 +169,20 @@ def prepare(args):
     snapshot = out / "source_config.yaml"
     snapshot.write_text(yaml.safe_dump(config, sort_keys=False))
     write_json(out / "manifest.json", {
-        "schema_version": 1, "limitation": LIMITATION,
-        "selection": "energy-ordered evenly spaced original-front positions, including extremes",
+        "schema_version": 1, "limitation": limitation,
+        "selection": ("energy-ordered evenly spaced original-front positions, including extremes"
+                      if source_rows is None else "explicit zero-based source CSV row indices, in supplied order"),
+        "requested_source_rows": source_rows,
         "valid_source_rows": valid_count, "original_front_count": front_count,
-        "source_csv": str(csv_path.resolve()), "source_csv_sha256": sha256(csv_path),
+        "source_csv": str(csv_path.resolve()), "source_csv_sha256": source_hash,
         "source_config": str(config_path.resolve()), "source_config_sha256": sha256(config_path),
         "snapshot_sha256": sha256(snapshot), "code_revision": git_revision(),
         "budgets": args.budgets, "seeds": args.seeds,
         "energy_policy": "fixed_historical_measurement", "candidates": selected,
     })
-    print(f"Prepared {len(selected)} of {front_count} original-front points in {out}")
-    print(LIMITATION)
+    print(f"Prepared {len(selected)} candidates in {out}; source has {front_count} original-front points")
+    print("Selected rows:", ", ".join(str(c["source_row_index"]) for c in selected))
+    print(limitation)
 
 
 def load_manifest(out):
@@ -432,7 +461,7 @@ def analyze(args):
     expected = len(manifest["candidates"]) * len(manifest["seeds"]) * len(manifest["budgets"]) * 2
     if len(indexed) != expected or len(rows) != expected or any(r["status"] != "ok" for r in rows):
         raise ValueError("Missing, duplicated or failed checkpoint records")
-    summary = {"limitation": LIMITATION, "reference_budget": max(manifest["budgets"]), "seeds": {}}
+    summary = {"limitation": manifest.get("limitation", LIMITATION), "reference_budget": max(manifest["budgets"]), "seeds": {}}
     for seed in manifest["seeds"]:
         def points(budget, policy):
             result = {}
@@ -483,9 +512,9 @@ def plot_results(out, manifest, indexed):
             ax.set_ylabel("Validation TFLite RMSE total (lower is better)")
             ax.legend(fontsize=8)
             ax.grid(alpha=0.2)
-        axes[0].set_title("Training-budget sensitivity within original-front panel")
+        axes[0].set_title("Training-budget sensitivity within selected panel")
         axes[1].set_title("Reference performance of early-selected subset")
-        fig.suptitle(f"Front-only conditional pilot — seed {seed}; no new HIL energy")
+        fig.suptitle(f"Conditional epoch pilot — seed {seed}; no new HIL energy")
         fig.tight_layout()
         fig.savefig(out / f"conditional_fronts_seed_{seed}.png", dpi=180)
         plt.close(fig)
@@ -494,12 +523,16 @@ def plot_results(out, manifest, indexed):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("prepare", help="Freeze original-front selection; no training/data loading/HIL")
+    p = sub.add_parser("prepare", help="Freeze front or explicit-row selection; no training/data loading/HIL")
     p.add_argument("--source-run-dir", type=Path, required=True)
     p.add_argument("--source-csv", type=Path)
     p.add_argument("--source-config", type=Path)
     p.add_argument("--output-dir", type=Path, required=True)
-    p.add_argument("--count", type=int, default=4)
+    selection = p.add_mutually_exclusive_group()
+    selection.add_argument("--count", type=int, help="Number of evenly spaced original-front points (default: 4)")
+    selection.add_argument("--source-rows", type=int, nargs="+",
+                           help="Exact zero-based CSV data-row indices; may include dominated candidates")
+    p.add_argument("--expected-source-sha256", help="Refuse preparation if the source CSV hash differs")
     p.add_argument("--budgets", type=budgets_arg, default=budgets_arg("15,30,55,100,200,300"))
     p.add_argument("--seeds", type=int, nargs="+", default=[17])
     p.set_defaults(func=prepare)
@@ -513,6 +546,8 @@ def main(argv=None):
     p.add_argument("--experiment-dir", type=Path, required=True)
     p.set_defaults(func=analyze)
     args = parser.parse_args(argv)
+    if args.command == "prepare" and args.count is None:
+        args.count = 4
     if args.command == "prepare" and (len(set(args.seeds)) != len(args.seeds) or any(s < 0 for s in args.seeds)):
         parser.error("Seeds must be unique nonnegative integers")
     args.func(args)
