@@ -17,6 +17,8 @@ SEMANTIC_CONTEXT_GUIDANCE = (
     "Parameter effects are architectural priors, not measured facts or guaranteed outcomes.",
     "Actual CREST and HIL observations take precedence over semantic priors.",
     "Candidates must still contain the exact raw Optuna parameter names and values.",
+    "Registered RAM/flash capacities are not necessarily free tensor-arena or application budgets; use explicit feasibility rules and measured allocation failures.",
+    "Greater model capacity does not guarantee greater accuracy, especially under short training budgets.",
 )
 
 _BUILTIN_MODALITIES = {

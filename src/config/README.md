@@ -309,6 +309,13 @@ optimizer:
     random_seed: 0
     recent_trial_window: 10
     semantic_context: true
+    memory:
+      enabled: true
+      start_after_trials: 10
+      interval_trials: 5
+      max_findings: 12
+      max_chars: 6000
+      max_pending_trials: 100
     extra_headers: {}
 ```
 
@@ -332,8 +339,10 @@ default it to `false` because that option is not universally supported; set it
 to `true` only when the selected endpoint and model accept JSON response mode.
 `recent_trial_window` bounds compact records read directly from recent Optuna
 trials and included in the next prompt. It defaults to 10; set it to 0 to
-disable history. Anchors and evidence-compaction knowledge bases are not part
-of the MVP history path.
+disable that recent window. `batch_size` controls candidates per generation call;
+`recent_trial_window` controls detailed recent records. Both are independent of
+`memory.interval_trials`, which controls when accumulated evidence is summarized.
+Persistent best-candidate anchors are not implemented.
 
 `semantic_context` defaults to `true`. It adds a deterministic, versioned,
 hashed summary of the normalized dataset/input contract, task outputs and
@@ -345,6 +354,67 @@ precedence. Set `semantic_context: false` for an ablation that retains legal
 parameter names/ranges/choices, recent trial history, and trial-budget state.
 Paths, serial ports, credential values, dataset examples, and unfiltered config
 trees are not included.
+
+
+### Accumulated experimental memory
+
+For `llm_generator`, memory is enabled by default; set `optimizer.llm.memory.enabled:
+false` to retain recent-history-only behavior. The same configured provider/model
+makes separate JSON summarization calls. This adds API usage once the start
+threshold is reached. Fake-provider fixtures must interleave candidate and summary
+responses in the same order; the two response schemas are different.
+
+The default first summary is created once ten **terminal trials** (COMPLETE, FAIL,
+or PRUNED) exist, before the next candidate-generation call. Later summaries are
+created after five additional terminal trials. Thresholds are checked at generation
+batch boundaries, not in the middle of evaluating a batch. Partial accepted batches
+therefore change the timing. A final summary is not requested when no more candidates
+are needed. `start_after_trials` and `interval_trials` are independent positive
+integers; changing the recent-trial window does not change either setting.
+
+Every summary update receives the previous structured findings, new trial records,
+and the static task/model/deployment context. The LLM returns updates to stable
+finding IDs, with observation, conditions, evidence, exceptions, uncertainty, and
+audit trial numbers. Findings must carry their evidence in readable prose, not just
+references to unavailable trials. Unmentioned findings persist. Replacing a finding
+must explicitly retain still-relevant caveats. Retirement requires an ID and reason;
+old snapshots remain available. The generator receives a paragraph for each finding,
+rendered without another LLM rewrite, plus the recent detailed trials.
+
+Any unsummarized trials outside the recent window appear as `pending_trials`.
+Thus an interval of 20 with a recent window of 10 does not silently lose the
+intervening observations. Disabling memory intentionally removes this bridge.
+`max_findings` and `max_chars` bound accepted memory; `max_chars` is a character
+limit on the structured memory and its rendered prose, **not a tokenizer count or
+an API output-token cap**. Oversized/malformed summaries are rejected, never
+truncated. The model's factual conclusions are not automatically proven correct.
+
+`max_pending_trials` bounds the number of new records in each summary call and the
+unsummarized backlog permitted before another generation call. It must be at least
+both timing thresholds. On resume, old pending results are summarized in bounded
+chunks. On provider/schema failure, the last valid memory stays in use and pending
+results remain visible; the next generation boundary tries again. If that backlog
+exceeds the limit and cannot be summarized, generation stops with an actionable
+error instead of silently discarding evidence or indefinitely expanding the prompt.
+A reduced memory size on resume must still fit the saved findings.
+
+Artifacts live under `models/<study>/llm_optimizer/memory/`:
+
+- `state.json`: atomically replaced current memory, version, context hash, and hashes
+  of covered trial records. Coverage IDs/hashes remain on disk, not in every prompt.
+- `snapshots/`: prior committed memory versions, including subsequently retired findings.
+- `requests/`: summary requests/responses, including provider usage and latency.
+- `optimizer_events.jsonl`: commits, failures, rejections, and retirement reasons.
+
+Resume verifies the context and previously covered trial records. A changed context
+or incompatible study fails explicitly; use a new study/output directory. This is a
+single-writer workflow. It does not provide concurrent-worker locking. Summary
+quality, loss of nuance during revisions, and live provider behavior require empirical
+validation; schema and provenance checks cannot guarantee semantic faithfulness.
+
+The input-token estimator can count these summary request files separately and
+combine them with generation estimates; see
+[`analysis_scripts/llm_token_cost/README.md`](../../analysis_scripts/llm_token_cost/README.md).
 
 Minimal example:
 

@@ -119,6 +119,55 @@ def project(counts, *, trials, batch_size, acceptance_rate=1.0,
             "expected_api_calls": calls, "scenarios": scenarios}
 
 
+
+def project_memory(generation, summary_counts, *, start_after_trials=10, interval_trials=5,
+                   batch_size=5, acceptance_rate=1.0, output_tokens_per_call=None,
+                   input_price=None, output_price=None):
+    """Approximate successful summary calls at sequential generation boundaries.
+
+    Assumes a fresh study, terminal trials after each batch, no summary failures,
+    and the same provider/pricing as generation. No unused end-of-run summary.
+    """
+    for name, value in (("start_after_trials", start_after_trials), ("interval_trials", interval_trials)):
+        if type(value) is not int or value < 1:
+            raise ValueError(f"{name} must be a positive integer")
+    for count in summary_counts:
+        finite_number(count, "summary input count")
+    if not summary_counts:
+        raise ValueError("At least one summary prompt count is required")
+    for name, value in (("output_tokens_per_call", output_tokens_per_call),
+                        ("input_price", input_price), ("output_price", output_price)):
+        if value is not None:
+            finite_number(value, name)
+    finite_number(acceptance_rate, "acceptance_rate", maximum=1)
+    if acceptance_rate == 0 or type(batch_size) is not int or batch_size < 1:
+        raise ValueError("batch_size and acceptance_rate must be positive")
+    effective_batch = batch_size * acceptance_rate
+    first = math.ceil(start_after_trials / effective_batch)
+    step = math.ceil(interval_trials / effective_batch)
+    remaining = generation["generation_rounds"] - 1 - first
+    calls = 0 if remaining < 0 else 1 + remaining // step
+    output = None if output_tokens_per_call is None else calls * output_tokens_per_call
+    scenarios = []
+    for base, tokens in zip(generation["scenarios"],
+                           (min(summary_counts), statistics.mean(summary_counts), max(summary_counts))):
+        input_tokens = calls * tokens
+        input_cost = None if input_price is None else input_tokens * input_price / 1_000_000
+        output_cost = None if output is None or output_price is None else output * output_price / 1_000_000
+        summary_cost = None if input_cost is None or output_cost is None else input_cost + output_cost
+        scenarios.append({
+            "scenario": base["scenario"], "summary_input_tokens": input_tokens,
+            "summary_output_tokens": output, "summary_cost_usd": summary_cost,
+            "combined_input_tokens": base["projected_input_tokens"] + input_tokens,
+            "combined_output_tokens": None if output is None or base["projected_output_tokens"] is None
+                else output + base["projected_output_tokens"],
+            "combined_cost_usd": None if summary_cost is None or base["total_cost_usd"] is None
+                else summary_cost + base["total_cost_usd"],
+        })
+    return {"summary_calls": calls, "combined_api_calls": generation["expected_api_calls"] + calls,
+            "scenarios": scenarios}
+
+
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     source = p.add_mutually_exclusive_group(required=True)
@@ -135,6 +184,10 @@ def parser():
     p.add_argument("--input-usd-per-million", type=float)
     p.add_argument("--output-usd-per-million", type=float)
     p.add_argument("--price-source", help="Pricing URL/date or description, saved as provenance")
+    p.add_argument("--summary-counts", type=Path, help="Previously counted summary-request report; same model/provider")
+    p.add_argument("--summary-start-trials", type=int, default=10)
+    p.add_argument("--summary-interval-trials", type=int, default=5)
+    p.add_argument("--summary-output-tokens-per-call", type=float)
     p.add_argument("--report", type=Path, help="Write JSON here instead of stdout")
     return p
 
@@ -149,9 +202,24 @@ def main(argv=None):
                            output_tokens_per_call=args.output_tokens_per_call,
                            input_price=args.input_usd_per_million, output_price=args.output_usd_per_million)
         budgets = args.trials or [150, 250]
+        summary_counts = None
+        summary_assumptions = dict(start_after_trials=args.summary_start_trials,
+                                  interval_trials=args.summary_interval_trials,
+                                  batch_size=args.batch_size, acceptance_rate=args.acceptance_rate,
+                                  output_tokens_per_call=args.summary_output_tokens_per_call,
+                                  input_price=args.input_usd_per_million, output_price=args.output_usd_per_million)
+        if args.summary_counts:
+            summary_report = json.loads(args.summary_counts.read_text())
+            if summary_report.get("model") != args.model:
+                raise ValueError("Summary counts use a different model")
+            summary_counts = [r["input_tokens"] for r in summary_report["requests"]]
+            if not summary_counts or any(type(n) is not int or n < 0 for n in summary_counts):
+                raise ValueError("Summary report must contain API counts, not a dry run")
         # Validate every scenario before making any network requests.
         for budget in budgets:
-            project([0], trials=budget, **assumptions)
+            validation = project([0], trials=budget, **assumptions)
+            if summary_counts is not None:
+                project_memory(validation, summary_counts, **summary_assumptions)
         if args.reuse_counts:
             if args.count_api:
                 raise ValueError("--reuse-counts cannot be combined with --count-api")
@@ -185,6 +253,13 @@ def main(argv=None):
                 "Acceptance means candidates enqueued, not hardware feasibility. Frequent random fallback requires its own measured scenario.",
             ],
         }
+        if summary_counts is not None:
+            report["memory_assumptions"] = summary_assumptions
+            report["summary_counts_source"] = str(args.summary_counts.resolve())
+            report["summary_counts_sha256"] = hashlib.sha256(args.summary_counts.read_bytes()).hexdigest()
+            for projection in report["projections"]:
+                projection["memory"] = project_memory(projection, summary_counts, **summary_assumptions)
+            report["limitations"].append("Memory projection assumes successful summaries at generation boundaries in a fresh sequential study; failures/catch-up on resume are not modeled. Count generator prompts with the summary and pending evidence already included.")
         rendered = json.dumps(report, indent=2, allow_nan=False) + "\n"
         if args.report:
             args.report.parent.mkdir(parents=True, exist_ok=True)

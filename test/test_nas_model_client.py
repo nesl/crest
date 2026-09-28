@@ -2374,6 +2374,54 @@ class RunNASTests(unittest.TestCase):
             self.assertEqual(evidence["task_metrics"], {"rmse_total": 0.3})
             self.assertEqual(evidence["state"], "complete")
 
+    def test_run_nas_interleaves_memory_updates_and_resumes(self) -> None:
+        """Separate summary calls enter the next generator prompt and survive resume."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = _build_test_client(base_dir=Path(tmpdir))
+            client.config.device.hil = False
+            client.config.device.compile_when_hil_disabled = "false"
+            client.config.training.train = False
+            client.config.training.nas_trials = 5
+            client.config.training.max_total_trials = 5
+            client.config.nas.score = Dict(type="scoring-function", metrics=Dict(),
+                params=Dict(terms=[Dict(type="weighted", metric="flops", weight=-1.0)]))
+            client.config.optimizer = Dict(type="llm_generator", llm=Dict(
+                batch_size=1, recent_trial_window=1, max_repair_attempts=0,
+                memory=Dict(start_after_trials=2, interval_trials=2)))
+            client.model_family.trial_search_space = MagicMock(
+                return_value=[SearchParam("width", "int", low=2, high=8)])
+            finding = dict(id="observed", observation="Wider candidates had larger proxy values.",
+                conditions="Desktop proxy evaluation only.", evidence="Widths 2 and 3 were evaluated.",
+                exceptions="No hardware measurements exist.", uncertainty="No accuracy conclusion is supported.",
+                trial_numbers=[0, 1])
+            provider = FakeProvider([
+                {"candidates": [{"width": 2}]}, {"candidates": [{"width": 3}]},
+                {"updates": [finding], "retire": []},
+                {"candidates": [{"width": 4}]}, {"candidates": [{"width": 5}]},
+                {"updates": [], "retire": []}, {"candidates": [{"width": 6}]},
+            ])
+            client._llm_provider_override = provider
+            def objective(trial):
+                return -float(trial.suggest_int("width", 2, 8))
+            client.objective = objective
+            storage = f"sqlite:///{Path(tmpdir) / 'study.db'}"
+            study = client.run_nas(study_name="memory-integration", storage=storage)
+            self.assertEqual(len(study.trials), 5)
+            self.assertEqual([r.metadata["purpose"] for r in provider.requests],
+                ["candidate_generation", "candidate_generation", "summarization",
+                 "candidate_generation", "candidate_generation", "summarization", "candidate_generation"])
+            third = json.loads(provider.requests[3].user_prompt)
+            self.assertIn("No accuracy conclusion", third["knowledge_base"]["summary"])
+            self.assertEqual(len(third["recent_trials"]), 1)
+            self.assertEqual(third["knowledge_base"]["covered_trial_count"], 2)
+            client.config.training.nas_trials = 6
+            client.config.training.max_total_trials = 6
+            resumed = FakeProvider([{"candidates": [{"width": 7}]}])
+            client._llm_provider_override = resumed
+            client.run_nas(study_name="memory-integration", storage=storage)
+            self.assertEqual(len(resumed.requests), 1)
+            self.assertEqual(json.loads(resumed.requests[0].user_prompt)["knowledge_base"]["version"], 2)
+
     def test_run_nas_sets_multiobjective_metric_names(self) -> None:
         """Multi-objective studies should expose configured objective names."""
         client = _build_test_client()

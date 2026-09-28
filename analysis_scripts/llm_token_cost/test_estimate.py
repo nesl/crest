@@ -65,6 +65,19 @@ class CountingTests(unittest.TestCase):
         self.assertIsNone(result["scenarios"][0]["projected_output_tokens"])
         self.assertIsNone(result["scenarios"][0]["total_cost_usd"])
 
+    def test_summary_schedule_and_combined_cost(self):
+        generation = estimate.project([1000], trials=150, batch_size=5,
+                                      output_tokens_per_call=100, input_price=2, output_price=8)
+        memory = estimate.project_memory(generation, [2000], output_tokens_per_call=200,
+                                         input_price=2, output_price=8)
+        self.assertEqual(memory["summary_calls"], 28)
+        self.assertEqual(memory["combined_api_calls"], 58)
+        self.assertAlmostEqual(memory["scenarios"][0]["combined_cost_usd"], .2408)
+        slower = estimate.project_memory(generation, [2000], interval_trials=20)
+        self.assertEqual(slower["summary_calls"], 7)
+        short = estimate.project([1000], trials=10, batch_size=5)
+        self.assertEqual(estimate.project_memory(short, [2000])["summary_calls"], 0)
+
     def test_invalid_scenarios_fail_before_network(self):
         for bad in [0, float("nan"), float("inf"), -1, 1.1]:
             with self.subTest(bad=bad), self.assertRaises(ValueError):

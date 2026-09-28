@@ -1042,6 +1042,12 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
     if not isinstance(raw_semantic_context, bool):
         raise ValueError("optimizer.llm.semantic_context must be a boolean.")
     llm.semantic_context = raw_semantic_context
+    from .optimizers.llm.memory import MemoryConfig
+    from dataclasses import asdict
+    raw_memory = llm.get("memory", {})
+    if not isinstance(raw_memory, (dict, Dict)):
+        raise ValueError("optimizer.llm.memory must be a mapping")
+    llm.memory = Dict(asdict(MemoryConfig.from_config(raw_memory)))
 
     prompt_version = str(llm.get("prompt_version", "v1")).strip()
     if not prompt_version:

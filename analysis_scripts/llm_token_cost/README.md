@@ -98,3 +98,39 @@ Tests cover payload fidelity, endpoint selection, missing credentials, cost math
 partial batches, and invalid inputs. HTTP is mocked; these tests do not prove live
 model/endpoint availability. Validate a real count with your account before relying
 on the estimate. Reports contain prompt text; keep them with the experiment artifacts.
+
+## Include experimental-memory updates
+
+Count generation requests and summary requests **separately** using `--request` and
+`--count-api`. Summary request files are in `llm_optimizer/memory/requests/` and use
+the same ledger format. Use representative generator prompts that already include
+memory and pending evidence; a first empty-history prompt is not a steady-state cost.
+
+Then combine the two saved count reports without more API calls:
+
+```sh
+python analysis_scripts/llm_token_cost/estimate.py \
+  --reuse-counts /tmp/generation-counts.json \
+  --summary-counts /tmp/summary-counts.json --model MODEL_ID \
+  --trials 150 --trials 250 --batch-size 5 \
+  --summary-start-trials 10 --summary-interval-trials 5 \
+  --output-tokens-per-call 1000 --summary-output-tokens-per-call 1000 \
+  --report /tmp/combined-projection.json
+```
+
+Output allowances above are illustrative assumptions, not observed usage. Supply
+current input/output rates as before to calculate costs. Generation and summary
+counts must use the same model; this matches the runtime's shared provider. Reports
+keep the two components separate and include combined token and cost totals.
+
+With defaults and five accepted candidates per round, a fresh 150-trial run has
+30 generation calls and 28 summary calls; a 250-trial run has 50 and 48. Summaries
+occur before subsequent generation, starting after trial 10; there is no unused
+end-of-run summary. If the interval is 20, the 150-trial example has seven updates
+(after 10, 30, 50, 70, 90, 110, and 130 trials). A larger interval may increase the
+pending evidence in generator prompts and the size of each summary request.
+
+The projection assumes sequential terminal results, successful summary calls,
+constant effective batch size, and a fresh study. Resume catch-up, summary failures,
+and irregular batch acceptance can change the schedule. Calibrate against saved
+usage from both ledgers. Character limits on memory are not API token limits.

@@ -14,7 +14,11 @@ from .search_space import SearchParam, SearchSpaceDescriptor
 
 SYSTEM_PROMPT = (
     "You are the CREST candidate generator. Return exact raw Optuna trial parameters "
-    "inside the supplied search space. Do not invent decoded or build-time fields."
+    "inside the supplied search space. Do not invent decoded or build-time fields. "
+    "The knowledge_base summary carries older evidence; pending_trials are unsummarized "
+    "results outside the recent window. Recent trials may overlap summarized evidence: "
+    "do not count this as independent confirmation. Treat memory as fallible observations, "
+    "not hard constraints; retain its conditions and uncertainty."
 )
 
 
@@ -51,6 +55,7 @@ class PromptContext:
     device_context: dict[str, Any] = field(default_factory=dict)
     runtime_context: dict[str, Any] = field(default_factory=dict)
     recent_trials: tuple[dict[str, Any], ...] = ()
+    pending_trials: tuple[dict[str, Any], ...] = ()
     anchors: tuple[dict[str, Any], ...] = ()
     knowledge_base: dict[str, Any] = field(default_factory=dict)
     semantic_context: dict[str, Any] = field(default_factory=dict)
@@ -87,6 +92,7 @@ class PromptContext:
                 "phase_instruction": phase.instruction,
             },
             "recent_trials": list(self.recent_trials),
+            "pending_trials": list(self.pending_trials),
             "anchors": list(self.anchors),
             "knowledge_base": self.knowledge_base,
             "output_contract": {
@@ -138,6 +144,7 @@ def build_candidate_request(
     if repair_feedback:
         payload["repair_feedback"] = repair_feedback
     metadata = {
+        "purpose": "candidate_generation",
         "study_name": context.study_name,
         "phase": context.phase().name,
         "batch_size": context.batch_size,

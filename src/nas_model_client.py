@@ -73,6 +73,7 @@ from crest.model_metrics import StaticMemoryEstimate
 from crest.optimizers.llm.enqueue import enqueue_llm_batch
 from crest.optimizers.llm.history import build_recent_trial_history
 from crest.optimizers.llm.ledger import LLMLedger
+from crest.optimizers.llm.memory import ExperimentalMemory, MemoryConfig
 from crest.optimizers.llm.prompt_builder import PromptContext
 from crest.optimizers.llm.provider import build_provider
 from crest.optimizers.llm.search_space import build_search_space_descriptor
@@ -2171,6 +2172,7 @@ class NASModelClient:
         llm_descriptor = None
         llm_ledger = None
         llm_rng = None
+        llm_memory = None
         if optimizer_type == "llm_generator":
             metric_dependencies = self._classify_nas_metric_dependencies()
             collect_compile_metrics = self._should_collect_compile_metrics(metric_dependencies)
@@ -2186,6 +2188,9 @@ class NASModelClient:
                 llm_provider = build_provider(llm_config)
             llm_ledger = LLMLedger(self._artifacts_dir() / "llm_optimizer")
             llm_rng = random.Random(int(self._cfg_get(llm_config, "random_seed", 0)))
+            memory_config = MemoryConfig.from_config(self._cfg_get(llm_config, "memory", {}))
+            if memory_config.enabled:
+                llm_memory = ExperimentalMemory(llm_ledger.root / "memory", memory_config)
         elif optimizer_type != "optuna":
             raise ValueError("optimizer.type must be one of: optuna, llm_generator.")
 
@@ -2312,6 +2317,8 @@ class NASModelClient:
                         ),
                         semantic_context=semantic_context,
                     )
+                    if llm_memory is not None:
+                        context = llm_memory.enrich(study, context, llm_provider)
                     accepted = enqueue_llm_batch(
                         study,
                         llm_provider,

@@ -53,7 +53,18 @@ def build_recent_trial_history(study: Any, *, window_size: int) -> tuple[dict[st
     if window_size == 0:
         return ()
 
-    trials = list(study.trials)[-window_size:]
+    return _trial_records(study, list(study.trials)[-window_size:])
+
+
+def build_terminal_trial_history(study: Any) -> tuple[dict[str, Any], ...]:
+    """Return completed, failed and pruned trials; unfinished trials are not evidence."""
+    trials = sorted((t for t in study.trials
+                     if str(getattr(getattr(t, "state", None), "name", "")).upper()
+                     in {"COMPLETE", "FAIL", "PRUNED"}), key=lambda t: t.number)
+    return _trial_records(study, trials)
+
+
+def _trial_records(study: Any, trials: list[Any]) -> tuple[dict[str, Any], ...]:
     directions = [
         str(getattr(direction, "name", direction)).strip().lower()
         for direction in getattr(study, "directions", ())
