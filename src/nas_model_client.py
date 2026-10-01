@@ -13,11 +13,11 @@ import csv
 from dataclasses import dataclass
 import json
 import logging
-import random
 import shutil
 import socket
 import time
 from datetime import datetime
+from uuid import uuid4
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +47,7 @@ from crest.microcontrollers import (
     resolve_device_options,
 )
 from crest.builtin_components import ensure_builtin_components_registered
-from crest.component_selection import cfg_get, resolve_component_selection
+from crest.component_selection import cfg_get, resolve_component_selection, resolve_optimizer_selection
 from crest.cadence import resolve_batch_period_ms
 from crest.model import (
     NONNEGATIVE_METRICS,
@@ -70,15 +70,13 @@ from crest.model import (
     set_error_code,
 )
 from crest.model_metrics import StaticMemoryEstimate
-from crest.optimizers.llm.enqueue import enqueue_llm_batch
-from crest.optimizers.llm.history import build_best_trial_anchors, build_recent_trial_history
-from crest.optimizers.llm.ledger import LLMLedger
-from crest.optimizers.llm.memory import ExperimentalMemory, MemoryConfig
-from crest.optimizers.llm.prompt_builder import PromptContext
-from crest.optimizers.llm.provider import build_provider
-from crest.optimizers.llm.search_space import build_search_space_descriptor
-from crest.optimizers.llm.semantic_context import build_semantic_context
-from crest.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
+from crest.optimizer_history import build_trial_snapshot, freeze_plain_data
+from crest.search_space import build_search_space_descriptor, validate_candidate
+from crest.semantic_context import build_semantic_context
+from crest.pipeline_types import (
+    BudgetSnapshot, CandidateProposal, DataSplit, DatasetBundle, ExplicitRound,
+    ModelBuildContext, NativeRound, SearchContext,
+)
 from crest.registry import dataset_registry, model_family_registry
 from crest.runtime_bootstrap import bootstrap_pipeline
 
@@ -106,6 +104,8 @@ RUNTIME_ONLY_METRICS = frozenset(
 )
 FEASIBILITY_POLICY_SIGNATURE_ATTR = "crest_feasibility_policy_signature"
 FEASIBILITY_NOT_EVALUATED_CONSTRAINT = 1e12
+OPTIMIZER_SIGNATURE_ATTR = "crest_optimizer_signature"
+PROPOSAL_ATTR = "crest_proposal"
 
 
 @dataclass(frozen=True)
@@ -751,22 +751,141 @@ class NASModelClient:
             NSGA-II or TPE sampler with feasibility constraints enabled when
             configured.
         """
+        sampler_class, kwargs = self._sampler_setup()
+        return sampler_class(**kwargs)
+
+    def _sampler_setup(self):
+        """Use one effective sampler declaration for construction and identity."""
         constraints_func = self._constraints_func if self._feasibility_enabled() else None
         if self._score_is_multiobjective():
-            kwargs = {
-                "population_size": self.config.training.nas_multiobjective_population_size,
-                "seed": 42,
-            }
-            if constraints_func is not None:
-                kwargs["constraints_func"] = constraints_func
-            return optuna.samplers.NSGAIISampler(**kwargs)
-        kwargs = {
-            "n_startup_trials": 15,
-            "multivariate": True,
-        }
+            sampler_class = optuna.samplers.NSGAIISampler
+            kwargs = {"population_size": self.config.training.nas_multiobjective_population_size, "seed": 42}
+        else:
+            sampler_class = optuna.samplers.TPESampler
+            kwargs = {"n_startup_trials": 15, "multivariate": True}
         if constraints_func is not None:
             kwargs["constraints_func"] = constraints_func
-        return optuna.samplers.TPESampler(**kwargs)
+        return sampler_class, kwargs
+
+    def _select_optimizer(self, study: optuna.Study, sampler: Any):
+        """Resolve proposal ownership and validate campaign identity before work."""
+        config = self._cfg_get(self.config, "optimizer", {}) or {}
+        name, component_cls = resolve_optimizer_selection(self._cfg_get(config, "type", "optuna"))
+        optimizer = component_cls()
+        optimizer.validate_config(config)
+        _, options = self._sampler_setup()
+        options = dict(options)
+        if "constraints_func" in options:
+            options["constraints_func"] = "crest.persisted_feasibility_constraints.v1"
+        signature = {
+            "version": 1, "optimizer": name,
+            "config": optimizer.identity_config(config),
+            "sampler": {"class": type(sampler).__module__ + "." + type(sampler).__qualname__, "options": options},
+        }
+        # Round-trip rejects non-JSON settings and ensures detached ordinary data.
+        signature = json.loads(json.dumps(signature, sort_keys=True, allow_nan=False))
+        stored = study.user_attrs.get(OPTIMIZER_SIGNATURE_ATTR)
+        if stored is None:
+            if study.trials:
+                raise RuntimeError(
+                    "Existing nonempty study has no CREST optimizer signature. "
+                    "Keep it for analysis and select a new study name."
+                )
+            study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, signature)
+        elif stored != signature:
+            raise RuntimeError(
+                "Active optimizer or sampler settings do not match the existing study optimizer signature. "
+                "Restore the original configuration or select a new study name."
+            )
+        return name, optimizer, config
+
+    def _initialize_optimizer(self, optimizer: Any, config: Any) -> Any:
+        """Build stable plain proposal context once, leaving evaluation in objective."""
+        dependencies = self._classify_nas_metric_dependencies()
+        collect_compile_metrics = self._should_collect_compile_metrics(dependencies)
+        try:
+            descriptor = build_search_space_descriptor(
+                self.model_family, self.model_build_context, self.model_config, self.config,
+                collect_compile_metrics=collect_compile_metrics,
+            )
+        except NotImplementedError:
+            descriptor = None
+        semantic_context = {}
+        if descriptor is not None:
+            semantic_context = build_semantic_context(
+                enabled=True,
+                dataset_name=self.dataset_name, dataset_config=self.dataset_config,
+                dataset_bundle=self.dataset_bundle, model_build_context=self.model_build_context,
+                task_name=self.task_name, target_spec=self.target_spec,
+                metric_contract=self.metric_contract, score_config=self.config.nas.score,
+                feasibility_config=self._feasibility_config(), model_family_name=self.model_family_name,
+                descriptor=descriptor, device_config=self.config.device,
+                training_config=self.config.training, collect_compile_metrics=collect_compile_metrics,
+            )
+        context = SearchContext(
+            study_name=self.study_name, artifact_dir=self._artifacts_dir(),
+            objective_names=tuple(self._study_metric_names()),
+            objective_directions=tuple(self._study_directions()),
+            objective_summary=json.dumps(self.config.nas.score, sort_keys=True, default=str),
+            semantic_context=freeze_plain_data(semantic_context), search_space=descriptor,
+            model_family_name=self.model_family_name, feasibility_enabled=self._feasibility_enabled(),
+        )
+        optimizer.initialize(context, config)
+        return descriptor
+
+    @staticmethod
+    def _waiting_round_size(study: optuna.Study) -> int:
+        """Return the oldest reserved group's size, without allocating attempts."""
+        waiting = sorted(
+            (trial for trial in study.trials if trial.state == TrialState.WAITING),
+            key=lambda trial: trial.number,
+        )
+        if not waiting:
+            return 0
+        group = waiting[0].user_attrs.get(PROPOSAL_ATTR, {}).get("round_id")
+        count = 0
+        for trial in waiting:
+            if trial.user_attrs.get(PROPOSAL_ATTR, {}).get("round_id") != group:
+                break
+            count += 1
+        return count
+
+    def _execute_search_round(self, study: optuna.Study, optimizer: Any, name: str,
+                              descriptor: Any, budget: BudgetSnapshot) -> int:
+        """Validate a complete proposal before enqueue, then use the shared objective."""
+        proposal = optimizer.propose_round(build_trial_snapshot(study), budget)
+        if isinstance(proposal, NativeRound):
+            size = proposal.n_trials
+            if isinstance(size, bool) or not isinstance(size, int) or not 0 < size <= budget.permitted_round_size:
+                raise ValueError("NativeRound.n_trials must be positive and within the permitted round size.")
+        elif isinstance(proposal, ExplicitRound):
+            if not isinstance(proposal.candidates, tuple) or not proposal.candidates:
+                raise ValueError("ExplicitRound requires a nonempty ordered tuple of candidates.")
+            size = len(proposal.candidates)
+            if size > budget.permitted_round_size:
+                raise ValueError("ExplicitRound exceeds the permitted round size.")
+            if descriptor is None:
+                raise ValueError("Explicit rounds require a declared raw search-space descriptor.")
+            round_id = uuid4().hex
+            validated = []
+            for index, candidate in enumerate(proposal.candidates):
+                if not isinstance(candidate, CandidateProposal) or not isinstance(candidate.params, Mapping):
+                    raise ValueError("ExplicitRound members must be CandidateProposal parameter mappings.")
+                validate_candidate(candidate.params, descriptor)
+                params = dict(candidate.params)
+                if not isinstance(candidate.provenance, Mapping):
+                    raise ValueError("Candidate provenance must be a JSON-safe mapping.")
+                metadata = dict(candidate.provenance)
+                metadata.update(optimizer=name, round_id=round_id, batch_index=index, proposal_params=dict(params))
+                metadata.setdefault("proposal_source", name)
+                metadata = json.loads(json.dumps(metadata, sort_keys=True, allow_nan=False))
+                validated.append((dict(params), metadata))
+            for params, metadata in validated:
+                study.enqueue_trial(params, user_attrs={PROPOSAL_ATTR: metadata})
+        else:
+            raise ValueError("Optimizer must return NativeRound or ExplicitRound.")
+        study.optimize(self.objective, n_trials=size)
+        return size
 
     def _hardware_limit_device_options(self) -> dict[str, str] | None:
         """Build board options required to resolve dynamic hardware limits.
@@ -2027,32 +2146,36 @@ class NASModelClient:
                     sampler=sampler,
                     load_if_exists=True,
                 )
+            optimizer_name, optimizer, optimizer_config = self._select_optimizer(single_trial_study, sampler)
             self._validate_or_store_feasibility_signature(single_trial_study)
             single_trial_study.set_metric_names(self._study_metric_names())
             try:
-                optimizer_config = self._cfg_get(self.config, "optimizer", None)
-                optimizer_type = str(
-                    self._cfg_get(optimizer_config, "type", "optuna")
-                ).strip().lower()
-                if optimizer_type == "llm_generator":
-                    if self._feasibility_enabled():
-                        existing_feasible = sum(
-                            1
-                            for trial in single_trial_study.trials
-                            if (
-                                trial.state == TrialState.COMPLETE
-                                and trial.user_attrs.get("feasibility_status") == "feasible"
-                            )
-                        )
+                descriptor = self._initialize_optimizer(optimizer, optimizer_config)
+                remaining = trials
+                initial_completed = sum(
+                    t.state == TrialState.COMPLETE and (
+                        not self._feasibility_enabled() or t.user_attrs.get("feasibility_status") == "feasible"
+                    ) for t in single_trial_study.trials
+                )
+                target = initial_completed + trials
+                total_cap = len(single_trial_study.trials) + trials
+                while remaining > 0:
+                    waiting_size = self._waiting_round_size(single_trial_study)
+                    if waiting_size:
+                        size = min(waiting_size, remaining)
+                        single_trial_study.optimize(self.objective, n_trials=size)
                     else:
-                        existing_feasible = sum(
-                            1 for trial in single_trial_study.trials if trial.state == TrialState.COMPLETE
+                        completed = sum(
+                            t.state == TrialState.COMPLETE and (
+                                not self._feasibility_enabled() or t.user_attrs.get("feasibility_status") == "feasible"
+                            ) for t in single_trial_study.trials
                         )
-                    self.config.training.nas_trials = existing_feasible + trials
-                    self.config.training.max_total_trials = len(single_trial_study.trials) + trials
-                    single_trial_study = self.run_nas(study_name=study_name, storage=storage_uri)
-                else:
-                    single_trial_study.optimize(self.objective, n_trials=trials)
+                        size = self._execute_search_round(
+                            single_trial_study, optimizer, optimizer_name, descriptor,
+                            BudgetSnapshot(len(single_trial_study.trials), completed,
+                                           target, total_cap, remaining),
+                        )
+                    remaining -= size
             except Exception as exc:
                 completed = sum(1 for t in single_trial_study.trials if t.state == TrialState.COMPLETE)
                 pruned = sum(1 for t in single_trial_study.trials if t.state == TrialState.PRUNED)
@@ -2160,39 +2283,13 @@ class NASModelClient:
                 sampler=sampler,
                 load_if_exists=True,  # resume if the study already exists
             )
+        optimizer_name, optimizer, optimizer_config = self._select_optimizer(study, sampler)
         self._validate_or_store_feasibility_signature(study)
         study.set_metric_names(self._study_metric_names())
         # Make sure we never shrink the total budget when resuming an existing study.
         max_total_trials = max(max_total_trials, len(study.trials))
 
-        optimizer_config = self._cfg_get(self.config, "optimizer", None)
-        optimizer_type = str(self._cfg_get(optimizer_config, "type", "optuna")).strip().lower()
-        llm_config = self._cfg_get(optimizer_config, "llm", None)
-        llm_provider = None
-        llm_descriptor = None
-        llm_ledger = None
-        llm_rng = None
-        llm_memory = None
-        if optimizer_type == "llm_generator":
-            metric_dependencies = self._classify_nas_metric_dependencies()
-            collect_compile_metrics = self._should_collect_compile_metrics(metric_dependencies)
-            llm_descriptor = build_search_space_descriptor(
-                self.model_family,
-                self.model_build_context,
-                self.model_config,
-                self.config,
-                collect_compile_metrics=collect_compile_metrics,
-            )
-            llm_provider = getattr(self, "_llm_provider_override", None)
-            if llm_provider is None:
-                llm_provider = build_provider(llm_config)
-            llm_ledger = LLMLedger(self._artifacts_dir() / "llm_optimizer")
-            llm_rng = random.Random(int(self._cfg_get(llm_config, "random_seed", 0)))
-            memory_config = MemoryConfig.from_config(self._cfg_get(llm_config, "memory", {}))
-            if memory_config.enabled:
-                llm_memory = ExperimentalMemory(llm_ledger.root / "memory", memory_config)
-        elif optimizer_type != "optuna":
-            raise ValueError("optimizer.type must be one of: optuna, llm_generator.")
+        descriptor = self._initialize_optimizer(optimizer, optimizer_config)
 
         def _trial_counts():
             """Count complete/pruned/failed trials plus feasibility outcomes.
@@ -2254,6 +2351,11 @@ class NASModelClient:
                     logger.info("[NAS] Reached target of %s feasible completed trials.", target_completions)
                     break
 
+                waiting_size = self._waiting_round_size(study)
+                if waiting_size:
+                    study.optimize(self.objective, n_trials=waiting_size)
+                    continue
+
                 remaining_needed = target_completions - feasible
                 remaining_budget = max_total_trials - total
                 if remaining_budget <= 0:
@@ -2273,71 +2375,10 @@ class NASModelClient:
                 else:
                     next_batch = min(remaining_needed, remaining_budget)
                 logger.info("[NAS] Launching round %s for %s additional trial(s).", round_idx, next_batch)
-                if optimizer_type == "llm_generator":
-                    request_batch_size = min(
-                        next_batch,
-                        int(self._cfg_get(llm_config, "batch_size", 5)),
-                    )
-                    semantic_context = build_semantic_context(
-                        enabled=bool(self._cfg_get(llm_config, "semantic_context", True)),
-                        dataset_name=self.dataset_name,
-                        dataset_config=self.dataset_config,
-                        dataset_bundle=self.dataset_bundle,
-                        model_build_context=self.model_build_context,
-                        task_name=self.task_name,
-                        target_spec=self.target_spec,
-                        metric_contract=self.metric_contract,
-                        score_config=self.config.nas.score,
-                        feasibility_config=self._feasibility_config(),
-                        model_family_name=self.model_family_name,
-                        descriptor=llm_descriptor,
-                        device_config=self.config.device,
-                        training_config=self.config.training,
-                        collect_compile_metrics=collect_compile_metrics,
-                    )
-                    context = PromptContext(
-                        study_name=study_name,
-                        model_family=self.model_family_name,
-                        descriptor=llm_descriptor,
-                        objective_summary=json.dumps(
-                            self.config.nas.score,
-                            sort_keys=True,
-                            default=str,
-                        ),
-                        attempted_trials=total,
-                        feasible_completed_trials=feasible,
-                        target_feasible_trials=target_completions,
-                        max_total_attempts=max_total_trials,
-                        batch_size=request_batch_size,
-                        recent_trials=build_recent_trial_history(
-                            study,
-                            window_size=int(
-                                self._cfg_get(llm_config, "recent_trial_window", 10)
-                            ),
-                        ),
-                        anchors=build_best_trial_anchors(
-                            study,
-                            anchor_count=int(self._cfg_get(llm_config, "anchor_count", 5)),
-                            feasibility_enabled=self._feasibility_enabled(),
-                        ),
-                        semantic_context=semantic_context,
-                    )
-                    if llm_memory is not None:
-                        context = llm_memory.enrich(study, context, llm_provider)
-                    accepted = enqueue_llm_batch(
-                        study,
-                        llm_provider,
-                        context,
-                        llm_ledger,
-                        prompt_version=str(self._cfg_get(llm_config, "prompt_version", "v1")),
-                        max_repair_attempts=int(
-                            self._cfg_get(llm_config, "max_repair_attempts", 1)
-                        ),
-                        rng=llm_rng,
-                    )
-                    study.optimize(self.objective, n_trials=len(accepted))
-                else:
-                    study.optimize(self.objective, n_trials=next_batch)
+                self._execute_search_round(
+                    study, optimizer, optimizer_name, descriptor,
+                    BudgetSnapshot(total, feasible, target_completions, max_total_trials, next_batch),
+                )
         except Exception as exc:
             completed, feasible, infeasible, pruned, failed = _trial_counts()
             logger.exception(

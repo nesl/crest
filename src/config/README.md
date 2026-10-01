@@ -283,6 +283,64 @@ Validation notes:
 
 ## `optimizer`
 
+Optimizer names are resolved through `optimizer_registry` after lazy built-in
+registration. Names strip surrounding whitespace and preserve the registry's
+case-sensitive custom keys. An exact registration takes precedence; when none
+exists, case variants of the historical built-in names `optuna` and
+`llm_generator` resolve to those lowercase keys. The resolved registration name
+is stored in campaign identity and proposal provenance. Register custom classes
+before calling `load_config()`; their custom optimizer fields are preserved,
+and they need no `llm` block. Only
+`llm_generator` receives the LLM-specific compatibility defaults and validation.
+Registration and config validation do not read credentials or create clients.
+
+Each component receives the whole normalized `optimizer` block. Implement
+`OptimizerABC` with a zero-argument constructor and `propose_round`, and override
+`validate_config` and `identity_config` for configurable behavior. Identity
+settings must be deterministic JSON-safe plain data with no secrets or paths.
+An example plugin can use the existing execution path without importing Optuna:
+
+```python
+from crest.interfaces import OptimizerABC
+from crest.pipeline_types import CandidateProposal, ExplicitRound
+from crest.registry import optimizer_registry
+from crest.model import load_config
+
+class FixedWidth(OptimizerABC):
+    def validate_config(self, config):
+        if type(config.get("width")) is not int:
+            raise ValueError("optimizer.width must be an integer")
+
+    def identity_config(self, config):
+        return {"width": config.width}
+
+    def initialize(self, context, config):
+        self.params = {"width": config.width}
+        # Supply every raw field declared by context.search_space in a real run.
+
+    def propose_round(self, history, budget):
+        return ExplicitRound((CandidateProposal(self.params),))
+
+optimizer_registry.register("fixed_width", FixedWidth)
+config = load_config("config.yaml")
+```
+
+```yaml
+optimizer:
+  type: fixed_width
+  width: 8
+```
+
+Native sampling does not require a model-family descriptor. Explicit proposals
+require one and must supply exactly all active raw fields. The runner validates
+every candidate before queueing any candidate; it owns proposal provenance in
+namespaced trial user attributes and executes the same objective for all modes.
+
+Study resume requires the same registered optimizer, proposal identity, and
+native sampler configuration. Completion/attempt budgets and output paths can
+change without changing identity. A nonempty unsigned legacy study must use a
+new study name for this contract; no automatic adoption is performed.
+
 The default remains the existing Optuna path:
 
 ```yaml
@@ -325,28 +383,37 @@ The generator emits raw Optuna parameters such as `dilations_index` and
 and CPU clock search appear only when their corresponding runtime paths are
 active. The required JSON envelope is `{"candidates": [{...}]}`. Local validation
 checks exact keys, types, bounds/choices, batch size, and duplicates against
-COMPLETE trials and earlier accepted candidates in the batch. WAITING trials are
-also checked when their full parameters are present in `trial.params`; ordinary
-enqueued WAITING trials keep fixed parameters separately, so queued duplicates
-can escape this check on resume.
+descriptor-complete COMPLETE trials and earlier accepted candidates in the
+batch. Penalized COMPLETE trials count for duplicate detection but do not
+qualify as anchors. The shared runner drains waiting work before fresh proposals;
+WAITING parameters are never interpreted as already sampled evidence.
 Any accepted candidates run through the existing CREST objective; a partially
 accepted batch is evaluated without filling its rejected slots. A batch with no
 accepted candidates gets at most `max_repair_attempts` additional calls (default
-1). After all attempts fail, CREST logs and enqueues one random candidate from
+1). After all attempts fail, the component logs and returns one random candidate from
 the same descriptor. If 100 fallback samples cannot pass the same validation,
 generation stops explicitly. `random_seed` controls this local fallback
 RNG; it does not seed the remote provider.
 
 Requests/responses live in `models/<study_name>/llm_optimizer/requests/` as
 numbered `.request.json` / `.response.json` pairs. The same directory's parent
-contains `prompt_contexts.jsonl`, `accepted_candidates.jsonl`,
+contains `prompt_contexts.jsonl`, `returned_candidates.jsonl`,
 `rejected_candidates.jsonl`, and `optimizer_events.jsonl`. Responses retain raw
-provider output, usage when supplied, finish reason, and latency. API keys are
+provider output, usage when supplied, finish reason, and latency.
+`returned_candidates.jsonl` records `returned_to_runner`, which means validated
+proposals were returned, not that the queue accepted them. Successful queue
+acceptance is evidenced only by study trial attributes. Historical
+`accepted_candidates.jsonl` and `batch_enqueued` artifacts retain their original
+historical meaning and remain readable. API keys are
 read from the configured environment variable and are not included in the
 serialized requests or normal responses.
 `provider: openrouter` defaults `api_key_env` to `OPENROUTER_API_KEY`.
 Generic `provider: openai_compatible` endpoints require `api_key_env` to be
 set explicitly so they never inherit an OpenRouter credential name silently.
+`base_url` must be a clean endpoint without URL userinfo, query parameters, or
+fragments; the transport appends `/chat/completions` to it. Use `api_key_env` or
+`extra_headers` for authentication. Extra headers and credentials are excluded
+from the study identity.
 The MVP transport is `/chat/completions`. OpenRouter defaults
 `json_response_mode` to `true`, which sends
 `response_format: {type: json_object}`. Generic `openai_compatible` providers

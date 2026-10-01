@@ -45,8 +45,8 @@ __all__ = [
     "build_recent_trial_history",
     "build_semantic_context",
     "resolve_phase",
-    "enqueue_llm_batch",
+    "generate_llm_batch",
     "sample_random_candidate",
     "validate_candidate_batch",
 ]
-from .enqueue import enqueue_llm_batch, sample_random_candidate
+from .enqueue import generate_llm_batch, sample_random_candidate

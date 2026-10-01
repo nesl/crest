@@ -370,6 +370,18 @@ class DummyTrial:
         self.user_attrs[key] = value
 
 
+
+def _sign_test_study(client, study):
+    """Give a study fixture the signature that its original campaign stored."""
+    if not hasattr(study, "user_attrs"):
+        study.user_attrs = {}
+    if not hasattr(study, "set_user_attr"):
+        study.set_user_attr = lambda key, value: study.user_attrs.__setitem__(key, value)
+    existing = study.trials
+    study.trials = []
+    client._select_optimizer(study, client._build_sampler())
+    study.trials = existing
+
 class HILRequestTests(unittest.TestCase):
     """Validate the ZeroMQ request/response helper."""
 
@@ -1795,6 +1807,7 @@ class SmokeTestTests(unittest.TestCase):
                 self.optimize_calls.append((func, n_trials))
 
         fake_study = DummyStudy()
+        _sign_test_study(client, fake_study)
 
         with patch("nas_model_client.optuna.create_study", return_value=fake_study):
             with self.assertRaises(ValueError):
@@ -1868,7 +1881,7 @@ class SmokeTestTests(unittest.TestCase):
                 storage=storage,
             )
             trials_csv = root / "trials.csv"
-            accepted_path = root / "llm_optimizer/accepted_candidates.jsonl"
+            accepted_path = root / "llm_optimizer/returned_candidates.jsonl"
             request_path = root / "llm_optimizer/requests/000001.request.json"
             response_path = root / "llm_optimizer/requests/000001.response.json"
 
@@ -1979,9 +1992,10 @@ class SmokeTestTests(unittest.TestCase):
                 self.optimize_calls.append((func, n_trials))
 
         fake_study = DummyStudy()
+        _sign_test_study(client, fake_study)
 
         with patch("nas_model_client.optuna.create_study", return_value=fake_study) as mock_create:
-            client.smoke_test(train=True, hil=False, trials=1, epochs=1)
+            client.smoke_test(train=True, hil=True, trials=1, epochs=1)
 
         self.assertEqual(fake_study.optimize_calls[0][1], 1)
         self.assertEqual(fake_study.metric_names_calls, [["rmse_total", "latency_ms"]])
@@ -2028,6 +2042,7 @@ class SmokeTestTests(unittest.TestCase):
                 self.optimize_calls.append((func, n_trials))
 
         fake_study = DummyStudy()
+        _sign_test_study(client, fake_study)
         with patch("nas_model_client.optuna.create_study", return_value=fake_study) as mock_create:
             client.smoke_test(train=True, hil=False, trials=1, epochs=1)
 
@@ -2093,6 +2108,7 @@ class SmokeTestTests(unittest.TestCase):
                 func(SimpleNamespace())
 
         fake_study = DummyStudy()
+        _sign_test_study(client, fake_study)
         with patch("nas_model_client.optuna.create_study", return_value=fake_study):
             client.smoke_test(train=True, trials=1, epochs=1)
 
@@ -2153,6 +2169,7 @@ class SmokeTestTests(unittest.TestCase):
                 self.optimize_calls.append((func, n_trials))
 
         fake_study = DummyStudy()
+        _sign_test_study(client, fake_study)
         artifacts_dir = client._artifacts_dir()
         db_path = artifacts_dir / "optuna_smoke_test.db"
         db_path.write_text("stale-db", encoding="utf-8")
@@ -2185,6 +2202,13 @@ class SmokeTestTests(unittest.TestCase):
 
 
 class RunNASTests(unittest.TestCase):
+    def _use_provider(self, client, provider):
+        client.config.optimizer.llm.setdefault("provider", "fake")
+        client.config.optimizer.llm.setdefault("responses", [{"candidates": []}])
+        provider_patch = patch("crest.optimizers.llm.component.build_provider", return_value=provider)
+        provider_patch.start()
+        self.addCleanup(provider_patch.stop)
+
     """Run_nas should continue until completed trials meet the target."""
 
     class DummyStudy:
@@ -2243,14 +2267,14 @@ class RunNASTests(unittest.TestCase):
             self.optimize_calls.append(n_trials)
             for _ in range(n_trials):
                 state = self.states_queue.pop(0) if self.states_queue else TrialState.FAIL
-                trial = SimpleNamespace(state=state)
+                trial = SimpleNamespace(state=state, number=len(self.trials), params={}, values=None, user_attrs={}, system_attrs={})
                 self.trials.append(trial)
             complete = [t for t in self.trials if t.state == TrialState.COMPLETE]
             if complete:
                 self.best_trial = SimpleNamespace(value=1.0, params={})
                 self.best_value = self.best_trial.value
 
-        def enqueue_trial(self, params):
+        def enqueue_trial(self, params, user_attrs=None):
             """Run enqueue trial.
 
             Parameters
@@ -2295,9 +2319,9 @@ class RunNASTests(unittest.TestCase):
         client.model_family.trial_search_space = MagicMock(
             return_value=[SearchParam("width", "int", low=2, high=8)]
         )
-        client._llm_provider_override = FakeProvider(
+        self._use_provider(client, FakeProvider(
             [{"candidates": [{"width": 3}, {"width": 7}]}]
-        )
+        ))
         client.objective = MagicMock()
         dummy = self.DummyStudy([TrialState.COMPLETE, TrialState.COMPLETE])
 
@@ -2309,7 +2333,7 @@ class RunNASTests(unittest.TestCase):
         self.assertEqual(dummy.optimize_calls, [2])
         ledger_root = Path(client.config.outputs.models_dir) / "llm-demo/llm_optimizer"
         self.assertTrue((ledger_root / "requests/000001.request.json").is_file())
-        self.assertEqual(len((ledger_root / "accepted_candidates.jsonl").read_text().splitlines()), 2)
+        self.assertEqual(len((ledger_root / "returned_candidates.jsonl").read_text().splitlines()), 2)
 
     def test_run_nas_feeds_completed_measurements_to_later_bounded_prompt(self) -> None:
         """The first request is empty and the next reads evidence from Optuna."""
@@ -2344,7 +2368,7 @@ class RunNASTests(unittest.TestCase):
                     {"candidates": [{"width": 5}]},
                 ]
             )
-            client._llm_provider_override = provider
+            self._use_provider(client, provider)
 
             def objective(trial):
                 width = trial.suggest_int("width", 2, 8)
@@ -2392,7 +2416,7 @@ class RunNASTests(unittest.TestCase):
             client.model_family.trial_search_space = MagicMock(
                 return_value=[SearchParam("width", "int", low=2, high=8)])
             provider = FakeProvider([{"candidates": [{"width": width}]} for width in [2, 5, 6]])
-            client._llm_provider_override = provider
+            self._use_provider(client, provider)
 
             def objective(trial):
                 width = trial.suggest_int("width", 2, 8)
@@ -2419,7 +2443,7 @@ class RunNASTests(unittest.TestCase):
             client.config.training.nas_trials = 4
             client.config.training.max_total_trials = 4
             resumed = FakeProvider([{"candidates": [{"width": 7}]}])
-            client._llm_provider_override = resumed
+            self._use_provider(client, resumed)
             client.run_nas(study_name="anchor-integration", storage=storage)
             payload = json.loads(resumed.requests[0].user_prompt)
             self.assertEqual([r["number"] for r in payload["recent_trials"]], [2])
@@ -2429,8 +2453,13 @@ class RunNASTests(unittest.TestCase):
             client.config.training.nas_trials = 5
             client.config.training.max_total_trials = 5
             disabled = FakeProvider([{"candidates": [{"width": 8}]}])
-            client._llm_provider_override = disabled
-            client.run_nas(study_name="anchor-integration", storage=storage)
+            self._use_provider(client, disabled)
+            with self.assertRaisesRegex(RuntimeError, "optimizer signature"):
+                client.run_nas(study_name="anchor-integration", storage=storage)
+            self.assertEqual(disabled.requests, [])
+            client.config.training.nas_trials = 1
+            client.config.training.max_total_trials = 1
+            client.run_nas(study_name="anchor-disabled", storage=storage)
             self.assertEqual(json.loads(disabled.requests[0].user_prompt)["anchors"], [])
 
     def test_run_nas_interleaves_memory_updates_and_resumes(self) -> None:
@@ -2459,7 +2488,7 @@ class RunNASTests(unittest.TestCase):
                 {"candidates": [{"width": 4}]}, {"candidates": [{"width": 5}]},
                 {"updates": [], "retire": []}, {"candidates": [{"width": 6}]},
             ])
-            client._llm_provider_override = provider
+            self._use_provider(client, provider)
             def objective(trial):
                 return -float(trial.suggest_int("width", 2, 8))
             client.objective = objective
@@ -2477,7 +2506,7 @@ class RunNASTests(unittest.TestCase):
             client.config.training.nas_trials = 6
             client.config.training.max_total_trials = 6
             resumed = FakeProvider([{"candidates": [{"width": 7}]}])
-            client._llm_provider_override = resumed
+            self._use_provider(client, resumed)
             client.run_nas(study_name="memory-integration", storage=storage)
             self.assertEqual(len(resumed.requests), 1)
             self.assertEqual(json.loads(resumed.requests[0].user_prompt)["knowledge_base"]["version"], 2)
@@ -2593,6 +2622,7 @@ class RunNASTests(unittest.TestCase):
                 self.metric_names_calls.append(list(metric_names))
 
         dummy = DummyStudy()
+        _sign_test_study(client, dummy)
 
         with patch("nas_model_client.optuna.create_study", return_value=dummy):
             with self.assertLogs("nas_model_client", level="INFO") as captured:

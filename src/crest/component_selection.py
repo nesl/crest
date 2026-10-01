@@ -33,6 +33,24 @@ def cfg_get(container: Any, key: str, default: Any = None) -> Any:
     return getattr(container, key, default)
 
 
+def resolve_optimizer_selection(raw_name: Any = "optuna") -> tuple[str, type[object]]:
+    """Return the registered optimizer name and class after lazy registration.
+
+    Registry keys remain case-sensitive and strip surrounding whitespace. Exact
+    registrations take precedence; only the historical built-in names ``optuna``
+    and ``llm_generator`` accept case aliases when no exact registration exists.
+    The returned name is also the stable name used in campaign identity.
+    """
+    from .builtin_components import ensure_optimizer_components_registered
+    from .registry import optimizer_registry
+
+    ensure_optimizer_components_registered()
+    name = str(raw_name).strip()
+    if name not in optimizer_registry and name.lower() in {"optuna", "llm_generator"}:
+        name = name.lower()
+    return name, optimizer_registry.get(name)
+
+
 def _require_block(config: Any, key: str) -> Any:
     """Return one required top-level config block.
 

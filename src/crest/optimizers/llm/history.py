@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from ...errors import HIL_MASTER_SUCCESS
@@ -22,6 +23,18 @@ MEASUREMENT_FIELDS = (
     "cpu_clock_mhz_requested",
     "clock_hz",
 )
+
+
+def _history_view(history: Any, directions: tuple[str, ...]) -> Any:
+    """Keep existing evidence algorithms usable with snapshots and legacy studies."""
+    if isinstance(history, (tuple, list)):
+        return SimpleNamespace(trials=history, directions=directions)
+    return history
+
+
+def _state_name(trial: Any) -> str:
+    state = getattr(trial, "state", None)
+    return str(getattr(state, "name", state)).strip()
 
 
 def _json_safe(value: Any) -> Any:
@@ -48,8 +61,9 @@ def _available_measurement(value: Any) -> bool:
     return math.isfinite(float(value)) and float(value) >= 0.0
 
 
-def build_recent_trial_history(study: Any, *, window_size: int) -> tuple[dict[str, Any], ...]:
+def build_recent_trial_history(study: Any, *, window_size: int, directions: tuple[str, ...] = ()) -> tuple[dict[str, Any], ...]:
     """Build compact records for only the newest configured Optuna trials."""
+    study = _history_view(study, directions)
     if isinstance(window_size, bool) or not isinstance(window_size, int) or window_size < 0:
         raise ValueError("window_size must be a non-negative integer.")
     if window_size == 0:
@@ -58,10 +72,11 @@ def build_recent_trial_history(study: Any, *, window_size: int) -> tuple[dict[st
     return _trial_records(study, list(study.trials)[-window_size:])
 
 
-def build_terminal_trial_history(study: Any) -> tuple[dict[str, Any], ...]:
+def build_terminal_trial_history(study: Any, *, directions: tuple[str, ...] = ()) -> tuple[dict[str, Any], ...]:
     """Return completed, failed and pruned trials; unfinished trials are not evidence."""
+    study = _history_view(study, directions)
     trials = sorted((t for t in study.trials
-                     if str(getattr(getattr(t, "state", None), "name", "")).upper()
+                     if _state_name(t).upper()
                      in {"COMPLETE", "FAIL", "PRUNED"}), key=lambda t: t.number)
     return _trial_records(study, trials)
 
@@ -71,6 +86,7 @@ def build_best_trial_anchors(
     *,
     anchor_count: int,
     feasibility_enabled: bool = False,
+    directions: tuple[str, ...] = (),
 ) -> tuple[dict[str, Any], ...]:
     """Keep top scalar trials or a bounded, representative feasible Pareto front.
 
@@ -78,6 +94,7 @@ def build_best_trial_anchors(
     Flat/degenerate fronts and higher-dimensional fronts use the closest point
     to the normalized ideal as a compromise. Trial numbers break ties.
     """
+    study = _history_view(study, directions)
     if isinstance(anchor_count, bool) or not isinstance(anchor_count, int) or anchor_count < 0:
         raise ValueError("anchor_count must be a non-negative integer.")
     if anchor_count == 0:
@@ -85,7 +102,7 @@ def build_best_trial_anchors(
     directions = [str(getattr(d, "name", d)).strip().lower() for d in study.directions]
     candidates: list[tuple[Any, tuple[float, ...]]] = []
     for trial in study.trials:
-        if str(getattr(getattr(trial, "state", None), "name", "")).upper() != "COMPLETE":
+        if _state_name(trial).upper() != "COMPLETE":
             continue
         attrs = trial.user_attrs
         status = str(attrs.get("feasibility_status", "")).strip().lower()

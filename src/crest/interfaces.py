@@ -8,8 +8,12 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from .model_metrics import StaticMemoryEstimate, count_flops_keras, estimate_static_memory_keras
 from .pipeline_types import (
+    BudgetSnapshot,
+    ExplicitRound,
+    NativeRound,
+    SearchContext,
+    TrialRecord,
     DataSplit,
     DatasetBundle,
     EvaluationResult,
@@ -22,7 +26,8 @@ from .pipeline_types import (
 if TYPE_CHECKING:
     import tensorflow as tf
 
-    from .optimizers.llm.search_space import SearchParam
+    from .model_metrics import StaticMemoryEstimate
+    from .search_space import SearchParam
 
 
 class DatasetABC(ABC):
@@ -683,6 +688,8 @@ class ModelFamilyABC(ABC):
             Static proxy estimate for batch size 1.
         """
         del ctx, config
+        from .model_metrics import estimate_static_memory_keras
+
         return estimate_static_memory_keras(
             model,
             quantization_mode=quantization_mode,
@@ -719,6 +726,8 @@ class ModelFamilyABC(ABC):
         del config
         if ctx.input_shape is None or len(ctx.input_shape) == 0:
             raise ValueError("ModelFamilyABC requires a non-empty input shape to count FLOPs.")
+        from .model_metrics import count_flops_keras
+
         return count_flops_keras(
             model,
             tuple(int(dim) for dim in ctx.input_shape),
@@ -734,3 +743,42 @@ class ModelFamilyABC(ABC):
             supported.
         """
         return True
+
+
+class OptimizerABC(ABC):
+    """Choose search rounds within CREST's shared Optuna execution lifecycle.
+
+    Components use zero-argument construction and receive normalized optimizer
+    configuration. They never evaluate, enqueue, or mutate a Study or Trial.
+    Stateful components derive evidence from fresh history on every call.
+    """
+
+    @property
+    def name(self) -> str:
+        """Return the implementing class name by default."""
+        return type(self).__name__
+
+    def validate_config(self, config: Any) -> None:
+        """Validate component settings without credentials or runtime access."""
+        del config
+
+    def identity_config(self, config: Any) -> dict[str, Any]:
+        """Return deterministic JSON-safe, non-secret proposal settings.
+
+        Configurable components must override this hook for settings that
+        affect their proposals. Paths, secrets, and run budgets are excluded.
+        """
+        del config
+        return {}
+
+    def initialize(self, context: SearchContext, config: Any) -> None:
+        """Initialize component-local runtime state; default is a no-op."""
+        del context, config
+
+    @abstractmethod
+    def propose_round(
+        self,
+        history: tuple[TrialRecord, ...],
+        budget: BudgetSnapshot,
+    ) -> NativeRound | ExplicitRound:
+        """Return an explicit batch or native sampling round without execution."""

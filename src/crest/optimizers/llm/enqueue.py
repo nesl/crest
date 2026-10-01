@@ -1,6 +1,6 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Generate, validate, log, and enqueue one LLM candidate batch."""
+"""Generate and validate proposals; queue mutation belongs to the runner."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from ...pipeline_types import CandidateProposal, TrialRecord
 from .ledger import LLMLedger
 from .prompt_builder import PromptContext, build_candidate_request
 from .provider import LLMProvider
@@ -17,11 +18,11 @@ from .schemas import CandidateBatch, validate_candidate_batch
 from .search_space import SearchParam, SearchSpaceDescriptor
 
 
-def _study_candidates(study: Any, descriptor: SearchSpaceDescriptor, state_name: str) -> list[dict[str, Any]]:
+def _history_candidates(history: tuple[TrialRecord, ...], descriptor: SearchSpaceDescriptor, state_name: str) -> list[dict[str, Any]]:
     """Extract exact descriptor-shaped candidates in one Optuna state."""
     candidates = []
-    for trial in study.trials:
-        if str(getattr(getattr(trial, "state", None), "name", "")) != state_name:
+    for trial in history:
+        if str(trial.state).upper() != state_name:
             continue
         params = getattr(trial, "params", {})
         if all(name in params for name in descriptor):
@@ -47,8 +48,8 @@ def sample_random_candidate(
     return {name: _sample_param(descriptor[name], rng) for name in descriptor}
 
 
-def enqueue_llm_batch(
-    study: Any,
+def generate_llm_batch(
+    history: tuple[TrialRecord, ...],
     provider: LLMProvider,
     context: PromptContext,
     ledger: LLMLedger,
@@ -56,10 +57,10 @@ def enqueue_llm_batch(
     prompt_version: str,
     max_repair_attempts: int,
     rng: random.Random,
-) -> tuple[dict[str, Any], ...]:
-    """Request candidates, reject invalid output, and guarantee one fallback."""
-    completed = _study_candidates(study, context.descriptor, "COMPLETE")
-    queued = _study_candidates(study, context.descriptor, "WAITING")
+) -> tuple[CandidateProposal, ...]:
+    """Return validated candidates with source provenance and one fallback."""
+    completed = _history_candidates(history, context.descriptor, "COMPLETE")
+    queued = _history_candidates(history, context.descriptor, "WAITING")
     repair_feedback = None
 
     for attempt in range(max_repair_attempts + 1):
@@ -129,20 +130,19 @@ def enqueue_llm_batch(
             )
             continue
 
-        for candidate in validation.accepted:
-            study.enqueue_trial(candidate)
-            ledger.record_accepted(
-                {"request_id": request_id, "source": "llm", "candidate": candidate}
-            )
-        ledger.record_event(
-            {
-                "event": "batch_enqueued",
-                "request_id": request_id,
-                "accepted": len(validation.accepted),
-                "rejected": len(validation.rejected),
-            }
-        )
-        return validation.accepted
+        proposals = tuple(CandidateProposal(candidate, {
+            "proposal_source": "llm", "optimizer": "llm_generator",
+            "request_id": request_id, "batch_id": f"llm-{request_id:06d}",
+            "batch_index": index,
+        }) for index, candidate in enumerate(validation.accepted))
+        for proposal in proposals:
+            ledger.record_returned({**proposal.provenance, "candidate": proposal.params})
+        ledger.record_event({
+            "event": "batch_returned_to_runner", "schema_version": 2,
+            "request_id": request_id, "accepted": len(proposals),
+            "rejected": len(validation.rejected),
+        })
+        return proposals
 
     for _ in range(100):
         candidate = sample_random_candidate(context.descriptor, rng=rng)
@@ -154,8 +154,14 @@ def enqueue_llm_batch(
             queued_candidates=queued,
         )
         if validation.accepted:
-            study.enqueue_trial(candidate)
-            ledger.record_accepted({"source": "random_fallback", "candidate": candidate})
-            ledger.record_event({"event": "random_fallback", "candidate": candidate})
-            return validation.accepted
+            proposal = CandidateProposal(candidate, {
+                "proposal_source": "random_fallback", "optimizer": "llm_generator",
+                "request_id": request_id, "batch_id": f"llm-{request_id:06d}",
+                "batch_index": 0,
+            })
+            ledger.record_returned({**proposal.provenance, "candidate": candidate})
+            ledger.record_event({"event": "random_fallback", "schema_version": 2,
+                                 "status": "returned_to_runner", "request_id": request_id,
+                                 "candidate": candidate})
+            return (proposal,)
     raise RuntimeError("Unable to sample a unique random fallback candidate after 100 attempts.")

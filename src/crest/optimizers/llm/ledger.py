@@ -100,8 +100,14 @@ class LLMLedger:
         """Append the bounded context supplied for one request."""
         self._append_jsonl("prompt_contexts.jsonl", context)
 
+    def record_returned(self, payload: Any) -> None:
+        """Record generation acceptance; only study provenance proves enqueue."""
+        self._append_jsonl("returned_candidates.jsonl", {
+            "schema_version": 2, "status": "returned_to_runner", **payload,
+        })
+
     def record_accepted(self, payload: Any) -> None:
-        """Append one accepted-candidate record."""
+        """Compatibility writer for historical v1 accepted-candidate artifacts."""
         self._append_jsonl("accepted_candidates.jsonl", payload)
 
     def record_rejected(self, payload: Any) -> None:

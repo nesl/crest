@@ -192,14 +192,39 @@ See [`config/README.md`](config/README.md) for the current shipped config shape.
 
 ## Candidate Generation
 
-`optimizer.type` defaults to `optuna`. With `llm_generator`,
-[`nas_model_client.py`](nas_model_client.py) builds the active raw search-space
-schema from the model family, adding quantization and CPU-clock parameters only
-when their runtime paths are active. Provider proposals are validated before
-`study.enqueue_trial(...)`; accepted batches run through the existing objective,
-feasibility, pruning, training, HIL, and logging path. Calls that yield no valid
-candidates receive bounded repair attempts, followed by a locally sampled random
-fallback if those attempts are exhausted.
+CREST uses a proposal contract to keep deployment choices explicit and measured
+results comparable as workloads, models, devices, schedules, and proposal
+mechanisms change. `optimizer.type` defaults to `optuna`. Registered components
+use zero-argument construction and receive a plain `SearchContext`, normalized
+optimizer configuration, fresh read-only trial history, and a `BudgetSnapshot`.
+They return either `NativeRound(n_trials)` or `ExplicitRound(candidates)`; the
+explicit count is derived from the candidate tuple.
+
+[`OptimizerABC`](crest/interfaces.py) exposes `validate_config`,
+`identity_config`, `initialize`, and `propose_round`. Components choose
+parameters; the runner owns the Study, queue, budget, and one existing
+`study.optimize(objective)` execution path. Native sampling remains inside the
+objective with the configured TPE/NSGA-II sampler. Native families can keep
+using define-by-run sampling without declaring a search descriptor. Explicit
+proposers require a valid descriptor and every active raw field, including
+run-activated quantization and CPU-clock fields. Shared legality validation in
+[`crest/search_space.py`](crest/search_space.py) checks the entire batch before
+enqueueing any candidate; it allows deliberate repeated experiments. The old
+LLM search-space import remains a compatibility re-export.
+
+LLM generation, repair, random fallback, anchors, memory, and provider clients
+belong to the LLM component. It returns accepted proposals without enqueueing
+or evaluating. A smaller accepted batch remains smaller. Waiting reservations
+run before fresh proposals, in trial-number order, and consume no new attempt.
+Proposal provenance and intended parameters live only in trial user attributes;
+actual sampled parameters remain distinct and keep model-family replay intact.
+
+A versioned study signature records the registered optimizer, normalized
+non-secret proposal settings, and effective native sampler options. Matching
+studies resume; mismatches and nonempty unsigned legacy studies fail before
+queued work runs. Budgets and artifact paths are excluded so otherwise identical
+campaigns can be extended. This contract covers the shared serial Optuna
+runtime; algorithms requiring different execution semantics are outside it.
 
 Generation prompts combine the legal parameter schema and trial-budget state
 with semantic task/model/deployment context, a recent trial window, best-candidate
@@ -211,7 +236,8 @@ evidence. The three evidence controls are independent. Generation provenance is
 saved under `<outputs.models_dir>/<study>/llm_optimizer/`; persistent memory and
 its summary exchanges live under `memory/` there.
 
-Implementation entry points are [`search_space.py`](crest/optimizers/llm/search_space.py),
+Implementation entry points are [`search_space.py`](crest/search_space.py),
+[`component.py`](crest/optimizers/llm/component.py),
 [`prompt_builder.py`](crest/optimizers/llm/prompt_builder.py),
 [`history.py`](crest/optimizers/llm/history.py),
 [`memory.py`](crest/optimizers/llm/memory.py),
@@ -235,13 +261,16 @@ CREST does not currently auto-discover components from the filesystem.
 The registry model is explicit:
 
 - [`crest/registry.py`](crest/registry.py) defines
-  `dataset_registry`, `task_registry`, and `model_family_registry`.
+  `dataset_registry`, `task_registry`, `model_family_registry`, and
+  `optimizer_registry`.
 - [`crest/builtin_components.py`](crest/builtin_components.py) registers
   the built-in components under their stable string keys.
 - The entry points call `ensure_builtin_components_registered()` before they
-  resolve component names from config.
+  resolve pipeline component names from config. Optimizer resolution uses
+  `ensure_optimizer_components_registered()` independently, without loading
+  datasets or creating provider clients.
 
-If you add a new dataset, task, or model family, it is not available until
+If you add a new dataset, task, model family, or optimizer, it is not available until
 something registers it under the name you intend to use in config.
 
 ## Shared Scoring And Trial Outputs

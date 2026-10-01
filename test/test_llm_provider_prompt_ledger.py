@@ -116,7 +116,7 @@ class ProviderPromptLedgerTests(unittest.TestCase):
 
             ledger.write_exchange(1, request, response)
             ledger.record_prompt_context(context.as_prompt_payload())
-            ledger.record_accepted({"request_id": 1, "candidate": {"width": 4, "mode": "small"}})
+            ledger.record_returned({"request_id": 1, "candidate": {"width": 4, "mode": "small"}})
             ledger.record_rejected(rejection)
             ledger.record_event({"event": "batch_complete", "accepted": 1, "rejected": 1})
 
@@ -131,7 +131,7 @@ class ProviderPromptLedgerTests(unittest.TestCase):
             self.assertEqual(len(response_payload["response_hash"]), 64)
             self.assertEqual(rejected_payload["code"], "out_of_range")
             for filename in (
-                "accepted_candidates.jsonl",
+                "returned_candidates.jsonl",
                 "rejected_candidates.jsonl",
                 "optimizer_events.jsonl",
                 "prompt_contexts.jsonl",

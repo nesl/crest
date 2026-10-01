@@ -129,8 +129,9 @@ class ExperimentalMemory:
             raise ValueError("Memory exceeds max_chars; no automatic truncation is permitted")
         return result
 
-    def enrich(self, study: Any, context: PromptContext, provider: LLMProvider) -> PromptContext:
-        records = list(build_terminal_trial_history(study))
+    def enrich(self, study: Any, context: PromptContext, provider: LLMProvider,
+               *, directions: tuple[str, ...] = ()) -> PromptContext:
+        records = list(build_terminal_trial_history(study, directions=directions))
         by_number = {str(r["number"]): r for r in records}
         payload = context.as_prompt_payload()
         scope = {k: v for k, v in payload.items() if k not in {

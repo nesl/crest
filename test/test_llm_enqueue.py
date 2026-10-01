@@ -1,6 +1,6 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Tests for validated LLM candidate enqueueing and fallback."""
+"""Tests for generation-only LLM proposals, repair and fallback."""
 
 import json
 import random
@@ -16,7 +16,8 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from crest.optimizers.llm.enqueue import enqueue_llm_batch  # noqa: E402
+from crest.optimizer_history import build_trial_snapshot
+from crest.optimizers.llm.enqueue import generate_llm_batch  # noqa: E402
 from crest.optimizers.llm.ledger import LLMLedger  # noqa: E402
 from crest.optimizers.llm.prompt_builder import PromptContext  # noqa: E402
 from crest.optimizers.llm.provider import FakeProvider  # noqa: E402
@@ -57,7 +58,7 @@ class EnqueueTests(unittest.TestCase):
     """Exercise valid, repaired, and random-fallback enqueue paths."""
 
     def test_fake_provider_enqueues_two_trials_for_unchanged_objective(self) -> None:
-        """Accepted raw dictionaries flow through Optuna's normal objective path."""
+        """Generation leaves the study untouched; returned values retain execution parity."""
         study = optuna.create_study(direction="maximize")
         provider = FakeProvider(
             [
@@ -71,8 +72,8 @@ class EnqueueTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             ledger = LLMLedger(Path(tmpdir) / "llm_optimizer")
-            accepted = enqueue_llm_batch(
-                study,
+            accepted = generate_llm_batch(
+                build_trial_snapshot(study),
                 provider,
                 context(2),
                 ledger,
@@ -80,11 +81,15 @@ class EnqueueTests(unittest.TestCase):
                 max_repair_attempts=0,
                 rng=random.Random(0),
             )
+            self.assertEqual(len(study.trials), 0)
+            params = tuple(proposal.params for proposal in accepted)
+            for proposal in accepted:
+                study.enqueue_trial(dict(proposal.params))
             study.optimize(objective, n_trials=len(accepted))
 
-            self.assertEqual(accepted, ({"width": 4, "mode": "small"}, {"width": 7, "mode": "large"}))
-            self.assertEqual([trial.params for trial in study.trials], list(accepted))
-            accepted_lines = (Path(tmpdir) / "llm_optimizer/accepted_candidates.jsonl").read_text()
+            self.assertEqual(params, ({"width": 4, "mode": "small"}, {"width": 7, "mode": "large"}))
+            self.assertEqual([trial.params for trial in study.trials], list(params))
+            accepted_lines = (Path(tmpdir) / "llm_optimizer/returned_candidates.jsonl").read_text()
             self.assertEqual(len(accepted_lines.splitlines()), 2)
 
     def test_invalid_first_response_can_be_repaired(self) -> None:
@@ -98,8 +103,8 @@ class EnqueueTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             ledger = LLMLedger(Path(tmpdir) / "llm_optimizer")
-            accepted = enqueue_llm_batch(
-                study,
+            accepted = generate_llm_batch(
+                build_trial_snapshot(study),
                 provider,
                 context(1),
                 ledger,
@@ -108,7 +113,7 @@ class EnqueueTests(unittest.TestCase):
                 rng=random.Random(0),
             )
 
-            self.assertEqual(accepted, ({"width": 6, "mode": "large"},))
+            self.assertEqual(tuple(p.params for p in accepted), ({"width": 6, "mode": "large"},))
             rejected = json.loads(
                 (Path(tmpdir) / "llm_optimizer/rejected_candidates.jsonl").read_text()
             )
@@ -123,8 +128,8 @@ class EnqueueTests(unittest.TestCase):
         provider = FakeProvider(["not-json"])
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "llm_optimizer"
-            accepted = enqueue_llm_batch(
-                study,
+            accepted = generate_llm_batch(
+                build_trial_snapshot(study),
                 provider,
                 context(1),
                 LLMLedger(root),
@@ -134,10 +139,13 @@ class EnqueueTests(unittest.TestCase):
             )
 
             self.assertEqual(len(accepted), 1)
-            self.assertGreaterEqual(accepted[0]["width"], 2)
-            self.assertLessEqual(accepted[0]["width"], 8)
+            self.assertGreaterEqual(accepted[0].params["width"], 2)
+            self.assertLessEqual(accepted[0].params["width"], 8)
             event = json.loads((root / "optimizer_events.jsonl").read_text())
             self.assertEqual(event["event"], "random_fallback")
+            self.assertEqual(event["status"], "returned_to_runner")
+            self.assertEqual(accepted[0].provenance["proposal_source"], "random_fallback")
+            self.assertEqual(len(study.trials), 0)
 
 
 if __name__ == "__main__":
