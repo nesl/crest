@@ -365,10 +365,14 @@ Set the flag only after checking that the active workload, model, device,
 schedule, score/feasibility policy and sampler settings match the original
 native experiment. This is your attestation of the original configuration;
 CREST cannot prove an unsigned history was native or certify its provenance.
-The default is false. Adoption rejects WAITING trials and recorded
-explicit-proposer provenance, and validates stored ordered study directions,
-existing feasibility signatures and required COMPLETE feasibility evidence
-before storing the optimizer signature.
+The default is false. Adoption rejects WAITING trials, recorded
+explicit-proposer provenance, any trial with Optuna's `fixed_params` enqueue
+metadata (even an empty dictionary), and an existing per-study `llm_optimizer`
+artifact path. Older explicit proposals may have no user-attribute provenance;
+these markers conservatively prevent labeling that history as native. Adoption
+also validates stored ordered study directions, existing feasibility signatures
+and required COMPLETE feasibility evidence before storing the optimizer signature.
+These adoption-only guards do not block matching signed native or LLM resumes.
 It preserves every existing trial number, state, parameter, value and attribute.
 RUNNING trials keep consuming the attempt cap; adoption does not recover them.
 

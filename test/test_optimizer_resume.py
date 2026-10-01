@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """SQLite campaign extension preserves evidence and requires explicit legacy consent."""
 import copy
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from addict import Dict
@@ -119,6 +120,97 @@ def test_legacy_rejection_does_not_evaluate_or_stamp(campaign, reason):
             client.run_nas("campaign", storage)
     client.objective.assert_not_called()
     assert_unchanged(storage, before, attrs)
+
+
+@pytest.mark.parametrize("state", [TrialState.COMPLETE, TrialState.PRUNED, TrialState.FAIL])
+@pytest.mark.parametrize("params", [{"width": 3}, {}])
+def test_unsigned_terminal_enqueue_rejects_native_adoption_without_user_provenance(campaign, state, params):
+    client, storage = campaign
+    study = optuna.create_study(study_name="campaign", storage=storage, direction="maximize")
+    study.enqueue_trial(params)
+
+    def finish_trial(trial):
+        width = trial.suggest_int("width", 2, 8)
+        if state == TrialState.PRUNED:
+            raise optuna.TrialPruned()
+        if state == TrialState.FAIL:
+            raise RuntimeError("synthetic failure")
+        return float(width)
+
+    study.optimize(finish_trial, n_trials=1, catch=(RuntimeError,))
+    trial = study.trials[0]
+    assert trial.state == state
+    assert trial.system_attrs["fixed_params"] == params
+    assert trial.user_attrs == {}
+    client.config.optimizer.adopt_legacy_study = True
+    client.config.training.nas_trials = 2
+    client.objective = MagicMock()
+    before, attrs = study.trials, study.user_attrs
+    with patch.object(client, "_validate_or_store_feasibility_signature",
+                      side_effect=AssertionError("feasibility validation reached")):
+        with pytest.raises(RuntimeError, match="enqueued fixed_params"):
+            client.run_nas("campaign", storage)
+    client.objective.assert_not_called()
+    assert_unchanged(storage, before, attrs)
+
+
+@pytest.mark.parametrize("artifact_kind", ["directory", "file"])
+def test_unsigned_unqueued_terminal_history_rejects_llm_artifact_path(campaign, artifact_kind):
+    client, storage = campaign
+    study = optuna.create_study(study_name="campaign", storage=storage, direction="maximize")
+    study.optimize(client.objective, n_trials=1)
+    assert study.trials[0].state == TrialState.COMPLETE
+    assert study.trials[0].system_attrs == {}
+    assert study.trials[0].user_attrs == {}
+    artifact_path = Path(client.config.outputs.models_dir) / study.study_name / "llm_optimizer"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    if artifact_kind == "directory":
+        artifact_path.mkdir()
+    else:
+        artifact_path.touch()
+    client.config.optimizer.adopt_legacy_study = True
+    client.config.training.nas_trials = 2
+    client.objective = MagicMock()
+    before, attrs = study.trials, study.user_attrs
+    with patch.object(client, "_validate_or_store_feasibility_signature",
+                      side_effect=AssertionError("feasibility validation reached")):
+        with pytest.raises(RuntimeError, match="llm_optimizer artifacts"):
+            client.run_nas("campaign", storage)
+    client.objective.assert_not_called()
+    assert_unchanged(storage, before, attrs)
+
+
+@pytest.mark.parametrize("optimizer", ["optuna", "llm_generator"])
+def test_signed_resume_accepts_fixed_params_llm_artifacts_and_waiting_work(campaign, optimizer):
+    client, storage = campaign
+    client.config.optimizer = Dict(type=optimizer)
+    if optimizer == "llm_generator":
+        client.config.optimizer.llm = Dict(provider="fake", responses=[{"candidates": [{"width": 5}]}],
+            memory={"enabled": False})
+    study = optuna.create_study(study_name="campaign", storage=storage, direction="maximize")
+    client._select_optimizer(study, client._build_sampler())
+    study.enqueue_trial({"width": 3})
+    study.optimize(client.objective, n_trials=1)
+    assert study.trials[0].system_attrs["fixed_params"] == {"width": 3}
+    assert study.trials[0].user_attrs == {}
+    study.enqueue_trial({"width": 7})
+    artifact_path = Path(client.config.outputs.models_dir) / study.study_name / "llm_optimizer"
+    artifact_path.mkdir(parents=True)
+    before, signature = study.trials, study.user_attrs[OPTIMIZER_SIGNATURE_ATTR]
+    if optimizer == "optuna":
+        client.config.optimizer.adopt_legacy_study = True
+    client.config.training.nas_trials = 2
+    client.config.training.max_total_trials = 2
+    provider = FakeProvider([])
+    with patch("crest.optimizers.llm.component.build_provider", return_value=provider):
+        result = client.run_nas("campaign", storage)
+    assert provider.requests == []
+    assert result.trials[:1] == before[:1]
+    assert len(result.trials) == 2
+    assert result.trials[1].state == TrialState.COMPLETE
+    assert result.trials[1].params == {"width": 7}
+    assert result.user_attrs[OPTIMIZER_SIGNATURE_ATTR] == signature
+    assert LEGACY_OPTIMIZER_ADOPTION_ATTR not in result.user_attrs
 
 
 @pytest.mark.parametrize("policy", ["missing", "mismatch", "disabled", "missing_trial_evidence"])

@@ -815,6 +815,11 @@ class NASModelClient:
                 if any(PROPOSAL_ATTR in trial.user_attrs or "proposal_source" in trial.user_attrs
                        for trial in trials):
                     raise RuntimeError("Cannot adopt native legacy history with explicit-proposer provenance.")
+                # Older explicit proposals carried only Optuna's enqueue metadata.
+                if any("fixed_params" in trial.system_attrs for trial in trials):
+                    raise RuntimeError("Cannot adopt native legacy history with enqueued fixed_params.")
+                if (Path(self.config.outputs.models_dir) / study.study_name / "llm_optimizer").exists():
+                    raise RuntimeError("Cannot adopt native legacy history with llm_optimizer artifacts.")
                 stored_directions = [direction.name.lower() for direction in study.directions]
                 if stored_directions != self._study_directions():
                     raise RuntimeError("Cannot adopt legacy history: study directions do not match the active score configuration.")

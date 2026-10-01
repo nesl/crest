@@ -11,7 +11,7 @@ the game.**
 
 | Finding | Disposition and concrete change |
 | --- | --- |
-| Existing unsigned campaigns cannot extend | Fix with explicit default-false `optimizer.adopt_legacy_study` for native Optuna only. The user attests original configuration compatibility. Reject WAITING work and explicit-proposer provenance; validate stored ordered directions and existing feasibility policy/evidence before stamping. Preserve trials and RUNNING accounting. Signed native and LLM campaigns continue to extend budgets normally. |
+| Existing unsigned campaigns cannot extend | Fix with explicit default-false `optimizer.adopt_legacy_study` for native Optuna only. The user attests original configuration compatibility. Reject WAITING work, explicit-proposer provenance, any trial with `fixed_params` enqueue metadata and an existing per-study `llm_optimizer` artifact path; validate stored ordered directions and existing feasibility policy/evidence before stamping. Preserve trials and RUNNING accounting. Signed native and LLM campaigns continue to extend budgets normally. |
 | Native execution enters proposal descriptor and semantic setup | Fix through component capability declarations. Native opts out of both; LLM requires a descriptor and obeys its semantic-context switch. Existing explicit plugins retain setup by default. Detect the inherited absent family hook, and propagate errors inside declared hooks. |
 | Sampler identity stores unstable internal module paths | Fix new signatures to public `optuna.samplers.TPESampler`/`NSGAIISampler`. Accept only exact historical `_tpe.sampler.TPESampler` and `nsgaii._sampler.NSGAIISampler` module paths with unchanged remaining identity fields. Preserve existing stored signatures on compatible resume. |
 | LLM ledger names changed | Accept and document. `returned_candidates.jsonl`/`batch_returned_to_runner` describe proposals returned to the runner; study user attributes alone evidence actual queue acceptance. Historical artifacts remain evidence under their original semantics. |
@@ -23,7 +23,10 @@ Native adoption is a narrow compatibility option, not provenance certification,
 a hybrid campaign mechanism, crash recovery, a trial importer or a new journal.
 The implementation leaves objective, scoring, pruning, feasibility penalties,
 logging, family decoding, final training and replay behavior in the shared path.
-Unsigned LLM adoption requires a separate user decision and is outside this fix.
+The user confirmed there are no pre-contract LLM campaigns to migrate. Unsigned
+LLM adoption remains unsupported; no migration path is needed. The conservative
+markers above guard against historical explicit proposals without user attributes
+and apply only to nonempty unsigned adoption, preserving signed resumes.
 
 For extension, retain the same database, study name and original experiment
 configuration. `training.nas_trials` is the total completed/feasible-completed
@@ -40,3 +43,21 @@ strict sampler alias tests; capability/context tests; plain pytest integration;
 and adoption/extension probes on temporary copies of historical snapshots with a
 synthetic objective. Source snapshots are read only and their hashes verified;
 no campaign execution, provider payment or hardware measurements are performed.
+
+
+## Native adoption counterevidence verification (2026-10-01)
+
+The follow-up guard rejects nonempty unsigned native adoption when any trial
+contains Optuna's `fixed_params` system-attribute key, including an empty
+dictionary, or the per-study `llm_optimizer` artifact path exists. Ten added
+SQLite regression cases cover terminal COMPLETE/PRUNED/FAIL enqueue evidence
+without user attributes, artifact-only evidence, and matching signed native/LLM
+resumes with waiting work. The guards run before feasibility validation and
+signature/adoption writes; rejected studies preserve all evidence.
+
+The focused resume suite passed 40 tests; an independent reviewer repeated those
+40 tests and found no actionable concerns. The full default test and token-cost
+suite passed 790 tests and 203 subtests, with one skip and 126 warnings. Validation
+used the existing Python environment without inherited `PYTHONPATH`; no paid
+provider, hardware campaign or original historical database was used. This note
+records the follow-up evidence separately from the restored validation report.
