@@ -1,0 +1,51 @@
+%% CREST optimizer flow, implementation b66f452.
+%% Editable flow topology and labels. The accompanying optimizer_flow.svg is
+%% hand-positioned vector artwork; optimizer_flow.png is rendered from that SVG.
+%% Rendering this Mermaid source preserves the architecture, with a different layout.
+%% Native sampling occurs only when the existing objective calls trial.suggest_*.
+%% LLM ledger records generation evidence, never queue ownership or enqueue proof.
+flowchart TB
+    CONFIG["Config + component registry<br/>Resolve optimizer type; validate config"]
+    STUDY["Create or resume Optuna study<br/>Sampler, directions + identity signatures"]
+    CONTEXT["Initialize SearchContext<br/>Plain context; descriptor when required"]
+    ORDER["Shared loop: target → reservations → budget<br/>1. Target qualifying completions met? Stop.<br/>2. Else oldest WAITING group? Execute reservations first.<br/>3. Else attempt cap reached? Stop. Otherwise propose."]
+    BUDGET["BudgetSnapshot + immutable TrialRecord history<br/>Compute permitted size; propose_round(history, budget)"]
+
+    subgraph NATIVE["Native Optuna proposal component"]
+        N["NativeRound(n)<br/>Return a permitted trial count; runner validates n.<br/>No candidate parameters; no enqueue.<br/>Sampling happens later inside the objective."]
+    end
+
+    subgraph LLM["LLM generator proposal component"]
+        PROMPT["Bounded prompt context<br/>Search space + recent history + best anchors<br/>Semantic context + optional derived memory"]
+        PROVIDER["Provider → validation → repair / fallback<br/>Validate JSON, raw values and duplicates<br/>Unique random fallback if repair fails"]
+        EXPLICIT["ExplicitRound(candidates)<br/>Ordered raw mappings + provenance<br/>No study / queue access; ledger stores generation evidence"]
+        PROMPT --> PROVIDER --> EXPLICIT
+    end
+
+    VALIDATE["Runner validates the entire raw batch<br/>Validate every candidate before any queue write<br/>Enqueue with crest_proposal trial attributes"]
+    OPTIMIZE["study.optimize(existing objective, n_trials=round size)<br/>Native: sampled parameters<br/>LLM / reservations: enqueued fixed parameters"]
+    OBJECTIVE["Shared objective: build → measure → gate → train → score → log<br/>sample_hparams(trial): native suggestions or fixed queued values<br/>Validate hparams; configured resource / HIL metrics; pre-fit rejection<br/>Train when enabled; feasibility + scalar / multi-objective outcomes"]
+    HISTORY["Optuna completion + sampler hooks → persistent study history<br/>Trial states, actual params, metrics and provenance<br/>become the next immutable snapshot"]
+    OUTPUT["After the search stops: results, finalization and replay<br/>Trials CSV; Pareto results or configured final model<br/>Saved config, study + LLM evidence"]
+
+    CONFIG --> STUDY --> CONTEXT --> ORDER
+    ORDER -->|new proposal permitted| BUDGET
+    ORDER -->|oldest WAITING group; bypass proposal generation| OPTIMIZE
+    ORDER -->|target met or cap reached| OUTPUT
+    BUDGET --> N
+    BUDGET --> PROMPT
+    N --> OPTIMIZE
+    EXPLICIT --> VALIDATE --> OPTIMIZE
+    OPTIMIZE --> OBJECTIVE --> HISTORY
+    HISTORY -. updated study evidence; next round .-> ORDER
+
+    classDef shared fill:#f0f5fa,stroke:#b6c7d9,color:#23364c,stroke-width:2px;
+    classDef native fill:#eef7fd,stroke:#2678ad,color:#23364c,stroke-width:2px;
+    classDef llm fill:#f5f0fc,stroke:#7956b1,color:#23364c,stroke-width:2px;
+    classDef evaluation fill:#e9f4f3,stroke:#27857c,color:#23364c,stroke-width:2px;
+    class CONFIG,STUDY,CONTEXT,ORDER,BUDGET,VALIDATE,OUTPUT shared;
+    class N native;
+    class PROMPT,PROVIDER,EXPLICIT llm;
+    class OPTIMIZE,OBJECTIVE,HISTORY evaluation;
+    style NATIVE fill:#eef7fd,stroke:#cde5f5,color:#2678ad
+    style LLM fill:#f5f0fc,stroke:#dfd3ef,color:#7956b1

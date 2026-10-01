@@ -246,10 +246,13 @@ Runtime behavior:
   `urbansound8k_representative`, and `urbansound8k_real`
 - `training.max_total_trials` defaults to `training.nas_trials * 2` when
   omitted
-- `training.nas_trials` is the target number of feasible completed trials when
-  `nas.feasibility.rules` is enabled. Infeasible, failed, and pruned attempts
-  still count against `training.max_total_trials`, so constrained hardware
-  runs usually need a larger total-attempt budget than the feasible target.
+- `training.nas_trials` is the total COMPLETE trial target, or the total feasible
+  COMPLETE target when `nas.feasibility.rules` is enabled. Without feasibility,
+  penalized multi-objective COMPLETE trials also count toward that target.
+- `training.max_total_trials` is a total attempt cap. All stored trials, including
+  failed, pruned, infeasible, RUNNING, and reserved WAITING trials, consume it.
+  Constrained runs usually need a larger attempt cap than the completion target.
+  See [optimizer resume behavior](#optimizer) before extending a campaign.
 
 ## `dataset`, `task`, and `model`
 
@@ -283,6 +286,12 @@ Validation notes:
 
 ## `optimizer`
 
+The [optimizer system guide](../../optimizer_system_guide.md) explains the
+proposal contract, shared evaluation, evidence, and restart behavior; its
+[flow diagram](../../assets/optimizer_flow.svg) shows ownership at each boundary.
+Optimizer components reuse the same objective while making candidate choices
+explicit. The YAML blocks below are merge snippets for a complete study config.
+
 Optimizer names are resolved through `optimizer_registry` after lazy built-in
 registration. Names strip surrounding whitespace and preserve the registry's
 case-sensitive custom keys. An exact registration takes precedence; when none
@@ -301,35 +310,45 @@ settings must be deterministic JSON-safe plain data with no secrets or paths.
 An example plugin can use the existing execution path without importing Optuna:
 
 ```python
+from collections.abc import Mapping
 from crest.interfaces import OptimizerABC
 from crest.pipeline_types import CandidateProposal, ExplicitRound
 from crest.registry import optimizer_registry
+from crest.search_space import validate_candidate
 from crest.model import load_config
 
-class FixedWidth(OptimizerABC):
+class FixedCandidate(OptimizerABC):
     def validate_config(self, config):
-        if type(config.get("width")) is not int:
-            raise ValueError("optimizer.width must be an integer")
+        if not isinstance(config.get("candidate"), Mapping):
+            raise ValueError("optimizer.candidate must be a mapping")
 
     def identity_config(self, config):
-        return {"width": config.width}
+        return {"candidate": dict(config["candidate"])}
+
+    def requires_semantic_context(self, config):
+        return False
 
     def initialize(self, context, config):
-        self.params = {"width": config.width}
-        # Supply every raw field declared by context.search_space in a real run.
+        self.params = dict(config["candidate"])
+        validate_candidate(self.params, context.search_space)
 
     def propose_round(self, history, budget):
         return ExplicitRound((CandidateProposal(self.params),))
 
-optimizer_registry.register("fixed_width", FixedWidth)
+optimizer_registry.register("fixed_candidate", FixedCandidate)
 config = load_config("config.yaml")
 ```
 
 ```yaml
 optimizer:
-  type: fixed_width
-  width: 8
+  type: fixed_candidate
+  candidate: {} # Replace with every active raw field for the selected family/runtime.
 ```
+
+The empty mapping is a placeholder and fails descriptor validation. Supply legal
+values for the complete descriptor. This example deliberately repeats a fixed
+experiment; shared validation allows repetition, while duplicate filtering is a
+proposer policy. Use the usual runner after registering the class.
 
 Native sampling does not require a model-family descriptor. Explicit proposals
 require one and must supply exactly all active raw fields. The runner validates
@@ -341,9 +360,24 @@ native sampler configuration. Completion/attempt budgets and output paths can
 change without changing identity. `training.nas_trials` is the **total completed
 trial target** (feasible completions when feasibility is enabled), and
 `training.max_total_trials` is the **total attempt cap**, including failed,
-pruned, infeasible and RUNNING trials. To add evaluations, keep the same study
-name, database and original experiment configuration, then increase the total
+pruned, infeasible, RUNNING, and reserved WAITING trials. To add evaluations, keep
+the same study name, database and original experiment configuration, then increase
+the total
 target and cap as needed. These are not counts of additional trials.
+
+The optimizer signature is not a fingerprint of the whole scientific experiment.
+It does not certify unchanged dataset, model, training, device, runtime schedule,
+or score settings. Preserve and compare the original experiment configuration;
+budget-only extension is the supported use.
+
+At each production boundary the runner stops first if the completion target is
+met, leaving WAITING work untouched. Otherwise it drains the oldest contiguous
+WAITING group before checking the cap for new proposals. The cap is at least the
+number of stored trials at study open; reservations can be drained at that cap.
+Targets and caps are rechecked between rounds, so a multi-objective population
+round can exceed the remaining completion need. Orphan RUNNING trials keep
+consuming attempts and are not recovered automatically. `--smoke-test N` instead
+executes N additional attempts in the separate per-study smoke database.
 
 A signed native or LLM study resumes with unchanged optimizer identity when these
 budgets increase. Sampler signatures now use stable public TPE/NSGA-II names;
@@ -723,6 +757,9 @@ Use these files together:
 - [`../crest/model.py`](../crest/model.py) for validation and derived
   runtime behavior
 - [`../README.md`](../README.md) for source architecture
+- [Optimizer system guide](../../optimizer_system_guide.md) and
+  [flow diagram](../../assets/optimizer_flow.svg) for the full proposal,
+  evaluation, budget, and resume contract
 - [`../crest/model_families/README.md`](../crest/model_families/README.md)
   for model-family selection and extension
 - [`../crest/microcontrollers/README.md`](../crest/microcontrollers/README.md)

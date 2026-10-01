@@ -12,6 +12,12 @@ logging, and replay workflow fixed while users vary workload, model family,
 target backend, runtime schedule, quantization mode, and optimizer or selection
 policy.
 
+The optimizer proposal contract keeps those deployment choices explicit while
+reusing one evaluation path across proposers. Registered optimizers request
+native sampling or supply exact raw candidates; CREST owns validation, execution,
+and trial evidence. See the [optimizer system guide](optimizer_system_guide.md)
+and [flow diagram](assets/optimizer_flow.svg) for the complete boundary.
+
 CREST currently includes built-in support for OxIOD inertial odometry and
 UrbanSound8K prepared-feature audio classification, with target backends for
 Arduino Nano 33 BLE Sense, Arduino Portenta H7, and STM32 NUCLEO-N657X0-Q.
@@ -309,8 +315,7 @@ The highest-signal fields for a first pass are:
   Candidate generation: `optuna` by default, or `llm_generator` with provider,
   batch, context, and memory settings.
 - `dataset`, `task`, `model`
-  Modular component selection blocks when you want to override the built-in
-  defaults explicitly.
+  Required modular component selection blocks for the workload and model family.
 
 For the full config reference, score/prune schema, and current runtime caveats,
 see [src/config/README.md](src/config/README.md).
@@ -380,8 +385,9 @@ same client with the edited config:
 python3 src/nas_model_client.py --config /path/to/config.yaml --study-name crest_llm_run
 ```
 
-The generator proposes raw trial parameters; CREST validates them and enqueues
-accepted candidates into the same Optuna study and training/HIL evaluation path.
+The generator returns raw trial proposals; CREST validates the complete batch,
+reserves accepted candidates in the same Optuna study, and evaluates them through
+the shared training/HIL path.
 Defaults include five candidates per call, ten recent trials, up to five eligible
 best-candidate anchors, and experimental memory updated through separate provider
 calls. Anchors retain top scalar trials or a bounded Pareto compromise region.
@@ -390,6 +396,21 @@ See [the optimizer config reference](src/config/README.md#optimizer) for provide
 setup, repair/fallback behavior, context controls, memory timing, and resume rules.
 For request-based input-token and cost estimates, see
 [the LLM token-cost utility](analysis_scripts/llm_token_cost/README.md).
+
+### Extending a study
+
+Keep the study name, database, and original experiment configuration, then raise
+`training.nas_trials` and `training.max_total_trials` to the desired **total**
+completion target and attempt cap. Failed, pruned, infeasible, RUNNING, and
+reserved WAITING trials consume attempts. Matching signed native and LLM studies
+resume; the optimizer signature checks proposer and sampler identity, so compare
+the original scientific configuration yourself.
+
+Nonempty unsigned studies fail by default. Native-only
+`optimizer.adopt_legacy_study: true` enables guarded one-time adoption after you
+verify that the original configuration matches. Remove the flag after adoption;
+unsigned LLM/plugin histories and optimizer switching are unsupported. See the
+[resume and adoption reference](src/config/README.md#optimizer) for the guards.
 
 ### 4. Outputs
 
@@ -402,8 +423,12 @@ Artifacts are written under the configured `outputs.models_dir` and
 - `models/<study_name>/summary.json`
 - generated TFLite and `.keras` artifacts
 - `models/<study_name>/llm_optimizer/` for LLM generation prompts, responses,
-  accepted/rejected candidates, and fallback events; its `memory/` subdirectory
+  returned/rejected proposals, and fallback events; its `memory/` subdirectory
   holds summary exchanges, persistent findings, and versioned snapshots
+
+The LLM ledger's `returned_to_runner` status records component validation and
+return. Study trial attributes establish queue acceptance; Optuna state and
+actual sampled parameters establish execution evidence.
 
 ## Reproducing Case-Study Analyses
 
@@ -420,6 +445,9 @@ or touch hardware unless their package README says so.
 
 ## Documentation Map
 
+- [optimizer_system_guide.md](optimizer_system_guide.md)
+  Proposal contract, shared evaluation, evidence, budgets, study extension,
+  guarded native adoption, and the [flow diagram](assets/optimizer_flow.svg).
 - [src/README.md](src/README.md)
   Source architecture, shared abstractions, trial logging, replay, and
   extension paths.

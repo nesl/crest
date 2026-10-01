@@ -16,6 +16,9 @@ Related docs:
   [`../README.md`](../README.md).
 - Config block meanings, NAS policy shape, and runtime config caveats live in
   [`config/README.md`](config/README.md).
+- The complete optimizer contract, evidence, budgeting, and restart behavior live
+  in the [optimizer system guide](../optimizer_system_guide.md), with a
+  [flow diagram](../assets/optimizer_flow.svg).
 - Microcontroller and hardware-backend bring-up live in
   [`crest/microcontrollers/README.md`](crest/microcontrollers/README.md).
 
@@ -24,6 +27,7 @@ Related docs:
 | Goal | Start Here | Hardware Requirement |
 |------|------------|----------------------|
 | Run or modify NAS/training orchestration | [`nas_model_client.py`](nas_model_client.py) and [`crest/runtime_bootstrap.py`](crest/runtime_bootstrap.py) | No hardware required when `device.hil: false` |
+| Add a proposer or inspect the shared optimizer flow | [Optimizer system guide](../optimizer_system_guide.md) and [`crest/interfaces.py`](crest/interfaces.py) | No hardware required for contract checks |
 | Modify LLM candidate generation | [`crest/optimizers/llm/`](crest/optimizers/llm) and [optimizer config](config/README.md#optimizer) | No hardware required for fake-provider tests |
 | Run or modify HIL server behavior | [`hil_server.py`](hil_server.py) and [`crest/hil_runtime.py`](crest/hil_runtime.py) | Development board required for execution; HIL harness required for energy measurement |
 | Add a dataset | [`crest/datasets/README.md`](crest/datasets/README.md) | No hardware required for adapter development |
@@ -49,14 +53,16 @@ The `crest/` package holds the reusable implementation behind the entry
 points above.
 
 - [`crest/component_selection.py`](crest/component_selection.py)
-  Resolves the active dataset, task, and model-family selections from config.
+  Resolves the active dataset, task, model-family, and optimizer names from config.
 - [`crest/registry.py`](crest/registry.py)
-  Defines the string-keyed registries for datasets, tasks, and model families.
+  Defines the string-keyed registries for datasets, tasks, model families, and
+  optimizers.
 - [`crest/builtin_components.py`](crest/builtin_components.py)
-  Registers the built-in dataset, task, and model-family implementations.
+  Registers built-in pipeline components and, through an independent lazy
+  helper, optimizer classes.
 - [`crest/interfaces.py`](crest/interfaces.py)
   Defines the core abstraction contracts:
-  `DatasetABC`, `TaskABC`, and `ModelFamilyABC`.
+  `DatasetABC`, `TaskABC`, `ModelFamilyABC`, and `OptimizerABC`.
 - [`crest/pipeline_types.py`](crest/pipeline_types.py)
   Defines shared typed payloads passed between the modular pipeline layers.
 - [`crest/datasets/`](crest/datasets)
@@ -79,10 +85,16 @@ points above.
   Hardware backends and backend registry/factory logic. See
   [`crest/microcontrollers/README.md`](crest/microcontrollers/README.md)
   for bring-up details.
-- [`crest/optimizers/llm/`](crest/optimizers/llm)
-  Declarative search spaces, provider transport, prompt construction, trial
-  evidence and anchors, persistent experimental memory, validation, enqueue,
-  and provenance ledger helpers.
+- [`crest/optimizers/`](crest/optimizers)
+  Registered native and LLM proposal components. Native Optuna requests sampling
+  rounds; the [`llm/`](crest/optimizers/llm) component owns provider transport,
+  prompts, anchors, memory, repair, local fallback, and audit ledgers. It returns
+  proposals to the runner, which owns enqueueing.
+- [`crest/search_space.py`](crest/search_space.py),
+  [`crest/optimizer_history.py`](crest/optimizer_history.py), and
+  [`crest/semantic_context.py`](crest/semantic_context.py)
+  Shared raw parameter legality, immutable trial snapshots, and deployment
+  context for optimizer components.
 - [`crest/model.py`](crest/model.py)
   Shared runtime helpers for config loading, score evaluation, and generic
   metric normalization.
@@ -104,7 +116,7 @@ points above.
 
 ## Shared Abstractions
 
-The modular runtime is built around three main interfaces plus a small set of
+The modular runtime is built around four main interfaces plus a small set of
 typed payloads shared across orchestration code.
 
 - `DatasetABC` in [`crest/interfaces.py`](crest/interfaces.py)
@@ -116,12 +128,17 @@ typed payloads shared across orchestration code.
 - `ModelFamilyABC` in [`crest/interfaces.py`](crest/interfaces.py)
   Declares and samples raw trial hyperparameters, builds models, validates
   family-local config, and materializes the export variant passed into HIL.
-  `trial_search_space(...)` exposes the legal raw parameter surface to the LLM
-  generator; the built-in families use it for Optuna sampling as well.
+  `trial_search_space(...)` exposes the legal raw parameter surface to explicit
+  proposers; the built-in families reuse it for Optuna sampling as well.
+- `OptimizerABC` in [`crest/interfaces.py`](crest/interfaces.py)
+  Chooses a native sampling round or explicit raw candidates from plain context,
+  read-only history, and a budget snapshot. The runner owns study mutation and
+  evaluation.
 - Shared typed payloads in [`crest/pipeline_types.py`](crest/pipeline_types.py)
   carry the normalized information exchanged between those layers:
   `DatasetBundle`, `TargetSpec`, `ModelBuildContext`, `FitPlan`,
-  `EvaluationResult`, and `TaskMetricContract`.
+  `EvaluationResult`, `TaskMetricContract`, `SearchContext`, `TrialRecord`,
+  `BudgetSnapshot`, `CandidateProposal`, `NativeRound`, and `ExplicitRound`.
 
 ## End-to-End Flow
 
@@ -143,9 +160,11 @@ At a high level, the source tree is wired like this:
    `DatasetBundle`.
 5. The selected task adapter builds the target contract and training/evaluation
    behavior.
-6. The NAS client uses the selected optimizer to sample or enqueue raw trial
-   parameters. The selected model family resolves those parameters, builds
-   models, and materializes export variants.
+6. The NAS client resolves the registered optimizer and checks study identity.
+   The component returns a native round or explicit raw candidates; the runner
+   validates and enqueues explicit candidates. Both execute the same objective,
+   where the selected model family samples/decodes parameters, builds models,
+   and materializes export variants.
 7. When hardware metrics are needed, the HIL path builds a normalized request
    through [`crest/hil_runtime.py`](crest/hil_runtime.py), then the
    selected microcontroller backend stages, compiles, uploads, and measures
@@ -156,8 +175,9 @@ At a high level, the source tree is wired like this:
 That split is important:
 
 - Dataset/task/model-family code owns the ML-side behavior.
+- Optimizer components own proposals.
 - Microcontroller backend code owns the build/upload/runtime measurement path.
-- The top-level scripts own orchestration and policy.
+- The top-level scripts own orchestration, queue mutation, budgets, and policy.
 
 NAS and HIL both use the same component-selection path. The same config-driven
 dataset/task/model-family selection is resolved before the code branches into
@@ -184,6 +204,8 @@ The main config knobs are:
   Model-family-local configuration.
 - `model.search`
   Model-family-local search-space configuration.
+- `optimizer.type`
+  Selects the registered proposer for the NAS client; defaults to `optuna`.
 
 `dataset`, `task`, and `model` are required blocks. The older top-level
 `data` fallback is not part of the supported config contract anymore.
@@ -223,16 +245,30 @@ evaluation. The resulting context contains only plain data.
 
 LLM generation, repair, random fallback, anchors, memory, and provider clients
 belong to the LLM component. It returns accepted proposals without enqueueing
-or evaluating. A smaller accepted batch remains smaller. Waiting reservations
-run before fresh proposals, in trial-number order, and consume no new attempt.
-Proposal provenance and intended parameters live only in trial user attributes;
-actual sampled parameters remain distinct and keep model-family replay intact.
+or evaluating. A smaller accepted batch remains smaller. At each production
+boundary, reaching the total completion target stops before queued work runs. Otherwise the runner drains the oldest contiguous WAITING group
+before checking the cap for fresh proposals. These reservations already consume
+attempts and can be drained at the cap. Budgets are rechecked between rounds;
+multi-objective population sizing can exceed the remaining completion need.
+Smoke tests instead execute exactly N additional attempts. Proposal provenance
+and intended parameters live only in trial user attributes; actual sampled
+parameters remain distinct and keep model-family replay intact.
 
 A versioned study signature records the registered optimizer, normalized
 non-secret proposal settings, and effective native sampler options. Matching
-studies resume; mismatches and nonempty unsigned legacy studies fail before
-queued work runs. Budgets and artifact paths are excluded so otherwise identical
-campaigns can be extended. This contract covers the shared serial Optuna
+studies resume; mismatches fail before initialization or queued work runs.
+Nonempty unsigned studies fail by default. Native-only
+`optimizer.adopt_legacy_study: true` supports one-time adoption after attesting
+that the active configuration matches the original experiment. It rejects
+WAITING work, explicit-proposer metadata, any `fixed_params` enqueue marker,
+and per-study LLM artifacts, and checks directions and feasibility evidence.
+Remove the flag afterward. Unsigned LLM/plugin adoption is unsupported.
+
+Completion targets and attempt caps are totals for the study. Budgets and artifact
+paths are excluded from identity so matching campaigns can be extended. The
+signature covers optimizer/sampler settings; it does not fingerprint dataset,
+model, training, device, or score configuration. Retain the original experiment
+configuration for comparison. This contract covers the shared serial Optuna
 runtime; algorithms requiring different execution semantics are outside it.
 
 Generation prompts combine the legal parameter schema and trial-budget state
@@ -241,9 +277,12 @@ anchors drawn from the full study, and accumulated experimental findings. Scalar
 anchors retain eligible top trials; multi-objective anchors retain a bounded
 Pareto region around a normalized knee or ideal-point compromise. Memory uses
 separate provider calls and preserves unsummarized older trials as pending
-evidence. The three evidence controls are independent. Generation provenance is
-saved under `<outputs.models_dir>/<study>/llm_optimizer/`; persistent memory and
-its summary exchanges live under `memory/` there.
+evidence. The three evidence controls are independent. Generation ledger evidence
+is saved under `<outputs.models_dir>/<study>/llm_optimizer/`; persistent memory and
+its summary exchanges live under `memory/` there. A `returned_to_runner` ledger
+status means a proposal was returned after component validation. Study trial
+attributes establish queue acceptance; actual parameters and state establish
+execution evidence.
 
 Implementation entry points are [`search_space.py`](crest/search_space.py),
 [`component.py`](crest/optimizers/llm/component.py),
@@ -255,7 +294,10 @@ Implementation entry points are [`search_space.py`](crest/search_space.py),
 [optimizer config reference](config/README.md#optimizer) for defaults, provider
 credentials, memory/resume behavior, and context ablations. Use the
 [token-cost utility](../analysis_scripts/llm_token_cost/README.md) to estimate
-separate generation and summary requests from their saved ledger files.
+separate generation and summary requests from their saved ledger files. The
+[optimizer system guide](../optimizer_system_guide.md) includes a complete
+contract walkthrough, [flow diagram](../assets/optimizer_flow.svg), and a minimal
+custom proposer example.
 
 Run the focused offline optimizer tests from the repository root in the CREST
 environment; provider HTTP is mocked and fake responses do not make API calls:
@@ -428,7 +470,7 @@ Typical steps:
    [`crest/builtin_components.py`](crest/builtin_components.py).
 4. Set `model.family` in config to the registered name.
 5. Put family-local knobs under `model.params` and `model.search` when needed.
-   For LLM generation support, implement `trial_search_space(...)` with exact raw
+   For explicit proposer support, implement `trial_search_space(...)` with exact raw
    parameter names, ranges/choices, and optional semantic descriptions. Keep it
    aligned with `sample_hparams(...)`; see the
    [model-family contributor guide](crest/model_families/README.md).

@@ -27,7 +27,9 @@ unsummarized pending evidence when enabled. Scalar anchors retain top eligible
 trials; multi-objective anchors retain a bounded Pareto knee region. Anchors can
 repeat trial numbers already present in other evidence sections; the repeated text
 still contributes to input size. See the [runtime config reference](../../src/config/README.md#optimizer)
-for eligibility, compromise fallback, and ablation settings.
+for eligibility, compromise fallback, and ablation settings. The
+[optimizer system guide](../../optimizer_system_guide.md) explains the proposal
+contract, evidence, budgets, and study extension/resume behavior.
 
 The script preserves the evidence already in supplied requests. It does not select
 anchors, construct memory, or simulate prompt growth from config. It reports
@@ -88,9 +90,13 @@ It excludes fees/taxes and training/HIL costs.
 - `output = expected_calls * assumed_billed_output_tokens_per_call`
 - `cost = (input * input_rate + output * output_rate) / 1,000,000`
 
-Acceptance is the fraction enqueued after a generation round, not hardware
-feasibility. Use attempted-trial budgets, not desired feasible completions. Defaults
-assume every candidate is accepted and no repair calls. The final partial batch is
+Here, acceptance is the assumed fraction of requested candidates validated and
+returned to the runner after a generation round. The projection assumes those
+proposals are then successfully reserved and executed. The `returned_to_runner`
+ledger status establishes return; study trial attributes establish queue acceptance.
+Use attempted-trial budgets rather than desired feasible completions; acceptance
+is independent of hardware feasibility. Defaults assume every candidate is
+accepted and no repair calls. The final partial batch is
 charged as a full batch, so this simplification can overestimate its size. Repair
 responses use the same output-size assumption. Frequent failed batches with random
 fallback should be modeled separately using observed candidates-per-round/call data.
