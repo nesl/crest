@@ -7,9 +7,10 @@ SPDX-License-Identifier: BSD-3-Clause
 
 CREST is a deployment-realistic hardware-in-the-loop (HIL) neural architecture
 search framework for embedded sensing systems on resource-constrained
-microcontrollers. It keeps the optimizer, HIL measurement boundary, logging,
-and replay workflow fixed while users vary workload, model family, target
-backend, runtime schedule, quantization mode, and selection policy.
+microcontrollers. It keeps the candidate evaluation, HIL measurement boundary,
+logging, and replay workflow fixed while users vary workload, model family,
+target backend, runtime schedule, quantization mode, and optimizer or selection
+policy.
 
 CREST currently includes built-in support for OxIOD inertial odometry and
 UrbanSound8K prepared-feature audio classification, with target backends for
@@ -26,6 +27,8 @@ Arduino Nano 33 BLE Sense, Arduino Portenta H7, and STM32 NUCLEO-N657X0-Q.
 - Continuous-inference and cadenced sensing-window runtime modes.
 - Search policies for scalar scoring, multi-objective Pareto exploration,
   pruning, and feasibility constraints.
+- Optuna sampling or an optional LLM candidate generator, with locally validated
+  batches, recent trial evidence, best-candidate anchors, and accumulated memory.
 - Replay utilities for remeasuring selected candidates across targets,
   schedules, and policies.
 - Analysis scripts for reproducing publication-style plots and claim calculations
@@ -301,7 +304,10 @@ The highest-signal fields for a first pass are:
   NAS epochs/trials, full-training epochs, quantization, and the runtime-side
   `energy_aware` / `input_mode` switches.
 - `nas.*`
-  Score and prune configuration.
+  Score, prune, and feasibility configuration.
+- `optimizer.*`
+  Candidate generation: `optuna` by default, or `llm_generator` with provider,
+  batch, context, and memory settings.
 - `dataset`, `task`, `model`
   Modular component selection blocks when you want to override the built-in
   defaults explicitly.
@@ -354,6 +360,37 @@ Useful flags:
 - `--smoke-test N`
 - `--study-name NAME`
 
+### Optional LLM candidate generation
+
+Add this block to a complete study config to select the LLM generator:
+
+```yaml
+optimizer:
+  type: llm_generator
+  llm:
+    provider: openrouter
+    model: openai/gpt-5-mini
+    api_key_env: OPENROUTER_API_KEY
+```
+
+Set the named API-key environment variable on the training host, then run the
+same client with the edited config:
+
+```bash
+python3 src/nas_model_client.py --config /path/to/config.yaml --study-name crest_llm_run
+```
+
+The generator proposes raw trial parameters; CREST validates them and enqueues
+accepted candidates into the same Optuna study and training/HIL evaluation path.
+Defaults include five candidates per call, ten recent trials, up to five eligible
+best-candidate anchors, and experimental memory updated through separate provider
+calls. Anchors retain top scalar trials or a bounded Pareto compromise region.
+The provider can also be `openai_compatible` or `fake` for offline fixtures.
+See [the optimizer config reference](src/config/README.md#optimizer) for provider
+setup, repair/fallback behavior, context controls, memory timing, and resume rules.
+For request-based input-token and cost estimates, see
+[the LLM token-cost utility](analysis_scripts/llm_token_cost/README.md).
+
 ### 4. Outputs
 
 Artifacts are written under the configured `outputs.models_dir` and
@@ -364,6 +401,9 @@ Artifacts are written under the configured `outputs.models_dir` and
 - `models/<study_name>/train_history.json`
 - `models/<study_name>/summary.json`
 - generated TFLite and `.keras` artifacts
+- `models/<study_name>/llm_optimizer/` for LLM generation prompts, responses,
+  accepted/rejected candidates, and fallback events; its `memory/` subdirectory
+  holds summary exchanges, persistent findings, and versioned snapshots
 
 ## Reproducing Case-Study Analyses
 
@@ -384,7 +424,8 @@ or touch hardware unless their package README says so.
   Source architecture, shared abstractions, trial logging, replay, and
   extension paths.
 - [src/config/README.md](src/config/README.md)
-  Full config reference and scoring/pruning semantics.
+  Full config reference, optimizer selection, experimental memory, and
+  scoring/pruning semantics.
 - [src/config/case_study_configs/README.md](src/config/case_study_configs/README.md)
   Case-study config index.
 - [src/crest/datasets/README.md](src/crest/datasets/README.md)

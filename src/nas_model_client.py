@@ -71,7 +71,7 @@ from crest.model import (
 )
 from crest.model_metrics import StaticMemoryEstimate
 from crest.optimizers.llm.enqueue import enqueue_llm_batch
-from crest.optimizers.llm.history import build_recent_trial_history
+from crest.optimizers.llm.history import build_best_trial_anchors, build_recent_trial_history
 from crest.optimizers.llm.ledger import LLMLedger
 from crest.optimizers.llm.memory import ExperimentalMemory, MemoryConfig
 from crest.optimizers.llm.prompt_builder import PromptContext
@@ -2314,6 +2314,11 @@ class NASModelClient:
                             window_size=int(
                                 self._cfg_get(llm_config, "recent_trial_window", 10)
                             ),
+                        ),
+                        anchors=build_best_trial_anchors(
+                            study,
+                            anchor_count=int(self._cfg_get(llm_config, "anchor_count", 5)),
+                            feasibility_enabled=self._feasibility_enabled(),
                         ),
                         semantic_context=semantic_context,
                     )

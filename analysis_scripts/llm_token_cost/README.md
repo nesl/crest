@@ -20,10 +20,19 @@ The ledger conversion does not include transport-level JSON mode. For a Response
 experiment, include the intended `text.format` in a native request file.
 
 A count from only the first empty-history prompt underestimates a run with populated
-history. Include cold and representative full-history prompts (default runtime
-window: ten trials), with the intended semantic context and batch size. The script
-reports sample-minimum, equal-weight-mean, and sample-maximum scenarios; these are
-not confidence bounds or a simulated history of the adaptive search.
+history. Include cold and representative populated prompts with the intended
+semantic context and batch size. Current runtime prompts include up to ten recent
+trials and five best-candidate anchors by default, plus accumulated memory and
+unsummarized pending evidence when enabled. Scalar anchors retain top eligible
+trials; multi-objective anchors retain a bounded Pareto knee region. Anchors can
+repeat trial numbers already present in other evidence sections; the repeated text
+still contributes to input size. See the [runtime config reference](../../src/config/README.md#optimizer)
+for eligibility, compromise fallback, and ablation settings.
+
+The script preserves the evidence already in supplied requests. It does not select
+anchors, construct memory, or simulate prompt growth from config. It reports
+sample-minimum, equal-weight-mean, and sample-maximum scenarios; these are not
+confidence bounds or a simulated history of the adaptive search.
 
 If no ledger exists yet, obtain one from a fake-provider desktop smoke run, or
 prepare a request using CREST's `build_candidate_request` and `LLMLedger` helpers.
@@ -104,7 +113,11 @@ on the estimate. Reports contain prompt text; keep them with the experiment arti
 Count generation requests and summary requests **separately** using `--request` and
 `--count-api`. Summary request files are in `llm_optimizer/memory/requests/` and use
 the same ledger format. Use representative generator prompts that already include
-memory and pending evidence; a first empty-history prompt is not a steady-state cost.
+memory, anchors, and pending evidence; a first empty-history prompt is not a
+steady-state cost. Summary requests contain previous structured findings and new
+terminal trials, so their sizes need their own representative samples. Setting
+`anchor_count: 0`, `recent_trial_window: 0`, `semantic_context: false`, or disabling
+memory changes live prompt text; count newly saved requests for each ablation.
 
 Then combine the two saved count reports without more API calls:
 

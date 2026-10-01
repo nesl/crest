@@ -1032,6 +1032,7 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
         ("max_repair_attempts", 1, 0),
         ("random_seed", 0, 0),
         ("recent_trial_window", 10, 0),
+        ("anchor_count", 5, 0),
     ):
         raw_value = llm.get(field_name, default)
         if isinstance(raw_value, bool) or not isinstance(raw_value, int) or raw_value < minimum:

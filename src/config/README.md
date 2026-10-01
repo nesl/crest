@@ -308,6 +308,7 @@ optimizer:
     prompt_version: v1
     random_seed: 0
     recent_trial_window: 10
+    anchor_count: 5
     semantic_context: true
     memory:
       enabled: true
@@ -322,13 +323,27 @@ optimizer:
 The generator emits raw Optuna parameters such as `dilations_index` and
 `cpu_clock_mhz_index`; decoded fields are not accepted. `quantization_mode`
 and CPU clock search appear only when their corresponding runtime paths are
-active. Provider output is validated locally before `study.enqueue_trial(...)`.
-If all configured attempts fail, CREST logs and enqueues one random candidate
-from the same descriptor.
+active. The required JSON envelope is `{"candidates": [{...}]}`. Local validation
+checks exact keys, types, bounds/choices, batch size, and duplicates against
+COMPLETE trials and earlier accepted candidates in the batch. WAITING trials are
+also checked when their full parameters are present in `trial.params`; ordinary
+enqueued WAITING trials keep fixed parameters separately, so queued duplicates
+can escape this check on resume.
+Any accepted candidates run through the existing CREST objective; a partially
+accepted batch is evaluated without filling its rejected slots. A batch with no
+accepted candidates gets at most `max_repair_attempts` additional calls (default
+1). After all attempts fail, CREST logs and enqueues one random candidate from
+the same descriptor. If 100 fallback samples cannot pass the same validation,
+generation stops explicitly. `random_seed` controls this local fallback
+RNG; it does not seed the remote provider.
 
-Every request, response, prompt context, candidate decision, and fallback is
-stored under `models/<study_name>/llm_optimizer/`. API keys are read from the
-configured environment variable and are never written to this ledger.
+Requests/responses live in `models/<study_name>/llm_optimizer/requests/` as
+numbered `.request.json` / `.response.json` pairs. The same directory's parent
+contains `prompt_contexts.jsonl`, `accepted_candidates.jsonl`,
+`rejected_candidates.jsonl`, and `optimizer_events.jsonl`. Responses retain raw
+provider output, usage when supplied, finish reason, and latency. API keys are
+read from the configured environment variable and are not included in the
+serialized requests or normal responses.
 `provider: openrouter` defaults `api_key_env` to `OPENROUTER_API_KEY`.
 Generic `provider: openai_compatible` endpoints require `api_key_env` to be
 set explicitly so they never inherit an OpenRouter credential name silently.
@@ -337,12 +352,38 @@ The MVP transport is `/chat/completions`. OpenRouter defaults
 `response_format: {type: json_object}`. Generic `openai_compatible` providers
 default it to `false` because that option is not universally supported; set it
 to `true` only when the selected endpoint and model accept JSON response mode.
+The runtime always sends `temperature` and does not expose a provider output-token
+cap. `provider: fake` uses a required non-empty `responses` list to exercise the
+same validation/ledger path without network access; memory summary responses must
+be included when memory is enabled.
+
+Each prompt includes attempted and feasible-trial budgets. Its phase guidance is
+`exploration` below 35% of the total-attempt budget, `specification` below 85%,
+and `finalization` afterward. These are prompt instructions; CREST still evaluates
+candidates with the configured objective and feasibility rules.
+
 `recent_trial_window` bounds compact records read directly from recent Optuna
 trials and included in the next prompt. It defaults to 10; set it to 0 to
 disable that recent window. `batch_size` controls candidates per generation call;
 `recent_trial_window` controls detailed recent records. Both are independent of
 `memory.interval_trials`, which controls when accumulated evidence is summarized.
-Persistent best-candidate anchors are not implemented.
+`anchor_count` bounds persistent best-candidate records in every generation prompt.
+It defaults to 5 and must be a non-negative integer; set it to 0 to disable anchors.
+Anchors are selected directly from the full study, independently of the recent
+window and memory. Only COMPLETE trials with finite objective values and no
+recorded failure, pruning, or infeasibility are eligible; when feasibility rules
+are active, recorded status must be `feasible`. Scalar studies retain the best
+trials according to the study direction. Multi-objective studies retain the feasible nondominated front; if it
+exceeds the limit, normalize each objective's front values to [0, 1], accounting
+for its direction, and keep candidates nearest the knee. For two objectives, the
+knee has the greatest positive distance toward the ideal from the line joining
+the objective extremes. When no positive bend exists (including a flat front),
+an objective has zero span, or there are more than two objectives, the candidate
+closest to the normalized ideal is used as a compromise proxy.
+The knee and its nearest neighbors are selected using normalized Euclidean
+distance. Trial numbers break ties deterministically. Records reuse the recent
+history format, including exact raw parameters and available measurements.
+Repeated trial numbers across prompt sections are the same evidence.
 
 `semantic_context` defaults to `true`. It adds a deterministic, versioned,
 hashed summary of the normalized dataset/input contract, task outputs and
@@ -351,7 +392,8 @@ capacities and deployment choices, and runtime flags. Parameter descriptions,
 units, and typical architectural effects augment the existing search-space
 schema; those effects are priors, and measured CREST/HIL observations take
 precedence. Set `semantic_context: false` for an ablation that retains legal
-parameter names/ranges/choices, recent trial history, and trial-budget state.
+parameter names/ranges/choices, recent trial history, best-candidate anchors,
+and trial-budget state.
 Paths, serial ports, credential values, dataset examples, and unfiltered config
 trees are not included.
 
@@ -359,10 +401,11 @@ trees are not included.
 ### Accumulated experimental memory
 
 For `llm_generator`, memory is enabled by default; set `optimizer.llm.memory.enabled:
-false` to retain recent-history-only behavior. The same configured provider/model
-makes separate JSON summarization calls. This adds API usage once the start
-threshold is reached. Fake-provider fixtures must interleave candidate and summary
-responses in the same order; the two response schemas are different.
+false` to disable accumulated memory while retaining configured recent trials
+and anchors. The same configured provider/model makes separate JSON summarization
+calls. This adds API usage once the start threshold is reached. Fake-provider
+fixtures must interleave candidate and summary responses in the same order; the
+two response schemas are different.
 
 The default first summary is created once ten **terminal trials** (COMPLETE, FAIL,
 or PRUNED) exist, before the next candidate-generation call. Later summaries are

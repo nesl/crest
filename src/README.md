@@ -24,6 +24,7 @@ Related docs:
 | Goal | Start Here | Hardware Requirement |
 |------|------------|----------------------|
 | Run or modify NAS/training orchestration | [`nas_model_client.py`](nas_model_client.py) and [`crest/runtime_bootstrap.py`](crest/runtime_bootstrap.py) | No hardware required when `device.hil: false` |
+| Modify LLM candidate generation | [`crest/optimizers/llm/`](crest/optimizers/llm) and [optimizer config](config/README.md#optimizer) | No hardware required for fake-provider tests |
 | Run or modify HIL server behavior | [`hil_server.py`](hil_server.py) and [`crest/hil_runtime.py`](crest/hil_runtime.py) | Development board required for execution; HIL harness required for energy measurement |
 | Add a dataset | [`crest/datasets/README.md`](crest/datasets/README.md) | No hardware required for adapter development |
 | Add a task | [`crest/tasks/README.md`](crest/tasks/README.md) | No hardware required for adapter development |
@@ -78,6 +79,10 @@ points above.
   Hardware backends and backend registry/factory logic. See
   [`crest/microcontrollers/README.md`](crest/microcontrollers/README.md)
   for bring-up details.
+- [`crest/optimizers/llm/`](crest/optimizers/llm)
+  Declarative search spaces, provider transport, prompt construction, trial
+  evidence and anchors, persistent experimental memory, validation, enqueue,
+  and provenance ledger helpers.
 - [`crest/model.py`](crest/model.py)
   Shared runtime helpers for config loading, score evaluation, and generic
   metric normalization.
@@ -109,8 +114,10 @@ typed payloads shared across orchestration code.
   Defines the target/output contract, task-owned fitting behavior, evaluation
   behavior, and the metric contract that shared NAS/scoring code consumes.
 - `ModelFamilyABC` in [`crest/interfaces.py`](crest/interfaces.py)
-  Samples hyperparameters, builds models, validates family-local config, and
-  materializes the export variant passed into HIL.
+  Declares and samples raw trial hyperparameters, builds models, validates
+  family-local config, and materializes the export variant passed into HIL.
+  `trial_search_space(...)` exposes the legal raw parameter surface to the LLM
+  generator; the built-in families use it for Optuna sampling as well.
 - Shared typed payloads in [`crest/pipeline_types.py`](crest/pipeline_types.py)
   carry the normalized information exchanged between those layers:
   `DatasetBundle`, `TargetSpec`, `ModelBuildContext`, `FitPlan`,
@@ -136,8 +143,9 @@ At a high level, the source tree is wired like this:
    `DatasetBundle`.
 5. The selected task adapter builds the target contract and training/evaluation
    behavior.
-6. The selected model family samples hyperparameters, builds models, and
-   materializes export variants.
+6. The NAS client uses the selected optimizer to sample or enqueue raw trial
+   parameters. The selected model family resolves those parameters, builds
+   models, and materializes export variants.
 7. When hardware metrics are needed, the HIL path builds a normalized request
    through [`crest/hil_runtime.py`](crest/hil_runtime.py), then the
    selected microcontroller backend stages, compiles, uploads, and measures
@@ -181,6 +189,45 @@ The main config knobs are:
 `data` fallback is not part of the supported config contract anymore.
 
 See [`config/README.md`](config/README.md) for the current shipped config shape.
+
+## Candidate Generation
+
+`optimizer.type` defaults to `optuna`. With `llm_generator`,
+[`nas_model_client.py`](nas_model_client.py) builds the active raw search-space
+schema from the model family, adding quantization and CPU-clock parameters only
+when their runtime paths are active. Provider proposals are validated before
+`study.enqueue_trial(...)`; accepted batches run through the existing objective,
+feasibility, pruning, training, HIL, and logging path. Calls that yield no valid
+candidates receive bounded repair attempts, followed by a locally sampled random
+fallback if those attempts are exhausted.
+
+Generation prompts combine the legal parameter schema and trial-budget state
+with semantic task/model/deployment context, a recent trial window, best-candidate
+anchors drawn from the full study, and accumulated experimental findings. Scalar
+anchors retain eligible top trials; multi-objective anchors retain a bounded
+Pareto region around a normalized knee or ideal-point compromise. Memory uses
+separate provider calls and preserves unsummarized older trials as pending
+evidence. The three evidence controls are independent. Generation provenance is
+saved under `<outputs.models_dir>/<study>/llm_optimizer/`; persistent memory and
+its summary exchanges live under `memory/` there.
+
+Implementation entry points are [`search_space.py`](crest/optimizers/llm/search_space.py),
+[`prompt_builder.py`](crest/optimizers/llm/prompt_builder.py),
+[`history.py`](crest/optimizers/llm/history.py),
+[`memory.py`](crest/optimizers/llm/memory.py),
+[`enqueue.py`](crest/optimizers/llm/enqueue.py), and
+[`provider.py`](crest/optimizers/llm/provider.py). Use the
+[optimizer config reference](config/README.md#optimizer) for defaults, provider
+credentials, memory/resume behavior, and context ablations. Use the
+[token-cost utility](../analysis_scripts/llm_token_cost/README.md) to estimate
+separate generation and summary requests from their saved ledger files.
+
+Run the focused offline optimizer tests from the repository root in the CREST
+environment; provider HTTP is mocked and fake responses do not make API calls:
+
+```bash
+python -m unittest discover -s test -p 'test_llm_*.py'
+```
 
 ## Registration Model
 
@@ -343,6 +390,10 @@ Typical steps:
    [`crest/builtin_components.py`](crest/builtin_components.py).
 4. Set `model.family` in config to the registered name.
 5. Put family-local knobs under `model.params` and `model.search` when needed.
+   For LLM generation support, implement `trial_search_space(...)` with exact raw
+   parameter names, ranges/choices, and optional semantic descriptions. Keep it
+   aligned with `sample_hparams(...)`; see the
+   [model-family contributor guide](crest/model_families/README.md).
 6. Verify export/materialization semantics if the family needs custom model
    loading, custom objects, or variant handling.
 

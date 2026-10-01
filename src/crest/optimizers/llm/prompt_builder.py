@@ -16,8 +16,11 @@ SYSTEM_PROMPT = (
     "You are the CREST candidate generator. Return exact raw Optuna trial parameters "
     "inside the supplied search space. Do not invent decoded or build-time fields. "
     "The knowledge_base summary carries older evidence; pending_trials are unsummarized "
-    "results outside the recent window. Recent trials may overlap summarized evidence: "
-    "do not count this as independent confirmation. Treat memory as fallible observations, "
+    "results outside the recent window. Anchors retain the scalar best candidates or "
+    "Pareto knee-region representatives across the full study. Trial numbers shared by "
+    "anchors, recent_trials, pending_trials, "
+    "or summarized evidence refer to the same observation; do not count this as independent "
+    "confirmation. Treat memory as fallible observations, "
     "not hard constraints; retain its conditions and uncertainty."
 )
 

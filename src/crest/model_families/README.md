@@ -89,6 +89,8 @@ concrete starting point.
 3. Implement the required methods:
    - `sample_hparams(trial, ctx, config)`
    - `build_model(hparams, ctx, config)`
+   - For LLM candidate generation, also implement `trial_search_space(ctx, config)`
+     with the exact raw parameters sampled by `sample_hparams(...)`.
 4. Keep family-specific logic inside the family:
    - search-space sampling;
    - input-shape interpretation from `ModelBuildContext`;
@@ -110,6 +112,18 @@ concrete starting point.
   families override it with the stable registry key.
 - `sample_hparams(trial, ctx, config)`
   Required. Produces normalized model-family hyperparameters for one trial.
+- `trial_search_space(ctx, config)`
+  Required for `optimizer.type: llm_generator`; optional for families used only
+  with Optuna. Returns ordered `SearchParam` declarations from
+  [`../optimizers/llm/search_space.py`](../optimizers/llm/search_space.py), using
+  raw persisted trial names, inclusive numeric bounds, or categorical choices.
+  Optional descriptions, units, and typical effects provide prompt semantics.
+  The default hook raises `NotImplementedError`. Both shipped families reuse
+  these declarations in `sample_hparams(...)` through `SearchParam.suggest(...)`
+  so legal ranges and choices stay consistent. Keep decoding inside the family
+  (for example, `dilations_index` becomes a dilation schedule); the runner adds
+  active quantization and CPU-clock parameters. See the
+  [optimizer config reference](../../config/README.md#optimizer).
 - `build_model(hparams, ctx, config)`
   Required. Builds the uncompiled Keras model from normalized hyperparameters
   and `ModelBuildContext`.
@@ -170,6 +184,8 @@ The shipped pattern is:
 - Keep architecture/search logic in the model family.
 - Keep board/toolchain logic in the microcontroller backend.
 - Validate family-local config and hyperparameters before export.
+- For LLM support, verify that descriptor names/types/choices match persisted
+  `sample_hparams(...)` parameters, including any narrowed `model.search` options.
 - Keep export/materialization decisions explicit; do not hide backend-specific
   behavior in the family.
 - Add or update NumPy-style docstrings for changed functions, classes,

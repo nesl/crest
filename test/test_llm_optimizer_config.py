@@ -45,6 +45,7 @@ class OptimizerConfigTests(unittest.TestCase):
         self.assertEqual(optimizer.llm.prompt_version, "v1")
         self.assertEqual(optimizer.llm.random_seed, 0)
         self.assertEqual(optimizer.llm.recent_trial_window, 10)
+        self.assertEqual(optimizer.llm.anchor_count, 5)
         self.assertTrue(optimizer.llm.semantic_context)
 
     def test_invalid_optimizer_configs_are_rejected(self) -> None:
@@ -87,6 +88,20 @@ class OptimizerConfigTests(unittest.TestCase):
             with self.subTest(config=config):
                 with self.assertRaises(ValueError):
                     _normalize_optimizer_config(config)
+
+    def test_anchor_count_accepts_disable_and_rejects_nonnegative_integer_violations(self) -> None:
+        """Best-model evidence can be omitted or bounded explicitly."""
+        for count in [0, 1, 9]:
+            with self.subTest(count=count):
+                optimizer = _normalize_optimizer_config(Dict(optimizer=Dict(
+                    type="llm_generator", llm=Dict(provider="fake", responses=[{}], anchor_count=count)
+                )))
+                self.assertEqual(optimizer.llm.anchor_count, count)
+        for count in [-1, True, False, 1.0, "5", None]:
+            with self.subTest(count=count), self.assertRaisesRegex(ValueError, "anchor_count"):
+                _normalize_optimizer_config(Dict(optimizer=Dict(
+                    type="llm_generator", llm=Dict(provider="fake", responses=[{}], anchor_count=count)
+                )))
 
     def test_semantic_context_can_be_disabled_for_ablation(self) -> None:
         """The semantic ablation flag is retained as a validated boolean."""

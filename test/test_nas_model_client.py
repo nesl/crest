@@ -2200,6 +2200,7 @@ class RunNASTests(unittest.TestCase):
             """
             self.states_queue = list(states)
             self.trials = []
+            self.directions = [optuna.study.StudyDirection.MAXIMIZE]
             self.optimize_calls = []
             self.best_trial = SimpleNamespace(value=None, params={})
             self.best_value = None
@@ -2374,6 +2375,64 @@ class RunNASTests(unittest.TestCase):
             self.assertEqual(evidence["task_metrics"], {"rmse_total": 0.3})
             self.assertEqual(evidence["state"], "complete")
 
+    def test_run_nas_keeps_best_anchor_outside_recent_window_and_resumes(self) -> None:
+        """A measured winner remains in provider prompts and the saved ledger."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = _build_test_client(base_dir=Path(tmpdir))
+            client.config.device.hil = False
+            client.config.device.compile_when_hil_disabled = "false"
+            client.config.training.train = False
+            client.config.training.nas_trials = 3
+            client.config.training.max_total_trials = 3
+            client.config.nas.score = Dict(type="scoring-function", metrics=Dict(),
+                params=Dict(terms=[Dict(type="weighted", metric="flops", weight=-1.0)]))
+            client.config.optimizer = Dict(type="llm_generator", llm=Dict(
+                batch_size=1, recent_trial_window=1, anchor_count=1, max_repair_attempts=0,
+                memory=Dict(enabled=False)))
+            client.model_family.trial_search_space = MagicMock(
+                return_value=[SearchParam("width", "int", low=2, high=8)])
+            provider = FakeProvider([{"candidates": [{"width": width}]} for width in [2, 5, 6]])
+            client._llm_provider_override = provider
+
+            def objective(trial):
+                width = trial.suggest_int("width", 2, 8)
+                # These are the normal persisted attrs when feasibility rules are disabled.
+                trial.set_user_attr("feasibility_status", "not_evaluated")
+                trial.set_user_attr("feasible", True)
+                trial.set_user_attr("error_code", HIL_MASTER_SUCCESS)
+                trial.set_user_attr("latency_ms", float(width))
+                return -float(width)
+
+            client.objective = objective
+            storage = f"sqlite:///{Path(tmpdir) / 'anchors.db'}"
+            client.run_nas(study_name="anchor-integration", storage=storage)
+            self.assertEqual(json.loads(provider.requests[0].user_prompt)["anchors"], [])
+            third = json.loads(provider.requests[2].user_prompt)
+            self.assertEqual([r["number"] for r in third["recent_trials"]], [1])
+            self.assertEqual([r["number"] for r in third["anchors"]], [0])
+            self.assertEqual(third["anchors"][0]["params"], {"width": 2})
+            self.assertEqual(third["anchors"][0]["latency_ms"], 2.0)
+            ledger = Path(client.config.outputs.models_dir) / "anchor-integration/llm_optimizer"
+            saved = json.loads((ledger / "requests/000003.request.json").read_text())
+            self.assertEqual(json.loads(saved["messages"][1]["content"])["anchors"], third["anchors"])
+
+            client.config.training.nas_trials = 4
+            client.config.training.max_total_trials = 4
+            resumed = FakeProvider([{"candidates": [{"width": 7}]}])
+            client._llm_provider_override = resumed
+            client.run_nas(study_name="anchor-integration", storage=storage)
+            payload = json.loads(resumed.requests[0].user_prompt)
+            self.assertEqual([r["number"] for r in payload["recent_trials"]], [2])
+            self.assertEqual([r["number"] for r in payload["anchors"]], [0])
+
+            client.config.optimizer.llm.anchor_count = 0
+            client.config.training.nas_trials = 5
+            client.config.training.max_total_trials = 5
+            disabled = FakeProvider([{"candidates": [{"width": 8}]}])
+            client._llm_provider_override = disabled
+            client.run_nas(study_name="anchor-integration", storage=storage)
+            self.assertEqual(json.loads(disabled.requests[0].user_prompt)["anchors"], [])
+
     def test_run_nas_interleaves_memory_updates_and_resumes(self) -> None:
         """Separate summary calls enter the next generator prompt and survive resume."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2414,6 +2473,7 @@ class RunNASTests(unittest.TestCase):
             self.assertIn("No accuracy conclusion", third["knowledge_base"]["summary"])
             self.assertEqual(len(third["recent_trials"]), 1)
             self.assertEqual(third["knowledge_base"]["covered_trial_count"], 2)
+            self.assertIn(0, [r["number"] for r in third["anchors"]])
             client.config.training.nas_trials = 6
             client.config.training.max_total_trials = 6
             resumed = FakeProvider([{"candidates": [{"width": 7}]}])
@@ -2421,6 +2481,7 @@ class RunNASTests(unittest.TestCase):
             client.run_nas(study_name="memory-integration", storage=storage)
             self.assertEqual(len(resumed.requests), 1)
             self.assertEqual(json.loads(resumed.requests[0].user_prompt)["knowledge_base"]["version"], 2)
+            self.assertIn(0, [r["number"] for r in json.loads(resumed.requests[0].user_prompt)["anchors"]])
 
     def test_run_nas_sets_multiobjective_metric_names(self) -> None:
         """Multi-objective studies should expose configured objective names."""

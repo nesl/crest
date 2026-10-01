@@ -1,6 +1,6 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Bounded compact history extracted directly from Optuna trials."""
+"""Compact recent history and best candidates extracted from Optuna trials."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+
+from ...errors import HIL_MASTER_SUCCESS
 
 
 MEASUREMENT_FIELDS = (
@@ -62,6 +64,79 @@ def build_terminal_trial_history(study: Any) -> tuple[dict[str, Any], ...]:
                      if str(getattr(getattr(t, "state", None), "name", "")).upper()
                      in {"COMPLETE", "FAIL", "PRUNED"}), key=lambda t: t.number)
     return _trial_records(study, trials)
+
+
+def build_best_trial_anchors(
+    study: Any,
+    *,
+    anchor_count: int,
+    feasibility_enabled: bool = False,
+) -> tuple[dict[str, Any], ...]:
+    """Keep top scalar trials or a bounded, representative feasible Pareto front.
+
+    Oversized fronts retain the region nearest the normalized two-objective knee.
+    Flat/degenerate fronts and higher-dimensional fronts use the closest point
+    to the normalized ideal as a compromise. Trial numbers break ties.
+    """
+    if isinstance(anchor_count, bool) or not isinstance(anchor_count, int) or anchor_count < 0:
+        raise ValueError("anchor_count must be a non-negative integer.")
+    if anchor_count == 0:
+        return ()
+    directions = [str(getattr(d, "name", d)).strip().lower() for d in study.directions]
+    candidates: list[tuple[Any, tuple[float, ...]]] = []
+    for trial in study.trials:
+        if str(getattr(getattr(trial, "state", None), "name", "")).upper() != "COMPLETE":
+            continue
+        attrs = trial.user_attrs
+        status = str(attrs.get("feasibility_status", "")).strip().lower()
+        if (attrs.get("pruned") or attrs.get("feasible") is False
+                or status == "infeasible"
+                or (feasibility_enabled and status != "feasible")):
+            continue
+        # Multi-objective execution failures can be COMPLETE with finite penalties.
+        if any(attrs.get(key) not in (None, HIL_MASTER_SUCCESS) for key in ("error_code", "hil_error_code")):
+            continue
+        if attrs.get("error_code_label") not in (None, "", "HIL_MASTER_SUCCESS"):
+            continue
+        values = trial.values
+        if values is None or len(values) != len(directions) or not all(
+            value is not None and math.isfinite(value) for value in values
+        ):
+            continue
+        costs = tuple(value if direction == "minimize" else -value
+                      for value, direction in zip(values, directions))
+        candidates.append((trial, costs))
+    candidates.sort(key=lambda item: item[0].number)
+    if len(directions) == 1:
+        candidates.sort(key=lambda item: (item[1], item[0].number))
+        return _trial_records(study, [trial for trial, _ in candidates[:anchor_count]])
+
+    front = [item for item in candidates if not any(
+        all(left <= right for left, right in zip(other[1], item[1]))
+        and any(left < right for left, right in zip(other[1], item[1]))
+        for other in candidates
+    )]
+    if len(front) <= anchor_count:
+        return _trial_records(study, [trial for trial, _ in front])
+
+    low = [min(item[1][j] for item in front) for j in range(len(directions))]
+    spans = [max(item[1][j] for item in front) - low[j] for j in range(len(directions))]
+    normalized = [tuple((cost - lo) / span if span else 0.0
+                        for cost, lo, span in zip(item[1], low, spans)) for item in front]
+    knee = min(range(len(front)), key=lambda i: (
+        sum(cost ** 2 for cost in normalized[i]), front[i][0].number,
+    ))
+    if len(directions) == 2 and all(spans):
+        # The normalized extreme chord joins (0, 1) to (1, 0). Its signed
+        # distance toward the ideal is proportional to 1 - x - y.
+        bend = [1.0 - sum(point) for point in normalized]
+        if max(bend) > 1e-12:
+            knee = max(range(len(front)), key=lambda i: (bend[i], -front[i][0].number))
+    nearest = sorted(range(len(front)), key=lambda i: (
+        sum((a - b) ** 2 for a, b in zip(normalized[i], normalized[knee])),
+        front[i][0].number,
+    ))
+    return _trial_records(study, [front[i][0] for i in nearest[:anchor_count]])
 
 
 def _trial_records(study: Any, trials: list[Any]) -> tuple[dict[str, Any], ...]:

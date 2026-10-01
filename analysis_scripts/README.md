@@ -25,6 +25,13 @@ workload and uses the CREST HIL harness.
   - **Hardware requirement: no hardware required.** Case Study 3 post-hoc
     score-sensitivity analysis over audio NAS logs.
 
+- [`llm_token_cost/`](llm_token_cost/README.md)
+  - **Hardware requirement: no hardware required.** Standard-library utility
+    that prepares saved LLM generation or memory-summary prompts for OpenAI input
+    counting, then projects token/cost scenarios. API counting is opt-in; saved
+    counts can be reused locally. See its README for representation and scheduling
+    assumptions.
+
 - `micro_workload_energy_probe/`
   - **Hardware requirement: development board and HIL harness required.**
     Synthetic phase-energy probe for CREST-compatible MCU targets, reusing the
