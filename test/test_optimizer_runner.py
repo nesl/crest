@@ -195,7 +195,12 @@ def test_target_already_satisfied_leaves_waiting_untouched(client,tmp_path):
 def test_native_descriptor_optional_and_running_still_consumes_cap(client,tmp_path):
     client.config.optimizer=Dict(type="optuna")
     client.model_family.trial_search_space=MagicMock(side_effect=NotImplementedError)
-    study=execute(client,tmp_path)
+    with patch("nas_model_client.build_search_space_descriptor", side_effect=ValueError("irrelevant descriptor")) as descriptor, \
+         patch("nas_model_client.build_semantic_context", side_effect=ValueError("irrelevant semantics")) as semantics:
+        study=execute(client,tmp_path)
+    descriptor.assert_not_called()
+    semantics.assert_not_called()
+    client.model_family.trial_search_space.assert_not_called()
     assert len(study.trials)==2
     assert all(PROPOSAL_ATTR not in t.user_attrs for t in study.trials)
     storage=f"sqlite:///{tmp_path / 'orphan.db'}"
@@ -276,7 +281,6 @@ def test_fixed_candidate_shared_objective_matches_prior_enqueued_execution(tmp_p
 
 
 def test_invalid_declared_descriptor_propagates_before_objective(client,tmp_path):
-    client.config.optimizer=Dict(type="optuna")
     client.model_family.trial_search_space=MagicMock(side_effect=ValueError("invalid descriptor"))
     client.objective=MagicMock()
     with pytest.raises(ValueError,match="invalid descriptor"):

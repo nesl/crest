@@ -212,6 +212,15 @@ run-activated quantization and CPU-clock fields. Shared legality validation in
 enqueueing any candidate; it allows deliberate repeated experiments. The old
 LLM search-space import remains a compatibility re-export.
 
+Proposal setup uses `requires_search_space` and
+`requires_semantic_context(config)` on `OptimizerABC`; both default to true for
+explicit plugins. Native Optuna opts out of both, so its setup never calls
+descriptor or semantic-context hooks. LLM generation requires a descriptor and
+requests semantic context only when its normalized `llm.semantic_context` flag
+is enabled. An inherited optional model-family descriptor hook is treated as
+absent; errors inside an overridden hook propagate before provider setup or
+evaluation. The resulting context contains only plain data.
+
 LLM generation, repair, random fallback, anchors, memory, and provider clients
 belong to the LLM component. It returns accepted proposals without enqueueing
 or evaluating. A smaller accepted batch remains smaller. Waiting reservations

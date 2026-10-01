@@ -2,9 +2,15 @@
 
 Verified against reviewed baseline `0f870764b6cf83d0024bc98139276a993d141871`, on implementation branch `codex/crest-proposal-contract`, using `/opt/anaconda3/envs/nesl-tinyodomex/bin/python` (Optuna 4.6.0, Pydantic 2.13.4). No paid provider API or physical hardware was used.
 
+
+The latest Claude-review follow-up passed **780 tests and 203 subtests**, with
+**1 expected skip**, using plain pytest without `PYTHONPATH`. All three
+independent follow-up reviewers reported no remaining actionable findings.
+Detailed original-refactor and follow-up evidence is retained below.
+
 ## Executed checks
 
-The final complete default suite plus token-estimator tests passed **737 tests and 203 subtests**, with **1 skip**, in 28.90 seconds. The skip is the existing STM32 template ownership check because the STM32CubeN6 checkout is absent under `tools/stm32`. The 88 warnings are existing TensorFlow/Optuna experimental or deprecation warnings and repeated Optuna warnings from the new real-study cases. Hardware integration suites remain opt-in through the existing `test/conftest.py` rule; the three unrelated analysis-script test modules also remain opt-in. The requested token estimator is included explicitly.
+The original refactor's final complete default suite plus token-estimator tests passed **737 tests and 203 subtests**, with **1 skip**, in 28.90 seconds. The skip is the existing STM32 template ownership check because the STM32CubeN6 checkout is absent under `tools/stm32`. The 88 warnings are existing TensorFlow/Optuna experimental or deprecation warnings and repeated Optuna warnings from the new real-study cases. Hardware integration suites remain opt-in through the existing `test/conftest.py` rule; the three unrelated analysis-script test modules also remain opt-in. The requested token estimator is included explicitly.
 
 Command from the implementation worktree:
 
@@ -94,4 +100,136 @@ contract correction, with no remaining actionable findings.
 
 ## Deliberate scope and remaining limits
 
-Smoke now follows the same exact-attempt behavior for all components; the old LLM-only completion-target delegation is normalized as documented in the plan appendix. Clean provider endpoints are required to keep routing identity explicit. Study signing rejects nonempty unsigned legacy studies rather than claiming historical provenance. Waiting reservations are drained deterministically, but partial enqueue remains visible and no exactly-once hardware, concurrent-writer or stale-RUNNING recovery guarantee is added. Physical measurement variability and actual paid-provider integration are outside this orchestration refactor's validation.
+Smoke now follows the same exact-attempt behavior for all components; the old LLM-only completion-target delegation is normalized as documented in the plan appendix. Clean provider endpoints are required to keep routing identity explicit. Unsigned studies reject by default; the follow-up permits explicit native-only legacy adoption under the checks described below. Historical provenance remains the user's attestation. Waiting reservations are drained deterministically, but partial enqueue remains visible and no exactly-once hardware, concurrent-writer or stale-RUNNING recovery guarantee is added. Physical measurement variability and actual paid-provider integration are outside this orchestration refactor's validation.
+
+
+## Claude review follow-up validation
+
+The follow-up retains the shared objective and proposal lifecycle while adding
+explicit native-only legacy adoption, public sampler names with compatibility
+for the two exact earlier private paths, and context capability gates. Native
+Optuna setup now skips descriptor and semantic-context construction entirely.
+Disabled LLM semantic context skips the builder and retains the exact disabled
+version/hash representation. Genuine errors inside an overridden descriptor
+hook propagate rather than being mistaken for an absent hook.
+
+After the final source/test handoffs, the complete default suite plus token
+estimator passed **780 tests and 203 subtests**, with **1 skip**, without
+`PYTHONPATH`. The existing STM32-template skip and opt-in collection rules are
+unchanged. No paid provider or physical hardware ran.
+
+```sh
+env -u PYTHONPATH PYTHONDONTWRITEBYTECODE=1 MPLCONFIGDIR=/private/tmp/crest-proposal-mpl /opt/anaconda3/envs/nesl-tinyodomex/bin/python -m pytest test analysis_scripts/llm_token_cost/test_estimate.py -q -p no:cacheprovider
+```
+
+Saved output: `outputs/optimizer_contract_validation/followup_complete_tests.log`.
+The scientific AST/file preservation checker passed again; output is in
+`followup_unchanged_bodies.log`. `git diff --check` passed. An earlier full run
+collected a resume test before its fixture correction; the only failure was a
+live `Study.trials` snapshot assertion, corrected before this final run.
+
+`pyproject.toml` now sets pytest's import paths to `src` and
+`analysis_scripts/llm_token_cost`, preserving all existing collection rules.
+Before that change, collection without `PYTHONPATH` imported `crest` from the
+unrelated editable installation at
+`/Users/jzales/Documents/Projects/nesl-tinyodomex/src/crest/builtin_components.py`
+and failed. `followup_import_failure_before.log` preserves that reproduction.
+A separate pytest subprocess asserts the actual imported `crest.__file__` and
+`estimate.__file__` both belong to this checkout, in
+`followup_import_provenance.log`; its runnable check is
+`pytest_import_provenance.py`. The corrected plain command also passed the
+contract and estimator selection: **20 tests and 14 subtests**.
+
+The new `test_optimizer_resume.py` cases verify SQLite-backed legacy adoption,
+repeated extension with every old trial unchanged, default rejection, WAITING
+and explicit-proposer rejection, feasibility-policy compatibility, ordered
+objective-direction compatibility, retained orphan RUNNING accounting, signed
+native and LLM budget-only extension, exact old sampler-name aliases with
+strict options, public names surviving internal module relocation, and strict
+boolean configuration. Adoption does not bypass signed identity mismatches.
+The new `test_optimizer_context.py` cases verify native descriptor/semantic
+skips, missing-hook errors for explicit proposers, propagation of internal
+`NotImplementedError`, disabled LLM semantics, exact enabled context and hashes,
+and third-proposer context support.
+
+### Historical campaign copies
+
+`legacy_copy_extension_probe.py` opens each source database using SQLite
+`mode=ro`, backs it up into a temporary directory, and mutates only that copy.
+This is a synthetic adoption/extension probe; it does not extend an actual
+hardware campaign or report new measured results. The original saved score
+and sampler configuration are retained: two minimized objectives
+`rmse_total`/`energy_mj_per_inference`, NSGA-II population 50, seed 42. Each copy
+rejects unsigned resume by default, adopts with explicit native opt-in, adds
+one synthetic trial under a one-attempt budget extension, then resumes its
+signed study with the opt-in removed and adds one more synthetic trial.
+Native descriptor and semantic builders are patched to fail during adoption,
+confirming neither is used. The probe passed again after the final ordered
+objective-direction guard.
+
+| Historical study | Original trials | Original trial-evidence SHA-256, identical before/after |
+| --- | --- | --- |
+| `OxIOD_STM32_B2B_case1_5_t1` | 250 COMPLETE | `5f1f4a658c86b0b3ac913514bd5923d2c0d93b30235623dd09204abdc89bd036` |
+| `OxIOD_PORTENTA_M7_B2B_case1_3_t1` | 147 COMPLETE, 1 FAIL | `1a8691cacd170f20bcd1143b2f060bb9fab1897401eb85fbf25f5e0c19166329` |
+
+All original trial parameters, values, states, attributes, intermediate values,
+distributions and timestamps have identical hashes after both copied-study
+extensions. The STM32 source database SHA-256 remained
+`786789fb9360521ed7bd8ce42d5e160e6f5d7f2dacb5da14d40fe3c0947841c0`;
+the Portenta source remained
+`686ef478628a2e09a1e07f3281c4d13b43a74f34a714ae3ee4303f61ce8ff9c3`.
+The exact copied-study results and source hashes are saved in
+`legacy_copy_extension_probe.log`. The source snapshots are under the main
+workspace's `outputs/search_budget_2026-09-24/{stm32_cs1,portenta_m7}/source/`.
+
+The adoption flag is an explicit assertion that the active experiment matches
+the original. The tests establish guarded append/resume behavior and preserved
+stored evidence; they cannot automatically establish historical provenance or
+physical measurement equivalence.
+
+
+### Independent follow-up reviews
+
+All three follow-up reviews completed with no actionable findings. Their
+focused selections overlap the complete suite and each other; the counts
+below are independent review evidence and must not be added to the **780**
+complete-suite total.
+
+The contract reviewer passed **54 tests and 9 subtests** across resume,
+context and contract coverage, then **39 runner/proposal tests**. It verified
+local module import provenance without `PYTHONPATH` and found no remaining
+contract or plugin-compatibility issues.
+
+The lifecycle reviewer passed **77 checked-in tests**, plus **4 separate
+real SQLite cases** preserved in
+`outputs/optimizer_contract_validation/followup_lifecycle_review_probe.py`.
+The extra cases verify queued work at the reservation cap under an old signed
+TPE identity with the adoption flag both false and true, preserving the old
+signature and executing exactly the oldest group; a nonempty old signed
+NSGA-II study extended once with prior FrozenTrials unchanged; and rejection
+of mismatched ordered directions before feasibility/adoption attributes or
+any evaluation. No lifecycle defects remained.
+
+The scientific-semantics reviewer passed **87 focused resume/context/runner/
+history/semantic tests** and **54 objective/finalization/smoke tests with
+5 subtests**, without `PYTHONPATH`. It independently reran both historical
+copied-study probes, confirmed unchanged source and trial-evidence hashes,
+and passed the scientific AST verifier and `git diff --check`.
+An additional independent real-objective/CSV/constrained-TPE adoption probe
+preserved the old infeasible and feasible FrozenTrials. A new fatal candidate
+was PRUNED before fit with positive feasibility sentinels; its successor fit
+once and persisted negative constraints. Both sampler completion callbacks
+fired, the following sample saw the pruned feedback, CSV evidence represented
+all four evaluations, and constrained best-trial selection retained a feasible
+candidate. These checks used test fixtures rather than physical hardware.
+
+The accepted dispositions remain in `claude_review_disposition.md`: guarded
+native-only legacy adoption, component context capabilities, stable public
+sampler identities with exact historical aliases, corrected pytest imports,
+truthful returned-proposal ledger names, clean provider endpoints, and
+unchanged actual-versus-intended WAITING evidence semantics. Unsigned LLM or
+plugin adoption is unsupported; native adoption remains an explicit user
+attestation rather than automatic historical-provenance certification.
+Documentation-only finalization required no further suite execution or
+production-code changes. The follow-up is committed locally; nothing was
+pushed, merged or published.

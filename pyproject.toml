@@ -35,3 +35,7 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+# Prefer this checkout over unrelated editable installs in the active environment.
+pythonpath = ["src", "analysis_scripts/llm_token_cost"]

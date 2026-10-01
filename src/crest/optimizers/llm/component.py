@@ -39,6 +39,9 @@ class LLMGeneratorOptimizer(OptimizerABC):
     def validate_config(self, config) -> None:
         normalize_llm_config(config)
 
+    def requires_semantic_context(self, config) -> bool:
+        return normalize_llm_config(config)["llm"]["semantic_context"]
+
     def identity_config(self, config) -> dict:
         llm = normalize_llm_config(config)["llm"]
         identity = {key: _plain(llm[key]) for key in (

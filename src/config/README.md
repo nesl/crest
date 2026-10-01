@@ -338,8 +338,46 @@ namespaced trial user attributes and executes the same objective for all modes.
 
 Study resume requires the same registered optimizer, proposal identity, and
 native sampler configuration. Completion/attempt budgets and output paths can
-change without changing identity. A nonempty unsigned legacy study must use a
-new study name for this contract; no automatic adoption is performed.
+change without changing identity. `training.nas_trials` is the **total completed
+trial target** (feasible completions when feasibility is enabled), and
+`training.max_total_trials` is the **total attempt cap**, including failed,
+pruned, infeasible and RUNNING trials. To add evaluations, keep the same study
+name, database and original experiment configuration, then increase the total
+target and cap as needed. These are not counts of additional trials.
+
+A signed native or LLM study resumes with unchanged optimizer identity when these
+budgets increase. Sampler signatures now use stable public TPE/NSGA-II names;
+the exact old private paths emitted by the first contract implementation remain
+compatible when all other identity fields match.
+
+Unsigned native studies require an explicit one-time opt-in:
+
+```yaml
+optimizer:
+  type: optuna
+  adopt_legacy_study: true
+training:
+  nas_trials: 300       # Example: raise a completed target of 250 to 300.
+  max_total_trials: 350 # Total attempts, with room for failures/pruning.
+```
+
+Set the flag only after checking that the active workload, model, device,
+schedule, score/feasibility policy and sampler settings match the original
+native experiment. This is your attestation of the original configuration;
+CREST cannot prove an unsigned history was native or certify its provenance.
+The default is false. Adoption rejects WAITING trials and recorded
+explicit-proposer provenance, and validates stored ordered study directions,
+existing feasibility signatures and required COMPLETE feasibility evidence
+before storing the optimizer signature.
+It preserves every existing trial number, state, parameter, value and attribute.
+RUNNING trials keep consuming the attempt cap; adoption does not recover them.
+
+Remove `adopt_legacy_study` after successful adoption. It is excluded from study
+identity, so later extensions use the normal signed resume check. The flag
+never overrides an existing optimizer or feasibility signature mismatch.
+Unsigned LLM and arbitrary plugin histories cannot be adopted through this
+option; use a new study name. Do not label a historical LLM study as native to
+make it resume.
 
 The default remains the existing Optuna path:
 

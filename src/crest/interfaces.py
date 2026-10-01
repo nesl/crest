@@ -753,6 +753,13 @@ class OptimizerABC(ABC):
     Stateful components derive evidence from fresh history on every call.
     """
 
+    requires_search_space: bool = True
+
+    def requires_semantic_context(self, config: Any) -> bool:
+        """Request the stable semantic payload; explicit plugins default to it."""
+        del config
+        return True
+
     @property
     def name(self) -> str:
         """Return the implementing class name by default."""

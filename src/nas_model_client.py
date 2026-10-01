@@ -105,6 +105,7 @@ RUNTIME_ONLY_METRICS = frozenset(
 FEASIBILITY_POLICY_SIGNATURE_ATTR = "crest_feasibility_policy_signature"
 FEASIBILITY_NOT_EVALUATED_CONSTRAINT = 1e12
 OPTIMIZER_SIGNATURE_ATTR = "crest_optimizer_signature"
+LEGACY_OPTIMIZER_ADOPTION_ATTR = "crest_legacy_optimizer_adoption"
 PROPOSAL_ATTR = "crest_proposal"
 
 
@@ -769,49 +770,104 @@ class NASModelClient:
 
     def _select_optimizer(self, study: optuna.Study, sampler: Any):
         """Resolve proposal ownership and validate campaign identity before work."""
+        from crest.optimizers.optuna import OptunaOptimizer
+
         config = self._cfg_get(self.config, "optimizer", {}) or {}
         name, component_cls = resolve_optimizer_selection(self._cfg_get(config, "type", "optuna"))
+        adopt_legacy = self._cfg_get(config, "adopt_legacy_study", False)
+        if not isinstance(adopt_legacy, bool):
+            raise ValueError("optimizer.adopt_legacy_study must be a boolean.")
+        if adopt_legacy and (name != "optuna" or component_cls is not OptunaOptimizer):
+            raise ValueError("optimizer.adopt_legacy_study supports only native optuna studies.")
         optimizer = component_cls()
         optimizer.validate_config(config)
         _, options = self._sampler_setup()
         options = dict(options)
         if "constraints_func" in options:
             options["constraints_func"] = "crest.persisted_feasibility_constraints.v1"
+        public_sampler_names = {
+            optuna.samplers.TPESampler: "optuna.samplers.TPESampler",
+            optuna.samplers.NSGAIISampler: "optuna.samplers.NSGAIISampler",
+        }
+        sampler_name = public_sampler_names.get(
+            type(sampler), type(sampler).__module__ + "." + type(sampler).__qualname__
+        )
         signature = {
             "version": 1, "optimizer": name,
             "config": optimizer.identity_config(config),
-            "sampler": {"class": type(sampler).__module__ + "." + type(sampler).__qualname__, "options": options},
+            "sampler": {"class": sampler_name, "options": options},
         }
         # Round-trip rejects non-JSON settings and ensures detached ordinary data.
         signature = json.loads(json.dumps(signature, sort_keys=True, allow_nan=False))
         stored = study.user_attrs.get(OPTIMIZER_SIGNATURE_ATTR)
         if stored is None:
-            if study.trials:
-                raise RuntimeError(
-                    "Existing nonempty study has no CREST optimizer signature. "
-                    "Keep it for analysis and select a new study name."
-                )
+            trials = study.trials
+            if trials:
+                if not adopt_legacy:
+                    raise RuntimeError(
+                        "Existing nonempty study has no CREST optimizer signature. "
+                        "For matching native Optuna history, explicitly attest the original "
+                        "configuration with optimizer.adopt_legacy_study: true; otherwise "
+                        "select a new study name."
+                    )
+                if any(trial.state == TrialState.WAITING for trial in trials):
+                    raise RuntimeError("Cannot adopt a legacy study with WAITING trials.")
+                if any(PROPOSAL_ATTR in trial.user_attrs or "proposal_source" in trial.user_attrs
+                       for trial in trials):
+                    raise RuntimeError("Cannot adopt native legacy history with explicit-proposer provenance.")
+                stored_directions = [direction.name.lower() for direction in study.directions]
+                if stored_directions != self._study_directions():
+                    raise RuntimeError("Cannot adopt legacy history: study directions do not match the active score configuration.")
+            # Adoption cannot certify an incompatible policy or missing feasibility evidence.
+            self._validate_or_store_feasibility_signature(study)
             study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, signature)
-        elif stored != signature:
-            raise RuntimeError(
-                "Active optimizer or sampler settings do not match the existing study optimizer signature. "
-                "Restore the original configuration or select a new study name."
-            )
+            if trials:
+                study.set_user_attr(LEGACY_OPTIMIZER_ADOPTION_ATTR, {
+                    "version": 1, "attestation": "matching_original_config",
+                    "trial_count": len(trials),
+                })
+        else:
+            # Only known version-1 private paths from the reviewed implementation alias
+            # public names. Keep optimizer/config/options and all other fields strict.
+            legacy_sampler_names = {
+                "optuna.samplers._tpe.sampler.TPESampler": "optuna.samplers.TPESampler",
+                "optuna.samplers.nsgaii._sampler.NSGAIISampler": "optuna.samplers.NSGAIISampler",
+            }
+            comparable = stored
+            if isinstance(stored, dict) and isinstance(stored.get("sampler"), dict):
+                stored_sampler = stored["sampler"]
+                old_name = stored_sampler.get("class")
+                if isinstance(old_name, str) and old_name in legacy_sampler_names:
+                    comparable = {**stored, "sampler": {
+                        **stored_sampler, "class": legacy_sampler_names[old_name],
+                    }}
+            if comparable != signature:
+                raise RuntimeError(
+                    "Active optimizer or sampler settings do not match the existing study optimizer signature. "
+                    "Restore the original configuration or select a new study name."
+                )
         return name, optimizer, config
 
     def _initialize_optimizer(self, optimizer: Any, config: Any) -> Any:
         """Build stable plain proposal context once, leaving evaluation in objective."""
-        dependencies = self._classify_nas_metric_dependencies()
-        collect_compile_metrics = self._should_collect_compile_metrics(dependencies)
-        try:
+        from crest.interfaces import ModelFamilyABC
+
+        descriptor = None
+        semantic_context = {}
+        if optimizer.requires_search_space:
+            hook = getattr(self.model_family, "trial_search_space", None)
+            if hook is None or getattr(hook, "__func__", None) is ModelFamilyABC.trial_search_space:
+                raise ValueError(
+                    f"Optimizer '{self._cfg_get(config, 'type', optimizer.name)}' requires a declared "
+                    "trial_search_space descriptor."
+                )
+            dependencies = self._classify_nas_metric_dependencies()
+            collect_compile_metrics = self._should_collect_compile_metrics(dependencies)
             descriptor = build_search_space_descriptor(
                 self.model_family, self.model_build_context, self.model_config, self.config,
                 collect_compile_metrics=collect_compile_metrics,
             )
-        except NotImplementedError:
-            descriptor = None
-        semantic_context = {}
-        if descriptor is not None:
+        if descriptor is not None and optimizer.requires_semantic_context(config):
             semantic_context = build_semantic_context(
                 enabled=True,
                 dataset_name=self.dataset_name, dataset_config=self.dataset_config,
