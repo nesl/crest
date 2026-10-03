@@ -37,7 +37,7 @@ adoption. See [configuration instructions](src/config/README.md#optimizer).
 
 Implementation/verification follows the revised appendix in
 [optimizer_contract_plan.md](optimizer_contract_plan.md). Evidence belongs in
-[optimizer_contract_validation.md](optimizer_contract_validation.md): focused
+the local-only `optimizer_contract_validation.md` report: focused
 real-Optuna SQLite resume/rejection tests; native and signed LLM budget extension;
 strict sampler alias tests; capability/context tests; plain pytest integration;
 and adoption/extension probes on temporary copies of historical snapshots with a

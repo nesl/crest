@@ -203,7 +203,7 @@ LLM `base_url` must be a clean endpoint without userinfo, query or fragment. The
 
 Runner-owned provenance lives only under `crest_proposal` user attributes. Its generated `round_id` uniformly identifies enqueue groups even when a plugin provides no request ID or reuses one. Source/request/batch metadata from components is retained alongside the enforced optimizer name, batch index and intended proposal parameters. The LLM ledger now records `returned_candidates.jsonl` and `batch_returned_to_runner`; it does not certify queue acceptance. Older artifacts remain historical evidence.
 
-Implementation evidence is recorded separately in `optimizer_contract_validation.md`; the design's older test/probe evidence above is not implementation verification.
+Implementation evidence is recorded separately in the local-only `optimizer_contract_validation.md` report; the design's older test/probe evidence above is not implementation verification.
 
 
 ## Claude review disposition and revised implementation plan (2026-10-01)
