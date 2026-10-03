@@ -1,6 +1,6 @@
 # CREST optimizer system: proposals, shared evaluation, and trustworthy evidence
 
-This guide describes the implementation at `b66f452`. CREST searches for models that work under a concrete deployment contract: a workload and task, a model family, a target device, a runtime schedule, and a scoring and feasibility policy. The optimizer chooses experiments within that contract. CREST retains responsibility for building, measuring, training, evaluating, and recording them.
+CREST searches for models that work under a concrete deployment contract: a workload and task, a model family, a target device, a runtime schedule, and a scoring and feasibility policy. The optimizer chooses experiments within that contract. CREST retains responsibility for building, measuring, training, evaluating, and recording them.
 
 ![CREST optimizer and shared evaluation flow](assets/optimizer_flow.svg)
 
@@ -136,7 +136,7 @@ At each production boundary, the runner first stops if the completion target is 
 
 WAITING trials already reserve attempts, so draining them remains possible when reservations have reached the cap. Target and cap are rechecked between rounds, not midway through an ordinary group. Multi-objective population sizing can therefore exceed the remaining completion need. Orphan RUNNING trials still consume attempts; the runner does not recover them automatically. Concurrent writers and exactly-once physical measurement are outside this serial runner's guarantees.
 
-Smoke testing differs: `smoke_test(trials=N)` executes exactly N additional attempts, including consumed waiting work, rather than retrying until N successful completions. It uses per-study `optuna_smoke_test.db`, appends on repeated calls, and restores temporary training/HIL/epoch/budget settings afterward. It uses the same selection, proposal, queue, and objective path.
+Smoke testing differs: `smoke_test(trials=N)` executes exactly N additional attempts, including consumed waiting work, rather than retrying until N successful completions. It uses per-study `optuna_smoke_test.db`, appends on repeated calls, and restores temporary training/HIL/epoch settings afterward. It uses the same selection, proposal, queue, and objective path.
 
 ## Configure and extend an experiment
 
@@ -169,11 +169,11 @@ optimizer:
       enabled: true
 ```
 
-OpenRouter defaults its base URL and JSON response mode. Generic `openai_compatible` providers require an explicit clean `base_url`, `model`, and `api_key_env`; the transport appends `/chat/completions`. URL userinfo, query parameters, and fragments are rejected. Credentials are read at runtime. A `fake` provider with configured response fixtures supports local checks without paid calls.
+OpenRouter defaults its base URL and JSON response mode. Generic `openai_compatible` providers require an explicit clean `base_url`, `model`, and `api_key_env`; the transport appends `/chat/completions`. URL userinfo, query parameters, and fragments are rejected. Credentials are checked during component initialization, before new study signatures are stored; the fake provider requires none. A `fake` provider with configured response fixtures supports local checks without paid calls.
 
-Each study stores a versioned optimizer signature: resolved registration name, deterministic non-secret `identity_config`, and effective sampler class/options. LLM identity includes provider/model, generation settings, prompt/schema/context/memory versions, history/anchor/memory settings, and fallback policy. Credentials, output paths, and completion/attempt budgets are excluded. Known older private TPE/NSGA-II class paths compare through exact public-name aliases; options and remaining identity stay strict.
+Each study stores a versioned optimizer signature: resolved registration name, deterministic non-secret `identity_config`, and effective sampler class/options. LLM identity includes provider/model, generation settings, prompt/schema/context/memory versions, history/anchor/memory settings, and fallback policy. Credentials, output paths, completion/attempt budgets, and the provider transport `timeout_s` are excluded. `json_response_mode` remains part of identity because it changes the provider request. Exact older built-in version-1 signatures for `openrouter` or `openai_compatible`, with otherwise matching identity and a valid `timeout_s`, compare after excluding only that transport field; existing stored signatures remain unchanged. Known older private TPE/NSGA-II class paths compare through exact public-name aliases; options and remaining identity stay strict.
 
-To extend a signed campaign, keep the study name, database, and original scientific configuration, then raise the total target and cap. For example, raising 250 completions to 300 requests progress toward 300 total. A matching signed native or LLM study resumes before new proposals. A signature mismatch fails before initialization or queued execution.
+To extend a signed campaign, keep the study name, database, and original scientific configuration, then raise the total target and cap. For example, raising 250 completions to 300 requests progress toward 300 total. A matching signed native or LLM study resumes before new proposals. Stored optimizer and feasibility identity is checked before component initialization or queued execution. New optimizer/feasibility signatures and legacy-adoption attributes are persisted only after component initialization succeeds, so a failed initialization leaves an unsigned study unsigned. Already signed studies retain strict compatibility checks, including empty ones.
 
 **This signature is not a fingerprint of the whole scientific experiment.** It does not certify unchanged dataset, model, training, device, or score settings. Retain and compare the original experiment configuration yourself; budget-only extension is the supported use.
 
@@ -237,4 +237,4 @@ Scalar `run_scoring_nas` selects a feasible completed trial when feasibility is 
 
 Contract, context, runner, resume, and LLM regression tests cover custom registration, legal raw fields, immutable evidence, partial acceptance, real Optuna reservations, partial-enqueue restart, budget extensions, strict identity mismatches, legacy adoption counterevidence, scalar/multi-objective rejection, and fixed-candidate objective parity. A regression explicitly verifies that a rejected first candidate never trains and a subsequent viable candidate trains once while both consume attempts.
 
-The recorded full suite passed **790 tests and 203 subtests, with one skip**; see [`claude_review_disposition.md`](claude_review_disposition.md). This is local regression evidence. Paid provider behavior, physical hardware campaigns, and final hardware/provider performance were not validated by that run. The contract does not support arbitrary dynamic explicit spaces, streaming proposal feedback, different execution semantics, automatic stale-trial recovery, or identical stochastic trajectories across proposers.
+The local default test and token-cost suites passed **814 tests and 203 subtests, with one skip**, without inherited `PYTHONPATH`. This is local regression evidence. Paid provider behavior, physical hardware campaigns, and final hardware/provider performance were not validated by that run. The contract does not support arbitrary dynamic explicit spaces, streaming proposal feedback, different execution semantics, automatic stale-trial recovery, or identical stochastic trajectories across proposers.

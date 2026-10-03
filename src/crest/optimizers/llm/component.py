@@ -3,6 +3,7 @@
 """LLM proposal preparation behind CREST's shared optimizer contract."""
 from __future__ import annotations
 
+import os
 import random
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -66,7 +67,7 @@ class LLMGeneratorOptimizer(OptimizerABC):
             if endpoint.port is not None:
                 host += f":{endpoint.port}"
             identity.update({key: llm[key] for key in (
-                "temperature", "timeout_s", "json_response_mode",
+                "temperature", "json_response_mode",
             )})
             # Credentials and optional auth headers are not study identity.
             identity["base_url"] = urlunsplit((endpoint.scheme, host, endpoint.path, "", ""))
@@ -76,6 +77,10 @@ class LLMGeneratorOptimizer(OptimizerABC):
         llm = normalize_llm_config(config)["llm"]
         if context.search_space is None:
             raise ValueError("llm_generator requires a declared trial_search_space descriptor.")
+        if llm["provider"] != "fake" and not os.environ.get(llm["api_key_env"]):
+            raise RuntimeError(
+                f"Required API key environment variable '{llm['api_key_env']}' is not set."
+            )
         self.context = context
         self.config = llm
         self.provider = build_provider(llm)

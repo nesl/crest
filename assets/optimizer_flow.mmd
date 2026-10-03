@@ -1,4 +1,4 @@
-%% CREST optimizer flow, implementation b66f452.
+%% CREST optimizer flow: shared proposal and evaluation contract.
 %% Editable flow topology and labels. The accompanying optimizer_flow.svg is
 %% hand-positioned vector artwork; optimizer_flow.png is rendered from that SVG.
 %% Rendering this Mermaid source preserves the architecture, with a different layout.
@@ -6,8 +6,8 @@
 %% LLM ledger records generation evidence, never queue ownership or enqueue proof.
 flowchart TB
     CONFIG["Config + component registry<br/>Resolve optimizer type; validate config"]
-    STUDY["Create or resume Optuna study<br/>Sampler, directions + identity signatures"]
-    CONTEXT["Initialize SearchContext<br/>Plain context; descriptor when required"]
+    STUDY["Create or resume Optuna study<br/>Sampler, directions + check stored identity"]
+    CONTEXT["Initialize proposal component<br/>Plain context; descriptor when required<br/>Persist new study signatures only after initialization succeeds"]
     ORDER["Shared loop: target → reservations → budget<br/>1. Target qualifying completions met? Stop.<br/>2. Else oldest WAITING group? Execute reservations first.<br/>3. Else attempt cap reached? Stop. Otherwise propose."]
     BUDGET["BudgetSnapshot + immutable TrialRecord history<br/>Compute permitted size; propose_round(history, budget)"]
 

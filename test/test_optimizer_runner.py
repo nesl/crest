@@ -101,7 +101,8 @@ def test_exact_plugin_registration_before_load_config_runs_with_registered_ident
 
 
 def sign(c, study):
-    c._select_optimizer(study, c._build_sampler())
+    *_, signature = c._select_optimizer(study, c._build_sampler())
+    study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, signature)
 
 @pytest.mark.parametrize("tagged", [False, True])
 def test_waiting_at_cap_consumes_exact_oldest_prefix_before_proposals(client, tmp_path, tagged):
@@ -391,3 +392,78 @@ def test_audio_family_smoke_uses_real_shared_objective_and_all_fields(client,tmp
     assert study.trials[0].params==params
     assert study.trials[0].user_attrs[PROPOSAL_ATTR]["proposal_params"]==params
     assert client.model_family.decode_trial_hparams(_family_trial_params(study.best_trial.params),client.model_build_context,client.model_config)==params
+
+
+@pytest.mark.parametrize("error", [False, True])
+def test_smoke_reuses_feasible_complete_counts_and_consumes_exact_reserved_plus_partial_attempts(
+        client, tmp_path, error):
+    from optuna.trial import create_trial
+    from nas_model_client import FEASIBILITY_POLICY_SIGNATURE_ATTR
+    client.study_name = "smoke-resume"
+    client.config.nas.feasibility = Dict(train_if_infeasible=False, rules=[{
+        "rule": "flops_budget", "metric": "flops", "condition": "<=",
+        "reference": {"type": "literal", "value": 10},
+    }])
+    storage = f"sqlite:///{client._artifacts_dir() / 'optuna_smoke_test.db'}"
+    study = optuna.create_study(study_name=client.study_name, storage=storage, direction="maximize")
+    sign(client, study)
+    study.set_user_attr(FEASIBILITY_POLICY_SIGNATURE_ATTR, client._feasibility_policy_signature())
+    for status in (" feasible ", "infeasible", "not_evaluated"):
+        study.add_trial(create_trial(value=1.0, user_attrs={
+            "feasibility_status": status, "feasibility_constraints": [-1.0] if status.strip() == "feasible" else [1.0],
+        }))
+    study.add_trial(create_trial(state=TrialState.PRUNED))
+    assert client._qualifying_complete_count(study.trials) == 1
+    for width in (3, 4):
+        study.enqueue_trial({"width": width}, user_attrs={PROPOSAL_ATTR: {"round_id": "old"}})
+    ThirdProposer.rounds = [[{"width": 7}]]
+    ThirdProposer.calls = []
+    observed = []
+    def objective(trial):
+        observed.append(trial.number)
+        width = trial.suggest_int("width", 2, 8)
+        if error:
+            raise RuntimeError("synthetic smoke failure")
+        if width == 3:
+            raise optuna.TrialPruned()
+        trial.set_user_attr("feasibility_status", " feasible ")
+        trial.set_user_attr("feasibility_constraints", [-1.0])
+        return float(width)
+    client.objective = objective
+    client.config.device.hil = True
+    client.config.training.train = True
+    client.config.training.nas_epochs = 8
+    original = (True, True, 8, client.config.training.nas_trials, client.config.training.max_total_trials)
+    if error:
+        with pytest.raises(RuntimeError, match="synthetic smoke failure"):
+            client.smoke_test(train=False, hil=False, trials=3, epochs=1, study_name=client.study_name)
+        assert observed == [4]
+        assert ThirdProposer.calls == []
+    else:
+        client.smoke_test(train=False, hil=False, trials=3, epochs=1, study_name=client.study_name)
+        assert observed == [4, 5, 6]
+        assert len(ThirdProposer.calls) == 1
+        budget = ThirdProposer.calls[0][1]
+        assert (budget.completed_target_count, budget.target, budget.total_cap, budget.permitted_round_size) == (2, 4, 9, 1)
+        assert len(study.trials) == 7
+        assert client._qualifying_complete_count(study.trials) == 3
+    assert (client.config.device.hil, client.config.training.train, client.config.training.nas_epochs,
+            client.config.training.nas_trials, client.config.training.max_total_trials) == original
+
+
+def test_plugin_timeout_identity_is_not_aliased_as_builtin_llm(client, tmp_path):
+    storage = f"sqlite:///{tmp_path / 'study.db'}"
+    study = optuna.create_study(study_name="acceptance", storage=storage, direction="maximize")
+    identity = {"provider": "openai_compatible", "model": "test-model", "json_response_mode": False}
+    with patch.object(ThirdProposer, "identity_config", return_value=identity):
+        *_, signature = client._select_optimizer(study, client._build_sampler())
+        signature["config"]["timeout_s"] = 60.0
+        study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, signature)
+        study.enqueue_trial({"width": 3})
+        client.objective = MagicMock()
+        with patch.object(ThirdProposer, "initialize", side_effect=AssertionError("initialized mismatch")):
+            with pytest.raises(RuntimeError, match="optimizer signature"):
+                execute(client, tmp_path)
+    client.objective.assert_not_called()
+    assert study.trials[0].state == TrialState.WAITING
+    assert study.user_attrs[OPTIMIZER_SIGNATURE_ATTR] == signature

@@ -356,8 +356,13 @@ every candidate before queueing any candidate; it owns proposal provenance in
 namespaced trial user attributes and executes the same objective for all modes.
 
 Study resume requires the same registered optimizer, proposal identity, and
-native sampler configuration. Completion/attempt budgets and output paths can
-change without changing identity. `training.nas_trials` is the **total completed
+native sampler configuration. Completion/attempt budgets, output paths, and LLM
+transport `timeout_s` can change without changing identity. `json_response_mode`
+remains signed because it changes the provider request. Exact older built-in
+version-1 signatures for `openrouter` or `openai_compatible`, with otherwise
+matching identity and a valid `timeout_s`, compare after excluding only that
+transport field; stored signatures are preserved. `training.nas_trials` is the
+**total completed
 trial target** (feasible completions when feasibility is enabled), and
 `training.max_total_trials` is the **total attempt cap**, including failed,
 pruned, infeasible, RUNNING, and reserved WAITING trials. To add evaluations, keep
@@ -382,7 +387,11 @@ executes N additional attempts in the separate per-study smoke database.
 A signed native or LLM study resumes with unchanged optimizer identity when these
 budgets increase. Sampler signatures now use stable public TPE/NSGA-II names;
 the exact old private paths emitted by the first contract implementation remain
-compatible when all other identity fields match.
+compatible when all other identity fields match. Stored optimizer and feasibility
+identity is checked before component initialization or queued work. New signatures
+and adoption attributes are written only after component initialization succeeds;
+failed initialization leaves an unsigned study unsigned. Existing signed studies,
+including empty ones, still require compatible identity.
 
 Unsigned native studies require an explicit one-time opt-in:
 
@@ -483,7 +492,10 @@ acceptance is evidenced only by study trial attributes. Historical
 historical meaning and remain readable. API keys are
 read from the configured environment variable and are not included in the
 serialized requests or normal responses.
-`provider: openrouter` defaults `api_key_env` to `OPENROUTER_API_KEY`.
+Nonfake providers require the API key environment variable during component
+initialization, before new study signatures are stored. The fake provider
+requires no credentials. `provider: openrouter` defaults `api_key_env` to
+`OPENROUTER_API_KEY`.
 Generic `provider: openai_compatible` endpoints require `api_key_env` to be
 set explicitly so they never inherit an OpenRouter credential name silently.
 `base_url` must be a clean endpoint without URL userinfo, query parameters, or

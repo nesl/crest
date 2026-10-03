@@ -256,7 +256,9 @@ parameters remain distinct and keep model-family replay intact.
 
 A versioned study signature records the registered optimizer, normalized
 non-secret proposal settings, and effective native sampler options. Matching
-studies resume; mismatches fail before initialization or queued work runs.
+studies resume; mismatches fail before initialization or queued work runs. New
+signatures and adoption attributes are written after component initialization
+succeeds, so initialization failure leaves an unsigned study unsigned.
 Nonempty unsigned studies fail by default. Native-only
 `optimizer.adopt_legacy_study: true` supports one-time adoption after attesting
 that the active configuration matches the original experiment. It rejects
@@ -265,7 +267,11 @@ and per-study LLM artifacts, and checks directions and feasibility evidence.
 Remove the flag afterward. Unsigned LLM/plugin adoption is unsupported.
 
 Completion targets and attempt caps are totals for the study. Budgets and artifact
-paths are excluded from identity so matching campaigns can be extended. The
+paths are excluded from identity so matching campaigns can be extended. LLM
+transport `timeout_s` is also excluded; `json_response_mode` stays signed because
+it changes the request. Exact older built-in version-1 OpenRouter/OpenAI-compatible
+signatures with otherwise matching identity and a valid timeout compare with only
+that field excluded, without rewriting stored signatures. The
 signature covers optimizer/sampler settings; it does not fingerprint dataset,
 model, training, device, or score configuration. Retain the original experiment
 configuration for comparison. This contract covers the shared serial Optuna

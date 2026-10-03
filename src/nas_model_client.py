@@ -694,13 +694,16 @@ class NASModelClient:
             return tuple(FEASIBILITY_NOT_EVALUATED_CONSTRAINT for _ in range(self._feasibility_rule_count()))
         return tuple(FEASIBILITY_NOT_EVALUATED_CONSTRAINT for _ in range(self._feasibility_rule_count()))
 
-    def _validate_or_store_feasibility_signature(self, study: optuna.Study) -> None:
+    def _validate_or_store_feasibility_signature(self, study: optuna.Study, *, store: bool = True) -> None:
         """Validate persisted feasibility policy metadata for a study.
 
         Parameters
         ----------
         study : optuna.Study
             Study being created or resumed.
+        store : bool, optional
+            If false, validate without stamping a new empty-study policy. Setup
+            uses this before initialization and persists only after it succeeds.
 
         Returns
         -------
@@ -725,7 +728,8 @@ class NASModelClient:
                 raise RuntimeError(
                     "Active config enables nas.feasibility, but the existing study has no feasibility policy signature."
                 )
-            study.set_user_attr(FEASIBILITY_POLICY_SIGNATURE_ATTR, active_signature)
+            if store:
+                study.set_user_attr(FEASIBILITY_POLICY_SIGNATURE_ATTR, active_signature)
         elif stored_signature != active_signature:
             raise RuntimeError(
                 "Active nas.feasibility policy does not match the existing study feasibility signature."
@@ -769,7 +773,7 @@ class NASModelClient:
         return sampler_class, kwargs
 
     def _select_optimizer(self, study: optuna.Study, sampler: Any):
-        """Resolve proposal ownership and validate campaign identity before work."""
+        """Validate campaign identity and return its pending signature before setup."""
         from crest.optimizers.optuna import OptunaOptimizer
 
         config = self._cfg_get(self.config, "optimizer", {}) or {}
@@ -824,13 +828,7 @@ class NASModelClient:
                 if stored_directions != self._study_directions():
                     raise RuntimeError("Cannot adopt legacy history: study directions do not match the active score configuration.")
             # Adoption cannot certify an incompatible policy or missing feasibility evidence.
-            self._validate_or_store_feasibility_signature(study)
-            study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, signature)
-            if trials:
-                study.set_user_attr(LEGACY_OPTIMIZER_ADOPTION_ATTR, {
-                    "version": 1, "attestation": "matching_original_config",
-                    "trial_count": len(trials),
-                })
+            self._validate_or_store_feasibility_signature(study, store=False)
         else:
             # Only known version-1 private paths from the reviewed implementation alias
             # public names. Keep optimizer/config/options and all other fields strict.
@@ -846,12 +844,51 @@ class NASModelClient:
                     comparable = {**stored, "sampler": {
                         **stored_sampler, "class": legacy_sampler_names[old_name],
                     }}
+            # Earlier built-in LLM signatures included transport timeout. It does
+            # not change proposals; only this exact known version-1 shape aliases.
+            from crest.optimizers.llm.component import LLMGeneratorOptimizer
+            old_config = comparable.get("config") if isinstance(comparable, dict) else None
+            if (type(optimizer) is LLMGeneratorOptimizer
+                    and isinstance(comparable, dict)
+                    and comparable.get("version") == 1
+                    and comparable.get("optimizer") == "llm_generator"
+                    and isinstance(old_config, dict)
+                    and old_config.get("provider") in {"openrouter", "openai_compatible"}
+                    and set(old_config) == set(signature["config"]) | {"timeout_s"}
+                    and isinstance(old_config["timeout_s"], (int, float))
+                    and not isinstance(old_config["timeout_s"], bool)
+                    and 0.001 <= old_config["timeout_s"] < float("inf")):
+                comparable = {**comparable, "config": {
+                    key: value for key, value in old_config.items() if key != "timeout_s"
+                }}
             if comparable != signature:
                 raise RuntimeError(
                     "Active optimizer or sampler settings do not match the existing study optimizer signature. "
                     "Restore the original configuration or select a new study name."
                 )
-        return name, optimizer, config
+        return name, optimizer, config, signature
+
+    @staticmethod
+    def _store_optimizer_signature(study: optuna.Study, signature: dict[str, Any]) -> None:
+        """Sign validated setup after initialization, before proposals or work."""
+        if study.user_attrs.get(OPTIMIZER_SIGNATURE_ATTR) is not None:
+            return
+        study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, signature)
+        if study.trials:
+            study.set_user_attr(LEGACY_OPTIMIZER_ADOPTION_ATTR, {
+                "version": 1, "attestation": "matching_original_config",
+                "trial_count": len(study.trials),
+            })
+
+    def _qualifying_complete_count(self, trials) -> int:
+        """Count COMPLETE trials eligible for the configured completion target."""
+        feasibility_enabled = self._feasibility_enabled()
+        return sum(
+            trial.state == TrialState.COMPLETE and (
+                not feasibility_enabled
+                or str(trial.user_attrs.get("feasibility_status", "")).strip() == "feasible"
+            ) for trial in trials
+        )
 
     def _initialize_optimizer(self, optimizer: Any, config: Any) -> Any:
         """Build stable plain proposal context once, leaving evaluation in objective."""
@@ -2175,8 +2212,6 @@ class NASModelClient:
         _previous_hil = self.config.device.hil
         _previous_train = self.config.training.train
         _previous_epochs = self.config.training.nas_epochs
-        _previous_nas_trials = self.config.training.nas_trials
-        _previous_max_total_trials = self.config.training.max_total_trials
         try:
             if hil is not None:
                 self.config.device.hil = hil
@@ -2207,17 +2242,15 @@ class NASModelClient:
                     sampler=sampler,
                     load_if_exists=True,
                 )
-            optimizer_name, optimizer, optimizer_config = self._select_optimizer(single_trial_study, sampler)
-            self._validate_or_store_feasibility_signature(single_trial_study)
-            single_trial_study.set_metric_names(self._study_metric_names())
+            optimizer_name, optimizer, optimizer_config, signature = self._select_optimizer(single_trial_study, sampler)
+            self._validate_or_store_feasibility_signature(single_trial_study, store=False)
             try:
                 descriptor = self._initialize_optimizer(optimizer, optimizer_config)
+                self._validate_or_store_feasibility_signature(single_trial_study)
+                self._store_optimizer_signature(single_trial_study, signature)
+                single_trial_study.set_metric_names(self._study_metric_names())
                 remaining = trials
-                initial_completed = sum(
-                    t.state == TrialState.COMPLETE and (
-                        not self._feasibility_enabled() or t.user_attrs.get("feasibility_status") == "feasible"
-                    ) for t in single_trial_study.trials
-                )
+                initial_completed = self._qualifying_complete_count(single_trial_study.trials)
                 target = initial_completed + trials
                 total_cap = len(single_trial_study.trials) + trials
                 while remaining > 0:
@@ -2226,11 +2259,7 @@ class NASModelClient:
                         size = min(waiting_size, remaining)
                         single_trial_study.optimize(self.objective, n_trials=size)
                     else:
-                        completed = sum(
-                            t.state == TrialState.COMPLETE and (
-                                not self._feasibility_enabled() or t.user_attrs.get("feasibility_status") == "feasible"
-                            ) for t in single_trial_study.trials
-                        )
+                        completed = self._qualifying_complete_count(single_trial_study.trials)
                         size = self._execute_search_round(
                             single_trial_study, optimizer, optimizer_name, descriptor,
                             BudgetSnapshot(len(single_trial_study.trials), completed,
@@ -2255,8 +2284,6 @@ class NASModelClient:
             self.config.device.hil = _previous_hil
             self.config.training.train = _previous_train
             self.config.training.nas_epochs = _previous_epochs
-            self.config.training.nas_trials = _previous_nas_trials
-            self.config.training.max_total_trials = _previous_max_total_trials
 
         trials_dataframe = getattr(single_trial_study, "trials_dataframe", None)
         if callable(trials_dataframe):
@@ -2344,13 +2371,15 @@ class NASModelClient:
                 sampler=sampler,
                 load_if_exists=True,  # resume if the study already exists
             )
-        optimizer_name, optimizer, optimizer_config = self._select_optimizer(study, sampler)
-        self._validate_or_store_feasibility_signature(study)
-        study.set_metric_names(self._study_metric_names())
+        optimizer_name, optimizer, optimizer_config, signature = self._select_optimizer(study, sampler)
+        self._validate_or_store_feasibility_signature(study, store=False)
         # Make sure we never shrink the total budget when resuming an existing study.
         max_total_trials = max(max_total_trials, len(study.trials))
 
         descriptor = self._initialize_optimizer(optimizer, optimizer_config)
+        self._validate_or_store_feasibility_signature(study)
+        self._store_optimizer_signature(study, signature)
+        study.set_metric_names(self._study_metric_names())
 
         def _trial_counts():
             """Count complete/pruned/failed trials plus feasibility outcomes.
@@ -2362,16 +2391,8 @@ class NASModelClient:
                 pruned, and failed trials in that order.
             """
             completed = sum(1 for t in study.trials if t.state == TrialState.COMPLETE)
+            feasible = self._qualifying_complete_count(study.trials)
             if self._feasibility_enabled():
-                feasible = sum(
-                    1
-                    for t in study.trials
-                    if (
-                        t.state == TrialState.COMPLETE
-                        and str(getattr(t, "user_attrs", {}).get("feasibility_status", "")).strip()
-                        == "feasible"
-                    )
-                )
                 infeasible = sum(
                     1
                     for t in study.trials
@@ -2382,7 +2403,6 @@ class NASModelClient:
                     )
                 )
             else:
-                feasible = completed
                 infeasible = 0
             pruned = sum(1 for t in study.trials if t.state == TrialState.PRUNED)
             failed = sum(1 for t in study.trials if t.state == TrialState.FAIL)

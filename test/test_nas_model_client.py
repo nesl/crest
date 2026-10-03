@@ -379,7 +379,8 @@ def _sign_test_study(client, study):
         study.set_user_attr = lambda key, value: study.user_attrs.__setitem__(key, value)
     existing = study.trials
     study.trials = []
-    client._select_optimizer(study, client._build_sampler())
+    *_, signature = client._select_optimizer(study, client._build_sampler())
+    study.set_user_attr("crest_optimizer_signature", signature)
     study.trials = existing
 
 class HILRequestTests(unittest.TestCase):
