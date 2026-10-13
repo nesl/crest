@@ -38,15 +38,20 @@ enum
   kWakeupDivider = 16,
 };
 
+/* Memory-mapped external-weight address range: inclusive start, exclusive end. */
 static const uintptr_t kExternalWeightsStart = 0x70000000UL;
 static const uintptr_t kExternalWeightsEnd = 0x80000000UL;
 
+/* PD0 is high during the harness measurement window. */
 #define CREST_DUT_TRIGGER_GPIO_PORT   GPIOD
 #define CREST_DUT_TRIGGER_GPIO_PIN    GPIO_PIN_0
+/* PE9 arms the harness when low; high is the idle/disarmed state. */
 #define CREST_DUT_ARM_GPIO_PORT       GPIOE
 #define CREST_DUT_ARM_GPIO_PIN        GPIO_PIN_9
 
+/* Telemetry label for system Stop entered with the WFI instruction. */
 #define CREST_DUT_STOP_MODE_VARIANT "system_stop_wfi"
+/* Host-validated protocol: RTC wall timing, Stop-entry evidence, awake final tail. */
 #define CREST_DUT_MEASUREMENT_PROTOCOL "rtc_wall_v3_stop_evidence_awake_tail"
 
 typedef struct
