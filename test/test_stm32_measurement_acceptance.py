@@ -144,13 +144,14 @@ def test_integrity_remeasure_once_same_compile_and_keeps_both_records():
         """Fail the first attempt and require the retry to reuse its compiled build."""
         calls.append(kwargs)
         if len(calls) == 1:
-            device._phase_compile_result = compiled
+            kwargs['_retry_state']['compile_result'] = compiled
             return failed
         assert kwargs['_reuse_compile_result'] is compiled
         return success
     with patch.object(device, '_evaluate_phase_attempt', side_effect=attempt):
         result = device._evaluate_single_phase(dirpath='unused')
     assert len(calls) == 2 and result.error_code == HIL_ERROR_OK
+    assert not hasattr(device, '_phase_compile_result')
     assert result.power_metrics['measurement_record_paths'] == ['first.json', 'second.json']
     assert result.power_metrics['measurement_remeasure_count'] == 1
 
@@ -161,7 +162,7 @@ def test_exhausted_integrity_stops_at_two_and_infeasible_is_not_retried():
     failure = DeviceMetrics(1, 2, -1, 3, HIL_ERROR_INTEGRITY, power_metrics={})
     def fail(**kwargs):
         """Simulate exhausted instrumentation recovery after a successful compile."""
-        device._phase_compile_result = object()
+        kwargs['_retry_state']['compile_result'] = object()
         return failure
     with patch.object(device, '_evaluate_phase_attempt', side_effect=fail) as mock:
         assert device._evaluate_single_phase(dirpath='unused').error_code == HIL_ERROR_INTEGRITY
@@ -264,3 +265,38 @@ def test_fractional_deadline_telemetry_is_rejected_after_parsing(misses):
     assert not result['instrumentation_valid']
     assert not result['deployment_eligible']
     assert 'deadline_count_valid' in result['instrumentation_reasons']
+
+
+@pytest.mark.parametrize('period_ms,effective_ms', [(33.333, 33), (33.7, 34), (0.25, 1)])
+def test_cadence_window_uses_firmware_period(period_ms, effective_ms):
+    """Fractional and sub-millisecond budgets must match the programmed cadence."""
+    args = sample('cadenced')
+    args.update(period_ms=period_ms, latency_s=0.0001)
+    window_s = args['runs'] * effective_ms / 1000
+    args['metrics'].update(timer_per_window_s=window_s,
+                           harness_latency_s=window_s / args['runs'])
+    args['dut_log'][1] = f'cadence budget (ms): {effective_ms}'
+    result = validate_measurement(**args)
+    assert result['instrumentation_valid'] and result['deployment_eligible']
+    # Rounding the cadence must not relax the independently requested active deadline.
+    args['latency_s'] = period_ms / 1000 + 0.00001
+    assert 'active_latency_exceeds_budget' in validate_measurement(**args)['infeasibility_reasons']
+    args['metrics']['timer_per_window_s'] += 0.0001
+    args['metrics']['harness_latency_s'] = args['metrics']['timer_per_window_s'] / args['runs']
+    assert 'cadence_window_outside_budget' in validate_measurement(**args)['infeasibility_reasons']
+
+
+@pytest.mark.parametrize('clock_mhz', [200, 300, 400, 600, 800])
+def test_configured_integer_clock_is_exact_after_parsing(clock_mhz):
+    """Supported integer clock telemetry needs no oscillator-drift tolerance."""
+    from crest.microcontrollers import stm32_runtime
+    args = sample()
+    args['clock_mhz'] = clock_mhz
+    telemetry = stm32_runtime.parse_stm32_runtime_lines([
+        'phase output: back_to_back', 'runs: 10',
+        f'clock hz output: {clock_mhz * 1000000}',
+        'timer per inference output: 0.010000', 'STM32_AI_RUN=OK'])
+    args['metrics']['clock_hz'] = telemetry.power_metrics['clock_hz']
+    assert validate_measurement(**args)['checks']['clock_matches']
+    args['metrics']['clock_hz'] -= 1
+    assert not validate_measurement(**args)['checks']['clock_matches']

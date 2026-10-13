@@ -1,7 +1,23 @@
 """Pure acceptance rules for the repaired STM32 measurement protocol."""
 import math
 
-PROTOCOL = 'rtc_wall_v3_stop_evidence_awake_tail'
+PROTOCOL = 'rtc_wall_v4_dwt_active_stop_evidence_awake_tail'
+
+
+def firmware_period_ms(period_ms):
+    """Resolve the integer cadence emitted in the generated firmware header.
+
+    Parameters
+    ----------
+    period_ms : float
+        Requested positive cadence in milliseconds.
+
+    Returns
+    -------
+    int
+        Rounded cadence, clamped to the firmware minimum of one millisecond.
+    """
+    return max(1, int(round(period_ms)))
 
 
 def positive(value):
@@ -55,8 +71,12 @@ def validate_measurement(metrics, *, latency_s, phase, clock_mhz, runs, period_m
     -----
     The 2% timing agreement band detects gross mismatch, not meter accuracy.
     Two RTC ticks (62 us) bound cadence-window endpoint quantization.
+    Window duration follows the rounded firmware cadence; the active-latency
+    constraint retains the requested budget. Clock telemetry reports the integer
+    configured frequency, not a physical oscillator measurement.
     Requested sleep is never interpreted as measured Stop residency.
     """
+    effective_period_ms = firmware_period_ms(period_ms)
     reasons = []
     checks = {
         'phase_matches': metrics.get('phase') == phase,
@@ -64,7 +84,7 @@ def validate_measurement(metrics, *, latency_s, phase, clock_mhz, runs, period_m
         'runs_match': metrics.get('runs') == runs,
         'latency_positive_finite': positive(latency_s),
         'protocol_matches': f'measurement protocol output: {PROTOCOL}' in dut_log,
-        'period_matches': f'cadence budget (ms): {round(period_ms)}' in dut_log,
+        'period_matches': f'cadence budget (ms): {effective_period_ms}' in dut_log,
         'rtc_window_positive_finite': positive(metrics.get('timer_per_window_s')),
         'rtc_lse': metrics.get('rtc_clock_source') == 'LSE' and metrics.get('rtc_clock_hz_nominal') == 32768,
     }
@@ -103,7 +123,7 @@ def validate_measurement(metrics, *, latency_s, phase, clock_mhz, runs, period_m
     if phase == 'cadenced':
         if checks['deadline_count_valid'] and metrics['deadline_miss_count'] > 0:
             eligibility.append('deadline_miss')
-        if positive(rtc) and abs(rtc - runs * period_ms / 1000) > .000062:
+        if positive(rtc) and abs(rtc - runs * effective_period_ms / 1000) > .000062:
             eligibility.append('cadence_window_outside_budget')
     return {'instrumentation_valid': not reasons, 'checks': checks,
             'instrumentation_reasons': reasons, 'deployment_eligible': not reasons and not eligibility,

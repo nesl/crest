@@ -51,8 +51,8 @@ static const uintptr_t kExternalWeightsEnd = 0x80000000UL;
 
 /* Telemetry label for system Stop entered with the WFI instruction. */
 #define CREST_DUT_STOP_MODE_VARIANT "system_stop_wfi"
-/* Host-validated protocol: RTC wall timing, Stop-entry evidence, awake final tail. */
-#define CREST_DUT_MEASUREMENT_PROTOCOL "rtc_wall_v3_stop_evidence_awake_tail"
+/* RTC windows, wrap-safe DWT cadenced active timing, and an awake final tail. */
+#define CREST_DUT_MEASUREMENT_PROTOCOL "rtc_wall_v4_dwt_active_stop_evidence_awake_tail"
 
 typedef struct
 {
@@ -673,6 +673,10 @@ static bool stop_sleep_for_us(uint32_t sleep_us, int64_t *wake_recovery_us,
   {
     HAL_RTCEx_DeactivateWakeUpTimer(&s_rtc_handle);
     HAL_NVIC_DisableIRQ(RTC_S_IRQn);
+    /* The caller emits a UART integrity failure. Restore the runtime clock
+     * even when the RTC cannot synchronize, so that report has the right baud.
+     * A clock-restore failure itself remains a best-effort reporting case. */
+    (void)restore_runtime_clocks();
     return false;
   }
   after_wake_us = rtc_now_us();
@@ -692,6 +696,8 @@ static bool stop_sleep_for_us(uint32_t sleep_us, int64_t *wake_recovery_us,
   {
     *wake_recovery_us = (int64_t)(after_restore_us - after_wake_us);
   }
+  /* STOPF proves entry only. An unrelated interrupt cannot justify counting
+   * the requested sleep interval as completed; invalidate this measurement. */
   return s_rtc_wakeup_fired;
 }
 
@@ -860,8 +866,9 @@ static bool run_back_to_back_window(ai_handle network,
   phase_end_us = rtc_now_us();
   disarm_harness_window();
 
-  /* With no per-invoke RTC overhead, conservatively discard all DWT
-   * deltas if the entire RTC window could contain one counter wrap. */
+  /* Keep RTC reads outside this energy window's invoke loop. A short whole
+   * window proves every invoke wrap-safe; its average cannot prove that for
+   * a long window, so conservatively discard optional DWT telemetry then. */
   cycles_valid = ((phase_end_us - phase_start_us + 62ULL) * measurement->clock_hz) <
                  (0x100000000ULL * 1000000ULL);
   measurement->have_cycles = cycles_valid && (measurement->runs_completed > 0U);
@@ -963,14 +970,27 @@ static bool run_cadenced_window(ai_handle network,
   disarm_harness_window();
 
   measurement->clock_hz = read_cpu_clock_hz();
-  measurement->have_cycles = cycles_valid && (measurement->runs_completed > 0U);
+  measurement->have_cycles = cycles_valid && (measurement->clock_hz > 0U) &&
+                             (measurement->runs_completed > 0U);
   measurement->have_timing = measurement->runs_completed > 0U;
   if (measurement->runs_completed > 0U)
   {
     measurement->dwt_cycles_per_inference_milli =
         (active_cycles_total * 1000ULL) / (uint64_t)measurement->runs_completed;
-    measurement->timer_per_inference_scaled_1e6 =
-        active_us_total / (uint64_t)measurement->runs_completed;
+    /* RTC tick quantization is phase-locked to each cadence release. Prefer
+     * DWT for active latency when every invoke is provably below one wrap;
+     * RTC still measures the wall window and is the long-invoke fallback. */
+    if (measurement->have_cycles)
+    {
+      measurement->timer_per_inference_scaled_1e6 =
+          (active_cycles_total * 1000000ULL) /
+          ((uint64_t)measurement->clock_hz * measurement->runs_completed);
+    }
+    else
+    {
+      measurement->timer_per_inference_scaled_1e6 =
+          active_us_total / (uint64_t)measurement->runs_completed;
+    }
     measurement->timer_per_window_scaled_1e6 = (phase_end_us - phase_start_us);
   }
 

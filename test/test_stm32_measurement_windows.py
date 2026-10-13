@@ -81,7 +81,12 @@ int main(void) {
  assert(m.timer_per_window_scaled_1e6 >= 2000000);
  assert(m.timer_per_window_scaled_1e6 < 2000200);
  assert(sleeps==9 && m.slept_slots==9 && m.stop_entries==9); /* historical final slot remains awake */
- assert(m.timer_per_inference_scaled_1e6 >= duration);
+ assert(m.timer_per_inference_scaled_1e6 == duration);
+ /* Each fake RTC read advances by a tick: DWT must avoid this fixed bias. */
+ memset(&m,0,sizeof m); now=0; duration=100;
+ assert(run_cadenced_window(0,0,0,&m));
+ assert(m.have_cycles && m.timer_per_inference_scaled_1e6 == 100);
+ assert(m.timer_per_window_scaled_1e6 >= 2000000);
  memset(&m,0,sizeof m); duration=6000000;
  assert(run_cadenced_window(0,0,0,&m));
  assert(!m.have_cycles && m.have_timing && m.deadline_miss_count==10);

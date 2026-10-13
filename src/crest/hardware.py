@@ -832,12 +832,7 @@ def return_hardware_specs(
         # Direct backend imports can defer registry population during a cycle.
         # Reuse the catalog's lazy refresh, preserving custom/legacy entries.
         get_device_spec(normalized_name)
-    try:
-        spec = DEVICE_SPECS[normalized_name]
-    except KeyError as exc:
-        raise ValueError(
-            f"Unknown device '{normalized_name}'. Supported devices: {list(DEVICE_SPECS)}"
-        ) from exc
+    spec = DEVICE_SPECS[normalized_name]
     return int(spec["max_ram"]), int(spec["max_flash"])
 
 
@@ -962,12 +957,7 @@ def arena_size_candidates(
         # Direct backend imports can defer registry population during a cycle.
         # Reuse the catalog's lazy refresh, preserving custom/legacy entries.
         get_device_spec(normalized_name)
-    try:
-        spec = DEVICE_SPECS[normalized_name]
-    except KeyError as exc:
-        raise ValueError(
-            f"Unknown device '{normalized_name}'. Supported devices: {list(DEVICE_SPECS)}"
-        ) from exc
+    spec = DEVICE_SPECS[normalized_name]
     return np.array(spec["arena_sizes"])
 
 

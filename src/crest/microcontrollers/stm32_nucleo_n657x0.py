@@ -46,10 +46,23 @@ from ..errors import (
 )
 from .. import hil_protocol
 from . import arduino_base
-from .stm32_measurement import validate_measurement, positive
+from .stm32_measurement import validate_measurement, positive, firmware_period_ms
 from . import stm32_cube_clt
 from . import stm32_runtime
 
+
+# Backend failures that indicate instrumentation failure and permit one retry.
+MEASUREMENT_INTEGRITY_KINDS = frozenset({
+    "measurement_integrity",
+    "runtime_protocol",
+    "runtime_latency",
+    "harness_metrics_missing",
+    "harness_run_count_mismatch",
+    "harness_ready_timeout",
+    "harness_done_timeout",
+    "runtime_io",
+    "runtime_start_timeout",
+})
 
 # Public device identifier used throughout config parsing and backend selection.
 BOARD_NAME = "STM32_NUCLEO_N657X0_Q"
@@ -837,7 +850,7 @@ def _write_phase_config_header(
         "#define CREST_DUT_PHASE_BACK_TO_BACK 0\n"
         "#define CREST_DUT_PHASE_CADENCED 1\n\n"
         f"#define CREST_DUT_SELECTED_PHASE {selected_phase_macro}\n"
-        f"#define CREST_DUT_LATENCY_BUDGET_MS {max(1, int(round(latency_budget_ms)))}\n"
+        f"#define CREST_DUT_LATENCY_BUDGET_MS {firmware_period_ms(latency_budget_ms)}\n"
         f"#define CREST_DUT_MEASURED_RUNS {max(1, int(measured_runs))}\n"
         f"#define CREST_DUT_CPU_CLOCK_MHZ {int(cpu_clock_mhz)}\n"
         f"#define CREST_DUT_WAKE_MARGIN_US {max(0, int(wake_margin_us))}\n"
@@ -909,7 +922,7 @@ def _validate_phase_config_header(
         raise stm32_cube_clt.WorkflowError(
             f"Generated phase config is missing requested measured-runs {measured_runs}: {header_path}"
         )
-    expected_budget = f"#define CREST_DUT_LATENCY_BUDGET_MS {max(1, int(round(latency_budget_ms)))}"
+    expected_budget = f"#define CREST_DUT_LATENCY_BUDGET_MS {firmware_period_ms(latency_budget_ms)}"
     if expected_budget not in text:
         raise stm32_cube_clt.WorkflowError(
             "Generated phase config is missing requested cadence budget "
@@ -3030,22 +3043,26 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         Exception
             If phase execution or durable evidence persistence raises an exception.
         """
-        self._phase_compile_result = None
-        first = self._evaluate_phase_attempt(**kwargs)
-        if first.error_code != HIL_ERROR_INTEGRITY or self._phase_compile_result is None:
+        retry_state = {}
+        first = self._evaluate_phase_attempt(**kwargs, _retry_state=retry_state)
+        compile_result = retry_state.get("compile_result")
+        if first.error_code != HIL_ERROR_INTEGRITY or compile_result is None:
             return first
-        second = self._evaluate_phase_attempt(**kwargs, _reuse_compile_result=self._phase_compile_result)
+        second = self._evaluate_phase_attempt(
+            **kwargs, _retry_state=retry_state, _reuse_compile_result=compile_result)
         metrics = dict(second.power_metrics or {})
         metrics["measurement_record_paths"] = (list((first.power_metrics or {}).get("measurement_record_paths", []))
                                                + list(metrics.get("measurement_record_paths", [])))
         metrics["measurement_remeasure_count"] = 1
         return replace(second, power_metrics=metrics)
 
-    def _evaluate_phase_attempt(self, **kwargs) -> DeviceMetrics:
+    def _evaluate_phase_attempt(self, *, _retry_state: dict | None = None, **kwargs) -> DeviceMetrics:
         """Measure and validate one phase while persisting durable raw evidence.
 
         Parameters
         ----------
+        _retry_state : dict | None, optional
+            State local to one phase, carrying the build into a bounded retry.
         **kwargs : dict
             Candidate and runtime arguments forwarded to `_evaluate_single_phase_unchecked`.
             With HIL disabled, execution bypasses measurement evidence and acceptance.
@@ -3064,7 +3081,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             If the underlying phase execution fails; its evidence is retained.
         """
         if not kwargs.get("run_hil", True):
-            return self._evaluate_single_phase_unchecked(**kwargs)
+            return self._evaluate_single_phase_unchecked(**kwargs, _retry_state=_retry_state)
         record = {"started_utc": datetime.now(timezone.utc).isoformat(), "request": {key: str(value) if isinstance(value, Path) else value
                               for key, value in kwargs.items()},
                   "dut_log": [], "harness_log": []}
@@ -3075,7 +3092,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             json.dump(record, handle, indent=2, default=str)
         result = None
         try:
-            result = self._evaluate_single_phase_unchecked(**kwargs, _record=record)
+            result = self._evaluate_single_phase_unchecked(**kwargs, _record=record, _retry_state=_retry_state)
             metrics = dict(result.power_metrics or {})
             if result.error_code == HIL_ERROR_OK:
                 if kwargs.get("phase", DEFAULT_RUNTIME_MODE) == "back_to_back" and not kwargs.get("harness_serial_port"):
@@ -3151,6 +3168,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         harness_active_timeout_s: Optional[float] = None,
         harness_done_timeout_s: Optional[float] = None,
         _record: dict | None = None,
+        _retry_state: dict | None = None,
         _reuse_compile_result: Any = None,
     ) -> DeviceMetrics:
         """Run one STM32 compile/upload/runtime phase and return metrics.
@@ -3204,6 +3222,8 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
 
         _record : dict | None, optional
             Mutable evidence record populated with raw logs and expected run count.
+        _retry_state : dict | None, optional
+            Mutable state local to the phase, populated with its compile result.
         _reuse_compile_result : Any, optional
             Existing compile result reused for a bounded instrumentation retry.
 
@@ -3262,7 +3282,8 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             num_channels=num_channels,
             build_defines=None,
         )
-        self._phase_compile_result = compile_result
+        if _retry_state is not None:
+            _retry_state["compile_result"] = compile_result
         compile_external_flash_bytes = getattr(compile_result, "external_flash_bytes", None)
 
         def _merge_metrics(extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -3303,7 +3324,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 flash_bytes=compile_result.flash_bytes or -1,
                 latency_s=-1.0,
                 arena_bytes=compile_result.arena_bytes or -1,
-                error_code=(HIL_ERROR_INTEGRITY if kind in {"measurement_integrity", "runtime_protocol", "runtime_latency", "harness_metrics_missing", "harness_run_count_mismatch", "harness_ready_timeout", "harness_done_timeout", "runtime_io", "runtime_start_timeout"} else HIL_ERROR_LATENCY),
+                error_code=(HIL_ERROR_INTEGRITY if kind in MEASUREMENT_INTEGRITY_KINDS else HIL_ERROR_LATENCY),
                 power_metrics=_merge_metrics(
                     stm32_runtime.build_backend_error_metrics(kind, detail)
                 ),

@@ -35,6 +35,7 @@ from crest.microcontrollers import stm32_nucleo_n657x0 as stm32_n657_backend  # 
 from crest.microcontrollers import stm32_runtime  # noqa: E402
 from crest.microcontrollers.stm32_nucleo_n657x0 import (  # noqa: E402
     BOARD_NAME,
+    MEASUREMENT_INTEGRITY_KINDS,
     DEFAULT_WEIGHTS_EXTERNAL_LOADER_NAME,
     DEFAULT_MAX_EXTERNAL_FLASH_BYTES,
     DEFAULT_TEMPLATE_ROOT,
@@ -611,7 +612,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         )
         # Repaired DUT telemetry: RTC aggregate covers all reported releases.
         telemetry.serial_log.extend([
-            "measurement protocol output: rtc_wall_v3_stop_evidence_awake_tail",
+            "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
             "cadence budget (ms): 200",
         ])
         telemetry.power_metrics.update(runs=10, phase="back_to_back",
@@ -1561,7 +1562,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v3_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
                 "cadence budget (ms): 200",
             ])
             telemetry.power_metrics.update(runs=5, phase="back_to_back",
@@ -2974,7 +2975,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v3_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
                 "cadence budget (ms): 200",
             ])
             telemetry.power_metrics.update(runs=10, phase="back_to_back",
@@ -3104,7 +3105,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v3_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
                 "cadence budget (ms): 200",
             ])
             telemetry.power_metrics.update(runs=1, phase="back_to_back",
@@ -3210,7 +3211,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v3_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
                 "cadence budget (ms): 200",
             ])
             telemetry.power_metrics.update(runs=7, phase="back_to_back",
@@ -3350,7 +3351,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v3_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
                 "cadence budget (ms): 200",
             ])
             telemetry.power_metrics.update(runs=4, phase="back_to_back",
@@ -3502,7 +3503,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v3_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
                 "cadence budget (ms): 321",
             ])
             telemetry.power_metrics.update(runs=4, phase="back_to_back",
@@ -3628,7 +3629,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v3_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
                 "cadence budget (ms): 200",
             ])
             telemetry.power_metrics.update(runs=10, phase="back_to_back",
@@ -3874,7 +3875,7 @@ class RuntimeIOEvidenceTests(unittest.TestCase):
             compiled = SimpleNamespace(success=True, log="ok", flash_bytes=2,
                 ram_bytes=1, overflow_kind=None, build_dir=root / "Debug", arena_bytes=3)
             prefix = "crest.microcontrollers.stm32_nucleo_n657x0."
-            with patch.object(device, "compile", return_value=compiled), \
+            with patch.object(device, "compile", return_value=compiled) as compile_mock, \
                  patch(prefix + "stm32_cube_clt.resolve_elf_path", return_value=root / "app.elf"), \
                  patch(prefix + "stm32_runtime.SerialMonitor") as monitor_class, \
                  patch(prefix + "stm32_cube_clt.debug_load_elf", return_value="ok"), \
@@ -3885,9 +3886,64 @@ class RuntimeIOEvidenceTests(unittest.TestCase):
                 result = device.evaluate(dirpath=root / "unstaged", arena_kb=-1,
                     window_size=200, num_channels=10, serial_port="fake")
             self.assertEqual(result.error_code, HIL_ERROR_INTEGRITY)
+            # An integrity retry reuses its build without retaining hidden device state.
+            self.assertEqual(compile_mock.call_count, 1)
+            self.assertFalse(hasattr(device, "_phase_compile_result"))
             paths = result.power_metrics["measurement_record_paths"]
             self.assertEqual(len(paths), 2)
             for path in paths:
                 record = json.loads(Path(path).read_text())
                 self.assertEqual(record["dut_log"], ["STM32_AI_INIT=OK", "DUT READY"])
                 self.assertEqual(record["result"]["power_metrics"]["backend_error_kind"], "runtime_io")
+
+
+class MeasurementRetryPolicyTests(unittest.TestCase):
+    def test_retry_compile_state_is_local_to_each_phase(self):
+        # A later phase that fails before compiling must not reuse an earlier build.
+        device = STM32NucleoN657X0QDevice()
+        compiled = object()
+        failure = DeviceMetrics(ram_bytes=1, flash_bytes=2, latency_s=-1.0,
+                                arena_bytes=3, error_code=HIL_ERROR_INTEGRITY)
+        states = []
+
+        def attempt(*, _retry_state, **kwargs):
+            if not states:
+                _retry_state["compile_result"] = compiled
+            states.append(_retry_state)
+            if len(states) == 2:
+                self.assertIs(kwargs["_reuse_compile_result"], compiled)
+            return failure
+
+        with patch.object(device, "_evaluate_phase_attempt", side_effect=attempt) as attempts:
+            device._evaluate_single_phase()
+            device._evaluate_single_phase()
+        self.assertEqual(attempts.call_count, 3)
+        self.assertIs(states[0], states[1])
+        self.assertIsNot(states[1], states[2])
+        self.assertEqual(states[2], {})
+        self.assertFalse(hasattr(device, "_phase_compile_result"))
+
+    def test_runtime_error_kinds_preserve_retry_and_timeout_policy(self):
+        # Protocol/transport failures permit retry while an actual run timeout penalizes latency.
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            device = STM32NucleoN657X0QDevice()
+            compiled = SimpleNamespace(success=True, log="ok", flash_bytes=2,
+                ram_bytes=1, overflow_kind=None, build_dir=root / "Debug", arena_bytes=3)
+            prefix = "crest.microcontrollers.stm32_nucleo_n657x0."
+            with patch.object(device, "compile", return_value=compiled), \
+                 patch(prefix + "stm32_cube_clt.resolve_elf_path", return_value=root / "app.elf"), \
+                 patch(prefix + "stm32_runtime.SerialMonitor"), \
+                 patch(prefix + "stm32_cube_clt.debug_load_elf", return_value="ok"):
+                for kind in sorted(MEASUREMENT_INTEGRITY_KINDS | {"runtime_timeout"}):
+                    with self.subTest(kind=kind), patch(
+                        prefix + "stm32_runtime.execute_runtime_session",
+                        side_effect=stm32_runtime.STM32RuntimeProtocolError(
+                            kind=kind, detail="failed", serial_log=[])):
+                        result = device._evaluate_single_phase_unchecked(
+                            dirpath=root / "unstaged", arena_kb=-1, window_size=200,
+                            num_channels=10, serial_port="fake")
+                        expected = HIL_ERROR_LATENCY if kind == "runtime_timeout" else HIL_ERROR_INTEGRITY
+                        self.assertEqual(result.error_code, expected)
+                        self.assertEqual(result.power_metrics["backend_error_kind"], kind)

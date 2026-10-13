@@ -49,6 +49,7 @@ static int write_protected=1;
 #define __HAL_RTC_WRITEPROTECTION_ENABLE(h) (write_protected=1)
 static int s_rtc_handle, flag, synced, tick, sync_fail, simulate_stop=1, reads, disabled;
 static bool s_rtc_wakeup_fired;
+static int restore_calls, restore_fail, runtime_clock=1, simulate_rtc_wake=1;
 static uint32_t wakeup_counter_for_sleep_us(uint32_t us) { return us/500; }
 static void HAL_NVIC_DisableIRQ(int n) { ++disabled; }
 static void NVIC_ClearPendingIRQ(int n) {}
@@ -59,24 +60,36 @@ static int HAL_RTCEx_SetWakeUpTimer_IT(int *h,int c,int d,int e) { return HAL_OK
 static void HAL_SuspendTick(void) { tick=0; }
 static void HAL_ResumeTick(void) { tick=1; }
 static void HAL_PWR_EnterSTOPMode(int a,int b) {
- assert(flag==0); flag=simulate_stop; synced=0; s_rtc_wakeup_fired=true;
+ assert(flag==0); flag=simulate_stop; synced=0; runtime_clock=0;
+ s_rtc_wakeup_fired=simulate_rtc_wake;
 }
 #define __HAL_PWR_CLEAR_FLAG(f) (flag=0)
 #define __HAL_PWR_GET_FLAG(f) (flag)
 static int HAL_RTC_WaitForSynchro(int *h) { assert(tick && !write_protected); synced=!sync_fail; return sync_fail; }
 static uint64_t rtc_now_us(void) { assert(synced && write_protected); return ++reads; }
-static bool restore_runtime_clocks(void) { return true; }
+static bool restore_runtime_clocks(void) {
+ ++restore_calls; runtime_clock=!restore_fail; return !restore_fail;
+}
 '''
     checks = r'''
 int main(void) {
  CrestDutMeasurement m={0}; int64_t recovery=0;
  flag=1; assert(stop_sleep_for_us(10000,&recovery,&m));
  assert(m.slept_slots==1 && m.stop_entries==1 && reads==2 && recovery==1);
+ assert(runtime_clock && restore_calls==1);
  simulate_stop=0; assert(stop_sleep_for_us(10000,&recovery,&m));
  assert(m.slept_slots==2 && m.stop_entries==1);
  sync_fail=1; int before=reads; int previous_disabled=disabled;
  assert(!stop_sleep_for_us(10000,&recovery,&m));
  assert(reads==before && tick && write_protected && disabled>=previous_disabled+2);
+ assert(runtime_clock && restore_calls==3); /* sync failure still restores UART clock */
+ sync_fail=0; restore_fail=1; before=reads;
+ assert(!stop_sleep_for_us(10000,&recovery,&m));
+ assert(reads==before+1 && restore_calls==4 && tick && write_protected);
+ /* Entry alone cannot prove the requested sleep completed after an early wake. */
+ restore_fail=0; simulate_stop=1; simulate_rtc_wake=0;
+ assert(!stop_sleep_for_us(10000,&recovery,&m));
+ assert(runtime_clock && restore_calls==5 && m.slept_slots==5 && m.stop_entries==2);
  return 0;
 }
 '''

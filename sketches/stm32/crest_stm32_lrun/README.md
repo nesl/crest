@@ -86,8 +86,9 @@ This repo-local project includes copied ST license material:
 
 ## Measurement protocol
 
-The `rtc_wall_v3_stop_evidence_awake_tail` protocol uses RTC/LSE wall timing and
-reports Stop-entry counts, not residency. Cadenced energy includes an awake
+The `rtc_wall_v4_dwt_active_stop_evidence_awake_tail` protocol uses RTC/LSE window
+timing and DWT cadenced active timing when wrap-safe (RTC fallback otherwise).
+Stop counts establish entry, not residency. Cadenced energy includes an awake
 final-slot tail. The host validates telemetry and retries instrumentation failure
 once with the same compiled candidate; valid measurements that miss deployment
 budgets remain ineligible. Each deployment programs and verifies the app and
