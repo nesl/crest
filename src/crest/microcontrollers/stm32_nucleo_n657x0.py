@@ -17,8 +17,10 @@ import re
 import shutil
 import subprocess
 import uuid
+import sys
 import warnings
-from dataclasses import dataclass
+from datetime import datetime, timezone
+from dataclasses import dataclass, asdict, replace
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -37,12 +39,14 @@ from ..errors import (
     HIL_ERROR_COMPILE,
     HIL_ERROR_FLASH_OVERFLOW,
     HIL_ERROR_LATENCY,
+    HIL_ERROR_INTEGRITY,
     HIL_ERROR_OK,
     HIL_ERROR_RAM_OVERFLOW,
     HIL_ERROR_UPLOAD,
 )
 from .. import hil_protocol
 from . import arduino_base
+from .stm32_measurement import validate_measurement, positive
 from . import stm32_cube_clt
 from . import stm32_runtime
 
@@ -253,6 +257,7 @@ class STM32NucleoN657X0QOptions:
     signing_load_offset: str
     signing_header_version: str
     max_external_flash_bytes: int
+    measurement_records_dir: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -560,6 +565,7 @@ def resolve_stm32_nucleo_n657x0_q_options(
         DEFAULT_MAX_EXTERNAL_FLASH_BYTES,
     )
     return STM32NucleoN657X0QOptions(
+        measurement_records_dir=(Path(str(options["measurement_records_dir"])).expanduser().resolve() if options.get("measurement_records_dir") else None),
         project_root=project_root,
         gdbserver=gdbserver,
         gdb=gdb,
@@ -2182,7 +2188,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         *,
         recover_first: bool = True,
     ) -> dict[str, Any]:
-        """Program staged external weights when the manifest requires it.
+        """Program and verify staged external weights on every deployment.
 
         Parameters
         ----------
@@ -2241,17 +2247,15 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 f"({external_flash_bytes} > {self._spec.max_external_flash_bytes})."
             )
         current_blob_path = Path(str(blob_path)).expanduser().resolve()
-        current_blob_hash = (
-            str(manifest.get("weights_blob_sha256"))
-            if manifest.get("weights_blob_sha256")
-            else _sha256_file(current_blob_path)
-        )
+        # Workspace history cannot establish the contents of a shared board.
+        # Hash the bytes being sent, never a potentially stale manifest digest.
+        current_blob_hash = _sha256_file(current_blob_path)
+        actual_blob_bytes = current_blob_path.stat().st_size
+        if actual_blob_bytes <= 0 or actual_blob_bytes > self._spec.max_external_flash_bytes:
+            raise stm32_cube_clt.WorkflowError(
+                f"STM external weight blob has invalid actual size ({actual_blob_bytes})."
+            )
         current_flash_address = str(manifest.get("weights_flash_address") or self._options.weights_flash_address)
-        if (
-            manifest.get("last_programmed_weights_sha256") == current_blob_hash
-            and str(manifest.get("last_programmed_weights_flash_address") or "") == current_flash_address
-        ):
-            return power_metrics
         loader_path = manifest.get("weights_external_loader")
         resolved_loader = (
             _resolve_weights_external_loader(
@@ -2271,9 +2275,11 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         )
         power_metrics["external_flash_program_log"] = program_log
         power_metrics["weights_programmed"] = True
+        power_metrics["external_flash_bytes"] = actual_blob_bytes
         _update_staged_manifest(
             paths,
             weights_blob_sha256=current_blob_hash,
+            weights_blob_size=actual_blob_bytes,
             last_programmed_weights_sha256=current_blob_hash,
             last_programmed_weights_flash_address=current_flash_address,
         )
@@ -2310,42 +2316,34 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 "STM LRUN upload requires a signed_app_bin_path from the compile step."
             )
         manifest = self._read_storage_manifest(paths)
-        current_app_hash = (
-            str(manifest.get("signed_app_sha256"))
-            if manifest.get("signed_app_sha256")
-            else _sha256_file(signed_app_path)
-        )
+        # A different candidate/workspace may have programmed the board since
+        # this manifest was written. Always program; CubeProgrammer uses -v.
+        current_app_hash = _sha256_file(signed_app_path)
         appli_flash_address = str(manifest.get("appli_flash_address") or self._options.appli_flash_address)
-        app_program_log = None
-        appli_programmed = False
-        if not (
-            manifest.get("last_programmed_appli_sha256") == current_app_hash
-            and str(manifest.get("last_programmed_appli_flash_address") or "") == appli_flash_address
-        ):
-            loader_path = manifest.get("weights_external_loader")
-            resolved_loader = (
-                _resolve_weights_external_loader(
-                    self._options.cubeprog_bin,
-                    self._options.weights_external_loader,
-                )
-                if not loader_path
-                else Path(str(loader_path)).expanduser().resolve()
+        loader_path = manifest.get("weights_external_loader")
+        resolved_loader = (
+            _resolve_weights_external_loader(
+                self._options.cubeprog_bin,
+                self._options.weights_external_loader,
             )
-            app_program_log = stm32_cube_clt.program_external_image(
-                cubeprog_bin=self._options.cubeprog_bin,
-                apid=self._options.apid,
-                image_path=signed_app_path,
-                flash_address=appli_flash_address,
-                external_loader=resolved_loader,
-                recover_first=True,
-            )
-            appli_programmed = True
-            _update_staged_manifest(
-                paths,
-                signed_app_sha256=current_app_hash,
-                last_programmed_appli_sha256=current_app_hash,
-                last_programmed_appli_flash_address=appli_flash_address,
-            )
+            if not loader_path
+            else Path(str(loader_path)).expanduser().resolve()
+        )
+        app_program_log = stm32_cube_clt.program_external_image(
+            cubeprog_bin=self._options.cubeprog_bin,
+            apid=self._options.apid,
+            image_path=signed_app_path,
+            flash_address=appli_flash_address,
+            external_loader=resolved_loader,
+            recover_first=True,
+        )
+        appli_programmed = True
+        _update_staged_manifest(
+            paths,
+            signed_app_sha256=current_app_hash,
+            last_programmed_appli_sha256=current_app_hash,
+            last_programmed_appli_flash_address=appli_flash_address,
+        )
         storage_metrics = self._program_weight_blob_if_needed(
             paths,
             recover_first=not appli_programmed,
@@ -3014,7 +3012,84 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             power_metrics=telemetry.power_metrics,
         )
 
-    def _evaluate_single_phase(
+    def _evaluate_single_phase(self, **kwargs) -> DeviceMetrics:
+        """At most one integrity remeasurement of this exact candidate/phase build."""
+        self._phase_compile_result = None
+        first = self._evaluate_phase_attempt(**kwargs)
+        if first.error_code != HIL_ERROR_INTEGRITY or self._phase_compile_result is None:
+            return first
+        second = self._evaluate_phase_attempt(**kwargs, _reuse_compile_result=self._phase_compile_result)
+        metrics = dict(second.power_metrics or {})
+        metrics["measurement_record_paths"] = (list((first.power_metrics or {}).get("measurement_record_paths", []))
+                                               + list(metrics.get("measurement_record_paths", [])))
+        metrics["measurement_remeasure_count"] = 1
+        return replace(second, power_metrics=metrics)
+
+    def _evaluate_phase_attempt(self, **kwargs) -> DeviceMetrics:
+        """Persist every STM32 phase outside disposable candidate workspaces."""
+        if not kwargs.get("run_hil", True):
+            return self._evaluate_single_phase_unchecked(**kwargs)
+        record = {"started_utc": datetime.now(timezone.utc).isoformat(), "request": {key: str(value) if isinstance(value, Path) else value
+                              for key, value in kwargs.items()},
+                  "dut_log": [], "harness_log": []}
+        record_path = (self._options.measurement_records_dir or (Path.cwd() / "outputs" / "hil_measurements")) / f"{uuid.uuid4().hex}.json"
+        # Fail before touching hardware if the durable evidence directory is unavailable.
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        with record_path.open("x") as handle:
+            json.dump(record, handle, indent=2, default=str)
+        result = None
+        try:
+            result = self._evaluate_single_phase_unchecked(**kwargs, _record=record)
+            metrics = dict(result.power_metrics or {})
+            if result.error_code == HIL_ERROR_OK:
+                if kwargs.get("phase", DEFAULT_RUNTIME_MODE) == "back_to_back" and not kwargs.get("harness_serial_port"):
+                    rtc_window = metrics.get("timer_per_window_s")
+                    if positive(rtc_window):
+                        result = replace(result, latency_s=rtc_window / record["expected_runs"])
+                acceptance = validate_measurement(
+                    metrics, latency_s=result.latency_s,
+                    phase=kwargs.get("phase", DEFAULT_RUNTIME_MODE),
+                    clock_mhz=self._options.cpu_clock_mhz,
+                    runs=record["expected_runs"], period_ms=self._options.latency_budget_ms,
+                    dut_log=record["dut_log"], harness_log=record["harness_log"],
+                    require_harness=bool(kwargs.get("harness_serial_port")))
+                record["acceptance"] = acceptance
+                metrics.update(measurement_instrumentation_valid=acceptance["instrumentation_valid"],
+                               measurement_deployment_eligible=acceptance["deployment_eligible"],
+                               measurement_infeasibility_reasons=acceptance["infeasibility_reasons"],
+                               measurement_instrumentation_reasons=acceptance["instrumentation_reasons"])
+                if not acceptance["instrumentation_valid"]:
+                    metrics.update(stm32_runtime.build_backend_error_metrics(
+                        "measurement_integrity", ", ".join(acceptance["instrumentation_reasons"])))
+                    result = replace(result, error_code=HIL_ERROR_INTEGRITY, latency_s=-1.0)
+            else:
+                record["acceptance"] = {"instrumentation_valid": False,
+                                        "instrumentation_reasons": [metrics.get("backend_error_kind", "backend_failure")]}
+            metrics.setdefault("measurement_instrumentation_valid", False)
+            metrics.setdefault("measurement_deployment_eligible", False)
+            metrics.setdefault("measurement_instrumentation_reasons", record["acceptance"]["instrumentation_reasons"])
+            metrics["measurement_record_path"] = str(record_path)
+            metrics["measurement_record_paths"] = [str(record_path)]
+            result = replace(result, power_metrics=metrics)
+            record["result"] = asdict(result)
+            return result
+        except Exception as exc:
+            record["exception"] = {"type": type(exc).__name__, "detail": str(exc)}
+            raise
+        finally:
+            # Unique names prevent a retry/candidate from overwriting prior evidence.
+            record["finished_utc"] = datetime.now(timezone.utc).isoformat()
+            active_exception = sys.exc_info()[1]
+            try:
+                with record_path.open("w") as handle:
+                    json.dump(record, handle, indent=2, default=str)
+            except OSError:
+                logger.exception("Failed to finalize measurement record %s", record_path)
+                if active_exception is None:
+                    raise
+            self.measurement_records = getattr(self, "measurement_records", []) + [str(record_path)]
+
+    def _evaluate_single_phase_unchecked(
         self,
         *,
         dirpath: str | Path,
@@ -3039,6 +3114,8 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         harness_arm_timeout_s: Optional[float] = None,
         harness_active_timeout_s: Optional[float] = None,
         harness_done_timeout_s: Optional[float] = None,
+        _record: dict | None = None,
+        _reuse_compile_result: Any = None,
     ) -> DeviceMetrics:
         """Run one STM32 compile/upload/runtime phase and return metrics.
 
@@ -3101,6 +3178,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             If existing validation or execution checks fail.
         """
         del arena_kb
+        _record = {} if _record is None else _record
         project_root = Path(dirpath).expanduser().resolve()
         paths: STM32WorkspacePaths | None = None
         normalized_phase = _resolve_runtime_mode(phase)
@@ -3119,6 +3197,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                     effective_measured_runs = 10
         else:
             effective_measured_runs = max(1, int(measured_inference_runs))
+        _record["expected_runs"] = effective_measured_runs
         if paths is not None:
             self._write_runtime_phase_config(
                 paths=paths,
@@ -3133,13 +3212,14 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 external_flash_bytes=None,
             )
 
-        compile_result = self.compile(
+        compile_result = _reuse_compile_result or self.compile(
             sketch_path=project_root if paths is None else paths.root,
             arena_kb=-1,
             window_size=window_size,
             num_channels=num_channels,
             build_defines=None,
         )
+        self._phase_compile_result = compile_result
         compile_external_flash_bytes = getattr(compile_result, "external_flash_bytes", None)
 
         def _merge_metrics(extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -3173,14 +3253,14 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             Returns
             -------
             DeviceMetrics
-                Failure metrics tagged with ``HIL_ERROR_LATENCY``.
+                Failure metrics tagged as measurement infrastructure or candidate latency.
             """
             return DeviceMetrics(
                 ram_bytes=compile_result.ram_bytes or -1,
                 flash_bytes=compile_result.flash_bytes or -1,
                 latency_s=-1.0,
                 arena_bytes=compile_result.arena_bytes or -1,
-                error_code=HIL_ERROR_LATENCY,
+                error_code=(HIL_ERROR_INTEGRITY if kind in {"measurement_integrity", "runtime_protocol", "runtime_latency", "harness_metrics_missing", "harness_run_count_mismatch", "harness_ready_timeout", "harness_done_timeout", "runtime_io", "runtime_start_timeout"} else HIL_ERROR_LATENCY),
                 power_metrics=_merge_metrics(
                     stm32_runtime.build_backend_error_metrics(kind, detail)
                 ),
@@ -3292,6 +3372,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                 )
             except (RuntimeError, stm32_cube_clt.WorkflowError) as exc:
                 return _upload_failure("harness_prepare", str(exc))
+        monitor = None
         try:
             # Canonical combined ordering:
             # 1. build
@@ -3311,6 +3392,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             with stm32_runtime.SerialMonitor(use_serial_port, baud_rate, "dut") as monitor:
                 if harness_enabled:
                     harness_log: list[str] = []
+                    _record["harness_log"] = harness_log
                     with serial.Serial(
                         str(harness_serial_port),
                         baudrate=baud_rate,
@@ -3352,6 +3434,8 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                             ),
                             run_timeout_s=float(serial_timeout_s),
                         )
+                        _record["dut_log"] = list(telemetry.serial_log)
+                        _record["harness_log"] = prime_result.harness_log
                         harness_result = hil_protocol.wait_for_harness_done(
                             harness=harness,
                             harness_active_timeout_s=(
@@ -3362,6 +3446,7 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                             ),
                             harness_log=prime_result.harness_log,
                         )
+                    _record["harness_log"] = list(harness_result.harness_log)
                     if not harness_result.harness_done:
                         return _latency_failure(
                             "harness_done_timeout",
@@ -3396,6 +3481,8 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
                     # Preserve STM32-specific cadence telemetry that the generic
                     # harness merge helper does not know about.
                     for passthrough_field in (
+                        "slept_slots",
+                        "stop_entries",
                         "wake_recovery_us",
                         "wake_overshoot_us",
                         "rtc_sleep_total_ms",
@@ -3452,9 +3539,16 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         except stm32_cube_clt.WorkflowError as exc:
             return _upload_failure(classify_stm32_backend_error(exc), str(exc))
         except stm32_runtime.STM32RuntimeProtocolError as exc:
+            _record["dut_log"] = list(exc.serial_log)
             return _latency_failure(exc.kind, exc.detail)
         except (serial.SerialException, RuntimeError) as exc:
+            if monitor is not None:
+                try:
+                    _record["dut_log"] = list(monitor.snapshot_lines())
+                except Exception:
+                    logger.warning("Unable to snapshot DUT log after runtime I/O failure", exc_info=True)
             return _latency_failure("runtime_io", str(exc))
+        _record["dut_log"] = list(telemetry.serial_log)
         return DeviceMetrics(
             ram_bytes=compile_result.ram_bytes or -1,
             flash_bytes=compile_result.flash_bytes or -1,
@@ -3753,17 +3847,27 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         )
         merged_power_metrics["runtime_mode"] = "cadenced"
         merged_power_metrics.update(self._cadenced_power_metrics_from_phase_result(cadenced_result))
-        result_latency_s = (
-            cadenced_result.latency_s
-            if cadenced_result.latency_s >= 0.0
-            else base_result.latency_s
-        )
+        for key, value in (cadenced_result.power_metrics or {}).items():
+            if key.startswith("measurement_") or key.startswith("backend_error_"):
+                merged_power_metrics[key] = value
+        merged_power_metrics["measurement_record_paths"] = (
+            list((base_result.power_metrics or {}).get("measurement_record_paths", []))
+            + list((cadenced_result.power_metrics or {}).get("measurement_record_paths", [])))
+        base_acceptance = base_result.power_metrics or {}
+        cadence_acceptance = cadenced_result.power_metrics or {}
+        merged_power_metrics["measurement_deployment_eligible"] = (
+            base_acceptance.get("measurement_deployment_eligible") is True
+            and cadence_acceptance.get("measurement_deployment_eligible") is True)
+        merged_power_metrics["measurement_infeasibility_reasons"] = list(dict.fromkeys(
+            list(base_acceptance.get("measurement_infeasibility_reasons", []))
+            + list(cadence_acceptance.get("measurement_infeasibility_reasons", []))))
+        result_latency_s = cadenced_result.latency_s
         return DeviceMetrics(
             ram_bytes=base_result.ram_bytes,
             flash_bytes=base_result.flash_bytes,
             latency_s=result_latency_s,
             arena_bytes=base_result.arena_bytes,
-            error_code=base_result.error_code,
+            error_code=cadenced_result.error_code,
             power_metrics=merged_power_metrics,
             external_flash_bytes=base_result.external_flash_bytes,
             retry_hint_bytes=base_result.retry_hint_bytes,

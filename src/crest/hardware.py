@@ -31,7 +31,7 @@ import subprocess
 import time
 import tempfile
 
-from .devices import DeviceInterface, DEVICE_SPECS  # legacy catalog moved to devices.py (Phase 1 bridge)
+from .devices import DeviceInterface, DEVICE_SPECS, get_device_spec  # legacy catalog moved to devices.py (Phase 1 bridge)
 from .errors import (
     HIL_ERROR_OK,
     HIL_ERROR_COMPILE,
@@ -40,6 +40,7 @@ from .errors import (
     HIL_ERROR_FLASH_OVERFLOW,
     HIL_ERROR_RAM_OVERFLOW,
     HIL_ERROR_UPLOAD,
+    HIL_ERROR_INTEGRITY,
     HIL_MASTER_PENDING,
     HIL_MASTER_SUCCESS,
     HIL_MASTER_ARENA_EXHAUSTED,
@@ -47,6 +48,7 @@ from .errors import (
     HIL_MASTER_FLASH_OVERFLOW,
     HIL_MASTER_RAM_OVERFLOW,
     HIL_MASTER_DEVICE_NOT_FOUND,
+    HIL_MASTER_INFRASTRUCTURE,
 )
 from .microcontrollers.arduino_base import normalize_power_metrics
 from .microcontrollers import get_device as get_microcontroller_device
@@ -826,6 +828,10 @@ def return_hardware_specs(
             device_options=device_options,
         ).spec
         return int(spec.max_ram_bytes), int(spec.max_flash_bytes)
+    if normalized_name not in DEVICE_SPECS:
+        # Direct backend imports can defer registry population during a cycle.
+        # Reuse the catalog's lazy refresh, preserving custom/legacy entries.
+        get_device_spec(normalized_name)
     try:
         spec = DEVICE_SPECS[normalized_name]
     except KeyError as exc:
@@ -952,6 +958,10 @@ def arena_size_candidates(
             device_options=device_options,
         ).spec
         return np.array([int(value) for value in spec.arena_sizes_kb])
+    if normalized_name not in DEVICE_SPECS:
+        # Direct backend imports can defer registry population during a cycle.
+        # Reuse the catalog's lazy refresh, preserving custom/legacy entries.
+        get_device_spec(normalized_name)
     try:
         spec = DEVICE_SPECS[normalized_name]
     except KeyError as exc:
@@ -972,6 +982,7 @@ _HIL_ERROR_LABELS = {
     HIL_ERROR_FLASH_OVERFLOW: "HIL_ERROR_FLASH_OVERFLOW",
     HIL_ERROR_RAM_OVERFLOW: "HIL_ERROR_RAM_OVERFLOW",
     HIL_ERROR_UPLOAD: "HIL_ERROR_UPLOAD",
+    HIL_ERROR_INTEGRITY: "HIL_ERROR_INTEGRITY",
 }
 
 _HIL_MASTER_ERROR_LABELS = {
@@ -982,6 +993,7 @@ _HIL_MASTER_ERROR_LABELS = {
     HIL_MASTER_FLASH_OVERFLOW: "HIL_MASTER_FLASH_OVERFLOW",
     HIL_MASTER_RAM_OVERFLOW: "HIL_MASTER_RAM_OVERFLOW",
     HIL_MASTER_DEVICE_NOT_FOUND: "HIL_MASTER_DEVICE_NOT_FOUND",
+    HIL_MASTER_INFRASTRUCTURE: "HIL_MASTER_INFRASTRUCTURE",
 }
 
 
@@ -1498,6 +1510,11 @@ def HIL_controller(
             idealArenaBytes = arena_bytes
             finPower_metrics = power_metrics
             masterError = HIL_MASTER_FLASH_OVERFLOW
+        elif err_flag == HIL_ERROR_INTEGRITY:
+            finRAM, finFlash, finLatency = ram_bytes, flash_bytes, latency_s
+            idealArenaBytes, finPower_metrics = arena_bytes, power_metrics
+            masterError = HIL_MASTER_INFRASTRUCTURE
+            break
         elif err_flag == HIL_ERROR_UPLOAD:
             # Upload failures usually mean the board disappeared; stop the sweep immediately.
             finRAM = ram_bytes
