@@ -117,9 +117,9 @@ def test_waiting_at_cap_consumes_exact_oldest_prefix_before_proposals(client, tm
     client.config.training.nas_trials=2
     sizes=[]
     original=optuna.Study.optimize
-    def optimize(study, objective, n_trials):
+    def optimize(study, objective, n_trials, **kwargs):
         sizes.append(n_trials)
-        return original(study, objective, n_trials=n_trials)
+        return original(study, objective, n_trials=n_trials, **kwargs)
     with patch.object(optuna.Study, "optimize", optimize):
         result=execute(client,tmp_path)
     assert sizes == ([2] if tagged else [3])
@@ -299,9 +299,9 @@ def test_native_round_boundaries_preserve_population_and_target_rules(client,tmp
         client.objective=lambda trial:(float(trial.suggest_int("width",2,8)),1.0)
     sizes=[]
     original=optuna.Study.optimize
-    def optimize(study,objective,n_trials):
+    def optimize(study,objective,n_trials,**kwargs):
         sizes.append(n_trials)
-        return original(study,objective,n_trials=n_trials)
+        return original(study,objective,n_trials=n_trials,**kwargs)
     with patch.object(optuna.Study,"optimize",optimize),patch.object(optuna.Study,"enqueue_trial",side_effect=AssertionError("native must never enqueue")):
         result=execute(client,tmp_path)
     assert sizes==[expected]

@@ -10,7 +10,7 @@ import argparse
 import copy
 from collections.abc import Mapping
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import logging
 import shutil
@@ -34,6 +34,7 @@ from crest.hardware import (
     HIL_MASTER_ARENA_EXHAUSTED,
     HIL_MASTER_DEVICE_NOT_FOUND,
     HIL_MASTER_FATAL,
+    HIL_MASTER_INFRASTRUCTURE,
     HIL_MASTER_FLASH_OVERFLOW,
     HIL_MASTER_RAM_OVERFLOW,
     HIL_MASTER_SUCCESS,
@@ -87,12 +88,75 @@ tf.autograph.set_verbosity(0)
 
 logger = logging.getLogger(__name__)
 
+
+class MeasurementInfrastructureError(RuntimeError):
+    """A bounded HIL recovery failed; consume this NAS attempt without a score."""
+
+
+class MeasurementInfrastructureStop(RuntimeError):
+    """Three consecutive failed measurements require repair before resuming."""
+
+
+class _ConsecutiveMeasurementFailureGuard:
+    """Invocation-local streak, retained across batches but reset on explicit resume.
+
+    Optuna invokes callbacks only after committing the finished trial. Raising
+    here therefore preserves all three FAIL records and prevents a fourth proposal.
+    Historic failures remain in storage/budget, but do not preempt a repaired run.
+    """
+
+    def __init__(self):
+        """Start an invocation with no unbroken infrastructure failures.
+
+        Returns
+        -------
+        None
+        """
+        self.streak = 0
+
+    def __call__(self, study, trial):
+        """Update the committed-trial streak and stop after three failures.
+
+        Parameters
+        ----------
+        study : optuna.study.Study
+            Study invoking this post-trial callback.
+        trial : optuna.trial.FrozenTrial
+            Committed trial whose state and measurement evidence update the streak.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        MeasurementInfrastructureStop
+            If three infrastructure failures occur without a valid measurement.
+        """
+        if not trial.state.is_finished():
+            return
+        if (trial.state == TrialState.FAIL
+                and trial.user_attrs.get("measurement_failure_class") == "infrastructure"):
+            self.streak += 1
+        elif trial.user_attrs.get("measurement_instrumentation_valid") is True:
+            self.streak = 0
+        # Pre-HIL rejection and unclassified outcomes provide no recovery evidence.
+        if self.streak >= 3:
+            message = (
+                "Stopping after 3 measurement infrastructure FAIL trials without an intervening valid measurement. "
+                "The study and raw evidence are retained; repair the measurement setup "
+                "before explicitly resuming the same study. No further candidate will be proposed in this invocation.")
+            logger.error(message)
+            raise MeasurementInfrastructureStop(message)
+
+
 RUNNER_OWNED_TRIAL_PARAM_KEYS = frozenset({"cpu_clock_mhz_index", "quantization_mode"})
 COMPILE_DERIVED_METRICS = frozenset(
     {"ram_bytes", "flash_bytes", "external_flash_bytes", "arena_bytes"}
 )
 RUNTIME_ONLY_METRICS = frozenset(
     {
+        "measurement_deployment_eligible",
         "latency_ms",
         "energy_mj_per_inference",
         "avg_power_mw",
@@ -949,7 +1013,8 @@ class NASModelClient:
         return count
 
     def _execute_search_round(self, study: optuna.Study, optimizer: Any, name: str,
-                              descriptor: Any, budget: BudgetSnapshot) -> int:
+                              descriptor: Any, budget: BudgetSnapshot,
+                              measurement_failure_guard=None) -> int:
         """Validate a complete proposal before enqueue, then use the shared objective."""
         proposal = optimizer.propose_round(build_trial_snapshot(study), budget)
         if isinstance(proposal, NativeRound):
@@ -982,7 +1047,9 @@ class NASModelClient:
                 study.enqueue_trial(params, user_attrs={PROPOSAL_ATTR: metadata})
         else:
             raise ValueError("Optimizer must return NativeRound or ExplicitRound.")
-        study.optimize(self.objective, n_trials=size)
+        study.optimize(self.objective, n_trials=size,
+                       callbacks=[measurement_failure_guard or _ConsecutiveMeasurementFailureGuard()],
+                       catch=(MeasurementInfrastructureError,))
         return size
 
     def _hardware_limit_device_options(self) -> dict[str, str] | None:
@@ -1853,8 +1920,10 @@ class NASModelClient:
         def _fail_with_penalty(
             prune_reason: str,
             prune_rule: str = "",
+            *,
+            infrastructure_failure: bool = False,
         ):
-            """Return a helper to prune with a penalty score and log the failure.
+            """Log a rejected attempt; infrastructure failures raise a typed error.
 
             Parameters
             ----------
@@ -1862,6 +1931,9 @@ class NASModelClient:
                 Reason text attached to the pruning decision.
             prune_rule : str
                 Rule name attached to the pruning decision.
+            infrastructure_failure : bool
+                Log evidence, then raise a typed infrastructure error instead
+                of returning a score or pruning. Optuna records this as FAIL.
 
             Returns
             -------
@@ -1873,6 +1945,8 @@ class NASModelClient:
             ------
             TrialPruned
                 If existing validation or execution checks fail.
+            MeasurementInfrastructureError
+                If bounded measurement recovery was exhausted.
             """
             # Normalize missing metrics, build a loggable TrialOutcome, and
             # then diverge between scalar Optuna pruning and multi-objective
@@ -1912,22 +1986,41 @@ class NASModelClient:
                     quantization_mode=quantization_mode,
                 )
 
+            if infrastructure_failure:
+                trial_outcome = replace(trial_outcome, score=None,
+                    objective_values=[None] * len(trial_outcome.objective_names))
+                metrics["trial_outcome"] = "FAIL_infrastructure"
+                metrics["score_type"] = "multi-objective" if self._score_is_multiobjective() else "scoring-function"
+
             log_trial(
                 trial_outcome=trial_outcome,
                 metrics=metrics,
                 trial=trial,
                 log_file_name=str(log_path),
                 study_name=self.study_name,
-                pruned=True,
+                pruned=not infrastructure_failure,
                 prune_reason=prune_reason,
                 prune_rule=prune_rule,
             )
 
+            if infrastructure_failure:
+                raise MeasurementInfrastructureError(prune_reason)
             if self._score_is_multiobjective():
                 return tuple(trial_outcome.objective_values)
 
             _report_if_supported(-float("inf"))
             raise optuna.TrialPruned(prune_reason)
+
+        # Exhausted measurement retries are infrastructure failures, not deadline
+        # infeasibility. Optuna records FAIL; only this typed exception is caught
+        # by optimization, so it consumes one attempted-trial slot without training.
+        if error_code == HIL_MASTER_INFRASTRUCTURE:
+            metrics["measurement_failure_class"] = "infrastructure"
+            return _fail_with_penalty(
+                "HIL measurement integrity failed after bounded recovery",
+                prune_rule="measurement_integrity",
+                infrastructure_failure=True,
+            )
 
         # Prune trials if they hit known fatal HIL error codes
         if error_code == HIL_MASTER_FLASH_OVERFLOW:
@@ -2242,6 +2335,7 @@ class NASModelClient:
                     sampler=sampler,
                     load_if_exists=True,
                 )
+            measurement_failure_guard = _ConsecutiveMeasurementFailureGuard()
             optimizer_name, optimizer, optimizer_config, signature = self._select_optimizer(single_trial_study, sampler)
             self._validate_or_store_feasibility_signature(single_trial_study, store=False)
             try:
@@ -2257,13 +2351,14 @@ class NASModelClient:
                     waiting_size = self._waiting_round_size(single_trial_study)
                     if waiting_size:
                         size = min(waiting_size, remaining)
-                        single_trial_study.optimize(self.objective, n_trials=size)
+                        single_trial_study.optimize(self.objective, n_trials=size, callbacks=[measurement_failure_guard], catch=(MeasurementInfrastructureError,))
                     else:
                         completed = self._qualifying_complete_count(single_trial_study.trials)
                         size = self._execute_search_round(
                             single_trial_study, optimizer, optimizer_name, descriptor,
                             BudgetSnapshot(len(single_trial_study.trials), completed,
                                            target, total_cap, remaining),
+                            measurement_failure_guard=measurement_failure_guard,
                         )
                     remaining -= size
             except Exception as exc:
@@ -2371,6 +2466,7 @@ class NASModelClient:
                 sampler=sampler,
                 load_if_exists=True,  # resume if the study already exists
             )
+        measurement_failure_guard = _ConsecutiveMeasurementFailureGuard()
         optimizer_name, optimizer, optimizer_config, signature = self._select_optimizer(study, sampler)
         self._validate_or_store_feasibility_signature(study, store=False)
         # Make sure we never shrink the total budget when resuming an existing study.
@@ -2434,7 +2530,7 @@ class NASModelClient:
 
                 waiting_size = self._waiting_round_size(study)
                 if waiting_size:
-                    study.optimize(self.objective, n_trials=waiting_size)
+                    study.optimize(self.objective, n_trials=waiting_size, callbacks=[measurement_failure_guard], catch=(MeasurementInfrastructureError,))
                     continue
 
                 remaining_needed = target_completions - feasible
@@ -2459,6 +2555,7 @@ class NASModelClient:
                 self._execute_search_round(
                     study, optimizer, optimizer_name, descriptor,
                     BudgetSnapshot(total, feasible, target_completions, max_total_trials, next_batch),
+                    measurement_failure_guard=measurement_failure_guard,
                 )
         except Exception as exc:
             completed, feasible, infeasible, pruned, failed = _trial_counts()
