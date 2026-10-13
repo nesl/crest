@@ -115,6 +115,18 @@ The provider must return `{"candidates": [{...}]}`. LLM validation checks the en
 
 A partially accepted batch runs at its accepted size without filling rejected slots. A batch with zero accepted candidates gets up to `max_repair_attempts` additional calls after the initial call. Provider errors, invalid JSON, and validation errors contribute repair feedback. After exhaustion, the component tries up to 100 locally sampled candidates and returns one legal unique random fallback. Failure to find one raises an error. `random_seed` controls this local RNG, not remote provider randomness.
 
+### Fixed measured warm-up
+
+Optional `optimizer.llm.warmup_params_file` supplies an ordered JSON list of raw
+parameter dictionaries. For the CS3 study, use 15 entries and
+`recent_trial_window: 15`. The LLM component returns one fixed `ExplicitRound`
+entry at a time, reusing runner validation, enqueueing, evaluation, and budget
+accounting. Provider requests begin only after those attempts are terminal;
+failed/pruned entries remain evidence. Provenance records `llm_warmup`, its index,
+and the content hash. Resume uses saved provenance and the existing waiting
+queue; orphan RUNNING warm-up trials require recovery. The content hash guards
+study identity, while runs without this option retain their previous identity.
+
 ## Budgeting and restart behavior
 
 Production targets and caps are totals for the study, not additional work requested by this invocation:

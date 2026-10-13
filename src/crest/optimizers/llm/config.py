@@ -36,6 +36,10 @@ def normalize_llm_config(optimizer_config) -> Dict:
             raise ValueError(f"optimizer.llm.{field_name} must be an integer >= {minimum}.")
         llm[field_name] = raw_value
 
+    warmup_file = llm.get("warmup_params_file")
+    if warmup_file is not None and (not isinstance(warmup_file, str) or not warmup_file.strip()):
+        raise ValueError("optimizer.llm.warmup_params_file must be a non-empty path or null.")
+
     raw_semantic_context = llm.get("semantic_context", True)
     if not isinstance(raw_semantic_context, bool):
         raise ValueError("optimizer.llm.semantic_context must be a boolean.")

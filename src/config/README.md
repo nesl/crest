@@ -517,6 +517,36 @@ Each prompt includes attempted and feasible-trial budgets. Its phase guidance is
 and `finalization` afterward. These are prompt instructions; CREST still evaluates
 candidates with the configured objective and feasibility rules.
 
+To give the LLM a fixed measured warm-up, add an ordered JSON parameter file:
+
+```yaml
+optimizer:
+  type: llm_generator
+  llm:
+    # Keep the provider/model settings from your LLM configuration.
+    warmup_params_file: experiments/cs3/warmup_params.json
+    recent_trial_window: 15
+    memory:
+      enabled: false
+```
+
+The file must contain a nonempty JSON list of complete raw parameter dictionaries
+for the active search space. For CS3, supply the 15 baseline configurations in
+order; the path above is illustrative, not a bundled dataset. Relative paths
+resolve from the launch working directory. All entries are validated before
+execution. One fixed candidate runs per round through the same objective before
+any provider request; failures and pruned trials count as warm-up attempts.
+Warm-up uses the normal attempt/completion budgets, so a smaller budget can stop
+partway through it. Set the recent window to at least 15 to expose the whole CS3
+warm-up in the first LLM prompt.
+
+Existing queue/provenance handling resumes without replaying completed entries.
+An orphan RUNNING warm-up trial requires explicit recovery. Study identity hashes
+the ordered file contents rather than the path: relocation or JSON formatting
+changes are allowed, changing the candidates requires a new study. Omitting the
+option preserves the existing LLM behavior and optimizer identity. Provider
+configuration and credentials are still checked during initialization.
+
 `recent_trial_window` bounds compact records read directly from recent Optuna
 trials and included in the next prompt. It defaults to 10; set it to 0 to
 disable that recent window. `batch_size` controls candidates per generation call;

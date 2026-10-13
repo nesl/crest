@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import os
+import json
 import random
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from ...interfaces import OptimizerABC
-from ...pipeline_types import BudgetSnapshot, ExplicitRound, SearchContext, TrialRecord
+from ...pipeline_types import BudgetSnapshot, CandidateProposal, ExplicitRound, SearchContext, TrialRecord
+from ...search_space import validate_candidate
 from ...semantic_context import SEMANTIC_CONTEXT_VERSION, disabled_semantic_context
 from .config import normalize_llm_config
 from .enqueue import generate_llm_batch
@@ -30,6 +32,35 @@ def _plain(value):
     return value
 
 
+def _load_warmup(llm):
+    """Read ordered fixed candidates without invoking the provider.
+
+    Parameters
+    ----------
+    llm : Mapping
+        Normalized LLM configuration; relative paths use the working directory.
+
+    Returns
+    -------
+    list of dict
+        Raw candidate parameters, or an empty list when warm-up is disabled.
+
+    Raises
+    ------
+    ValueError
+        If the file is not a nonempty JSON list of parameter dictionaries.
+    OSError
+        If the configured file cannot be read.
+    """
+    filename = llm.get("warmup_params_file")
+    if filename is None:
+        return []
+    candidates = json.loads(Path(filename).expanduser().read_text())
+    if not isinstance(candidates, list) or not candidates or not all(isinstance(p, dict) for p in candidates):
+        raise ValueError("warmup_params_file must contain a nonempty JSON list of parameter dictionaries.")
+    return candidates
+
+
 class LLMGeneratorOptimizer(OptimizerABC):
     """Own prompts, provider requests, derived memory, repair and fallback."""
 
@@ -45,6 +76,7 @@ class LLMGeneratorOptimizer(OptimizerABC):
 
     def identity_config(self, config) -> dict:
         llm = normalize_llm_config(config)["llm"]
+        self._warmup_params = _load_warmup(llm)
         identity = {key: _plain(llm[key]) for key in (
             "provider", "prompt_version", "batch_size", "max_repair_attempts",
             "random_seed", "recent_trial_window", "anchor_count", "semantic_context", "memory",
@@ -58,6 +90,8 @@ class LLMGeneratorOptimizer(OptimizerABC):
             "phase_policy_version": 1,
             "fallback_policy": {"type": "unique_random", "max_attempts": 100},
         })
+        if self._warmup_params:
+            identity["warmup_params_hash"] = digest(self._warmup_params)
         if llm["provider"] == "fake":
             # Only configured responses affect this provider, never credentials.
             identity["fixture_responses_hash"] = digest(llm["responses"])
@@ -77,6 +111,13 @@ class LLMGeneratorOptimizer(OptimizerABC):
         llm = normalize_llm_config(config)["llm"]
         if context.search_space is None:
             raise ValueError("llm_generator requires a declared trial_search_space descriptor.")
+        # Reuse the exact file contents hashed during identity checking.
+        self.warmup_params = getattr(self, "_warmup_params", None)
+        if self.warmup_params is None:
+            self.warmup_params = _load_warmup(llm)
+        for params in self.warmup_params:
+            validate_candidate(params, context.search_space)
+        self.warmup_hash = digest(self.warmup_params)
         if llm["provider"] != "fake" and not os.environ.get(llm["api_key_env"]):
             raise RuntimeError(
                 f"Required API key environment variable '{llm['api_key_env']}' is not set."
@@ -97,6 +138,23 @@ class LLMGeneratorOptimizer(OptimizerABC):
                       budget: BudgetSnapshot) -> ExplicitRound:
         if budget.permitted_round_size < 1:
             raise ValueError("LLM proposal requires a positive permitted round size.")
+        if self.warmup_params:
+            ordered = sorted(history, key=lambda trial: trial.number)
+            for index, trial in enumerate(ordered[:len(self.warmup_params)]):
+                provenance = trial.user_attrs.get("crest_proposal", {})
+                if (provenance.get("proposal_source") != "llm_warmup"
+                        or provenance.get("warmup_index") != index
+                        or provenance.get("warmup_params_hash") != self.warmup_hash
+                        or _plain(provenance.get("proposal_params")) != self.warmup_params[index]):
+                    raise RuntimeError("Warm-up history does not match its fixed candidate sequence.")
+                if trial.state not in {"COMPLETE", "PRUNED", "FAIL"}:
+                    raise RuntimeError("Warm-up has unfinished trials; resolve them before proposing more work.")
+            if len(ordered) < len(self.warmup_params):
+                index = len(ordered)
+                return ExplicitRound((CandidateProposal(dict(self.warmup_params[index]), {
+                    "proposal_source": "llm_warmup", "warmup_index": index,
+                    "warmup_params_hash": self.warmup_hash,
+                }),))
         context = self.context
         llm = self.config
         batch_size = min(budget.permitted_round_size, llm["batch_size"])
