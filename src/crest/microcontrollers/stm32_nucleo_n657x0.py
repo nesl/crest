@@ -3013,7 +3013,23 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         )
 
     def _evaluate_single_phase(self, **kwargs) -> DeviceMetrics:
-        """At most one integrity remeasurement of this exact candidate/phase build."""
+        """Measure a phase, allowing one integrity retry of the same build.
+
+        Parameters
+        ----------
+        **kwargs : dict
+            Phase and candidate arguments forwarded to `_evaluate_phase_attempt`.
+
+        Returns
+        -------
+        DeviceMetrics
+            Final attempt metrics with record paths from both attempts when retried.
+
+        Raises
+        ------
+        Exception
+            If phase execution or durable evidence persistence raises an exception.
+        """
         self._phase_compile_result = None
         first = self._evaluate_phase_attempt(**kwargs)
         if first.error_code != HIL_ERROR_INTEGRITY or self._phase_compile_result is None:
@@ -3026,7 +3042,27 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
         return replace(second, power_metrics=metrics)
 
     def _evaluate_phase_attempt(self, **kwargs) -> DeviceMetrics:
-        """Persist every STM32 phase outside disposable candidate workspaces."""
+        """Measure and validate one phase while persisting durable raw evidence.
+
+        Parameters
+        ----------
+        **kwargs : dict
+            Candidate and runtime arguments forwarded to `_evaluate_single_phase_unchecked`.
+            With HIL disabled, execution bypasses measurement evidence and acceptance.
+
+        Returns
+        -------
+        DeviceMetrics
+            Phase metrics augmented with acceptance flags and a durable record path.
+
+        Raises
+        ------
+        OSError
+            If the evidence directory or record cannot be written and no earlier
+            execution exception is already being propagated.
+        Exception
+            If the underlying phase execution fails; its evidence is retained.
+        """
         if not kwargs.get("run_hil", True):
             return self._evaluate_single_phase_unchecked(**kwargs)
         record = {"started_utc": datetime.now(timezone.utc).isoformat(), "request": {key: str(value) if isinstance(value, Path) else value
@@ -3139,6 +3175,8 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             Serial baud rate retained for interface compatibility.
         serial_timeout_s : float, default=12.0
             Serial timeout retained for interface compatibility.
+        measured_inference_runs : int | None, optional
+            Number of measured invocations; defaults to the device setting.
         dut_ready_timeout_s : float | None, optional
             DUT-ready timeout retained for interface compatibility.
         harness_serial_port : str | None, optional
@@ -3163,6 +3201,11 @@ class STM32NucleoN657X0QDevice(DeviceInterface):
             Harness active timeout retained for interface compatibility.
         harness_done_timeout_s : float | None, optional
             Harness done timeout retained for interface compatibility.
+
+        _record : dict | None, optional
+            Mutable evidence record populated with raw logs and expected run count.
+        _reuse_compile_result : Any, optional
+            Existing compile result reused for a bounded instrumentation retry.
 
         Returns
         -------

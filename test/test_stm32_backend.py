@@ -3865,6 +3865,7 @@ class STM32HelperTests(unittest.TestCase):
 
 class RuntimeIOEvidenceTests(unittest.TestCase):
     def test_partial_dut_log_survives_transport_failure_and_retry(self):
+        """Partial DUT output must survive transport recovery in durable evidence."""
         from types import SimpleNamespace
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

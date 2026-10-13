@@ -11,6 +11,7 @@ from crest.errors import HIL_ERROR_OK, HIL_ERROR_LATENCY, HIL_ERROR_INTEGRITY
 
 
 def sample(phase='back_to_back'):
+    """Build valid phase telemetry and matching raw evidence for acceptance tests."""
     window = 5.0 if phase == 'cadenced' else .1
     return dict(metrics={'phase': phase, 'clock_hz': 600000000, 'runs': 10,
                          'timer_per_window_s': window, 'harness_latency_s': window / 10,
@@ -22,6 +23,7 @@ def sample(phase='back_to_back'):
 
 
 def test_both_phases_accept_units():
+    """Both phases must accept valid telemetry and retain consistent energy units."""
     for phase in ('back_to_back', 'cadenced'):
         result = validate_measurement(**sample(phase))
         assert result['instrumentation_valid'] and result['deployment_eligible']
@@ -36,16 +38,19 @@ def test_both_phases_accept_units():
     ('harness_latency_s', .02, 'window_sources_agree'),
     ('rtc_clock_source', 'LSI', 'rtc_lse')])
 def test_invalid_telemetry_rejected(field, value, reason):
+    """Malformed telemetry must report the corresponding instrumentation check."""
     args = sample(); args['metrics'][field] = value
     assert reason in validate_measurement(**args)['instrumentation_reasons']
 
 
 def test_old_firmware_and_wrong_budget_rejected():
+    """Protocol identity and requested cadence budget must both be present."""
     args = sample(); args['dut_log'] = []
     assert {'protocol_matches', 'period_matches'} <= set(validate_measurement(**args)['instrumentation_reasons'])
 
 
 def test_deadline_infeasible_is_not_instrumentation_failure():
+    """Valid deadline misses must remain infeasibility rather than instrumentation failure."""
     args = sample('cadenced'); args['metrics']['deadline_miss_count'] = 1
     args['latency_s'] = .6
     result = validate_measurement(**args)
@@ -56,15 +61,18 @@ def test_deadline_infeasible_is_not_instrumentation_failure():
 
 
 def test_missing_deadline_telemetry_is_instrumentation_failure():
+    """Invalid deadline counts must invalidate measurement instrumentation."""
     args = sample('cadenced'); args['metrics']['deadline_miss_count'] = -1
     assert 'deadline_count_valid' in validate_measurement(**args)['instrumentation_reasons']
 
 
 def test_unique_raw_records_accept_and_reject(tmp_path, monkeypatch):
+    """Accepted and rejected attempts must retain separate raw evidence records."""
     monkeypatch.chdir(tmp_path)
     device = STM32NucleoN657X0QDevice(device_options={'latency_budget_ms': 500})
     args = sample()
     def unchecked(**kwargs):
+        """Supply deterministic telemetry and populate the attempt evidence record."""
         kwargs['_record'].update(expected_runs=10, dut_log=args['dut_log'], harness_log=args['harness_log'])
         return DeviceMetrics(1, 2, .01, 3, HIL_ERROR_OK, power_metrics=args['metrics'])
     with patch.object(device, '_evaluate_single_phase_unchecked', side_effect=unchecked):
@@ -79,6 +87,7 @@ def test_unique_raw_records_accept_and_reject(tmp_path, monkeypatch):
 
 
 def test_cadence_failure_propagates_without_base_latency_fallback():
+    """Cadence failure must propagate instead of reusing base-phase latency."""
     device = STM32NucleoN657X0QDevice(device_options={'runtime_mode': 'cadenced'})
     base = DeviceMetrics(1, 2, .01, 3, HIL_ERROR_OK, power_metrics={})
     failed = DeviceMetrics(1, 2, -1, 3, HIL_ERROR_LATENCY,
@@ -90,6 +99,7 @@ def test_cadence_failure_propagates_without_base_latency_fallback():
 
 
 def test_cadence_keeps_both_records_and_base_infeasibility():
+    """Cadence results must retain both phase records and any base infeasibility."""
     device = STM32NucleoN657X0QDevice(device_options={'runtime_mode': 'cadenced'})
     base = DeviceMetrics(1, 2, .6, 3, HIL_ERROR_OK,
                         power_metrics={'measurement_deployment_eligible': False,
@@ -108,10 +118,12 @@ def test_cadence_keeps_both_records_and_base_infeasibility():
 
 
 def test_no_harness_uses_rtc_mean_not_aggregate(tmp_path, monkeypatch):
+    """Without a harness, reported latency must be the RTC mean per invocation."""
     monkeypatch.chdir(tmp_path)
     device = STM32NucleoN657X0QDevice(device_options={'latency_budget_ms': 500})
     args = sample()
     def unchecked(**kwargs):
+        """Supply deterministic telemetry and populate the attempt evidence record."""
         kwargs['_record'].update(expected_runs=10, dut_log=args['dut_log'], harness_log=[])
         return DeviceMetrics(1, 2, .1, 3, HIL_ERROR_OK, power_metrics=args['metrics'])
     with patch.object(device, '_evaluate_single_phase_unchecked', side_effect=unchecked):
@@ -120,6 +132,7 @@ def test_no_harness_uses_rtc_mean_not_aggregate(tmp_path, monkeypatch):
 
 
 def test_integrity_remeasure_once_same_compile_and_keeps_both_records():
+    """One integrity retry must reuse the compiled candidate and preserve both records."""
     device = STM32NucleoN657X0QDevice()
     compiled = object()
     failed = DeviceMetrics(1, 2, -1, 3, HIL_ERROR_INTEGRITY,
@@ -128,6 +141,7 @@ def test_integrity_remeasure_once_same_compile_and_keeps_both_records():
                             power_metrics={'measurement_record_paths': ['second.json']})
     calls = []
     def attempt(**kwargs):
+        """Fail the first attempt and require the retry to reuse its compiled build."""
         calls.append(kwargs)
         if len(calls) == 1:
             device._phase_compile_result = compiled
@@ -142,9 +156,11 @@ def test_integrity_remeasure_once_same_compile_and_keeps_both_records():
 
 
 def test_exhausted_integrity_stops_at_two_and_infeasible_is_not_retried():
+    """Integrity recovery must stop after two attempts and skip valid infeasible results."""
     device = STM32NucleoN657X0QDevice()
     failure = DeviceMetrics(1, 2, -1, 3, HIL_ERROR_INTEGRITY, power_metrics={})
     def fail(**kwargs):
+        """Simulate exhausted instrumentation recovery after a successful compile."""
         device._phase_compile_result = object()
         return failure
     with patch.object(device, '_evaluate_phase_attempt', side_effect=fail) as mock:
@@ -158,10 +174,12 @@ def test_exhausted_integrity_stops_at_two_and_infeasible_is_not_retried():
 
 
 def test_explicit_record_directory_and_original_exception_survives_write_failure(tmp_path, monkeypatch):
+    """A final record write failure must preserve the original candidate exception."""
     records = tmp_path / 'server-models' / 'hil_measurements'
     device = STM32NucleoN657X0QDevice(device_options={'measurement_records_dir': records})
     real_open = Path.open
     def open_with_final_failure(path, mode='r', *args, **kwargs):
+        """Fail record finalization while allowing initial evidence creation."""
         if path.parent == records and mode == 'w':
             raise OSError('disk full')
         return real_open(path, mode, *args, **kwargs)
@@ -178,12 +196,14 @@ def test_explicit_record_directory_and_original_exception_survives_write_failure
     ('STM32_AI_RUN=FAIL measurement_integrity:stop_sleep_extra', 'runtime_model', HIL_ERROR_LATENCY, 1),
 ])
 def test_real_parser_failure_routes_through_backend_recovery(tmp_path, token, expected_kind, expected_code, attempts):
+    """Parsed firmware failures must trigger only the matching backend recovery path."""
     from types import SimpleNamespace
     from crest.microcontrollers import stm32_runtime
     device = STM32NucleoN657X0QDevice(device_options={'measurement_records_dir': tmp_path/'records'})
     compiled = SimpleNamespace(success=True, log='ok', flash_bytes=2, ram_bytes=1,
                                overflow_kind=None, build_dir=tmp_path/'Debug', arena_bytes=3)
     def parse_failure(*args, **kwargs):
+        """Exercise production parsing of a firmware failure token."""
         return stm32_runtime.parse_stm32_runtime_lines(['STM32_AI_INIT=OK', 'DUT READY', token])
     module = 'crest.microcontrollers.stm32_nucleo_n657x0.'
     with patch.object(device, 'compile', return_value=compiled) as compile_mock, \
@@ -203,6 +223,7 @@ def test_real_parser_failure_routes_through_backend_recovery(tmp_path, token, ex
 
 @pytest.mark.parametrize('kind', ['runtime_io', 'harness_ready_timeout', 'harness_done_timeout', 'runtime_start_timeout'])
 def test_transport_failures_retry_same_build_and_keep_evidence(tmp_path, kind):
+    """Transport failures must retry the same build once and retain both evidence files."""
     from types import SimpleNamespace
     from crest.microcontrollers import stm32_runtime
     device = STM32NucleoN657X0QDevice(device_options={'measurement_records_dir': tmp_path/'records'})
@@ -225,6 +246,7 @@ def test_transport_failures_retry_same_build_and_keep_evidence(tmp_path, kind):
 
 @pytest.mark.parametrize('misses', ['0.5', '-0.5'])
 def test_fractional_deadline_telemetry_is_rejected_after_parsing(misses):
+    """Fractional deadline counts must remain invalid after runtime parsing."""
     from crest.microcontrollers import stm32_runtime
     args = sample('cadenced')
     lines = args['dut_log'] + [

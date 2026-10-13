@@ -1943,6 +1943,7 @@ if __name__ == "__main__":
 
 class EvidenceFailureTests(HILServerTestCase):
     def test_request_archive_failure_preserves_candidate_exception_and_cleanup(self):
+        """Archive failure must preserve the candidate exception and release request resources."""
         self.config.device.name = 'STM32_NUCLEO_N657X0_Q'
         server = self.build_server()
         device = MagicMock()

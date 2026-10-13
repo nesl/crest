@@ -5,15 +5,56 @@ PROTOCOL = 'rtc_wall_v3_stop_evidence_awake_tail'
 
 
 def positive(value):
+    """Check whether a telemetry value is finite and strictly positive.
+
+    Parameters
+    ----------
+    value : object
+        Candidate scalar; booleans and nonnumeric values are rejected.
+
+    Returns
+    -------
+    bool
+        Whether the value is a finite positive integer or float.
+    """
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
 
 
 def validate_measurement(metrics, *, latency_s, phase, clock_mhz, runs, period_ms,
                          dut_log, harness_log, require_harness):
-    """Return instrumentation reasons separately from deployment infeasibility.
+    """Separate instrumentation failures from deployment infeasibility.
 
-    The 2% timing agreement band detects gross timing mismatch, not meter accuracy.
-    Two RTC ticks (62 us) bound endpoint quantization for cadence-window validity.
+    Parameters
+    ----------
+    metrics : dict
+        Parsed timing, clock, energy, and Stop-entry telemetry.
+    latency_s : float
+        Active invocation latency in seconds.
+    phase : str
+        Requested back-to-back or cadenced measurement phase.
+    clock_mhz : int
+        Requested CPU clock in MHz.
+    runs : int
+        Expected number of measured invocations.
+    period_ms : float
+        Requested cadence and active-latency budget in milliseconds.
+    dut_log : str or sequence of str
+        DUT output containing protocol identity and cadence budget.
+    harness_log : str or sequence of str
+        Raw harness output used to establish presence of external evidence.
+    require_harness : bool
+        Whether harness timing and energy must also pass acceptance.
+
+    Returns
+    -------
+    dict
+        Acceptance flags, individual checks, failure reasons, and per-release
+        and aggregate energy in millijoules.
+
+    Notes
+    -----
+    The 2% timing agreement band detects gross mismatch, not meter accuracy.
+    Two RTC ticks (62 us) bound cadence-window endpoint quantization.
     Requested sleep is never interpreted as measured Stop residency.
     """
     reasons = []
@@ -38,6 +79,18 @@ def validate_measurement(metrics, *, latency_s, phase, clock_mhz, runs, period_m
     if phase == 'cadenced':
         slots, entries = metrics.get('slept_slots'), metrics.get('stop_entries')
         def valid_count(value):
+            """Check a Stop count against the available inter-release sleep slots.
+
+            Parameters
+            ----------
+            value : object
+                Reported count, required to be an integer between zero and runs minus one.
+
+            Returns
+            -------
+            bool
+                Whether the count is finite, integral, and within the slot limit.
+            """
             return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 and int(value) == value and value <= max(0, runs - 1)
         checks['stop_counts_valid'] = valid_count(slots) and valid_count(entries)
         checks['stop_entries_match_slots'] = checks['stop_counts_valid'] and entries == slots

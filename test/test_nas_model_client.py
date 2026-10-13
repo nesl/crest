@@ -625,6 +625,7 @@ class ObjectiveTests(unittest.TestCase):
         patch.stopall()
 
     def test_objective_classifies_exhausted_measurement_recovery(self) -> None:
+        """Exhausted recovery must raise an infrastructure failure before training."""
         self.client._hil_request = MagicMock(return_value={"error_code": HIL_MASTER_INFRASTRUCTURE})
         with self.assertRaises(MeasurementInfrastructureError):
             self.client.objective(DummyTrial())
@@ -635,6 +636,7 @@ class ObjectiveTests(unittest.TestCase):
         self.client.task.build_fit_plan.assert_not_called()
 
     def test_multiobjective_infrastructure_failure_has_no_penalty_return(self) -> None:
+        """Multiobjective infrastructure failures must raise instead of returning penalties."""
         self.client.config.nas.score = Dict(
             type="multi-objective", metrics=Dict(), params=Dict(objectives=[
                 Dict(metric="rmse_total", direction="minimize"),
@@ -647,6 +649,7 @@ class ObjectiveTests(unittest.TestCase):
         self.client.task.build_fit_plan.assert_not_called()
 
     def test_infrastructure_csv_has_null_objectives_and_explicit_failure(self):
+        """Infrastructure CSV rows must identify FAIL and leave objective values null."""
         import csv
         import json
         from crest.model import log_trial as real_log_trial
@@ -2114,11 +2117,13 @@ class MeasurementFailureGuardTests(unittest.TestCase):
 
     @staticmethod
     def _fail(trial):
+        """Record infrastructure evidence and raise the failure consumed by Optuna."""
         trial.set_user_attr("measurement_failure_class", "infrastructure")
         trial.set_user_attr("measurement_record_path", f"/evidence/{trial.number}.json")
         raise MeasurementInfrastructureError("bounded recovery exhausted")
 
     def test_three_failures_stop_run_and_resume_preserves_budget(self):
+        """Three committed failures must stop proposals while resume preserves the trial budget."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             client = _build_test_client(root)
@@ -2141,11 +2146,13 @@ class MeasurementFailureGuardTests(unittest.TestCase):
             self.assertEqual([t.state for t in resumed.trials], [TrialState.FAIL] * 3 + [TrialState.COMPLETE])
 
     def test_only_proven_measurement_success_resets_streak(self):
+        """Only valid measurement evidence may reset the infrastructure failure streak."""
         study = optuna.create_study()
         guard = _ConsecutiveMeasurementFailureGuard()
         kwargs = dict(callbacks=[guard], catch=(MeasurementInfrastructureError,))
         study.optimize(self._fail, n_trials=2, **kwargs)
         def measured(trial):
+            """Represent a valid measurement rejected only for deadline infeasibility."""
             trial.set_user_attr("measurement_instrumentation_valid", True)
             raise optuna.TrialPruned("valid measurement, deadline infeasible")
         study.optimize(measured, n_trials=1, **kwargs)
@@ -2153,6 +2160,7 @@ class MeasurementFailureGuardTests(unittest.TestCase):
         study.optimize(self._fail, n_trials=2, **kwargs)
         study.optimize(lambda trial: 10000., n_trials=1, **kwargs)
         def rejected(trial):
+            """Represent a pre-measurement rejection that cannot reset the streak."""
             raise optuna.TrialPruned("pre-HIL compile rejection")
         study.optimize(rejected, n_trials=1, **kwargs)
         self.assertEqual(guard.streak, 2)
@@ -2161,12 +2169,14 @@ class MeasurementFailureGuardTests(unittest.TestCase):
         self.assertEqual(study.trials[-1].state, TrialState.FAIL)
 
     def test_each_transport_kind_commits_fail_and_advances_guard(self):
+        """Each recoverable transport failure must commit FAIL and advance the guard."""
         study = optuna.create_study()
         guard = _ConsecutiveMeasurementFailureGuard()
         for kind in ("harness_ready_timeout", "harness_done_timeout", "runtime_io", "runtime_start_timeout"):
             with self.subTest(kind=kind):
                 guard.streak = 0
                 def failed(trial):
+                    """Attach the transport category before producing an infrastructure failure."""
                     trial.set_user_attr("backend_error_kind", kind)
                     self._fail(trial)
                 study.optimize(failed, n_trials=1, callbacks=[guard], catch=(MeasurementInfrastructureError,))
@@ -2174,6 +2184,7 @@ class MeasurementFailureGuardTests(unittest.TestCase):
                 self.assertEqual(guard.streak, 1)
 
     def test_smoke_stops_on_third_failure_and_restores_settings(self):
+        """Smoke runs must stop after three failures and restore configuration settings."""
         with tempfile.TemporaryDirectory() as directory:
             client = _build_test_client(Path(directory))
             original = (client.config.device.hil, client.config.training.train,
@@ -2191,6 +2202,7 @@ class MeasurementFailureGuardTests(unittest.TestCase):
 
 class RunNASTests(unittest.TestCase):
     def test_real_nsga_infrastructure_failure_consumes_budget_and_continues(self):
+        """NSGA must count an infrastructure failure toward budget and continue afterward."""
         with tempfile.TemporaryDirectory() as directory:
             client = _build_test_client(Path(directory))
             client.config.training.nas_trials = 2
@@ -2201,6 +2213,7 @@ class RunNASTests(unittest.TestCase):
                     Dict(metric="rmse_total", direction="minimize"),
                     Dict(metric="latency_ms", direction="minimize")]))
             def objective(trial):
+                """Fail the first proposal, then return valid NSGA objective values."""
                 if trial.number == 0:
                     trial.set_user_attr("measurement_failure_class", "infrastructure")
                     raise MeasurementInfrastructureError("recovery exhausted")
@@ -2213,6 +2226,7 @@ class RunNASTests(unittest.TestCase):
             self.assertEqual(len(study.trials), 2)  # No replacement proposal beyond attempt cap.
 
     def test_real_run_unrelated_exception_still_aborts(self):
+        """Unrelated objective exceptions must still abort NAS execution."""
         with tempfile.TemporaryDirectory() as directory:
             client = _build_test_client(Path(directory))
             client.config.training.nas_trials = 2

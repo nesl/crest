@@ -26,6 +26,7 @@ exec(compile(ast.Module(body=selected, type_ignores=[]), "model_policy_subset", 
 
 class MeasurementFeasibilityTests(unittest.TestCase):
     def test_explicit_policy_rejects_invalid_and_missing_measurements(self):
+        """Explicit measurement policy must reject missing or invalid acceptance evidence."""
         score = Dict(type="multi-objective", params=dict(objectives=[
             dict(metric="energy_mj_per_inference", direction="minimize")]))
         feasibility = Dict(train_if_infeasible=False, rules=[dict(
@@ -48,6 +49,7 @@ class MeasurementFeasibilityTests(unittest.TestCase):
                                      "measured_deployment_eligibility")
 
     def test_evidence_persisted_in_trial_attributes_and_csv_columns(self):
+        """Measurement evidence must survive in both trial attributes and CSV columns."""
         trial = Mock()
         metrics = {
             "measurement_deployment_eligible": False,
@@ -68,6 +70,7 @@ class MeasurementFeasibilityTests(unittest.TestCase):
         self.assertNotIn("other", attrs)
 
     def test_metric_registered_for_policy(self):
+        """The measurement eligibility metric must be available to feasibility policies."""
         for name in ["NONNEGATIVE_METRICS", "INFRASTRUCTURE_SCORE_METRICS"]:
             self.assertIn("measurement_deployment_eligible", namespace[name])
 

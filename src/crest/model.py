@@ -2910,7 +2910,21 @@ def _write_trial_log_append(log_path: Path, header: list[str], row: dict[str, An
 
 
 def _record_measurement_evidence(metrics: dict[str, Any], trial: TrialLike) -> dict[str, Any]:
-    """Preserve raw-record links and acceptance reasons in trial attrs/CSV."""
+    """Preserve raw-record links and acceptance reasons in trial attrs and CSV.
+
+    Parameters
+    ----------
+    metrics : dict[str, Any]
+        Metrics whose measurement-prefixed entries contain acceptance evidence.
+    trial : TrialLike
+        Trial receiving JSON-safe measurement user attributes.
+
+    Returns
+    -------
+    dict[str, Any]
+        CSV cells keyed by metric-prefixed column names, with lists and mappings
+        serialized as JSON strings.
+    """
     columns = {}
     for name, value in metrics.items():
         if name.startswith("measurement_"):

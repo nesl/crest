@@ -2961,6 +2961,7 @@ class HILControllerTests(unittest.TestCase):
         )
 
     def test_hil_controller_integrity_failure_is_infrastructure_without_arena_retry(self):
+        """An integrity failure must stop arena search and retain infrastructure evidence."""
         from crest.errors import HIL_ERROR_INTEGRITY, HIL_MASTER_INFRASTRUCTURE
         device = self._controller_device(np.array([-1]), name="STM32_NUCLEO_N657X0_Q")
         evidence = {"measurement_record_paths": ["first.json", "second.json"]}

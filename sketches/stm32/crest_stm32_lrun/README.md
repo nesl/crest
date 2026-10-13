@@ -86,38 +86,11 @@ This repo-local project includes copied ST license material:
 
 ## Measurement protocol
 
-The runner identifies `rtc_wall_v3_stop_evidence_awake_tail` in its pre-window
-header. RTC/LSE wall time determines latency and window duration, avoiding
-32-bit DWT batch wraps. Back-to-back windows use two RTC endpoints and report
-the mean wall time per invocation. DWT cycles are summed per invocation and
-omitted if the complete window could contain a counter wrap. Cadenced windows
-measure each invocation with RTC endpoints and omit DWT diagnostics if an
-individual invocation could wrap. RTC resolution is about 30.5 microseconds.
-
-Per-slot UART diagnostics are excluded from measured windows; aggregate
-telemetry is emitted afterward. Cadenced windows retain an awake final-slot
-tail, so energy includes that tail. Pre-window power/debug register values
-describe the current boot after the loader has disconnected. STOP uses the
-N6 HAL's fixed regulator argument.
-
-Cadenced telemetry includes `slept slots` and `stop entries`. The runner clears
-stale STOPF before each sleep attempt and synchronizes RTC shadow registers
-after wake with write protection temporarily disabled. These counts establish
-Stop-entry evidence; they do not measure Stop residency. A failed sleep or
-wake synchronization emits `STM32_AI_RUN=FAIL measurement_integrity:stop_sleep`
-and terminates the measured window.
-
-The host validates protocol identity, requested clock, run count and cadence
-budget, RTC source, timing agreement with an attached harness, and Stop-entry
-counts. Instrumentation failure permits one remeasurement using the same
-compiled candidate. Valid measurements that exceed the active latency budget,
-miss deadlines, or exceed cadence-window tolerance remain deployment-ineligible
-without an instrumentation retry. Raw phase records are retained outside the
-candidate workspace; `measurement_records_dir` selects their destination.
-The backend programs and verifies the app and any external weights on each
-deployment.
-
-Offline regression tests include `test/test_stm32_measurement_windows.py`,
-`test/test_stm32_stop_evidence.py`, and `test/test_stm32_measurement_acceptance.py`.
-Their host-compiled fakes exercise timing, Stop evidence, validation and retry
-behavior. They do not establish a vendor build or hardware measurement result.
+The `rtc_wall_v3_stop_evidence_awake_tail` protocol uses RTC/LSE wall timing and
+reports Stop-entry counts, not residency. Cadenced energy includes an awake
+final-slot tail. The host validates telemetry and retries instrumentation failure
+once with the same compiled candidate; valid measurements that miss deployment
+budgets remain ineligible. Each deployment programs and verifies the app and
+external weights, and raw evidence persists outside candidate workspaces under
+`measurement_records_dir`. Offline tests cover timing, acceptance, and recovery;
+hardware measurements require separate validation.

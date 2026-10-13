@@ -99,9 +99,33 @@ class _ConsecutiveMeasurementFailureGuard:
     """
 
     def __init__(self):
+        """Start an invocation with no unbroken infrastructure failures.
+
+        Returns
+        -------
+        None
+        """
         self.streak = 0
 
     def __call__(self, study, trial):
+        """Update the committed-trial streak and stop after three failures.
+
+        Parameters
+        ----------
+        study : optuna.study.Study
+            Study invoking this post-trial callback.
+        trial : optuna.trial.FrozenTrial
+            Committed trial whose state and measurement evidence update the streak.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        MeasurementInfrastructureStop
+            If three infrastructure failures occur without a valid measurement.
+        """
         if not trial.state.is_finished():
             return
         if (trial.state == TrialState.FAIL
