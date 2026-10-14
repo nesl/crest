@@ -12,12 +12,14 @@ has been run. This document is an implementation plan, not launch authorization.
   Trial 6 was historically PRUNED for an infrastructure failure; its parameters
   remain in order. The exact deployed baseline revision was not archived.
 - `experiments/cs3/nas_config_cs3_luna.yaml` preserves archived scientific settings,
-  including `export_variant: untrained`, with a renamed STM32 project path and new
+  including `export_variant: untrained`, with relocated STM32 project/memory-pool paths and new
   output names. It selects Luna/medium, standard tier, omitted temperature,
   memory on at 15/15, recent15/anchors5, batches5, a $5 local cap, 100,000 input
   allowance and 8,192 output tokens. Pricing assumptions and limitations are in
   `experiments/cs3/README.md`.
-- No paid API, training, hardware test, deployment, or campaign launch is included.
+- Preparation steps 1–6 were offline. The user subsequently ran the bounded
+  paid API smoke successfully; no training, hardware preflight, deployment, or
+  campaign launch has been performed as part of this preparation.
   Step 5 offline campaign smoke now passes: 15 fixed plus 20 generated trials,
   summaries at 15/30, restart after warm-up, a partially evaluated batch, and
   trial 30. Synthetic objectives and blocked network access were used.
@@ -25,7 +27,7 @@ has been run. This document is an implementation plan, not launch authorization.
   costs are about $0.11–$0.38 at 300 attempts before retries, depending on
   output/reasoning use. The suspended backlog issue is resolved by setting
   `memory.max_pending_trials: 15`; the updated proxy fits at 48,860/100,000
-  input guard units. Next: separately authorize API and HIL preflights.
+  input guard units. The user-run API smoke passed; next is deployment verification and bounded HIL preflight.
 
 ## Question
 
@@ -337,6 +339,28 @@ spending controls, deployment, or hardware preflight are complete.
 - Write-up: results file entry, one figure (best score vs hours, TPE vs LLM, both
   marking the shared warm-up), and a short "CREST Impact" paragraph.
 
+## Measured API smoke (2026-10-14)
+
+User-run bounded smoke passed: one memory update and five valid new candidates,
+with two paid requests and no training/hardware. Accounted total $0.000866375.
+Memory used 2,237 input / 35 output tokens (15 reasoning); generation used 2,714
+input / 460 output (47 reasoning). Usage and full exact prompts are saved in
+`experiments/cs3/api_smoke_usage.json` and `api_smoke_prompts.md` locally on the
+preparation computer; those two artifacts are not included in the repository push.
+
+| Projection | 200 attempts | 300 attempts |
+|---|---:|---:|
+| Repeat smoke sizes | $0.025 | $0.038 |
+| Larger proxy inputs + measured outputs | $0.056 | $0.085 |
+| Proxy inputs + 4,096 outputs/call + 20% extra calls | $0.18 | $0.27 |
+
+The small synthetic smoke does not establish real campaign memory size, reasoning
+usage, or search quality. Keep the $0.10–$0.40 ordinary planning range and $5 cap;
+calibrate from saved campaign usage. Next: deployment verification and a bounded
+hardware preflight, not the full campaign. Full manual commands and the
+config-generation helper are in `experiments/cs3/hardware_preflight.md`.
+Remote source must be staged first; existing workers must release the board.
+
 ## Costs
 
 - Board and GPU: one campaign, about 14-17 h.
@@ -345,7 +369,7 @@ spending controls, deployment, or hardware preflight are complete.
   These are assumptions, not measured bills. Keep the $5 cap and validate usage
   in a separately authorized smoke.
 - Remaining work:
-  real provider acceptance, deployment verification, and hardware preflight.
+  deployment verification and hardware preflight. Basic provider acceptance passed.
   Safeguards, baseline extraction, and campaign configuration are prepared.
 
 ## Limits

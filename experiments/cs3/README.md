@@ -17,7 +17,8 @@ Scientific settings come from the archived baseline YAML, including its
 `export_variant: untrained`, 55 NAS epochs, 990 final epochs, fixed int8 PTQ,
 2000 ms cadence, score, and 200-feasible/300-attempt budget. Changes outside the
 optimizer are the new output names and the existing STM32 project-directory
-rename to `sketches/stm32/crest_stm32_lrun`. The current measurement implementation
+rename to `sketches/stm32/crest_stm32_lrun` and the relocated memory-pool file
+`src/config/stm32_nucleo_mypool.json`. The current measurement implementation
 includes subsequent CS2 fixes; paired warm-up results must assess drift.
 
 Luna uses medium reasoning with temperature omitted, standard service tier, five
@@ -62,6 +63,13 @@ CS3 bounds pending prompt history and catch-up summary chunks to 15 records with
 records outside the recent 15 and reports omissions; saved evidence is preserved.
 The updated backlog proxy fits the 100,000 input guard at 48,860 guard units.
 
-Before launch: separately authorize a bounded paid API smoke
-and hardware preflight. Account access and actual API acceptance have not been
-tested. Do not run this HIL-enabled YAML for an offline smoke.
+The user-run bounded API smoke passed on 2026-10-14 (two requests; $0.000866375
+at configured accounting rates). See `api_smoke_usage.json` and the full exact
+messages in `api_smoke_prompts.md` (both retained locally, not pushed). The smoke uses synthetic scores and omits the
+campaign semantic context, so full prompt behavior and hardware readiness remain
+unverified. Next is deployment verification and the bounded hardware preflight;
+do not start the full campaign. Do not run this HIL-enabled YAML for an offline smoke.
+
+The complete manual hardware-preflight commands and stop conditions are in
+[hardware_preflight.md](hardware_preflight.md). The config generator prepares
+files only; it does not start hardware, training, or a campaign.

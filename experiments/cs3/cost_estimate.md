@@ -101,3 +101,29 @@ but does not authorize spending or launch. Preserve accounting across restarts;
 review actual input, billed output/reasoning, repair frequency, and memory usage
 in a separately authorized bounded API smoke before trusting the typical-cost
 estimate. Training/GPU time, hardware time, fees, and taxes are excluded.
+
+## Measured API smoke (2026-10-14)
+
+The user ran the bounded API-only smoke on this computer. Both requests passed;
+no model training or hardware evaluation ran. The saved usage is in
+`api_smoke_usage.json`; exact sent prompts are in `api_smoke_prompts.md`.
+These two artifacts remain local to the preparation computer, outside this commit.
+
+| Request | Input tokens | Billed output (including reasoning) | Configured accounted USD |
+|---|---:|---:|---:|
+| Memory | 2,237 | 35 (15 reasoning) | $0.000297125 |
+| Five candidates | 2,714 | 460 (47 reasoning) | $0.000569250 |
+| Total | 4,951 | 495 | $0.000866375 |
+
+| Extrapolation | 200 total attempts | 300 total attempts |
+|---|---:|---:|
+| Same request sizes as smoke | $0.024925 | $0.038093 |
+| Largest ordinary proxy inputs; measured smoke outputs | $0.055809 | $0.085070 |
+| Proxy inputs, 4,096 output tokens/call, 20% extra calls | $0.179366 | $0.272731 |
+
+The first row is optimistic: the smoke has synthetic outcomes, no campaign
+semantic context, and only 35 output tokens for memory. Larger real summaries,
+reasoning, repairs, and retries can change cost. Use roughly $0.10–$0.40 as an
+ordinary planning range, retain the $5 local cap, and recalibrate separately for
+memory and generation from real campaign usage. These are cost projections at
+the configured rates, not measured campaign cost or a provider invoice.
