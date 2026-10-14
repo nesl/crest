@@ -582,7 +582,8 @@ request logs without spend state is also rejected: use a new study rather than
 silently resetting earlier cost. Use one writer per study, as with the runner.
 
 Each prompt includes attempted and feasible-trial budgets. Its phase guidance is
-`exploration` below 35% of the total-attempt budget, `specification` below 85%,
+based on the greater of attempted/maximum attempts and feasible/target feasible:
+`exploration` below 35%, `specification` below 85%,
 and `finalization` afterward. These are prompt instructions; CREST still evaluates
 candidates with the configured objective and feasibility rules.
 

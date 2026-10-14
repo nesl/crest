@@ -79,7 +79,7 @@ class LLMGeneratorOptimizer(OptimizerABC):
             "semantic_context_version": SEMANTIC_CONTEXT_VERSION,
             "memory_schema_version": 1,
             "memory_prompt_version": "memory-v1",
-            "phase_policy_version": 1,
+            "phase_policy_version": 2,
             "fallback_policy": {"type": "unique_random", "max_attempts": 100},
         })
         if llm.get("max_output_tokens") is not None:

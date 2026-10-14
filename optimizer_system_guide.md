@@ -107,7 +107,7 @@ Feasibility constraints are persisted in trial attributes. The sampler callback 
 
 Repeated references to a trial across these views represent one observation. Semantic context supplies bounded workload/task/model/device/runtime explanations and parameter priors, with a version and hash. It distinguishes registered device capacities from available application or tensor-arena budgets. Priors and memory are fallible guidance; neither changes the legal search space or measured evidence.
 
-The prompt phase is deterministic from attempted trials divided by the total cap: exploration below 35%, specification below 85%, and finalization thereafter. These are proposal instructions, not changes to the objective or final-training procedure.
+The prompt phase uses the greater of attempted trials / total cap and feasible completions / feasible target (policy version 2): exploration below 35%, specification below 85%, and finalization thereafter. These are proposal instructions, not changes to the objective or final-training procedure.
 
 Memory defaults to starting after 10 terminal trials and updating every 5, with at most 12 findings, 6000 characters, and 100 pending trials. Valid updates retain untouched findings, explicitly replace existing IDs, and retire findings only with a reason. State records coverage hashes and snapshots. Restored memory must match its context and covered trial evidence. Rejected summaries receive one repair attempt. Persistent content rejection retains prior state and all study evidence, while bounding the pending prompt and explicitly reporting omissions. Provider execution errors stop the campaign.
 

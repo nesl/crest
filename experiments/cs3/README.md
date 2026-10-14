@@ -39,8 +39,29 @@ limits; it is not an invoice guarantee. A full request reserves $0.016596 before
 sending, then settles valid usage. Unknown usage retains the reservation.
 Preserve spending state on resume; only the dollar cap can be raised in place.
 
-Before launch: settle historical-only versus fresh TPE comparison and the prompt
-phase policy (currently finalization at attempt 255 of 300); run the offline
-campaign smoke/cost estimate; then separately authorize a bounded paid API smoke
+This first campaign compares with historical TPE only; it is a feasibility and
+search-behavior study, not evidence of optimizer superiority. Use paired warm-up
+results to assess drift. Phase policy v2 follows the greater fraction of the two
+stopping budgets: specification at 70 feasible trials or 105 attempts, and
+finalization at 170 feasible trials or 255 attempts, whichever occurs first.
+Warm-up counts toward these totals. The policy changes prompt guidance only and
+is recorded in optimizer identity; existing v1 LLM studies cannot silently resume
+under v2.
+
+The offline smoke passed: 15 fixed plus 20 generated synthetic trials, summaries
+at 15/30, restarts after warm-up and trial 30, and an interrupted batch with three
+queued candidates retained. Findings, snapshots, and provenance survive without
+trial replay. Reproduce with `PYTHONPATH=src python -m pytest -q
+-p no:cacheprovider test/test_cs3_offline_campaign.py`. This uses a fake provider
+and synthetic objective with network access blocked; it does not test model
+quality, API acceptance, audio training, or hardware.
+
+Offline cost estimation is complete; see [cost_estimate.md](cost_estimate.md).
+CS3 bounds pending prompt history and catch-up summary chunks to 15 records with
+`memory.max_pending_trials: 15`. Suspended memory retains the newest 15 pending
+records outside the recent 15 and reports omissions; saved evidence is preserved.
+The updated backlog proxy fits the 100,000 input guard at 48,860 guard units.
+
+Before launch: separately authorize a bounded paid API smoke
 and hardware preflight. Account access and actual API acceptance have not been
 tested. Do not run this HIL-enabled YAML for an offline smoke.

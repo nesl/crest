@@ -65,7 +65,11 @@ class PromptContext:
 
     def phase(self) -> PhaseState:
         """Resolve the deterministic current budget phase."""
-        return resolve_phase(self.attempted_trials, self.max_total_attempts)
+        return resolve_phase(
+            self.attempted_trials, self.max_total_attempts,
+            feasible_completed=self.feasible_completed_trials,
+            target_feasible=self.target_feasible_trials,
+        )
 
     def as_prompt_payload(self) -> dict[str, Any]:
         """Return the complete JSON-safe prompt and ledger context."""

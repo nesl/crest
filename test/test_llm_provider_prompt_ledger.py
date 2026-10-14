@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """Tests for the fake provider, prompt policy, and filesystem ledger."""
 
+from dataclasses import replace
 import json
 import sys
 import tempfile
@@ -63,6 +64,18 @@ class PhasePolicyTests(unittest.TestCase):
         self.assertEqual(resolve_phase(120, 100).remaining, 0)
 
 
+    def test_phase_follows_first_stopping_limit(self) -> None:
+        """Feasible progress reaches finalization before an unused attempt budget."""
+        # CS3 can stop at 200 feasible trials, long before 300 attempts.
+        self.assertEqual(resolve_phase(169, 300, feasible_completed=169, target_feasible=200).name, "specification")
+        phase = resolve_phase(170, 300, feasible_completed=170, target_feasible=200)
+        self.assertEqual(phase.name, "finalization")
+        self.assertEqual(phase.remaining, 130)
+        # Failure-heavy searches still finalize near their attempt limit.
+        self.assertEqual(resolve_phase(255, 300, feasible_completed=100, target_feasible=200).name, "finalization")
+        self.assertEqual(resolve_phase(70, 300, feasible_completed=70, target_feasible=200).name, "specification")
+
+
 class ProviderPromptLedgerTests(unittest.TestCase):
     """Exercise the network-free provider-to-envelope and ledger path."""
 
@@ -97,6 +110,18 @@ class ProviderPromptLedgerTests(unittest.TestCase):
         self.assertEqual(payload["trial_budget"]["phase"], "specification")
         self.assertEqual(payload["output_contract"]["exact_keys"], ["width", "mode"])
         self.assertEqual(request.metadata["phase"], "specification")
+
+    def test_prompt_phase_uses_feasible_progress(self) -> None:
+        """The serialized prompt uses both real stopping limits."""
+        # Preserve actual attempt headroom while issuing finalization guidance.
+        context = replace(prompt_context(), attempted_trials=180,
+                          max_total_attempts=300, feasible_completed_trials=170,
+                          target_feasible_trials=200)
+        request = build_candidate_request(context, prompt_version="v1")
+        budget = json.loads(request.user_prompt)["trial_budget"]
+        self.assertEqual(budget["phase"], "finalization")
+        self.assertEqual(budget["remaining_attempts"], 120)
+        self.assertEqual(request.metadata["phase"], "finalization")
 
     def test_ledger_writes_exchange_context_and_candidate_decisions(self) -> None:
         """The minimum reproducibility files are written in stable formats."""

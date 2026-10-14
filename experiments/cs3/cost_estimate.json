@@ -1,0 +1,214 @@
+{
+  "method": "OFFLINE ceil(system+user characters/4), approximate not tokenizer counts",
+  "tokenizer": "tiktoken absent in project environment; no downloads attempted",
+  "history": "Read-only archived baseline proxy only; never injected into live campaign",
+  "memory": "Synthetic near-6000-character structured findings; not measured scientific evidence",
+  "memory_structured_characters": 5999,
+  "memory_summary_characters": 5057,
+  "baseline_trial_count": 207,
+  "input_shape": [
+    201,
+    64
+  ],
+  "samples": [
+    {
+      "attempted_trials": 15,
+      "case": "ordinary",
+      "recent_records": 15,
+      "anchor_records": 5,
+      "generation": {
+        "text_characters": 25698,
+        "heuristic_input_tokens": 6425,
+        "serialized_message_bytes": 28351,
+        "tracker_input_token_bound": 29375
+      },
+      "summary": {
+        "text_characters": 21629,
+        "heuristic_input_tokens": 5408,
+        "serialized_message_bytes": 23816,
+        "tracker_input_token_bound": 24840
+      }
+    },
+    {
+      "attempted_trials": 30,
+      "case": "ordinary",
+      "recent_records": 15,
+      "anchor_records": 5,
+      "generation": {
+        "text_characters": 30579,
+        "heuristic_input_tokens": 7645,
+        "serialized_message_bytes": 33242,
+        "tracker_input_token_bound": 34266
+      },
+      "summary": {
+        "text_characters": 27262,
+        "heuristic_input_tokens": 6816,
+        "serialized_message_bytes": 29749,
+        "tracker_input_token_bound": 30773
+      }
+    },
+    {
+      "attempted_trials": 100,
+      "case": "ordinary",
+      "recent_records": 15,
+      "anchor_records": 5,
+      "generation": {
+        "text_characters": 30929,
+        "heuristic_input_tokens": 7733,
+        "serialized_message_bytes": 33616,
+        "tracker_input_token_bound": 34640
+      },
+      "summary": {
+        "text_characters": 27647,
+        "heuristic_input_tokens": 6912,
+        "serialized_message_bytes": 30158,
+        "tracker_input_token_bound": 31182
+      }
+    },
+    {
+      "attempted_trials": 190,
+      "case": "ordinary",
+      "recent_records": 15,
+      "anchor_records": 5,
+      "generation": {
+        "text_characters": 30981,
+        "heuristic_input_tokens": 7746,
+        "serialized_message_bytes": 33668,
+        "tracker_input_token_bound": 34692
+      },
+      "summary": {
+        "text_characters": 27681,
+        "heuristic_input_tokens": 6921,
+        "serialized_message_bytes": 30192,
+        "tracker_input_token_bound": 31216
+      }
+    },
+    {
+      "attempted_trials": 190,
+      "case": "suspended_memory_backlog",
+      "pending_records": 15,
+      "omitted_pending_records": 85,
+      "configured_input_allowance": 100000,
+      "fits_input_guard": true,
+      "generation": {
+        "text_characters": 43829,
+        "heuristic_input_tokens": 10958,
+        "serialized_message_bytes": 47836,
+        "tracker_input_token_bound": 48860
+      }
+    }
+  ],
+  "limitations": [
+    "Summary schema mirrors ExperimentalMemory.enrich; no provider called.",
+    "15-trial empty-memory generation is a lower sizing case; actual first accepted summary may populate memory.",
+    "100/190 snapshots are not necessarily scheduled summary boundaries.",
+    "Semantic metadata reconstructed from archived log-mel config/shape.",
+    "Byte+1024 guard is reservation, not billable tokens; completion/reasoning outputs require assumptions."
+  ],
+  "configured_prices": {
+    "input_usd_per_million_tokens": 0.125,
+    "output_usd_per_million_tokens": 0.5,
+    "pricing_source": "https://developers.openai.com/api/docs/models/gpt-6-luna"
+  },
+  "projections": [
+    {
+      "total_attempts": 200,
+      "assumed_output_tokens_per_call": 1024,
+      "generation_calls": 37.0,
+      "summary_calls": 13.0,
+      "combined_cost_usd": {
+        "sample_min": 0.064103625,
+        "sample_mean": 0.0703516875,
+        "sample_max": 0.072671875
+      }
+    },
+    {
+      "total_attempts": 200,
+      "assumed_output_tokens_per_call": 4096,
+      "generation_calls": 37.0,
+      "summary_calls": 13.0,
+      "combined_cost_usd": {
+        "sample_min": 0.14090362499999998,
+        "sample_mean": 0.1471516875,
+        "sample_max": 0.149471875
+      }
+    },
+    {
+      "total_attempts": 200,
+      "assumed_output_tokens_per_call": 8192,
+      "generation_calls": 37.0,
+      "summary_calls": 13.0,
+      "combined_cost_usd": {
+        "sample_min": 0.24330362499999997,
+        "sample_mean": 0.2495516875,
+        "sample_max": 0.25187187499999997
+      }
+    },
+    {
+      "total_attempts": 207,
+      "assumed_output_tokens_per_call": 1024,
+      "generation_calls": 39.0,
+      "summary_calls": 13.0,
+      "combined_cost_usd": {
+        "sample_min": 0.066733875,
+        "sample_mean": 0.0732225,
+        "sample_max": 0.075632375
+      }
+    },
+    {
+      "total_attempts": 207,
+      "assumed_output_tokens_per_call": 4096,
+      "generation_calls": 39.0,
+      "summary_calls": 13.0,
+      "combined_cost_usd": {
+        "sample_min": 0.146605875,
+        "sample_mean": 0.1530945,
+        "sample_max": 0.155504375
+      }
+    },
+    {
+      "total_attempts": 207,
+      "assumed_output_tokens_per_call": 8192,
+      "generation_calls": 39.0,
+      "summary_calls": 13.0,
+      "combined_cost_usd": {
+        "sample_min": 0.253101875,
+        "sample_mean": 0.2595905,
+        "sample_max": 0.26200037499999995
+      }
+    },
+    {
+      "total_attempts": 300,
+      "assumed_output_tokens_per_call": 1024,
+      "generation_calls": 57.0,
+      "summary_calls": 19.0,
+      "combined_cost_usd": {
+        "sample_min": 0.097534125,
+        "sample_mean": 0.10701749999999999,
+        "sample_max": 0.11053962500000002
+      }
+    },
+    {
+      "total_attempts": 300,
+      "assumed_output_tokens_per_call": 4096,
+      "generation_calls": 57.0,
+      "summary_calls": 19.0,
+      "combined_cost_usd": {
+        "sample_min": 0.214270125,
+        "sample_mean": 0.22375350000000002,
+        "sample_max": 0.227275625
+      }
+    },
+    {
+      "total_attempts": 300,
+      "assumed_output_tokens_per_call": 8192,
+      "generation_calls": 57.0,
+      "summary_calls": 19.0,
+      "combined_cost_usd": {
+        "sample_min": 0.369918125,
+        "sample_mean": 0.37940150000000006,
+        "sample_max": 0.382923625
+      }
+    }
+  ]
+}

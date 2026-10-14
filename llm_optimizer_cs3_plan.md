@@ -18,8 +18,14 @@ has been run. This document is an implementation plan, not launch authorization.
   allowance and 8,192 output tokens. Pricing assumptions and limitations are in
   `experiments/cs3/README.md`.
 - No paid API, training, hardware test, deployment, or campaign launch is included.
-  Next: settle comparison/phase policy, offline campaign smoke and representative
-  prompt estimate, then separately authorized API and HIL preflights.
+  Step 5 offline campaign smoke now passes: 15 fixed plus 20 generated trials,
+  summaries at 15/30, restart after warm-up, a partially evaluated batch, and
+  trial 30. Synthetic objectives and blocked network access were used.
+  Step 6 is complete: see `experiments/cs3/cost_estimate.md`. Offline proxy
+  costs are about $0.11–$0.38 at 300 attempts before retries, depending on
+  output/reasoning use. The suspended backlog issue is resolved by setting
+  `memory.max_pending_trials: 15`; the updated proxy fits at 48,860/100,000
+  input guard units. Next: separately authorize API and HIL preflights.
 
 ## Question
 
@@ -49,9 +55,9 @@ fields, and pricing before use), standard tier, memory on with summaries every 1
 the whole warm-up), `anchor_count: 5`, semantic context on, temperature omitted
 unless the model accepts it, one repair attempt then CREST's random fallback.
 
-Initial scope: one new LLM campaign compared with the historical TPE campaign; no
-replicated searches. A fresh TPE campaign on the same integrated code is the
-preferred controlled comparison, but is an additional experiment to decide on.
+Agreed scope: one new LLM campaign compared with historical TPE only, with no
+new TPE run or replicated searches. This establishes feasibility and search
+behavior, not optimizer superiority. A fresh TPE campaign remains possible later.
 The 15 warm-up attempts count toward the existing 200-feasible/300-attempt budget;
 they are not 15 extra free evaluations. Cadenced telemetry is collected, but the
 score remains based on `energy_mj_per_inference`, not energy per cadence release.
@@ -233,9 +239,12 @@ Freshly evaluate these configurations; do not inject historical scores.
   JSON response mode. Verify the actual provider model ID and supported request
   parameters in a bounded real-API smoke; do not assume Codex model labels or
   draft prices establish API availability.
-- Review the existing prompt phase schedule: it follows the 300-attempt cap, so
-  finalization starts at attempt 255 even if 200 feasible trials finish earlier.
-  Freeze the chosen policy before launch and record any change in identity.
+- Phase policy v2 is frozen: use the greater of attempted/300 and feasible/200.
+  Specification begins at 70 feasible completions or 105 attempts; finalization
+  at 170 feasible completions or 255 attempts, whichever comes first. Warm-up
+  counts toward progress. Actual stopping limits and objective are unchanged.
+  The version is recorded in optimizer identity; v1 campaigns cannot silently
+  resume with changed guidance.
 
 ## Second re-review: operational follow-ups
 
@@ -285,8 +294,8 @@ spending controls, deployment, or hardware preflight are complete.
    implemented spending/output limits and choose their values. Resolve temperature compatibility
    for the chosen model and validate the implemented error/stop behavior; retain
    offline regression coverage. CS2 integration and warm-up implementation are already complete.
-3. **Freeze experiment policy.** Decide historical-only versus fresh TPE comparison,
-   use the agreed memory-on/15-attempt cadence, and settle the phase schedule.
+3. **Experiment policy frozen.** Historical TPE only, memory-on/15-attempt cadence,
+   and phase policy v2 based on both stopping limits.
 4. **Prepare config.** Prefer the baseline's archived exact YAML. The checked-in
    template is `src/config/case_study_configs/nas_config_case3_2_stm32_audio.yaml`;
    the exact archived `_t1` YAML has now been retrieved and used for the
@@ -294,11 +303,19 @@ spending controls, deployment, or hardware preflight are complete.
    scientific settings, enable memory with the agreed cadence, and freeze retry settings;
    review output/optimizer additions and every required
    measurement-policy change explicitly rather than promising a names-only diff.
-5. **Offline smoke.** HIL and compilation off, fake provider, mocked objectives
-   for fast 15-warm-up-plus-10-proposal coverage. A separate one-epoch real audio
-   pipeline smoke may require dataset access and compute; do not call it free of
-   training cost. Exercise validation, repair, fallback, and ledger linkage.
-6. **Estimate cost.** Use saved representative prompts with the existing estimator.
+5. **Offline smoke complete.** `test/test_cs3_offline_campaign.py` runs 15 fixed
+   plus 20 generated synthetic trials, memory updates at 15/30, and three restart
+   boundaries including a partial batch. It verifies retained findings/snapshots,
+   queued work, provenance, and no replay, with HTTP/socket connections blocked.
+   Existing targeted tests cover repairs, fallback, budgets, and phase/resume
+   behavior. This does not validate actual audio training or hardware.
+6. **Offline cost estimate complete.** See `experiments/cs3/cost_estimate.md`
+   and its reproducible script/JSON report. Historical records are sizing proxies
+   only; input tokens use a characters/4 heuristic. Normal prompts fit the guard;
+   the original 100-record suspended backlog exceeded it. The campaign now caps
+   pending records and catch-up summary chunks at 15, retaining all saved evidence
+   and reporting prompt omissions. The updated proxy fits the guard and a
+   persisted-suspension regression passes. Keep the $5 cap; no paid call is authorized.
    Local fixture mode is offline; `--count-api` uses network/credentials even
    though it performs no generation. Verify prices and include reasoning/output,
    repairs, and late-run history. Set an explicit cap before paid calls.
@@ -323,9 +340,11 @@ spending controls, deployment, or hardware preflight are complete.
 ## Costs
 
 - Board and GPU: one campaign, about 14-17 h.
-- API: unverified until model/pricing and representative prompt estimates are
-  checked; the earlier $0.10-0.30 figure is not a validated budget.
-- Remaining work: experiment-policy freeze, offline campaign smoke/cost estimate,
+- API: offline proxy estimate about $0.11–$0.38 for 300 attempts before retries;
+  full configured token limits imply $1.26 for the normal 76-call schedule.
+  These are assumptions, not measured bills. Keep the $5 cap and validate usage
+  in a separately authorized smoke.
+- Remaining work:
   real provider acceptance, deployment verification, and hardware preflight.
   Safeguards, baseline extraction, and campaign configuration are prepared.
 
@@ -340,7 +359,5 @@ spending controls, deployment, or hardware preflight are complete.
 
 ## Decisions needed from you
 
-1. Historical TPE comparison only, or a fresh TPE campaign on the same integrated
-   code (preferred for a controlled comparison).
-2. Fourth case study or part of CS3 in the paper.
-3. Whether a Portenta run is wanted later.
+1. Fourth case study or part of CS3 in the paper.
+2. Whether a Portenta run is wanted later.

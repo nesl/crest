@@ -175,7 +175,8 @@ optimizer:
       interval_trials: 15
       max_findings: 12
       max_chars: 6000
-      max_pending_trials: 100
+      # Bound summary chunks and extra pending evidence outside recent trials.
+      max_pending_trials: 15
     max_usd: 5.0
     max_input_tokens: 100000
     max_output_tokens: 8192  # Includes reasoning tokens.
