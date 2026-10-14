@@ -53,6 +53,7 @@ def _history_candidates(
         # Only explicit deterministic rejection evidence blocks a FAIL retry.
         if state == "FAIL" and not (
             failure_class == "deterministic"
+            or trial.user_attrs.get("candidate_failure_class") == "deterministic"
             or trial.user_attrs.get("pruned") is True
             or trial.user_attrs.get("feasibility_status") == "infeasible"
         ):

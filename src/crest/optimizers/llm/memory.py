@@ -81,6 +81,8 @@ def summary_text(findings: list[dict]) -> str:
 
 # One repair keeps content rejection bounded without changing stored optimizer identity.
 SUMMARY_MAX_REPAIR_ATTEMPTS = 1
+# Suspend after three exhausted chunks, including across process restarts.
+SUMMARY_MAX_CONSECUTIVE_FAILURES = 3
 
 
 SUMMARY_SYSTEM = """You maintain CREST's accumulated experimental memory, not its candidate proposals.
@@ -111,6 +113,39 @@ class ExperimentalMemory:
         self.ledger = LLMLedger(self.root)
         self.state_path = self.root / "state.json"
         self.state = json.loads(self.state_path.read_text()) if self.state_path.exists() else None
+
+    def _save_state(self, state: dict[str, Any]) -> None:
+        """Atomically persist accepted memory and summary retry disposition.
+
+        Parameters
+        ----------
+        state : dict[str, Any]
+            Complete next memory state, including coverage and retry counters.
+
+        Returns
+        -------
+        None
+            The on-disk state and current instance are updated together.
+        """
+        temporary = self.root / "state.pending.json"
+        self.ledger._write_json(temporary, state)
+        temporary.replace(self.state_path)
+        self.state = state
+
+    def reset_summary_failures(self) -> None:
+        """Explicitly resume summary attempts after correcting repeated rejection.
+
+        Notes
+        -----
+        Three consecutive exhausted summary chunks suspend further summary calls,
+        including after resume. Call this method after correcting the cause (for
+        example, provider output). Accepted findings and coverage
+        are preserved; the next enrichment retries the oldest uncovered evidence.
+        """
+        if self.state is not None:
+            self._save_state({**self.state, "summary_failure_count": 0,
+                              "summary_failure_reason": None})
+            self.ledger.record_event({"event": "summary_failures_reset"})
 
     def _merge(self, update: MemoryUpdate, covered: set[int]) -> list[dict]:
         findings = {f["id"]: f for f in self.state["findings"]}
@@ -153,6 +188,8 @@ class ExperimentalMemory:
         PromptContext
             Last accepted memory and a bounded pending evidence window. Rejected
             summaries leave every trial uncovered and expose the omitted count.
+            After three consecutive exhausted chunks, summary calls remain
+            suspended until ``reset_summary_failures`` is explicitly called.
 
         Raises
         ------
@@ -179,9 +216,13 @@ class ExperimentalMemory:
                 raise ValueError("Saved LLM memory does not match the current trial history")
         # Validate restored state against current limits, including changed settings.
         self._merge(MemoryUpdate(updates=[], retire=[]), {int(n) for n in self.state["covered"]})
+        # Older state files predate the circuit breaker and start with no failures.
+        self.state.setdefault("summary_failure_count", 0)
+        self.state.setdefault("summary_failure_reason", None)
         pending = [r for r in records if str(r["number"]) not in self.state["covered"]]
         threshold = self.config.interval_trials if self.state["covered"] else self.config.start_after_trials
-        while len(pending) >= threshold:
+        while (len(pending) >= threshold
+               and self.state["summary_failure_count"] < SUMMARY_MAX_CONSECUTIVE_FAILURES):
             chunk = pending[:self.config.max_pending_trials]
             repair_feedback = None
             committed = False
@@ -235,36 +276,47 @@ class ExperimentalMemory:
                     "instruction": "Correct the rejected update using the same evidence. Preserve valid prior findings and obey the entire-memory limits.",
                 }
             if not committed:
+                failures = self.state["summary_failure_count"] + 1
+                self._save_state({**self.state, "summary_failure_count": failures,
+                                  "summary_failure_reason": reason})
                 self.ledger.record_event({"event": "summary_deferred", "request_id": request_id,
                                           "reason": reason, "pending_trial_count": len(pending),
-                                          "attempts": SUMMARY_MAX_REPAIR_ATTEMPTS + 1})
+                                          "attempts": SUMMARY_MAX_REPAIR_ATTEMPTS + 1,
+                                          "consecutive_failures": failures})
+                if failures >= SUMMARY_MAX_CONSECUTIVE_FAILURES:
+                    self.ledger.record_event({"event": "summary_suspended", "request_id": request_id,
+                                              "reason": reason, "consecutive_failures": failures,
+                                              "recovery": "Correct the rejection cause, then explicitly call reset_summary_failures()."})
                 break
             next_state = {**self.state, "version": self.state["version"] + 1,
-                          "covered": covered, "findings": findings, "request_id": request_id}
+                          "covered": covered, "findings": findings, "request_id": request_id,
+                          "summary_failure_count": 0, "summary_failure_reason": None}
             # Commit only after a valid complete response. Snapshots retain retired findings.
             snapshots = self.root / "snapshots"
             snapshots.mkdir(exist_ok=True)
             self.ledger._write_json(snapshots / f"{request_id:06d}.json", next_state)
-            temporary = self.root / "state.pending.json"
-            self.ledger._write_json(temporary, next_state)
-            temporary.replace(self.state_path)
-            self.state = next_state
+            self._save_state(next_state)
             self.ledger.record_event({"event": "summary_committed", "request_id": request_id,
                                       "version": self.state["version"], "retired": [r.model_dump() for r in update.retire]})
             pending = [r for r in pending if str(r["number"]) not in covered]
             threshold = self.config.interval_trials
         recent_ids = {r["number"] for r in context.recent_trials}
         prompt_pending = [r for r in pending if r["number"] not in recent_ids]
-        visible_pending = prompt_pending[:self.config.max_pending_trials]
+        # Keep the freshest unsummarized measurements alongside the recent window.
+        visible_pending = prompt_pending[-self.config.max_pending_trials:]
         omitted = len(prompt_pending) - len(visible_pending)
         if omitted:
             self.ledger.record_event({"event": "summary_backlog", "pending_trial_count": len(pending),
                                       "omitted_pending_trial_count": omitted,
-                                      "reason": "Evidence remains in study history and will be retried; pending prompt is bounded."})
+                                      "reason": "Evidence remains uncovered in study history; the prompt shows newest pending records."})
         return replace(context,
                        knowledge_base={"version": self.state["version"],
                                        "covered_trial_count": len(self.state["covered"]),
                                        "pending_trial_count": len(pending),
                                        "omitted_pending_trial_count": omitted,
+                                       "summary_status": ("suspended" if self.state["summary_failure_count"]
+                                                          >= SUMMARY_MAX_CONSECUTIVE_FAILURES else "active"),
+                                       "summary_failure_count": self.state["summary_failure_count"],
+                                       "summary_failure_reason": self.state["summary_failure_reason"],
                                        "summary": summary_text(self.state["findings"])},
                        pending_trials=tuple(visible_pending))

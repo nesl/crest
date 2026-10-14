@@ -4,13 +4,17 @@
 
 from __future__ import annotations
 
+import http.client
 import json
+import math
 import os
 import time
 import urllib.error
 import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Protocol
 
 from ...component_selection import cfg_get
@@ -116,9 +120,11 @@ class OpenAICompatibleProvider:
         json_response_mode: bool = True,
         extra_headers: dict[str, str] | None = None,
         urlopen: Any = urllib.request.urlopen,
-        max_transport_retries: int = 2,
-        retry_backoff_s: float = 1.0,
+        max_transport_retries: int = 5,
+        retry_backoff_s: float = 5.0,
+        retry_backoff_cap_s: float = 60.0,
         sleep: Any = time.sleep,
+        wall_clock: Any = time.time,
     ) -> None:
         """Store provider settings without reading or persisting the API key."""
         self.provider_name = provider_name
@@ -131,12 +137,44 @@ class OpenAICompatibleProvider:
         self.extra_headers = dict(extra_headers or {})
         if type(max_transport_retries) is not int or max_transport_retries < 0:
             raise ValueError("max_transport_retries must be a nonnegative integer")
-        if retry_backoff_s < 0:
-            raise ValueError("retry_backoff_s must be nonnegative")
+        for name, value in (("retry_backoff_s", retry_backoff_s),
+                            ("retry_backoff_cap_s", retry_backoff_cap_s)):
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) or value < 0):
+                raise ValueError(f"{name} must be a finite nonnegative number")
         self.max_transport_retries = max_transport_retries
         self.retry_backoff_s = float(retry_backoff_s)
+        self.retry_backoff_cap_s = float(retry_backoff_cap_s)
         self._urlopen = urlopen
         self._sleep = sleep
+        self._wall_clock = wall_clock
+
+    def _retry_after_seconds(self, value: str | None) -> float | None:
+        """Parse a server minimum delay without shortening its requested wait.
+
+        Parameters
+        ----------
+        value : str or None
+            Retry-After delta-seconds or HTTP-date header value.
+
+        Returns
+        -------
+        float or None
+            Nonnegative seconds from the injected wall clock, or ``None`` for
+            an absent or malformed header. Past dates return zero.
+        """
+        if not value:
+            return None
+        value = value.strip()
+        if value.isascii() and value.isdecimal():
+            return float(value)
+        try:
+            deadline = parsedate_to_datetime(value)
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=timezone.utc)
+            return max(0.0, deadline.timestamp() - self._wall_clock())
+        except (TypeError, ValueError, OverflowError, OSError):
+            return None
 
     def build_http_request(self, request: LLMRequest) -> urllib.request.Request:
         """Construct the authenticated chat-completions request."""
@@ -186,13 +224,19 @@ class OpenAICompatibleProvider:
         """
         http_request = self.build_http_request(request)
         started = time.monotonic()
+        backoff_s = min(self.retry_backoff_s, self.retry_backoff_cap_s)
         for attempt in range(self.max_transport_retries + 1):
+            retry_after_s = None
             try:
                 with self._urlopen(http_request, timeout=self.timeout_s) as response:
                     raw_bytes = response.read()
                 break
             except urllib.error.HTTPError as exc:
-                error_body = exc.read().decode("utf-8", errors="replace")
+                try:
+                    error_body = exc.read().decode("utf-8", errors="replace")
+                except (OSError, http.client.HTTPException):
+                    # The known status still determines retry/authentication policy.
+                    error_body = "error response body could not be read"
                 message = f"{self.provider_name} HTTP {exc.code}: {error_body}"
                 if exc.code in {401, 402, 403}:
                     raise ProviderAuthenticationError(
@@ -204,7 +248,8 @@ class OpenAICompatibleProvider:
                     ) from exc
                 failure = exc
                 reason = message
-            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                retry_after_s = self._retry_after_seconds((exc.headers or {}).get("Retry-After"))
+            except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
                 failure = exc
                 reason = f"{self.provider_name} request failed: {exc}"
             if attempt == self.max_transport_retries:
@@ -212,7 +257,15 @@ class OpenAICompatibleProvider:
                     f"{reason}. Exhausted {attempt + 1} transport attempts; "
                     "check provider availability before resuming."
                 ) from failure
-            self._sleep(self.retry_backoff_s * (2 ** attempt))
+            if retry_after_s is not None and retry_after_s > self.retry_backoff_cap_s:
+                raise ProviderTransportError(
+                    f"{reason}. Retry-After requires {retry_after_s:g}s, exceeding "
+                    f"retry_backoff_cap_s={self.retry_backoff_cap_s:g}s; stopped "
+                    "without retrying before the server deadline. Increase the cap "
+                    "or resume after the requested delay."
+                ) from failure
+            self._sleep(max(backoff_s, retry_after_s or 0.0))
+            backoff_s = min(self.retry_backoff_cap_s, backoff_s * 2.0)
         latency_ms = (time.monotonic() - started) * 1000.0
         try:
             raw_response = json.loads(raw_bytes.decode("utf-8"))
@@ -258,5 +311,8 @@ def build_provider(config: Any) -> LLMProvider:
                 cfg_get(config, "json_response_mode", provider_name == "openrouter")
             ),
             extra_headers=dict(cfg_get(config, "extra_headers", {})),
+            max_transport_retries=cfg_get(config, "max_transport_retries", 5),
+            retry_backoff_s=cfg_get(config, "retry_backoff_s", 5.0),
+            retry_backoff_cap_s=cfg_get(config, "retry_backoff_cap_s", 60.0),
         )
     raise ValueError(f"Unsupported LLM provider: {provider_name!r}.")

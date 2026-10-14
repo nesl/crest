@@ -471,7 +471,7 @@ def test_plugin_timeout_identity_is_not_aliased_as_builtin_llm(client, tmp_path)
 
 @pytest.mark.parametrize("smoke", [False, True])
 def test_explicit_orphan_recovery_preserves_waiting_and_prior_evidence(client, tmp_path, smoke):
-    """Recovery requires stopped-worker attestation and retains every consumed attempt."""
+    """Explicit trial numbers retain prior evidence and cannot fail later workers."""
     from nas_model_client import ORPHAN_TRIAL_RECOVERY_ATTR
     client.study_name = "recovery"
     storage = (f"sqlite:///{client._artifacts_dir() / 'optuna_smoke_test.db'}" if smoke
@@ -483,7 +483,7 @@ def test_explicit_orphan_recovery_preserves_waiting_and_prior_evidence(client, t
     orphan.set_user_attr("historic_note", "preserved")
     study.enqueue_trial({"width": 3}, user_attrs={PROPOSAL_ATTR: {"round_id": "reserved"}})
     before = study.trials[0]
-    client.config.optimizer.recover_orphaned_trials = True
+    client.config.optimizer.recover_orphaned_trials = [orphan.number]
     client.config.training.nas_trials = 1
     client.config.training.max_total_trials = 2
     if smoke:
@@ -499,11 +499,53 @@ def test_explicit_orphan_recovery_preserves_waiting_and_prior_evidence(client, t
     audit = study.user_attrs[ORPHAN_TRIAL_RECOVERY_ATTR]
     assert len(audit) == 1
     assert audit[0]["trial_number"] == orphan.number
-    assert audit[0]["attestation"] == "all_previous_workers_stopped"
+    assert audit[0]["version"] == 2
+    assert audit[0]["expected_trial_numbers"] == [orphan.number]
+    assert audit[0]["attestation"] == "listed_trial_workers_stopped"
     assert audit[0]["recorded_at_unix"] > 0
-    # Repeated resume does not append recovery events for terminal trials.
+    # A retained configuration must not fail a live worker from a later launch.
+    later_worker = study.ask()
     client._recover_orphaned_trials(study, client.config.optimizer)
+    assert study.trials[later_worker.number].state == TrialState.RUNNING
     assert study.user_attrs[ORPHAN_TRIAL_RECOVERY_ATTR] == audit
+
+
+def test_recovery_changes_only_listed_running_trials(client, tmp_path):
+    """An explicit recovery list excludes other workers, queued and terminal trials."""
+    from nas_model_client import ORPHAN_TRIAL_RECOVERY_ATTR
+    study = optuna.create_study(storage=f"sqlite:///{tmp_path / 'targets.db'}", direction="maximize")
+    selected = study.ask()
+    other_worker = study.ask()
+    terminal = study.ask()
+    study.tell(terminal, 1.0)
+    study.enqueue_trial({"width": 3})
+    targets = [selected.number, terminal.number]
+    client._recover_orphaned_trials(study, Dict(recover_orphaned_trials=targets))
+    assert [trial.state for trial in study.trials] == [
+        TrialState.FAIL, TrialState.RUNNING, TrialState.COMPLETE, TrialState.WAITING,
+    ]
+    assert study.trials[other_worker.number].datetime_complete is None
+    audit = study.user_attrs[ORPHAN_TRIAL_RECOVERY_ATTR]
+    assert len(audit) == 1 and audit[0]["trial_number"] == selected.number
+    assert audit[0]["expected_trial_numbers"] == targets
+
+
+@pytest.mark.parametrize("queued_target", [False, True])
+def test_recovery_rejects_future_or_queued_target_before_any_state_change(client, tmp_path, queued_target):
+    """A future or queued number cannot authorize failing a later worker."""
+    from nas_model_client import ORPHAN_TRIAL_RECOVERY_ATTR
+    study = optuna.create_study(storage=f"sqlite:///{tmp_path / 'unknown.db'}", direction="maximize")
+    orphan = study.ask()
+    if queued_target:
+        study.enqueue_trial({"width": 3})
+    config = Dict(recover_orphaned_trials=[orphan.number, orphan.number + 1])
+    message = "WAITING trial numbers" if queued_target else "trial numbers absent from this study"
+    with pytest.raises(ValueError, match=message):
+        client._recover_orphaned_trials(study, config)
+    assert study.trials[orphan.number].state == TrialState.RUNNING
+    if queued_target:
+        assert study.trials[-1].state == TrialState.WAITING
+    assert ORPHAN_TRIAL_RECOVERY_ATTR not in study.user_attrs
 
 
 @pytest.mark.parametrize("smoke", [False, True])
@@ -517,7 +559,7 @@ def test_recovery_rejects_mismatch_before_state_mutation(client, tmp_path, smoke
     sign(client, study)
     study.ask()
     client.config.optimizer.setting = 2
-    client.config.optimizer.recover_orphaned_trials = True
+    client.config.optimizer.recover_orphaned_trials = [0]
     with pytest.raises(RuntimeError, match="optimizer signature"):
         if smoke:
             client.smoke_test(trials=1, study_name=client.study_name)
@@ -527,12 +569,29 @@ def test_recovery_rejects_mismatch_before_state_mutation(client, tmp_path, smoke
     assert ORPHAN_TRIAL_RECOVERY_ATTR not in study.user_attrs
 
 
-@pytest.mark.parametrize("value", [None, 0, 1, "true", {}, []])
-def test_recovery_attestation_requires_boolean(value):
-    """Accidental truthy values must not authorize failing prior workers' trials."""
+@pytest.mark.parametrize("value", [None, True, 0, 1, "true", {}, (1,), [-1], [True], [1.0], ["1"], [1, 1]])
+def test_recovery_attestation_requires_explicit_trial_numbers(value):
+    """Broad flags and malformed targets must not authorize recovery."""
     from crest.model import _normalize_optimizer_config
-    with pytest.raises(ValueError, match="recover_orphaned_trials must be a boolean"):
+    with pytest.raises(ValueError, match="recover_orphaned_trials must be a list"):
         _normalize_optimizer_config(Dict(optimizer={"recover_orphaned_trials": value}))
+
+
+@pytest.mark.parametrize("value", [[], False, [0, 12]])
+def test_recovery_target_normalization(value):
+    """Legacy disabled flags remain harmless while exact target lists are retained."""
+    from crest.model import _normalize_optimizer_config
+    normalized = _normalize_optimizer_config(Dict(optimizer={"recover_orphaned_trials": value}))
+    assert normalized.recover_orphaned_trials == ([] if value is False else value)
+
+
+def test_null_optimizer_selects_default_native_component(client, tmp_path):
+    """Direct callers retain the native default when their optimizer is null."""
+    study = optuna.create_study(storage=f"sqlite:///{tmp_path / 'null.db'}", direction="maximize")
+    client.config.optimizer = None
+    name, _, config, signature = client._select_optimizer(study, client._build_sampler())
+    assert name == config.type == signature["optimizer"] == "optuna"
+    assert config.recover_orphaned_trials == []
 
 
 def test_resolved_plugin_cannot_adopt_native_legacy_identity():

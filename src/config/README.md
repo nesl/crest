@@ -512,13 +512,21 @@ cap. `provider: fake` uses a required non-empty `responses` list to exercise the
 same validation/ledger path without network access; memory summary responses must
 be included when memory is enabled.
 
-Provider authentication/credit errors stop immediately. Transient HTTP 429/5xx
-and network failures use bounded retries with backoff, then stop if exhausted.
+Provider authentication/credit errors stop immediately. Transient HTTP 429/5xx,
+network failures and incomplete HTTP reads use bounded retries, then stop if
+exhausted. YAML settings `optimizer.llm.max_transport_retries` (default 5),
+`retry_backoff_s` (5 seconds), and `retry_backoff_cap_s` (60 seconds per wait)
+control transport retry policy without changing study identity. Valid
+`Retry-After` seconds or HTTP dates set a minimum wait; if the server requests
+more than the configured cap, the campaign stops instead of retrying early.
 Only malformed provider responses or candidate content use repair/random fallback;
 transport failures never become random search. Proposal-source counts in the run
 summary distinguish LLM candidates, fixed warm-up attempts, and random fallback.
 Duplicate filtering includes pruned and known deterministic failed candidates,
-while infrastructure and unknown failures remain retryable. Float descriptors
+while infrastructure and unknown failures remain retryable. Model construction
+`ValueError`/`NotImplementedError` failures persist `candidate_failure_class`,
+stage and reason; deduplication consumes that evidence. Resource/transport and
+unknown backend exceptions are not labeled deterministic. Float descriptors
 normalize numeric values before deduplication; categorical types stay strict.
 
 Each prompt includes attempted and feasible-trial budgets. Its phase guidance is
@@ -551,11 +559,16 @@ partway through it. Set the recent window to at least 15 to expose the whole CS3
 warm-up in the first LLM prompt.
 
 Existing queue/provenance handling resumes without replaying completed entries.
-An orphan RUNNING trial requires explicit recovery. After confirming **all old
-workers for this study have stopped**, set `optimizer.recover_orphaned_trials:
-true` for the recovery invocation. The runner marks RUNNING trials FAIL through
-Optuna, records recovery evidence, and continues; remove the flag afterward.
-It never infers that a RUNNING worker is dead. Study identity hashes
+An orphan RUNNING trial requires explicit recovery. After confirming **the workers
+for the selected trials have stopped**, set `optimizer.recover_orphaned_trials:
+[12]` to list their exact Optuna trial numbers. The runner marks only those listed
+trials that are still RUNNING as FAIL through Optuna, records the target list and
+recovery evidence, and continues. Reusing that list leaves later trials untouched;
+terminal trial numbers are harmless. Unknown or WAITING trial numbers are rejected
+before any state changes so a future worker cannot become a retained target. The default is `[]`;
+legacy `false` also disables recovery, while `true` is rejected with instructions
+to provide exact trial numbers. Remove the list when recovery is finished for
+clarity. It never infers that a RUNNING worker is dead. Study identity hashes
 the ordered file contents rather than the path: relocation or JSON formatting
 changes are allowed, changing the candidates requires a new study. Omitting the
 option preserves the existing LLM behavior and optimizer identity. Provider
@@ -623,9 +636,9 @@ must explicitly retain still-relevant caveats. Retirement requires an ID and rea
 old snapshots remain available. The generator receives a paragraph for each finding,
 rendered without another LLM rewrite, plus the recent detailed trials.
 
-Any unsummarized trials outside the recent window appear as `pending_trials`.
-Thus an interval of 20 with a recent window of 10 does not silently lose the
-intervening observations. Disabling memory intentionally removes this bridge.
+The newest unsummarized trials outside the recent window appear as bounded
+`pending_trials`, with explicit counts when older evidence is omitted. Disabling
+memory intentionally removes this additional evidence window.
 `max_findings` and `max_chars` bound accepted memory; `max_chars` is a character
 limit on the structured memory and its rendered prose, **not a tokenizer count or
 an API output-token cap**. Oversized/malformed summaries are rejected, never
@@ -634,9 +647,15 @@ truncated. The model's factual conclusions are not automatically proven correct.
 `max_pending_trials` bounds each summary chunk and the pending records shown to
 the generator. It must be at least both timing thresholds. Rejected summaries get
 one repair attempt with rejection feedback. If both fail, the last valid memory
-remains in use, all uncovered evidence remains in the study for later summary
-attempts, and the generator receives bounded pending evidence with explicit total
-and omitted counts. Ledger events record the backlog. Provider execution failures
+remains in use, all uncovered evidence remains in the study, and the generator
+receives the newest bounded pending evidence with explicit total and omitted counts. Three
+consecutive deferrals suspend further summary calls, including across restarts;
+a successful summary resets the counter. The prompt reports suspension and its
+reason. After correcting the cause with all workers stopped, explicitly call
+`ExperimentalMemory(memory_directory, MemoryConfig.from_config(llm_memory_config)).reset_summary_failures()`
+to resume summaries. The directory is the study's `llm_optimizer/memory` folder;
+use its existing memory configuration. Resetting preserves findings and coverage.
+Ledger events record the backlog. Provider execution failures
 stop the campaign; they do not silently degrade memory or candidate generation.
 A reduced memory size on resume must still fit the saved findings.
 

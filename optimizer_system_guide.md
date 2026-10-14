@@ -253,15 +253,19 @@ The local default test and token-cost suites passed **814 tests and 203 subtests
 
 ## Recovery and provider failures
 
-After confirming all previous study workers have stopped, use
-`optimizer.recover_orphaned_trials: true` for one recovery invocation, then remove
-it. Existing RUNNING trials become FAIL through Optuna and a study audit records
-recovery; warm-up resumes without replaying those slots. Recovery is opt-in.
+After confirming the workers for specific trials have stopped, list their exact
+numbers with `optimizer.recover_orphaned_trials: [12]`. Only listed RUNNING trials
+become FAIL through Optuna; a study audit records the target list and recovery.
+Warm-up resumes without replaying those slots. Recovery defaults to `[]`; legacy
+`false` also disables it, while `true` is rejected. A retained list leaves later
+trial numbers untouched, and unknown or WAITING trial numbers are rejected before recovery.
+Remove the list after recovery for clarity.
 YAML warm-up paths resolve relative to the YAML directory.
 
 Provider authentication/credit failures stop immediately; transient failures get
 bounded backoff retries before stopping. Content errors retain repair/fallback.
 Run summaries count proposal sources. Memory summaries get one content repair;
 continued rejection retains stored evidence and exposes a bounded pending window
-with explicit omission counts instead of crashing on backlog size. Transport
-errors still stop. See `src/config/README.md` for the configuration contract.
+with explicit omission counts instead of crashing on backlog size. After three consecutive exhausted summary chunks, summarization remains
+suspended across restarts until explicit reset; candidate prompts use the newest
+bounded pending records and report suspension. Transport errors still stop. See `src/config/README.md` for the configuration contract.

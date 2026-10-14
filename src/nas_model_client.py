@@ -999,32 +999,57 @@ class NASModelClient:
 
     @staticmethod
     def _recover_orphaned_trials(study: optuna.Study, config: Any) -> None:
-        """Fail prior RUNNING trials after an explicit stopped-worker attestation.
+        """Fail explicitly listed RUNNING trials after workers have stopped.
 
         Parameters
         ----------
         study : optuna.Study
             Validated, initialized single-writer study being resumed.
         config : Any
-            Normalized optimizer config. ``recover_orphaned_trials: true``
-            attests that all previous workers for this study have stopped.
+            Normalized optimizer config. ``recover_orphaned_trials: [12]``
+            attests that the workers for those exact trial numbers have stopped.
 
         Returns
         -------
         None
             Existing attempts remain in the budget; recovery evidence is stored
             in study attributes before the public Optuna state transition.
+            Reusing a target list cannot recover newly allocated trial numbers.
+
+        Raises
+        ------
+        ValueError
+            If a requested number is unknown or still queued for execution.
         """
-        if not config.recover_orphaned_trials:
+        expected_numbers = list(config.recover_orphaned_trials)
+        if not expected_numbers:
             return
-        running = study.get_trials(deepcopy=False, states=(TrialState.RUNNING,))
+        trials = study.get_trials(deepcopy=False)
+        unknown = sorted(set(expected_numbers) - {trial.number for trial in trials})
+        if unknown:
+            raise ValueError(
+                f"optimizer.recover_orphaned_trials contains trial numbers absent from this study: {unknown}. "
+                "List only existing orphan trials after confirming their workers have stopped."
+            )
+        queued = [trial.number for trial in trials
+                  if trial.state == TrialState.WAITING and trial.number in expected_numbers]
+        if queued:
+            raise ValueError(
+                f"optimizer.recover_orphaned_trials contains WAITING trial numbers: {queued}. "
+                "Queued trials have not started; list only existing RUNNING or terminal trials."
+            )
+        running = [trial for trial in trials
+                   if trial.state == TrialState.RUNNING and trial.number in expected_numbers]
         if not running:
+            logger.warning("[NAS] Orphan recovery targets %s contain no RUNNING trials; no state changed.",
+                           expected_numbers)
             return
         events = list(study.user_attrs.get(ORPHAN_TRIAL_RECOVERY_ATTR, []))
         for trial in running:
             # Persist intent first so an interrupted recovery remains auditable.
-            events.append({"version": 1, "trial_number": trial.number,
-                           "attestation": "all_previous_workers_stopped",
+            events.append({"version": 2, "trial_number": trial.number,
+                           "expected_trial_numbers": expected_numbers,
+                           "attestation": "listed_trial_workers_stopped",
                            "recorded_at_unix": time.time(), "target_state": "FAIL"})
             study.set_user_attr(ORPHAN_TRIAL_RECOVERY_ATTR, events)
             study.tell(trial.number, state=TrialState.FAIL)
@@ -1819,18 +1844,26 @@ class NASModelClient:
             self.model_build_context,
             self.model_config,
         )
-        self.model_family.validate_hparams(
-            family_hparams,
-            self.model_build_context,
-            self.model_config,
-        )
-        model = self.model_family.build_model(
-            family_hparams,
-            self.model_build_context,
-            self.model_config,
-        )
-        self.task.validate_model_outputs(model, self.target_spec)
-        self.task.compile_model(model, self.task_config, self.target_spec)
+        try:
+            self.model_family.validate_hparams(
+                family_hparams,
+                self.model_build_context,
+                self.model_config,
+            )
+            model = self.model_family.build_model(
+                family_hparams,
+                self.model_build_context,
+                self.model_config,
+            )
+            self.task.validate_model_outputs(model, self.target_spec)
+            self.task.compile_model(model, self.task_config, self.target_spec)
+        except (ValueError, NotImplementedError) as exc:
+            # Invalid shapes/parameters and unsupported model operations repeat
+            # for this candidate. Do not classify resource/transport exceptions.
+            trial.set_user_attr("candidate_failure_class", "deterministic")
+            trial.set_user_attr("candidate_failure_stage", "model_construction")
+            trial.set_user_attr("candidate_failure_reason", f"{type(exc).__name__}: {exc}")
+            raise
         flops = self.model_family.count_flops(
             model,
             self.model_build_context,

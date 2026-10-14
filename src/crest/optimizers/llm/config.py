@@ -91,7 +91,13 @@ def normalize_llm_config(optimizer_config) -> Dict:
         if not isinstance(raw_json_response_mode, bool):
             raise ValueError("optimizer.llm.json_response_mode must be a boolean.")
         llm.json_response_mode = raw_json_response_mode
+        raw_retries = llm.get("max_transport_retries", 5)
+        if type(raw_retries) is not int or raw_retries < 0:
+            raise ValueError("optimizer.llm.max_transport_retries must be an integer >= 0.")
+        llm.max_transport_retries = raw_retries
         for field_name, default, minimum in (
+            ("retry_backoff_s", 5.0, 0.0),
+            ("retry_backoff_cap_s", 60.0, 0.0),
             ("temperature", 0.4, 0.0),
             ("timeout_s", 60.0, 0.001),
         ):

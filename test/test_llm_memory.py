@@ -101,13 +101,16 @@ class MemoryTests(unittest.TestCase):
         for _ in range(2):
             add(self.study)
         memory.enrich(self.study, context(self.study), FakeProvider([{'updates': [finding()], 'retire': []}]))
-        before = (self.root/'state.json').read_bytes()
+        before = json.loads((self.root/'state.json').read_text())
         for _ in range(2):
             add(self.study)
         bad = finding()
         bad['trial_numbers'] = [999]
         result = memory.enrich(self.study, context(self.study, 1), FakeProvider([{'updates': [bad], 'retire': []}] * 2))
-        self.assertEqual((self.root/'state.json').read_bytes(), before)
+        after = json.loads((self.root/'state.json').read_text())
+        for field in ('covered', 'findings', 'version'):
+            self.assertEqual(after[field], before[field])
+        self.assertEqual(after['summary_failure_count'], 1)
         self.assertEqual([r['number'] for r in result.pending_trials], [2])
         self.assertEqual(result.knowledge_base['covered_trial_count'], 2)
 
@@ -118,7 +121,7 @@ class MemoryTests(unittest.TestCase):
             memory = ExperimentalMemory(self.root, self.config)
             result = memory.enrich(self.study, context(self.study), FakeProvider([{'updates': [update], 'retire': []}] * 2))
             self.assertEqual(result.knowledge_base['covered_trial_count'], 0)
-            self.assertFalse((self.root/'state.json').exists())
+            self.assertEqual(json.loads(memory.state_path.read_text())['covered'], {})
 
     def test_contradictory_evidence_can_qualify_existing_finding(self):
         memory = ExperimentalMemory(self.root, self.config)
@@ -195,16 +198,78 @@ class MemoryTests(unittest.TestCase):
         result = memory.enrich(self.study, context(self.study, 0), provider)
         self.assertEqual(len(provider.requests), 2)  # No unbounded same-round repair loop.
         self.assertEqual(len(result.pending_trials), 4)
+        self.assertEqual([r['number'] for r in result.pending_trials], [3, 4, 5, 6])
         self.assertEqual(result.knowledge_base['pending_trial_count'], 7)
         self.assertEqual(result.knowledge_base['omitted_pending_trial_count'], 3)
         self.assertEqual(memory.state['covered'], {})
-        self.assertFalse(memory.state_path.exists())
+        self.assertEqual(json.loads(memory.state_path.read_text())['summary_failure_count'], 1)
         # The next successful round drains both chunks, including previously omitted trials.
         recovery = FakeProvider([{'updates': [], 'retire': []}] * 2)
         result = memory.enrich(self.study, context(self.study, 0), recovery)
         self.assertEqual(result.knowledge_base['covered_trial_count'], 7)
         self.assertEqual(result.knowledge_base['omitted_pending_trial_count'], 0)
+        self.assertEqual(result.knowledge_base['summary_failure_count'], 0)
         self.assertEqual([r['number'] for r in json.loads(recovery.requests[1].user_prompt)['new_trials']], [4, 5, 6])
+
+    def test_summary_circuit_survives_resume_and_backlog_growth_until_explicit_reset(self):
+        """Six rejected calls suspend summarization without marking evidence covered."""
+        for _ in range(2):
+            add(self.study)
+        memory = ExperimentalMemory(self.root, self.config)
+        memory.enrich(self.study, context(self.study), FakeProvider([{'updates': [finding()], 'retire': []}]))
+        accepted = json.loads(memory.state_path.read_text())
+        for _ in range(5):
+            add(self.study)
+        requests = []
+        for failures in range(1, 4):
+            # Reconstruct the owner each round to exercise persisted retry limits.
+            memory = ExperimentalMemory(self.root, self.config)
+            provider = FakeProvider([{'updates': [{'id': 'incomplete'}], 'retire': []}] * 2)
+            result = memory.enrich(self.study, context(self.study, 1), provider)
+            requests.extend(provider.requests)
+            self.assertEqual(result.knowledge_base['summary_failure_count'], failures)
+            add(self.study)
+        self.assertEqual(len(requests), 6)
+        # More evidence and process restarts must not reopen the same failed chunk.
+        restored = ExperimentalMemory(self.root, self.config)
+        provider = FakeProvider([])
+        result = restored.enrich(self.study, context(self.study, 1), provider)
+        self.assertEqual(provider.requests, [])
+        self.assertEqual(result.knowledge_base['summary_status'], 'suspended')
+        self.assertTrue(result.knowledge_base['summary_failure_reason'])
+        self.assertEqual(result.knowledge_base['pending_trial_count'], 8)
+        self.assertEqual(result.knowledge_base['omitted_pending_trial_count'], 3)
+        self.assertEqual([r['number'] for r in result.pending_trials], [5, 6, 7, 8])
+        self.assertEqual([r['number'] for r in result.recent_trials], [9])
+        for field in ('covered', 'findings', 'version'):
+            self.assertEqual(restored.state[field], accepted[field])
+        events = [json.loads(line) for line in (self.root/'optimizer_events.jsonl').read_text().splitlines()]
+        self.assertEqual(len([e for e in events if e['event'] == 'summary_suspended']), 1)
+        # Reset changes only retry disposition, and is itself persisted/auditable.
+        restored.reset_summary_failures()
+        self.assertEqual(json.loads(restored.state_path.read_text())['summary_failure_count'], 0)
+        recovery = FakeProvider([{'updates': [], 'retire': []}] * 2)
+        result = ExperimentalMemory(self.root, self.config).enrich(self.study, context(self.study), recovery)
+        self.assertEqual(result.knowledge_base['summary_status'], 'active')
+        self.assertEqual(result.knowledge_base['summary_failure_count'], 0)
+        self.assertEqual(result.knowledge_base['covered_trial_count'], 10)
+        self.assertEqual(len(recovery.requests), 2)
+        events = [json.loads(line) for line in (self.root/'optimizer_events.jsonl').read_text().splitlines()]
+        self.assertEqual(len([e for e in events if e['event'] == 'summary_failures_reset']), 1)
+
+    def test_legacy_state_defaults_to_active_summary_circuit(self):
+        """Accepted state from before the circuit breaker remains resumable."""
+        for _ in range(2):
+            add(self.study)
+        memory = ExperimentalMemory(self.root, self.config)
+        memory.enrich(self.study, context(self.study), FakeProvider([{'updates': [], 'retire': []}]))
+        legacy = json.loads(memory.state_path.read_text())
+        del legacy['summary_failure_count']
+        del legacy['summary_failure_reason']
+        memory.state_path.write_text(json.dumps(legacy))
+        result = ExperimentalMemory(self.root, self.config).enrich(self.study, context(self.study), FakeProvider([]))
+        self.assertEqual(result.knowledge_base['summary_status'], 'active')
+        self.assertEqual(result.knowledge_base['summary_failure_count'], 0)
 
     def test_scope_or_changed_history_cannot_reuse_old_memory(self):
         for _ in range(2):

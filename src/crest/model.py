@@ -1005,11 +1005,31 @@ def configured_quantization_mode(config_or_training: Any) -> str:
 
 
 def _normalize_optimizer_config(config: Dict) -> Dict:
-    """Resolve a registered optimizer, retaining its normalized custom fields."""
+    """Resolve a registered optimizer and validate explicit recovery targets.
+
+    Parameters
+    ----------
+    config : addict.Dict
+        Configuration containing an optional optimizer mapping. A null optimizer
+        selects the default Optuna component.
+
+    Returns
+    -------
+    addict.Dict
+        Component configuration with recovery disabled by default. Recovery
+        targets are distinct nonnegative Optuna trial numbers.
+
+    Raises
+    ------
+    ValueError
+        If the optimizer mapping or its component settings are invalid.
+    """
     from .component_selection import resolve_optimizer_selection
 
     raw_optimizer = config.get("optimizer", {})
-    if raw_optimizer is None or not isinstance(raw_optimizer, (dict, Dict)):
+    if raw_optimizer is None:
+        raw_optimizer = {}
+    if not isinstance(raw_optimizer, (dict, Dict)):
         raise ValueError("optimizer must be a mapping when provided.")
     optimizer = Dict(raw_optimizer)
     try:
@@ -1025,10 +1045,19 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
     if adopt_legacy and (optimizer_type != "optuna" or component_cls is not OptunaOptimizer):
         raise ValueError("optimizer.adopt_legacy_study supports only native optuna studies.")
     optimizer.adopt_legacy_study = adopt_legacy
-    recover = optimizer.get("recover_orphaned_trials", False)
-    if not isinstance(recover, bool):
-        raise ValueError("optimizer.recover_orphaned_trials must be a boolean.")
-    optimizer.recover_orphaned_trials = recover
+    recover = optimizer.get("recover_orphaned_trials", [])
+    if recover is False:
+        recover = []
+    if (not isinstance(recover, list)
+            or any(isinstance(number, bool) or not isinstance(number, int) or number < 0
+                   for number in recover)
+            or len(set(recover)) != len(recover)):
+        raise ValueError(
+            "optimizer.recover_orphaned_trials must be a list of distinct nonnegative "
+            "trial numbers (for example [12]) after confirming those workers have stopped; "
+            "true is unsafe and no longer supported."
+        )
+    optimizer.recover_orphaned_trials = list(recover)
     if optimizer_type == "llm_generator":
         from .optimizers.llm.config import normalize_llm_config
 

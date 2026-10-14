@@ -14,6 +14,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from crest.model import _normalize_optimizer_config  # noqa: E402
+from crest.optimizers.llm.component import LLMGeneratorOptimizer  # noqa: E402
 
 
 class OptimizerConfigTests(unittest.TestCase):
@@ -21,9 +22,11 @@ class OptimizerConfigTests(unittest.TestCase):
 
     def test_missing_optimizer_defaults_to_existing_optuna_path(self) -> None:
         """Legacy configurations retain Optuna behavior without edits."""
-        optimizer = _normalize_optimizer_config(Dict())
-
-        self.assertEqual(optimizer.type, "optuna")
+        for config in (Dict(), Dict(optimizer=None)):
+            with self.subTest(config=config):
+                optimizer = _normalize_optimizer_config(config)
+                self.assertEqual(optimizer.type, "optuna")
+                self.assertEqual(optimizer.recover_orphaned_trials, [])
 
     def test_llm_generator_config_is_normalized(self) -> None:
         """The fake provider path receives deterministic MVP defaults."""
@@ -137,8 +140,36 @@ class OptimizerConfigTests(unittest.TestCase):
         self.assertEqual(optimizer.llm.api_key_env, "OPENROUTER_API_KEY")
         self.assertEqual(optimizer.llm.temperature, 0.2)
         self.assertEqual(optimizer.llm.timeout_s, 15.0)
+        self.assertEqual(optimizer.llm.max_transport_retries, 5)
+        self.assertEqual(optimizer.llm.retry_backoff_s, 5.0)
+        self.assertEqual(optimizer.llm.retry_backoff_cap_s, 60.0)
         self.assertTrue(optimizer.llm.json_response_mode)
         self.assertEqual(optimizer.llm.extra_headers["X-Title"], "CREST")
+
+    def test_transport_settings_are_validated_and_excluded_from_study_identity(self) -> None:
+        """Operators can tune retry policy when resuming the same search study."""
+        component = LLMGeneratorOptimizer()
+        base = Dict(llm=Dict(provider="openrouter", model="openai/test-model"))
+        identity = component.identity_config(base)
+        for field, value in (("max_transport_retries", 0), ("retry_backoff_s", 0),
+                             ("retry_backoff_cap_s", 120.0)):
+            with self.subTest(field=field):
+                changed = Dict(llm={**base.llm, field: value})
+                self.assertEqual(component.identity_config(changed), identity)
+                self.assertNotIn(field, identity)
+
+        # Reject coercions and non-finite values at YAML normalization time.
+        for field, values in (
+            ("max_transport_retries", [-1, True, 1.0, "5", None]),
+            ("retry_backoff_s", [-1, True, "5", None, float("nan"), float("inf")]),
+            ("retry_backoff_cap_s", [-1, True, "60", None, float("nan"), float("inf")]),
+        ):
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    invalid = Dict(optimizer=Dict(type="llm_generator",
+                        llm={**base.llm, field: value}))
+                    with self.assertRaisesRegex(ValueError, field):
+                        _normalize_optimizer_config(invalid)
 
     def test_openai_compatible_requires_explicit_api_key_environment_variable(self) -> None:
         """Generic endpoints must not silently inherit OpenRouter credentials."""

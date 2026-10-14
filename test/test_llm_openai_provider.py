@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """Unit tests for the OpenRouter/OpenAI-compatible provider."""
 
+import http.client
 import io
 import json
 import os
@@ -182,11 +183,11 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
         with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
             response = provider.complete_json(request())
         self.assertEqual(transport.call_count, 3)
-        self.assertEqual(sleeper.call_args_list, [call(1.0), call(2.0)])
+        self.assertEqual(sleeper.call_args_list, [call(5.0), call(10.0)])
         self.assertEqual(response.metadata["transport_attempts"], 3)
 
     def test_timeouts_and_network_errors_exhaust_a_bounded_retry_budget(self) -> None:
-        """A provider outage stops after three attempts with an actionable error."""
+        """The default budget permits six attempts with capped exponential waits."""
         for error in (TimeoutError("timed out"), urllib.error.URLError("connection lost")):
             with self.subTest(error=error):
                 transport = Mock(side_effect=error)
@@ -195,10 +196,114 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
                     provider_name="test", base_url="https://llm.example/v1", api_key_env="TEST_LLM_KEY",
                     model="test", urlopen=transport, sleep=sleeper)
                 with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
-                    with self.assertRaisesRegex(ProviderTransportError, "Exhausted 3 transport attempts"):
+                    with self.assertRaisesRegex(ProviderTransportError, "Exhausted 6 transport attempts"):
                         provider.complete_json(request())
-                self.assertEqual(transport.call_count, 3)
-                self.assertEqual(sleeper.call_count, 2)
+                self.assertEqual(transport.call_count, 6)
+                self.assertEqual(sleeper.call_args_list,
+                                 [call(5.0), call(10.0), call(20.0), call(40.0), call(60.0)])
+
+    def test_retry_after_is_a_minimum_for_delta_seconds_and_http_dates(self) -> None:
+        """Server guidance overrides shorter backoff but never shortens it."""
+        # Freeze Unix time at the HTTP-date epoch so no wall-clock waits occur.
+        cases = [("20", 20.0), ("Thu, 01 Jan 1970 00:00:30 GMT", 30.0),
+                 ("1", 5.0), ("Wed, 31 Dec 1969 23:59:59 GMT", 5.0),
+                 ("malformed", 5.0)]
+        for status in (429, 503):
+            for header, delay in cases:
+                with self.subTest(status=status, header=header):
+                    transport = Mock(side_effect=[
+                        urllib.error.HTTPError("https://llm.example/v1", status, "busy",
+                                               {"Retry-After": header}, io.BytesIO(b"busy")),
+                        FakeHTTPResponse({"choices": [{"message": {"content": "{}"}}]}),
+                    ])
+                    sleeper = Mock()
+                    provider = OpenAICompatibleProvider(
+                        provider_name="test", base_url="https://llm.example/v1",
+                        api_key_env="TEST_LLM_KEY", model="test", urlopen=transport,
+                        sleep=sleeper, wall_clock=lambda: 0.0)
+                    with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+                        response = provider.complete_json(request())
+                    sleeper.assert_called_once_with(delay)
+                    self.assertEqual(response.metadata["transport_attempts"], 2)
+
+    def test_retry_after_above_cap_stops_without_retrying_early(self) -> None:
+        """A bounded client must stop if it cannot honor the server deadline."""
+        for header in ("61", "Thu, 01 Jan 1970 00:01:01 GMT"):
+            with self.subTest(header=header):
+                transport = Mock(side_effect=urllib.error.HTTPError(
+                    "https://llm.example/v1", 429, "busy", {"Retry-After": header},
+                    io.BytesIO(b"busy")))
+                sleeper = Mock()
+                provider = OpenAICompatibleProvider(
+                    provider_name="test", base_url="https://llm.example/v1",
+                    api_key_env="TEST_LLM_KEY", model="test", urlopen=transport,
+                    sleep=sleeper, wall_clock=lambda: 0.0)
+                with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+                    with self.assertRaisesRegex(ProviderTransportError,
+                                                "Retry-After requires 61s.*stopped"):
+                        provider.complete_json(request())
+                self.assertEqual(transport.call_count, 1)
+                sleeper.assert_not_called()
+
+    def test_http_protocol_errors_retry_including_incomplete_response_reads(self) -> None:
+        """HTTPException subclasses from connection setup or reading are transient."""
+        incomplete = FakeHTTPResponse({})
+        incomplete.read = Mock(side_effect=http.client.IncompleteRead(b"partial"))
+        for result in (http.client.BadStatusLine("broken"), incomplete):
+            with self.subTest(result=result):
+                transport = Mock(side_effect=[result, FakeHTTPResponse(
+                    {"choices": [{"message": {"content": "{}"}}]})])
+                sleeper = Mock()
+                provider = OpenAICompatibleProvider(
+                    provider_name="test", base_url="https://llm.example/v1",
+                    api_key_env="TEST_LLM_KEY", model="test", urlopen=transport,
+                    sleep=sleeper)
+                with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+                    response = provider.complete_json(request())
+                self.assertEqual(response.metadata["transport_attempts"], 2)
+                sleeper.assert_called_once_with(5.0)
+
+    def test_incomplete_http_error_body_preserves_status_and_retry_after(self) -> None:
+        """A broken error body cannot bypass known authentication or retry rules."""
+        for status, error_type in ((401, ProviderAuthenticationError), (429, None)):
+            with self.subTest(status=status):
+                error = urllib.error.HTTPError("https://llm.example/v1", status, "busy",
+                                               {"Retry-After": "8"}, io.BytesIO())
+                error.read = Mock(side_effect=http.client.IncompleteRead(b"partial"))
+                transport = Mock(side_effect=[error, FakeHTTPResponse(
+                    {"choices": [{"message": {"content": "{}"}}]})])
+                sleeper = Mock()
+                provider = OpenAICompatibleProvider(
+                    provider_name="test", base_url="https://llm.example/v1",
+                    api_key_env="TEST_LLM_KEY", model="test", urlopen=transport,
+                    sleep=sleeper)
+                with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+                    if error_type is not None:
+                        with self.assertRaises(error_type):
+                            provider.complete_json(request())
+                        sleeper.assert_not_called()
+                        self.assertEqual(transport.call_count, 1)
+                    else:
+                        response = provider.complete_json(request())
+                        self.assertEqual(response.metadata["transport_attempts"], 2)
+                        sleeper.assert_called_once_with(8.0)
+
+    def test_custom_budget_and_zero_retry_setting_bound_network_attempts(self) -> None:
+        """Configured retries and caps constrain requests without real sleeping."""
+        for retries, delays in ((0, []), (3, [3.0, 4.0, 4.0])):
+            with self.subTest(retries=retries):
+                transport = Mock(side_effect=TimeoutError("outage"))
+                sleeper = Mock()
+                provider = OpenAICompatibleProvider(
+                    provider_name="test", base_url="https://llm.example/v1",
+                    api_key_env="TEST_LLM_KEY", model="test", urlopen=transport,
+                    sleep=sleeper, max_transport_retries=retries,
+                    retry_backoff_s=3.0, retry_backoff_cap_s=4.0)
+                with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+                    with self.assertRaises(ProviderTransportError):
+                        provider.complete_json(request())
+                self.assertEqual(transport.call_count, retries + 1)
+                self.assertEqual(sleeper.call_args_list, [call(delay) for delay in delays])
 
     def test_nonretryable_http_error_stops_and_malformed_envelope_is_repairable(self) -> None:
         """Bad configuration is fatal; a received malformed response is content failure."""
@@ -218,7 +323,7 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
                 self.assertEqual(transport.call_count, 1)
                 sleeper.assert_not_called()
 
-    def test_provider_factory_applies_openrouter_defaults_from_normalized_config(self) -> None:
+    def test_provider_factory_passes_configured_openrouter_settings(self) -> None:
         """The NAS loop can remain unaware of provider-specific constructors."""
         provider = build_provider(
             Dict(
@@ -230,6 +335,9 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
                 timeout_s=60.0,
                 json_response_mode=True,
                 extra_headers=Dict(),
+                max_transport_retries=7,
+                retry_backoff_s=8.0,
+                retry_backoff_cap_s=90.0,
             )
         )
 
@@ -237,6 +345,9 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
         self.assertEqual(provider.provider_name, "openrouter")
         self.assertEqual(provider.model, "openai/test-model")
         self.assertTrue(provider.json_response_mode)
+        self.assertEqual(provider.max_transport_retries, 7)
+        self.assertEqual(provider.retry_backoff_s, 8.0)
+        self.assertEqual(provider.retry_backoff_cap_s, 90.0)
 
 
 if __name__ == "__main__":

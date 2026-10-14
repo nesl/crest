@@ -155,8 +155,8 @@ def test_explicit_recovery_advances_orphaned_warmup_once(warmup, smoke):
             with pytest.raises(RuntimeError, match='interrupted'):
                 invoke()
         study = optuna.load_study(study_name='campaign', storage=storage)
-        study.ask()
-        client.config.optimizer.recover_orphaned_trials = True
+        orphan = study.ask()
+        client.config.optimizer.recover_orphaned_trials = [orphan.number]
         client.config.training.max_total_trials = 2
         invoke()
     assert [t.state for t in study.trials] == [TrialState.FAIL, TrialState.COMPLETE]
