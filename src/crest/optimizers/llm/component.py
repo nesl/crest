@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from ...interfaces import OptimizerABC
+from ...optimizer_history import to_plain as _plain
 from ...pipeline_types import BudgetSnapshot, CandidateProposal, ExplicitRound, SearchContext, TrialRecord
 from ...search_space import validate_candidate
 from ...semantic_context import SEMANTIC_CONTEXT_VERSION, disabled_semantic_context
@@ -22,23 +23,14 @@ from .prompt_builder import PromptContext
 from .provider import build_provider
 
 
-def _plain(value):
-    """Detach immutable context mappings for JSON prompt serialization."""
-    from collections.abc import Mapping
-    if isinstance(value, Mapping):
-        return {str(k): _plain(v) for k, v in value.items()}
-    if isinstance(value, (tuple, list)):
-        return [_plain(v) for v in value]
-    return value
-
-
 def _load_warmup(llm):
     """Read ordered fixed candidates without invoking the provider.
 
     Parameters
     ----------
     llm : Mapping
-        Normalized LLM configuration; relative paths use the working directory.
+        Normalized LLM configuration. ``load_config`` resolves paths relative
+        to the YAML directory; direct callers supply their own resolved paths.
 
     Returns
     -------
@@ -106,6 +98,37 @@ class LLMGeneratorOptimizer(OptimizerABC):
             # Credentials and optional auth headers are not study identity.
             identity["base_url"] = urlunsplit((endpoint.scheme, host, endpoint.path, "", ""))
         return identity
+
+    def normalize_stored_identity(self, stored, active):
+        """Alias only the built-in version-1 transport-timeout signature.
+
+        Parameters
+        ----------
+        stored : Any
+            Persisted complete optimizer signature.
+        active : dict
+            Current complete optimizer signature.
+
+        Returns
+        -------
+        Any
+            Signature with a recognized legacy timeout removed, otherwise the
+            original value. All other keys and values remain strict.
+        """
+        old = stored.get("config") if isinstance(stored, dict) else None
+        if (type(self) is LLMGeneratorOptimizer
+                and isinstance(stored, dict)
+                and stored.get("version") == 1
+                and stored.get("optimizer") == "llm_generator"
+                and isinstance(old, dict)
+                and old.get("provider") in {"openrouter", "openai_compatible"}
+                and set(old) == set(active["config"]) | {"timeout_s"}
+                and isinstance(old["timeout_s"], (int, float))
+                and not isinstance(old["timeout_s"], bool)
+                and 0.001 <= old["timeout_s"] < float("inf")):
+            return {**stored, "config": {key: value for key, value in old.items()
+                                         if key != "timeout_s"}}
+        return stored
 
     def initialize(self, context: SearchContext, config) -> None:
         llm = normalize_llm_config(config)["llm"]

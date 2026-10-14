@@ -103,15 +103,15 @@ Feasibility constraints are persisted in trial attributes. The sampler callback 
 - **Recent trials:** the newest configured window, including state and useful failure/measurement information.
 - **Anchors:** the best eligible scalar candidates, or a bounded feasible Pareto representation near the two-objective knee. Degenerate or higher-dimensional fronts use a normalized ideal-point compromise; stable trial numbers break ties.
 - **Accumulated memory:** structured findings derived from older terminal evidence, with conditions, measurements, exceptions, uncertainty, and cited trial numbers.
-- **Pending trials:** unsummarized terminal evidence outside the recent window, so summary delay does not make it invisible.
+- **Pending trials:** a bounded window of unsummarized terminal evidence outside the recent window, with explicit counts when older evidence is omitted.
 
 Repeated references to a trial across these views represent one observation. Semantic context supplies bounded workload/task/model/device/runtime explanations and parameter priors, with a version and hash. It distinguishes registered device capacities from available application or tensor-arena budgets. Priors and memory are fallible guidance; neither changes the legal search space or measured evidence.
 
 The prompt phase is deterministic from attempted trials divided by the total cap: exploration below 35%, specification below 85%, and finalization thereafter. These are proposal instructions, not changes to the objective or final-training procedure.
 
-Memory defaults to starting after 10 terminal trials and updating every 5, with at most 12 findings, 6000 characters, and 100 pending trials. Valid updates retain untouched findings, explicitly replace existing IDs, and retire findings only with a reason. State records coverage hashes and snapshots. Restored memory must match its context and covered trial evidence. Failed summaries retain prior state and pending evidence; excessive backlog stops explicitly instead of silently discarding observations.
+Memory defaults to starting after 10 terminal trials and updating every 5, with at most 12 findings, 6000 characters, and 100 pending trials. Valid updates retain untouched findings, explicitly replace existing IDs, and retire findings only with a reason. State records coverage hashes and snapshots. Restored memory must match its context and covered trial evidence. Rejected summaries receive one repair attempt. Persistent content rejection retains prior state and all study evidence, while bounding the pending prompt and explicitly reporting omissions. Provider execution errors stop the campaign.
 
-The provider must return `{"candidates": [{...}]}`. LLM validation checks the envelope, count, exact raw fields, and duplicates. Duplicate detection uses descriptor-complete `COMPLETE` parameters and earlier accepted candidates in the batch, including penalized COMPLETE trials; PRUNED and FAIL trials are outside that completed set. Descriptor-complete actual WAITING parameters, when present, are also checked for queued duplicates. Anchors apply stricter success/feasibility filters and exclude penalized failures. WAITING sampled parameters are not reconstructed from queue metadata.
+The provider must return `{"candidates": [{...}]}`. LLM validation checks the envelope, count, exact raw fields, and duplicates. Deduplication covers COMPLETE, PRUNED, known deterministic FAIL, queued fixed parameters, and earlier accepted candidates in the batch. Infrastructure and unknown FAIL attempts remain retryable. Full candidate provenance fills parameters absent from early rejections. Numeric float descriptors canonicalize values; categorical types remain strict. Anchors retain their separate success/feasibility filters. The serial runner drains queued trials before requesting more proposals.
 
 A partially accepted batch runs at its accepted size without filling rejected slots. A batch with zero accepted candidates gets up to `max_repair_attempts` additional calls after the initial call. Provider errors, invalid JSON, and validation errors contribute repair feedback. After exhaustion, the component tries up to 100 locally sampled candidates and returns one legal unique random fallback. Failure to find one raises an error. `random_seed` controls this local RNG, not remote provider randomness.
 
@@ -189,7 +189,7 @@ To extend a signed campaign, keep the study name, database, and original scienti
 
 **This signature is not a fingerprint of the whole scientific experiment.** It does not certify unchanged dataset, model, training, device, or score settings. Retain and compare the original experiment configuration yourself; budget-only extension is the supported use.
 
-Migration of unsigned LLM studies is unsupported; existing signed LLM campaigns extend normally when identity matches. Nonempty unsigned studies fail by default. Native-only `optimizer.adopt_legacy_study: true` is a one-time attestation that the active configuration matches the original native experiment. It rejects WAITING trials, explicit-proposer attributes, any `fixed_params` system-attribute key even when empty, and an existing per-study `llm_optimizer` artifact path. It also checks ordered study directions, feasibility signatures, and required COMPLETE feasibility evidence before stamping identity. It preserves trial evidence and does not recover RUNNING work. Remove the flag after adoption. These checks are conservative counterevidence guards, not proof of native provenance; unsigned LLM/plugin adoption and optimizer switching within a campaign are unsupported.
+Migration of unsigned LLM studies is unsupported; existing signed LLM campaigns extend normally when identity matches. Nonempty unsigned studies fail by default. Native-only `optimizer.adopt_legacy_study: true` is a one-time attestation that the active configuration matches the original native experiment. It rejects WAITING trials, explicit-proposer attributes, any `fixed_params` system-attribute key even when empty, and an existing per-study `llm_optimizer` artifact path. It also checks ordered study directions, feasibility signatures, and required COMPLETE feasibility evidence before stamping identity. Legacy adoption preserves trial evidence and does not itself recover RUNNING work. Remove the flag after adoption. These checks are conservative counterevidence guards, not proof of native provenance; unsigned LLM/plugin adoption and optimizer switching within a campaign are unsupported.
 
 ## Add a simple proposer
 
@@ -250,3 +250,18 @@ Scalar `run_scoring_nas` selects a feasible completed trial when feasibility is 
 Contract, context, runner, resume, and LLM regression tests cover custom registration, legal raw fields, immutable evidence, partial acceptance, real Optuna reservations, partial-enqueue restart, budget extensions, strict identity mismatches, legacy adoption counterevidence, scalar/multi-objective rejection, and fixed-candidate objective parity. A regression explicitly verifies that a rejected first candidate never trains and a subsequent viable candidate trains once while both consume attempts.
 
 The local default test and token-cost suites passed **814 tests and 203 subtests, with one skip**, without inherited `PYTHONPATH`. This is local regression evidence. Paid provider behavior, physical hardware campaigns, and final hardware/provider performance were not validated by that run. The contract does not support arbitrary dynamic explicit spaces, streaming proposal feedback, different execution semantics, automatic stale-trial recovery, or identical stochastic trajectories across proposers.
+
+## Recovery and provider failures
+
+After confirming all previous study workers have stopped, use
+`optimizer.recover_orphaned_trials: true` for one recovery invocation, then remove
+it. Existing RUNNING trials become FAIL through Optuna and a study audit records
+recovery; warm-up resumes without replaying those slots. Recovery is opt-in.
+YAML warm-up paths resolve relative to the YAML directory.
+
+Provider authentication/credit failures stop immediately; transient failures get
+bounded backoff retries before stopping. Content errors retain repair/fallback.
+Run summaries count proposal sources. Memory summaries get one content repair;
+continued rejection retains stored evidence and exposes a bounded pending window
+with explicit omission counts instead of crashing on backlog size. Transport
+errors still stop. See `src/config/README.md` for the configuration contract.

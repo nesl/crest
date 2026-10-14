@@ -6,11 +6,15 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from functools import partial
+
+from ...optimizer_history import to_plain
 
 from ...errors import HIL_MASTER_SUCCESS
+
+_json_safe = partial(to_plain, nonfinite_to_none=True)
 
 
 MEASUREMENT_FIELDS = (
@@ -36,22 +40,6 @@ def _state_name(trial: Any) -> str:
     state = getattr(trial, "state", None)
     return str(getattr(state, "name", state)).strip()
 
-
-def _json_safe(value: Any) -> Any:
-    """Convert common Optuna/NumPy/path values into JSON-safe data."""
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, Mapping):
-        return {str(key): _json_safe(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
-    if hasattr(value, "item") and callable(value.item):
-        return _json_safe(value.item())
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return str(value)
 
 
 def _available_measurement(value: Any) -> bool:

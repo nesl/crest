@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import optuna
 
@@ -17,10 +18,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from crest.optimizer_history import build_trial_snapshot
+from crest.pipeline_types import TrialRecord
 from crest.optimizers.llm.enqueue import generate_llm_batch  # noqa: E402
 from crest.optimizers.llm.ledger import LLMLedger  # noqa: E402
 from crest.optimizers.llm.prompt_builder import PromptContext  # noqa: E402
-from crest.optimizers.llm.provider import FakeProvider  # noqa: E402
+from crest.optimizers.llm.provider import FakeProvider, LLMResponse, ProviderResponseError  # noqa: E402
 from crest.optimizers.llm.search_space import SearchParam, SearchSpaceDescriptor  # noqa: E402
 
 
@@ -121,6 +123,100 @@ class EnqueueTests(unittest.TestCase):
             self.assertEqual(len(provider.requests), 2)
             repaired_payload = json.loads(provider.requests[1].user_prompt)
             self.assertIn("out_of_range", repaired_payload["repair_feedback"])
+            prompt_rows = [json.loads(line) for line in (
+                Path(tmpdir) / "llm_optimizer/prompt_contexts.jsonl"
+            ).read_text().splitlines()]
+            self.assertIsNone(prompt_rows[0]["repair_feedback"])
+            self.assertEqual(prompt_rows[1]["repair_feedback"], repaired_payload["repair_feedback"])
+
+    def test_terminal_proposals_and_waiting_fixed_params_are_deduplicated(self) -> None:
+        """Partial terminal params retain identity; infrastructure and unknown FAIL retry."""
+        study = optuna.create_study(direction="maximize")
+        study.enqueue_trial({"width": 7, "mode": "small"})
+        history = (
+            TrialRecord(1, "PRUNED", {"width": 4}, None, {
+                "crest_proposal": {"proposal_params": {"width": 4, "mode": "small"}}}),
+            TrialRecord(2, "FAIL", {}, None, {
+                "measurement_failure_class": "deterministic",
+                "crest_proposal": {"proposal_params": {"width": 5, "mode": "small"}}}),
+            TrialRecord(3, "COMPLETE", {"width": 6, "mode": "small"}, (0.0,), {
+                "measurement_failure_class": "infrastructure"}),
+            TrialRecord(4, "FAIL", {"width": 8, "mode": "small"}, None),
+            TrialRecord(5, "FAIL", {"width": 6, "mode": "small"}, None, {
+                "measurement_failure_class": "infrastructure", "pruned": True}),
+            TrialRecord(6, "PRUNED", {"width": 6, "mode": "small"}, None, {
+                "measurement_failure_class": "infrastructure"}),
+            *build_trial_snapshot(study),
+        )
+        provider = FakeProvider([{"candidates": [
+            {"width": width, "mode": "small"} for width in range(4, 9)
+        ]}])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            accepted = generate_llm_batch(
+                history, provider, context(5), LLMLedger(Path(tmpdir)),
+                prompt_version="v1", max_repair_attempts=0, rng=random.Random(0),
+            )
+            self.assertEqual([p.params["width"] for p in accepted], [6, 8])
+            rejected = [json.loads(line) for line in (
+                Path(tmpdir) / "rejected_candidates.jsonl"
+            ).read_text().splitlines()]
+            self.assertEqual([row["code"] for row in rejected], [
+                "duplicate_completed", "duplicate_completed", "duplicate_queued",
+            ])
+
+    def test_random_fallback_avoids_terminal_and_queued_candidates(self) -> None:
+        """Fallback uses the same terminal and queued duplicate policy as the LLM."""
+        history = (
+            TrialRecord(0, "PRUNED", {"width": 4, "mode": "small"}, None),
+            TrialRecord(1, "FAIL", {"width": 5, "mode": "small"}, None,
+                        {"measurement_failure_class": "deterministic"}),
+            TrialRecord(2, "WAITING", {}, None, system_attrs={
+                "fixed_params": {"width": 6, "mode": "small"}}),
+        )
+        choices = [{"width": width, "mode": "small"} for width in range(4, 8)]
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "crest.optimizers.llm.enqueue.sample_random_candidate", side_effect=choices
+        ) as sample:
+            accepted = generate_llm_batch(
+                history, FakeProvider(["not-json"]), context(1), LLMLedger(Path(tmpdir)),
+                prompt_version="v1", max_repair_attempts=0, rng=random.Random(0),
+            )
+            self.assertEqual(accepted[0].params, choices[-1])
+            self.assertEqual(sample.call_count, 4)
+
+    def test_provider_execution_errors_abort_without_content_repair_or_fallback(self) -> None:
+        """Provider execution failures remain visible after their ledger event."""
+        provider = Mock()
+        failure = RuntimeError("provider unavailable")
+        provider.complete_json.side_effect = failure
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with self.assertRaises(RuntimeError) as raised:
+                generate_llm_batch(
+                    (), provider, context(1), LLMLedger(root),
+                    prompt_version="v1", max_repair_attempts=2, rng=random.Random(0),
+                )
+            self.assertIs(raised.exception, failure)
+            self.assertEqual(provider.complete_json.call_count, 1)
+            events = [json.loads(line) for line in (root / "optimizer_events.jsonl").read_text().splitlines()]
+            self.assertEqual([row["event"] for row in events], ["provider_error"])
+            self.assertFalse((root / "returned_candidates.jsonl").exists())
+
+    def test_malformed_provider_envelope_can_be_repaired(self) -> None:
+        """Malformed provider content retains the bounded content-repair path."""
+        provider = Mock()
+        provider.complete_json.side_effect = [
+            ProviderResponseError("invalid chat response"),
+            LLMResponse(json.dumps({"candidates": [{"width": 4, "mode": "small"}]}),
+                        "fake", "fake", {}),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            accepted = generate_llm_batch(
+                (), provider, context(1), LLMLedger(Path(tmpdir)),
+                prompt_version="v1", max_repair_attempts=1, rng=random.Random(0),
+            )
+            self.assertEqual(accepted[0].params, {"width": 4, "mode": "small"})
+            self.assertEqual(provider.complete_json.call_count, 2)
 
     def test_invalid_provider_output_triggers_logged_random_fallback(self) -> None:
         """Exhausted invalid responses still produce one locally valid trial."""

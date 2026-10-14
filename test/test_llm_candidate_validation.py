@@ -105,6 +105,34 @@ class CandidateValidationTests(unittest.TestCase):
             ["duplicate_completed", "duplicate_queued", "duplicate_batch"],
         )
 
+    def test_float_values_are_canonical_across_history_and_batch(self) -> None:
+        """Integer JSON numbers share float identities across all duplicate sources."""
+        numeric = {**VALID, "dropout": 0}
+        canonical = {**VALID, "dropout": 0.0}
+        result = validate([numeric, canonical])
+        self.assertIs(type(result.accepted[0]["dropout"]), float)
+        self.assertEqual(result.rejected[0].code, "duplicate_batch")
+        for source, code in (("completed_candidates", "duplicate_completed"),
+                             ("queued_candidates", "duplicate_queued")):
+            for proposed, historical in ((numeric, canonical), (canonical, numeric)):
+                with self.subTest(source=source, proposed=proposed):
+                    result = validate([proposed], **{source: [historical]})
+                    self.assertEqual(result.accepted, ())
+                    self.assertEqual(result.rejected[0].code, code)
+
+    def test_categorical_numeric_types_remain_distinct(self) -> None:
+        """Canonical numeric parameters do not collapse typed category choices."""
+        descriptor = SearchSpaceDescriptor((
+            SearchParam("category", "categorical", choices=(True, 1, 1.0)),
+        ))
+        result = validate_candidate_batch(
+            CandidateBatch(candidates=[{"category": True}, {"category": 1}, {"category": 1.0}]),
+            descriptor,
+            batch_size=3,
+        )
+        self.assertEqual([type(row["category"]) for row in result.accepted], [bool, int, float])
+        self.assertEqual(result.rejected, ())
+
     def test_candidates_beyond_requested_batch_size_are_rejected(self) -> None:
         """A provider cannot silently enlarge the requested evaluation batch."""
         result = validate([VALID, {**VALID, "width": 6}], batch_size=1)

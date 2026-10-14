@@ -6,26 +6,15 @@ from __future__ import annotations
 
 import json
 import hashlib
-from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
+from functools import partial
+
+from ...optimizer_history import to_plain
 
 from .provider import LLMRequest, LLMResponse
 
-
-def _json_safe(value: Any) -> Any:
-    """Normalize dataclasses, paths, tuples, and mappings for JSON output."""
-    if is_dataclass(value):
-        return _json_safe(asdict(value))
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return str(value)
+_json_safe = partial(to_plain, nonfinite_to_none=True)
 
 
 class LLMLedger:
@@ -36,6 +25,12 @@ class LLMLedger:
         self.root = Path(root)
         self.requests_dir = self.root / "requests"
         self.requests_dir.mkdir(parents=True, exist_ok=True)
+        # Recover the counter once; this ledger has one writer per directory.
+        self._next_request_id = max((
+            int(path.name.split(".", 1)[0])
+            for path in self.requests_dir.glob("*.request.json")
+            if path.name.split(".", 1)[0].isdigit()
+        ), default=0) + 1
 
     @staticmethod
     def _write_json(path: Path, payload: Any) -> None:
@@ -60,17 +55,15 @@ class LLMLedger:
 
     def next_request_id(self) -> int:
         """Return the next unused monotonically increasing request number."""
-        existing = [
-            int(path.name.split(".", 1)[0])
-            for path in self.requests_dir.glob("*.request.json")
-            if path.name.split(".", 1)[0].isdigit()
-        ]
-        return max(existing, default=0) + 1
+        request_id = self._next_request_id
+        self._next_request_id += 1
+        return request_id
 
     def write_request(self, request_id: int, request: LLMRequest) -> None:
         """Persist one numbered request before the provider call."""
         if request_id < 1:
             raise ValueError("request_id must be greater than or equal to 1.")
+        self._next_request_id = max(self._next_request_id, request_id + 1)
         stem = f"{request_id:06d}"
         request_payload = {
             "messages": request.messages(),

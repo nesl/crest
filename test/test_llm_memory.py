@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import Mock
 
 import optuna
 from optuna.trial import TrialState, create_trial
@@ -15,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from crest.optimizers.llm.history import build_terminal_trial_history
 from crest.optimizers.llm.memory import ExperimentalMemory, MemoryConfig
 from crest.optimizers.llm.prompt_builder import PromptContext, build_candidate_request
-from crest.optimizers.llm.provider import FakeProvider
+from crest.optimizers.llm.provider import FakeProvider, LLMRequest, ProviderAuthenticationError, ProviderTransportError
 from crest.optimizers.llm.search_space import SearchParam, SearchSpaceDescriptor
 from crest.model import _normalize_optimizer_config
 from addict import Dict
@@ -105,7 +106,7 @@ class MemoryTests(unittest.TestCase):
             add(self.study)
         bad = finding()
         bad['trial_numbers'] = [999]
-        result = memory.enrich(self.study, context(self.study, 1), FakeProvider([{'updates': [bad], 'retire': []}]))
+        result = memory.enrich(self.study, context(self.study, 1), FakeProvider([{'updates': [bad], 'retire': []}] * 2))
         self.assertEqual((self.root/'state.json').read_bytes(), before)
         self.assertEqual([r['number'] for r in result.pending_trials], [2])
         self.assertEqual(result.knowledge_base['covered_trial_count'], 2)
@@ -115,7 +116,7 @@ class MemoryTests(unittest.TestCase):
             add(self.study)
         for update in [{'id': 'incomplete'}, {**finding(), 'evidence': 'x'*10000}]:
             memory = ExperimentalMemory(self.root, self.config)
-            result = memory.enrich(self.study, context(self.study), FakeProvider([{'updates': [update], 'retire': []}]))
+            result = memory.enrich(self.study, context(self.study), FakeProvider([{'updates': [update], 'retire': []}] * 2))
             self.assertEqual(result.knowledge_base['covered_trial_count'], 0)
             self.assertFalse((self.root/'state.json').exists())
 
@@ -133,15 +134,77 @@ class MemoryTests(unittest.TestCase):
         self.assertIn('Float on this board', result.knowledge_base['summary'])
         self.assertIn('allocation failure', result.knowledge_base['summary'])
 
-    def test_failed_provider_retains_evidence_and_backlog_limit_stops_growth(self):
+    def test_provider_execution_failure_propagates_and_retains_evidence(self):
+        """A dead provider stops before stale memory can hide the outage."""
         memory = ExperimentalMemory(self.root, self.config)
-        for _ in range(4):
+        for _ in range(2):
             add(self.study)
-        result = memory.enrich(self.study, context(self.study, 1), FakeProvider([]))
-        self.assertEqual(len(result.pending_trials), 3)
-        add(self.study)
-        with self.assertRaisesRegex(RuntimeError, 'backlog'):
-            memory.enrich(self.study, context(self.study), FakeProvider([]))
+        for error in (ProviderAuthenticationError('check account credits'), ProviderTransportError('outage')):
+            provider = Mock()
+            provider.complete_json.side_effect = error
+            with self.subTest(error=error), self.assertRaises(type(error)):
+                memory.enrich(self.study, context(self.study, 1), provider)
+            self.assertEqual(memory.state['covered'], {})
+            self.assertFalse(memory.state_path.exists())
+            provider.complete_json.assert_called_once()
+        events = [json.loads(line) for line in (self.root/'optimizer_events.jsonl').read_text().splitlines()]
+        self.assertEqual(events[-1]['reason'], 'outage')
+
+    def test_rejected_summary_repairs_with_reason_and_same_evidence(self):
+        """Size rejection feedback allows correction without advancing coverage early."""
+        for _ in range(2):
+            add(self.study)
+        memory = ExperimentalMemory(self.root, self.config)
+        oversized = finding()
+        oversized['evidence'] = 'x' * 10000
+        provider = FakeProvider([
+            {'updates': [oversized], 'retire': []},
+            {'updates': [finding()], 'retire': []},
+        ])
+        result = memory.enrich(self.study, context(self.study), provider)
+        first, repair = [json.loads(r.user_prompt) for r in provider.requests]
+        self.assertEqual(len(provider.requests), 2)
+        self.assertEqual(first['new_trials'], repair['new_trials'])
+        self.assertIn('max_chars', repair['repair_feedback']['reason'])
+        self.assertEqual(result.knowledge_base['covered_trial_count'], 2)
+        # Both responses, including the rejected evidence, remain auditable.
+        self.assertEqual(len(list((self.root/'requests').glob('*.response.json'))), 2)
+
+    def test_incomplete_summary_is_repaired_before_committing(self):
+        """A truncated but otherwise valid summary cannot commit memory."""
+        for _ in range(2):
+            add(self.study)
+        memory = ExperimentalMemory(self.root, self.config)
+        response = FakeProvider([{'updates': [finding()], 'retire': []}]).complete_json(LLMRequest('', '', 'memory-v1'))
+        provider = Mock()
+        provider.complete_json.side_effect = [replace(response, finish_reason='length'), response]
+        result = memory.enrich(self.study, context(self.study), provider)
+        self.assertEqual(provider.complete_json.call_count, 2)
+        repair = json.loads(provider.complete_json.call_args_list[1].args[0].user_prompt)
+        self.assertIn("finish_reason='length'", repair['repair_feedback']['reason'])
+        self.assertEqual(result.knowledge_base['version'], 1)
+        # Only the complete response creates a committed snapshot.
+        self.assertEqual(len(list((self.root/'snapshots').glob('*.json'))), 1)
+
+    def test_persistent_rejection_bounds_prompt_without_losing_backlog(self):
+        """Rejected summaries keep all evidence uncovered and explicitly report omissions."""
+        for _ in range(7):
+            add(self.study)
+        memory = ExperimentalMemory(self.root, self.config)
+        provider = FakeProvider([{'updates': [{'id': 'incomplete'}], 'retire': []}] * 2)
+        result = memory.enrich(self.study, context(self.study, 0), provider)
+        self.assertEqual(len(provider.requests), 2)  # No unbounded same-round repair loop.
+        self.assertEqual(len(result.pending_trials), 4)
+        self.assertEqual(result.knowledge_base['pending_trial_count'], 7)
+        self.assertEqual(result.knowledge_base['omitted_pending_trial_count'], 3)
+        self.assertEqual(memory.state['covered'], {})
+        self.assertFalse(memory.state_path.exists())
+        # The next successful round drains both chunks, including previously omitted trials.
+        recovery = FakeProvider([{'updates': [], 'retire': []}] * 2)
+        result = memory.enrich(self.study, context(self.study, 0), recovery)
+        self.assertEqual(result.knowledge_base['covered_trial_count'], 7)
+        self.assertEqual(result.knowledge_base['omitted_pending_trial_count'], 0)
+        self.assertEqual([r['number'] for r in json.loads(recovery.requests[1].user_prompt)['new_trials']], [4, 5, 6])
 
     def test_scope_or_changed_history_cannot_reuse_old_memory(self):
         for _ in range(2):

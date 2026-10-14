@@ -408,9 +408,9 @@ def test_smoke_reuses_feasible_complete_counts_and_consumes_exact_reserved_plus_
     study = optuna.create_study(study_name=client.study_name, storage=storage, direction="maximize")
     sign(client, study)
     study.set_user_attr(FEASIBILITY_POLICY_SIGNATURE_ATTR, client._feasibility_policy_signature())
-    for status in (" feasible ", "infeasible", "not_evaluated"):
+    for status in (" FeAsIbLe ", "infeasible", "not_evaluated"):
         study.add_trial(create_trial(value=1.0, user_attrs={
-            "feasibility_status": status, "feasibility_constraints": [-1.0] if status.strip() == "feasible" else [1.0],
+            "feasibility_status": status, "feasibility_constraints": [-1.0] if status.strip().lower() == "feasible" else [1.0],
         }))
     study.add_trial(create_trial(state=TrialState.PRUNED))
     assert client._qualifying_complete_count(study.trials) == 1
@@ -467,3 +467,144 @@ def test_plugin_timeout_identity_is_not_aliased_as_builtin_llm(client, tmp_path)
     client.objective.assert_not_called()
     assert study.trials[0].state == TrialState.WAITING
     assert study.user_attrs[OPTIMIZER_SIGNATURE_ATTR] == signature
+
+
+@pytest.mark.parametrize("smoke", [False, True])
+def test_explicit_orphan_recovery_preserves_waiting_and_prior_evidence(client, tmp_path, smoke):
+    """Recovery requires stopped-worker attestation and retains every consumed attempt."""
+    from nas_model_client import ORPHAN_TRIAL_RECOVERY_ATTR
+    client.study_name = "recovery"
+    storage = (f"sqlite:///{client._artifacts_dir() / 'optuna_smoke_test.db'}" if smoke
+               else f"sqlite:///{tmp_path / 'study.db'}")
+    study = optuna.create_study(study_name=client.study_name, storage=storage, direction="maximize")
+    sign(client, study)
+    orphan = study.ask()
+    orphan.suggest_int("width", 2, 8)
+    orphan.set_user_attr("historic_note", "preserved")
+    study.enqueue_trial({"width": 3}, user_attrs={PROPOSAL_ATTR: {"round_id": "reserved"}})
+    before = study.trials[0]
+    client.config.optimizer.recover_orphaned_trials = True
+    client.config.training.nas_trials = 1
+    client.config.training.max_total_trials = 2
+    if smoke:
+        client.smoke_test(trials=1, study_name=client.study_name)
+    else:
+        client.run_nas(client.study_name, storage)
+    recovered, waiting = study.trials
+    assert recovered.state == TrialState.FAIL
+    assert recovered.params == before.params and recovered.user_attrs == before.user_attrs
+    assert recovered.datetime_start == before.datetime_start
+    assert waiting.state == TrialState.COMPLETE and waiting.params == {"width": 3}
+    assert ThirdProposer.calls == []
+    audit = study.user_attrs[ORPHAN_TRIAL_RECOVERY_ATTR]
+    assert len(audit) == 1
+    assert audit[0]["trial_number"] == orphan.number
+    assert audit[0]["attestation"] == "all_previous_workers_stopped"
+    assert audit[0]["recorded_at_unix"] > 0
+    # Repeated resume does not append recovery events for terminal trials.
+    client._recover_orphaned_trials(study, client.config.optimizer)
+    assert study.user_attrs[ORPHAN_TRIAL_RECOVERY_ATTR] == audit
+
+
+@pytest.mark.parametrize("smoke", [False, True])
+def test_recovery_rejects_mismatch_before_state_mutation(client, tmp_path, smoke):
+    """Opt-in recovery never bypasses the existing study identity guard."""
+    from nas_model_client import ORPHAN_TRIAL_RECOVERY_ATTR
+    client.study_name = "recovery-mismatch"
+    storage = (f"sqlite:///{client._artifacts_dir() / 'optuna_smoke_test.db'}" if smoke
+               else f"sqlite:///{tmp_path / 'study.db'}")
+    study = optuna.create_study(study_name=client.study_name, storage=storage, direction="maximize")
+    sign(client, study)
+    study.ask()
+    client.config.optimizer.setting = 2
+    client.config.optimizer.recover_orphaned_trials = True
+    with pytest.raises(RuntimeError, match="optimizer signature"):
+        if smoke:
+            client.smoke_test(trials=1, study_name=client.study_name)
+        else:
+            client.run_nas(client.study_name, storage)
+    assert study.trials[0].state == TrialState.RUNNING
+    assert ORPHAN_TRIAL_RECOVERY_ATTR not in study.user_attrs
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true", {}, []])
+def test_recovery_attestation_requires_boolean(value):
+    """Accidental truthy values must not authorize failing prior workers' trials."""
+    from crest.model import _normalize_optimizer_config
+    with pytest.raises(ValueError, match="recover_orphaned_trials must be a boolean"):
+        _normalize_optimizer_config(Dict(optimizer={"recover_orphaned_trials": value}))
+
+
+def test_resolved_plugin_cannot_adopt_native_legacy_identity():
+    """The Optuna name alone cannot attest native behavior if its class is replaced."""
+    from crest.model import _normalize_optimizer_config
+    from crest.builtin_components import ensure_optimizer_components_registered
+    ensure_optimizer_components_registered()
+    with patch.dict(optimizer_registry._items, {"optuna": ThirdProposer}):
+        with pytest.raises(ValueError, match="only native optuna"):
+            _normalize_optimizer_config(Dict(optimizer={"type": "optuna", "adopt_legacy_study": True}))
+
+
+@pytest.mark.parametrize("smoke", [False, True])
+def test_initializer_failure_logs_abort_summary(client, tmp_path, smoke, caplog):
+    """Both entry points summarize setup failures before any evaluation occurs."""
+    client.objective = MagicMock()
+    with patch.object(ThirdProposer, "initialize", side_effect=RuntimeError("setup failed")):
+        with pytest.raises(RuntimeError, match="setup failed"):
+            if smoke:
+                client.smoke_test(trials=1, study_name="setup-failure")
+            else:
+                execute(client, tmp_path)
+    client.objective.assert_not_called()
+    assert "Aborting after 0 trials" in caplog.text
+    assert "proposal_sources={}" in caplog.text
+
+
+def test_feasibility_validation_occurs_once_before_initialization(client, tmp_path):
+    """A successful setup validates once, then stamps after component initialization."""
+    ThirdProposer.rounds = [[{"width": 3}, {"width": 4}]]
+    with patch.object(client, "_validate_or_store_feasibility_signature",
+                      wraps=client._validate_or_store_feasibility_signature) as check:
+        execute(client, tmp_path)
+    assert [call.kwargs for call in check.call_args_list] == [{"store": False}, {}]
+
+
+def test_final_summary_counts_persisted_proposal_sources(client, tmp_path, caplog):
+    """The summary reports fallback and LLM counts from stored proposal provenance."""
+    import logging
+    ThirdProposer.rounds = [ExplicitRound((
+        CandidateProposal({"width": 3}, {"proposal_source": "llm"}),
+        CandidateProposal({"width": 4}, {"proposal_source": "random_fallback"}),
+    ))]
+    with caplog.at_level(logging.INFO, logger="nas_model_client"):
+        study = execute(client, tmp_path)
+    assert client._proposal_source_counts(study) == {"llm": 1, "random_fallback": 1}
+    assert "proposal_sources={'llm': 1, 'random_fallback': 1}" in caplog.text
+
+
+@pytest.mark.parametrize("absolute", [False, True])
+def test_config_warmup_path_is_stable_across_working_directories(tmp_path, monkeypatch, absolute):
+    """Warm-up identity follows the YAML directory regardless of the process CWD."""
+    from crest.optimizers.llm.component import LLMGeneratorOptimizer
+    config = yaml.safe_load((Path(__file__).resolve().parents[1] /
+                             "src/config/nas_config_flops_rmse.yaml").read_text())
+    warmup = tmp_path / "warmup.json"
+    warmup.write_text('[{"width": 3}]')
+    config["optimizer"] = {"type": "llm_generator", "llm": {
+        "provider": "fake", "responses": [{}], "memory": {"enabled": False},
+        "warmup_params_file": str(warmup) if absolute else "warmup.json",
+    }}
+    config["outputs"]["models_dir"] = str(tmp_path / "models")
+    config["outputs"]["candidate_dir"] = str(tmp_path / "candidate")
+    config_file = tmp_path / "campaign.yaml"
+    config_file.write_text(yaml.safe_dump(config))
+    first = load_config(config_file)
+    assert first.optimizer.llm.warmup_params_file == str(warmup.resolve())
+    identity = LLMGeneratorOptimizer().identity_config(first.optimizer)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "warmup.json").write_text('[{"width": 7}]')
+    monkeypatch.chdir(elsewhere)
+    second = load_config(config_file)
+    assert second.optimizer.llm.warmup_params_file == str(warmup.resolve())
+    assert LLMGeneratorOptimizer().identity_config(second.optimizer) == identity

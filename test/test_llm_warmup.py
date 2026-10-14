@@ -102,17 +102,27 @@ def test_waiting_resume_and_changed_file_guard(warmup):
     assert not provider.requests
 
 
-def test_orphan_running_warmup_blocks_provider(warmup):
-    """Unfinished warm-up work requires recovery rather than silent skipping."""
+@pytest.mark.parametrize('smoke', [False, True])
+def test_orphan_running_warmup_blocks_provider(warmup, smoke):
+    """Unfinished warm-up work requires explicit recovery in both runner paths."""
     client, storage, path, params, provider = warmup
+    client.study_name = 'campaign'
+    if smoke:
+        storage = f"sqlite:///{client._artifacts_dir() / 'optuna_smoke_test.db'}"
+    def invoke():
+        if smoke:
+            client.smoke_test(trials=1, study_name='campaign')
+        else:
+            client.run_nas('campaign', storage=storage)
     with patch('crest.optimizers.llm.component.build_provider', return_value=provider):
         with patch.object(optuna.Study, 'optimize', side_effect=RuntimeError('before execution')):
             with pytest.raises(RuntimeError):
-                client.run_nas('campaign', storage=storage)
+                invoke()
         study = optuna.load_study(study_name='campaign', storage=storage)
         study.ask()  # Simulate interruption after reservation became RUNNING.
         with pytest.raises(RuntimeError, match='unfinished'):
-            client.run_nas('campaign', storage=storage)
+            invoke()
+    assert study.trials[0].state == TrialState.RUNNING
     assert len(study.get_trials()) == 1 and not provider.requests
 
 
@@ -126,3 +136,30 @@ def test_invalid_file_fails_before_any_evaluation(warmup, payload):
             client.run_nas('campaign', storage=storage)
     objective.assert_not_called()
     build.assert_not_called()
+
+
+@pytest.mark.parametrize('smoke', [False, True])
+def test_explicit_recovery_advances_orphaned_warmup_once(warmup, smoke):
+    """A stopped-worker attestation fails the orphan and continues the fixed sequence."""
+    client, storage, path, params, provider = warmup
+    client.study_name = 'campaign'
+    def invoke():
+        if smoke:
+            client.smoke_test(trials=1, study_name='campaign')
+        else:
+            client.run_nas('campaign', storage=storage)
+    if smoke:
+        storage = f"sqlite:///{client._artifacts_dir() / 'optuna_smoke_test.db'}"
+    with patch('crest.optimizers.llm.component.build_provider', return_value=provider):
+        with patch.object(optuna.Study, 'optimize', side_effect=RuntimeError('interrupted')):
+            with pytest.raises(RuntimeError, match='interrupted'):
+                invoke()
+        study = optuna.load_study(study_name='campaign', storage=storage)
+        study.ask()
+        client.config.optimizer.recover_orphaned_trials = True
+        client.config.training.max_total_trials = 2
+        invoke()
+    assert [t.state for t in study.trials] == [TrialState.FAIL, TrialState.COMPLETE]
+    assert study.trials[1].params == params[1]
+    assert [t.user_attrs[PROPOSAL_ATTR]['warmup_index'] for t in study.trials] == [0, 1]
+    assert provider.requests == []

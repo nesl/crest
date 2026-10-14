@@ -49,6 +49,56 @@ def candidate_fingerprint(candidate: Mapping[str, Any]) -> str:
     return json.dumps(typed_items, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
+def _canonical_candidate(
+    candidate: Mapping[str, Any], descriptor: SearchSpaceDescriptor
+) -> dict[str, Any]:
+    """Normalize validated numeric values while preserving categorical types.
+
+    Parameters
+    ----------
+    candidate : Mapping[str, Any]
+        Candidate already validated against the descriptor.
+    descriptor : SearchSpaceDescriptor
+        Active parameter declarations.
+
+    Returns
+    -------
+    dict[str, Any]
+        Parameters with the same numeric types Optuna records.
+    """
+    return {
+        name: (
+            float(candidate[name]) if param.kind == "float"
+            else int(candidate[name]) if param.kind == "int" else candidate[name]
+        )
+        for name, param in descriptor.items()
+    }
+
+
+def _history_fingerprints(
+    candidates: Iterable[Mapping[str, Any]], descriptor: SearchSpaceDescriptor
+) -> set[str]:
+    """Build canonical identities for valid historical candidates.
+
+    Parameters
+    ----------
+    candidates : Iterable[Mapping[str, Any]]
+        Historical parameter dictionaries, possibly incomplete.
+    descriptor : SearchSpaceDescriptor
+        Active parameter declarations.
+
+    Returns
+    -------
+    set[str]
+        Identities for candidates that belong to the active search space.
+    """
+    return {
+        candidate_fingerprint(_canonical_candidate(candidate, descriptor))
+        for candidate in candidates
+        if candidate_error(candidate, descriptor) is None
+    }
+
+
 def validate_candidate_batch(
     batch: CandidateBatch,
     descriptor: SearchSpaceDescriptor,
@@ -61,8 +111,8 @@ def validate_candidate_batch(
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
         raise ValueError("batch_size must be an integer greater than or equal to 1.")
 
-    completed_fingerprints = {candidate_fingerprint(item) for item in completed_candidates}
-    queued_fingerprints = {candidate_fingerprint(item) for item in queued_candidates}
+    completed_fingerprints = _history_fingerprints(completed_candidates, descriptor)
+    queued_fingerprints = _history_fingerprints(queued_candidates, descriptor)
     accepted_fingerprints: set[str] = set()
     accepted: list[dict[str, Any]] = []
     rejected: list[CandidateRejection] = []
@@ -87,9 +137,10 @@ def validate_candidate_batch(
             reject(index, invalid_value[0], invalid_value[1], candidate)
             continue
 
-        fingerprint = candidate_fingerprint(candidate)
+        normalized = _canonical_candidate(candidate, descriptor)
+        fingerprint = candidate_fingerprint(normalized)
         if fingerprint in completed_fingerprints:
-            reject(index, "duplicate_completed", "Candidate duplicates a completed trial.", candidate)
+            reject(index, "duplicate_completed", "Candidate duplicates a terminal trial.", candidate)
             continue
         if fingerprint in queued_fingerprints:
             reject(index, "duplicate_queued", "Candidate duplicates a queued trial.", candidate)
@@ -98,7 +149,6 @@ def validate_candidate_batch(
             reject(index, "duplicate_batch", "Candidate duplicates an earlier candidate in this batch.", candidate)
             continue
 
-        normalized = dict(candidate)
         accepted.append(normalized)
         accepted_fingerprints.add(fingerprint)
 

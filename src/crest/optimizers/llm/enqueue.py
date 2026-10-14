@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import random
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import ValidationError
@@ -13,18 +14,56 @@ from pydantic import ValidationError
 from ...pipeline_types import CandidateProposal, TrialRecord
 from .ledger import LLMLedger
 from .prompt_builder import PromptContext, build_candidate_request
-from .provider import LLMProvider
+from .provider import LLMProvider, ProviderResponseError
 from .schemas import CandidateBatch, validate_candidate_batch
 from .search_space import SearchParam, SearchSpaceDescriptor
 
 
-def _history_candidates(history: tuple[TrialRecord, ...], descriptor: SearchSpaceDescriptor, state_name: str) -> list[dict[str, Any]]:
-    """Extract exact descriptor-shaped candidates in one Optuna state."""
+def _history_candidates(
+    history: tuple[TrialRecord, ...],
+    descriptor: SearchSpaceDescriptor,
+    states: set[str],
+) -> list[dict[str, Any]]:
+    """Extract full candidates while leaving infrastructure failures retryable.
+
+    Parameters
+    ----------
+    history : tuple[TrialRecord, ...]
+        Detached study evidence, including queued and terminal trials.
+    descriptor : SearchSpaceDescriptor
+        Active parameter declarations.
+    states : set[str]
+        Uppercase Optuna state names to include.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Full descriptor-shaped candidates reconstructed from proposal metadata,
+        queued fixed parameters, and actual sampled parameters, in that order.
+    """
     candidates = []
     for trial in history:
-        if str(trial.state).upper() != state_name:
+        state = str(trial.state).strip().upper()
+        if state not in states:
             continue
-        params = getattr(trial, "params", {})
+        failure_class = trial.user_attrs.get("measurement_failure_class")
+        if state != "WAITING" and failure_class == "infrastructure":
+            continue
+        # A failed process or recovered orphan says nothing about this design.
+        # Only explicit deterministic rejection evidence blocks a FAIL retry.
+        if state == "FAIL" and not (
+            failure_class == "deterministic"
+            or trial.user_attrs.get("pruned") is True
+            or trial.user_attrs.get("feasibility_status") == "infeasible"
+        ):
+            continue
+        params: dict[str, Any] = {}
+        provenance = trial.user_attrs.get("crest_proposal", {})
+        proposed = provenance.get("proposal_params", {}) if isinstance(provenance, Mapping) else {}
+        fixed = trial.system_attrs.get("fixed_params", {})
+        for source in (proposed, fixed, trial.params):
+            if isinstance(source, Mapping):
+                params.update(source)
         if all(name in params for name in descriptor):
             candidates.append({name: params[name] for name in descriptor})
     return candidates
@@ -59,8 +98,8 @@ def generate_llm_batch(
     rng: random.Random,
 ) -> tuple[CandidateProposal, ...]:
     """Return validated candidates with source provenance and one fallback."""
-    completed = _history_candidates(history, context.descriptor, "COMPLETE")
-    queued = _history_candidates(history, context.descriptor, "WAITING")
+    completed = _history_candidates(history, context.descriptor, {"COMPLETE", "PRUNED", "FAIL"})
+    queued = _history_candidates(history, context.descriptor, {"WAITING"})
     repair_feedback = None
 
     for attempt in range(max_repair_attempts + 1):
@@ -71,7 +110,8 @@ def generate_llm_batch(
             repair_feedback=repair_feedback,
         )
         prompt_payload = context.as_prompt_payload()
-        prompt_payload.update({"request_id": request_id, "repair_attempt": attempt})
+        prompt_payload.update({"request_id": request_id, "repair_attempt": attempt,
+                               "repair_feedback": repair_feedback})
         ledger.record_prompt_context(prompt_payload)
         ledger.write_request(request_id, request)
         try:
@@ -84,8 +124,10 @@ def generate_llm_batch(
             ledger.record_event(
                 {"event": "provider_error", "request_id": request_id, "repair_attempt": attempt}
             )
-            repair_feedback = f"The prior provider call failed with {type(exc).__name__}. Return valid JSON."
-            continue
+            if isinstance(exc, ProviderResponseError):
+                repair_feedback = f"The prior provider response was invalid: {exc}. Return valid JSON."
+                continue
+            raise
         ledger.write_response(request_id, response)
 
         try:
@@ -154,6 +196,7 @@ def generate_llm_batch(
             queued_candidates=queued,
         )
         if validation.accepted:
+            candidate = validation.accepted[0]
             proposal = CandidateProposal(candidate, {
                 "proposal_source": "random_fallback", "optimizer": "llm_generator",
                 "request_id": request_id, "batch_id": f"llm-{request_id:06d}",

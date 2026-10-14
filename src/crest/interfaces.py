@@ -778,6 +778,24 @@ class OptimizerABC(ABC):
         del config
         return {}
 
+    def normalize_stored_identity(self, stored: Any, active: dict[str, Any]) -> Any:
+        """Apply component-owned compatibility aliases before strict comparison.
+
+        Parameters
+        ----------
+        stored : Any
+            Persisted optimizer signature, including its version and name.
+        active : dict[str, Any]
+            Current complete signature used for strict equality afterward.
+
+        Returns
+        -------
+        Any
+            Comparable signature. The default leaves persisted data unchanged.
+        """
+        del active
+        return stored
+
     def initialize(self, context: SearchContext, config: Any) -> None:
         """Initialize component-local runtime state; default is a no-op."""
         del context, config

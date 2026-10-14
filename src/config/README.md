@@ -512,6 +512,15 @@ cap. `provider: fake` uses a required non-empty `responses` list to exercise the
 same validation/ledger path without network access; memory summary responses must
 be included when memory is enabled.
 
+Provider authentication/credit errors stop immediately. Transient HTTP 429/5xx
+and network failures use bounded retries with backoff, then stop if exhausted.
+Only malformed provider responses or candidate content use repair/random fallback;
+transport failures never become random search. Proposal-source counts in the run
+summary distinguish LLM candidates, fixed warm-up attempts, and random fallback.
+Duplicate filtering includes pruned and known deterministic failed candidates,
+while infrastructure and unknown failures remain retryable. Float descriptors
+normalize numeric values before deduplication; categorical types stay strict.
+
 Each prompt includes attempted and feasible-trial budgets. Its phase guidance is
 `exploration` below 35% of the total-attempt budget, `specification` below 85%,
 and `finalization` afterward. These are prompt instructions; CREST still evaluates
@@ -532,8 +541,9 @@ optimizer:
 
 The file must contain a nonempty JSON list of complete raw parameter dictionaries
 for the active search space. For CS3, supply the 15 baseline configurations in
-order; the path above is illustrative, not a bundled dataset. Relative paths
-resolve from the launch working directory. All entries are validated before
+order; the path above is illustrative, not a bundled dataset. When loaded from YAML, relative paths
+resolve from the YAML file directory (and `~` expands to the home directory).
+Direct component callers should supply an absolute path. All entries are validated before
 execution. One fixed candidate runs per round through the same objective before
 any provider request; failures and pruned trials count as warm-up attempts.
 Warm-up uses the normal attempt/completion budgets, so a smaller budget can stop
@@ -541,7 +551,11 @@ partway through it. Set the recent window to at least 15 to expose the whole CS3
 warm-up in the first LLM prompt.
 
 Existing queue/provenance handling resumes without replaying completed entries.
-An orphan RUNNING warm-up trial requires explicit recovery. Study identity hashes
+An orphan RUNNING trial requires explicit recovery. After confirming **all old
+workers for this study have stopped**, set `optimizer.recover_orphaned_trials:
+true` for the recovery invocation. The runner marks RUNNING trials FAIL through
+Optuna, records recovery evidence, and continues; remove the flag afterward.
+It never infers that a RUNNING worker is dead. Study identity hashes
 the ordered file contents rather than the path: relocation or JSON formatting
 changes are allowed, changing the candidates requires a new study. Omitting the
 option preserves the existing LLM behavior and optimizer identity. Provider
@@ -617,13 +631,13 @@ limit on the structured memory and its rendered prose, **not a tokenizer count o
 an API output-token cap**. Oversized/malformed summaries are rejected, never
 truncated. The model's factual conclusions are not automatically proven correct.
 
-`max_pending_trials` bounds the number of new records in each summary call and the
-unsummarized backlog permitted before another generation call. It must be at least
-both timing thresholds. On resume, old pending results are summarized in bounded
-chunks. On provider/schema failure, the last valid memory stays in use and pending
-results remain visible; the next generation boundary tries again. If that backlog
-exceeds the limit and cannot be summarized, generation stops with an actionable
-error instead of silently discarding evidence or indefinitely expanding the prompt.
+`max_pending_trials` bounds each summary chunk and the pending records shown to
+the generator. It must be at least both timing thresholds. Rejected summaries get
+one repair attempt with rejection feedback. If both fail, the last valid memory
+remains in use, all uncovered evidence remains in the study for later summary
+attempts, and the generator receives bounded pending evidence with explicit total
+and omitted counts. Ledger events record the backlog. Provider execution failures
+stop the campaign; they do not silently degrade memory or candidate generation.
 A reduced memory size on resume must still fit the saved findings.
 
 Artifacts live under `models/<study>/llm_optimizer/memory/`:

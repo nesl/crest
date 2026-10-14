@@ -1020,9 +1020,15 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
     adopt_legacy = optimizer.get("adopt_legacy_study", False)
     if not isinstance(adopt_legacy, bool):
         raise ValueError("optimizer.adopt_legacy_study must be a boolean.")
-    if adopt_legacy and optimizer_type != "optuna":
+    from .optimizers.optuna import OptunaOptimizer
+
+    if adopt_legacy and (optimizer_type != "optuna" or component_cls is not OptunaOptimizer):
         raise ValueError("optimizer.adopt_legacy_study supports only native optuna studies.")
     optimizer.adopt_legacy_study = adopt_legacy
+    recover = optimizer.get("recover_orphaned_trials", False)
+    if not isinstance(recover, bool):
+        raise ValueError("optimizer.recover_orphaned_trials must be a boolean.")
+    optimizer.recover_orphaned_trials = recover
     if optimizer_type == "llm_generator":
         from .optimizers.llm.config import normalize_llm_config
 
@@ -2410,6 +2416,13 @@ def load_config(
         normalized_device_name,
     )
     config.optimizer = _normalize_optimizer_config(config)
+    if config.optimizer.type == "llm_generator":
+        warmup_file = config.optimizer.llm.get("warmup_params_file")
+        if warmup_file is not None:
+            warmup_path = Path(warmup_file).expanduser()
+            if not warmup_path.is_absolute():
+                warmup_path = cfg_path.resolve().parent / warmup_path
+            config.optimizer.llm.warmup_params_file = str(warmup_path.resolve())
     # Input mode selects which Arduino sketch variant is used during HIL runs.
     training.input_mode = str(training.get("input_mode", "uniform")).lower()
     config.training.drop_rate_choices = DROP_RATE_CHOICES

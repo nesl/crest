@@ -72,8 +72,8 @@ class ProposalContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             proposals = generate_llm_batch(history, provider, context(5), LLMLedger(Path(tmp)),
                                            prompt_version="v1", max_repair_attempts=0, rng=random.Random(0))
-            self.assertEqual([p.params["width"] for p in proposals], [6, 7, 8])
-            self.assertEqual([p.provenance["batch_index"] for p in proposals], [0, 1, 2])
+            self.assertEqual([p.params["width"] for p in proposals], [7, 8])
+            self.assertEqual([p.provenance["batch_index"] for p in proposals], [0, 1])
             self.assertEqual(len(study.trials), 5)
             rows = [json.loads(line) for line in (Path(tmp)/"returned_candidates.jsonl").read_text().splitlines()]
             self.assertTrue(all(r["status"] == "returned_to_runner" and r["schema_version"] == 2 for r in rows))

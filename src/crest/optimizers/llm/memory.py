@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .history import build_terminal_trial_history
 from .ledger import LLMLedger
 from .prompt_builder import PromptContext
-from .provider import LLMRequest, LLMProvider
+from .provider import LLMRequest, LLMProvider, ProviderResponseError
 
 
 @dataclass(frozen=True)
@@ -79,6 +79,10 @@ def summary_text(findings: list[dict]) -> str:
     )
 
 
+# One repair keeps content rejection bounded without changing stored optimizer identity.
+SUMMARY_MAX_REPAIR_ATTEMPTS = 1
+
+
 SUMMARY_SYSTEM = """You maintain CREST's accumulated experimental memory, not its candidate proposals.
 Use general ML knowledge as prior knowledge, not as measured evidence. Update the previous findings
 using the supplied new trial records. Findings must be self-contained: state relevant architectural,
@@ -131,6 +135,33 @@ class ExperimentalMemory:
 
     def enrich(self, study: Any, context: PromptContext, provider: LLMProvider,
                *, directions: tuple[str, ...] = ()) -> PromptContext:
+        """Attach validated memory and bounded, explicitly incomplete evidence.
+
+        Parameters
+        ----------
+        study : Any
+            Study containing the authoritative terminal trial records.
+        context : PromptContext
+            Candidate prompt context to enrich without mutation.
+        provider : LLMProvider
+            Completion provider with its own bounded transport retry policy.
+        directions : tuple of str, optional
+            Objective directions used to normalize trial history.
+
+        Returns
+        -------
+        PromptContext
+            Last accepted memory and a bounded pending evidence window. Rejected
+            summaries leave every trial uncovered and expose the omitted count.
+
+        Raises
+        ------
+        ProviderError
+            Provider credentials, transport, or account access failed. The
+            campaign must stop instead of silently changing search strategy.
+        ValueError
+            Persisted memory conflicts with the current scope or study history.
+        """
         records = list(build_terminal_trial_history(study, directions=directions))
         by_number = {str(r["number"]): r for r in records}
         payload = context.as_prompt_payload()
@@ -152,37 +183,61 @@ class ExperimentalMemory:
         threshold = self.config.interval_trials if self.state["covered"] else self.config.start_after_trials
         while len(pending) >= threshold:
             chunk = pending[:self.config.max_pending_trials]
-            request_id = self.ledger.next_request_id()
-            body = {
-                "context": scope,
-                "previous_findings": self.state["findings"],
-                "previously_covered_trial_count": len(self.state["covered"]),
-                "new_trials": chunk,
-                "limits": {"max_findings": self.config.max_findings, "max_chars": self.config.max_chars},
-            }
-            request = LLMRequest(SUMMARY_SYSTEM, json.dumps(body, sort_keys=True, separators=(",", ":")),
-                                 "memory-v1", {"purpose": "summarization", "study_name": context.study_name,
-                                               "memory_version": self.state["version"],
-                                               "new_trial_numbers": [r["number"] for r in chunk]})
-            self.ledger.write_request(request_id, request)
-            self.ledger.record_prompt_context(body)
-            try:
-                response = provider.complete_json(request)
-            except Exception as exc:
-                self.ledger.write_response(request_id, {"error_type": type(exc).__name__})
-                self.ledger.record_event({"event": "summary_failed", "request_id": request_id,
-                                          "reason": type(exc).__name__})
-                break
-            self.ledger.write_response(request_id, response)
-            try:
-                if response.finish_reason not in (None, "stop"):
-                    raise ValueError("Summary response was not completed normally")
-                update = MemoryUpdate.model_validate_json(response.content)
-                covered = {**self.state["covered"], **{str(r["number"]): digest(r) for r in chunk}}
-                findings = self._merge(update, {int(n) for n in covered})
-            except ValueError as exc:
+            repair_feedback = None
+            committed = False
+            for attempt in range(SUMMARY_MAX_REPAIR_ATTEMPTS + 1):
+                request_id = self.ledger.next_request_id()
+                body = {
+                    "context": scope,
+                    "previous_findings": self.state["findings"],
+                    "previously_covered_trial_count": len(self.state["covered"]),
+                    "new_trials": chunk,
+                    "limits": {"max_findings": self.config.max_findings, "max_chars": self.config.max_chars},
+                }
+                if repair_feedback is not None:
+                    body["repair_feedback"] = repair_feedback
+                request = LLMRequest(SUMMARY_SYSTEM, json.dumps(body, sort_keys=True, separators=(",", ":")),
+                                     "memory-v1", {"purpose": "summarization", "study_name": context.study_name,
+                                                   "memory_version": self.state["version"],
+                                                   "repair_attempt": attempt,
+                                                   "new_trial_numbers": [r["number"] for r in chunk]})
+                self.ledger.write_request(request_id, request)
+                self.ledger.record_prompt_context(body)
+                try:
+                    response = provider.complete_json(request)
+                except ProviderResponseError as exc:
+                    self.ledger.write_response(request_id, {"error_type": type(exc).__name__, "error": str(exc)})
+                    reason = str(exc)
+                except Exception as exc:
+                    # Transport/auth failures stop before candidates can be proposed;
+                    # the unchanged covered map retains all unsummarized evidence.
+                    self.ledger.write_response(request_id, {"error_type": type(exc).__name__, "error": str(exc)})
+                    self.ledger.record_event({"event": "summary_failed", "request_id": request_id,
+                                              "reason": str(exc), "error_type": type(exc).__name__})
+                    raise
+                else:
+                    self.ledger.write_response(request_id, response)
+                    try:
+                        if response.finish_reason not in (None, "stop"):
+                            raise ValueError(f"Summary finish_reason={response.finish_reason!r}; return a complete response")
+                        update = MemoryUpdate.model_validate_json(response.content)
+                        covered = {**self.state["covered"], **{str(r["number"]): digest(r) for r in chunk}}
+                        findings = self._merge(update, {int(n) for n in covered})
+                    except ValueError as exc:
+                        reason = str(exc)
+                    else:
+                        committed = True
+                        break
                 self.ledger.record_event({"event": "summary_rejected", "request_id": request_id,
-                                          "reason": str(exc)})
+                                          "repair_attempt": attempt, "reason": reason})
+                repair_feedback = {
+                    "reason": reason,
+                    "instruction": "Correct the rejected update using the same evidence. Preserve valid prior findings and obey the entire-memory limits.",
+                }
+            if not committed:
+                self.ledger.record_event({"event": "summary_deferred", "request_id": request_id,
+                                          "reason": reason, "pending_trial_count": len(pending),
+                                          "attempts": SUMMARY_MAX_REPAIR_ATTEMPTS + 1})
                 break
             next_state = {**self.state, "version": self.state["version"] + 1,
                           "covered": covered, "findings": findings, "request_id": request_id}
@@ -198,11 +253,18 @@ class ExperimentalMemory:
                                       "version": self.state["version"], "retired": [r.model_dump() for r in update.retire]})
             pending = [r for r in pending if str(r["number"]) not in covered]
             threshold = self.config.interval_trials
-        if len(pending) > self.config.max_pending_trials:
-            raise RuntimeError("LLM summary backlog exceeds memory.max_pending_trials; inspect summary failures before resuming")
         recent_ids = {r["number"] for r in context.recent_trials}
+        prompt_pending = [r for r in pending if r["number"] not in recent_ids]
+        visible_pending = prompt_pending[:self.config.max_pending_trials]
+        omitted = len(prompt_pending) - len(visible_pending)
+        if omitted:
+            self.ledger.record_event({"event": "summary_backlog", "pending_trial_count": len(pending),
+                                      "omitted_pending_trial_count": omitted,
+                                      "reason": "Evidence remains in study history and will be retried; pending prompt is bounded."})
         return replace(context,
                        knowledge_base={"version": self.state["version"],
                                        "covered_trial_count": len(self.state["covered"]),
+                                       "pending_trial_count": len(pending),
+                                       "omitted_pending_trial_count": omitted,
                                        "summary": summary_text(self.state["findings"])},
-                       pending_trials=tuple(r for r in pending if r["number"] not in recent_ids))
+                       pending_trials=tuple(visible_pending))
