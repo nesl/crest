@@ -1,7 +1,7 @@
 # CS3 Luna preparation
 
 Use branch `codex/llm-generator-mvp`. `nas_config_cs3_luna.yaml` is a campaign
-configuration awaiting policy review and API/HIL preflight, not launch approval.
+configuration with bounded API/HIL preflight passed; campaign launch still requires authorization.
 Run from the repository root and use study name
 `UrbanSound8K_DSCNN_STM32_AUDIO_case3_llm_t1` when launch is authorized.
 
@@ -63,12 +63,13 @@ CS3 bounds pending prompt history and catch-up summary chunks to 15 records with
 records outside the recent 15 and reports omissions; saved evidence is preserved.
 The updated backlog proxy fits the 100,000 input guard at 51,109 guard units (semantic context v2).
 
-The user-run bounded API smoke passed on 2026-10-14 (two requests; $0.000866375
-at configured accounting rates). See `api_smoke_usage.json` and the full exact
-messages in `api_smoke_prompts.md` (both retained locally, not pushed). The smoke uses synthetic scores and omits the
-campaign semantic context, so full prompt behavior and hardware readiness remain
-unverified. Next is deployment verification and the bounded hardware preflight;
-do not start the full campaign. Do not run this HIL-enabled YAML for an offline smoke.
+The updated-context user-run API smoke passed on 2026-10-14: two requests,
+$0.00170525 at configured accounting rates. The one-candidate hardware preflight
+also passed at `fa1381a`, with ten accepted runs in each measurement phase and
+zero cadence deadline misses. See the CS3 plan for costs and evidence references.
+Neither result authorizes a full campaign. Semantic context v3 corrects the
+energy wording: trial-level `energy_mj_per_inference` is back-to-back energy;
+cadenced release energy is separate telemetry. No scoring behavior changed.
 
 The complete manual hardware-preflight commands and stop conditions are in
 [hardware_preflight.md](hardware_preflight.md). The config generator prepares
@@ -82,5 +83,5 @@ unverified; measured observations take precedence over architectural priors.
 Use `--render-only --output /path/to/new-directory` to save both complete prompts
 without a provider connection or API key. Scores/states remain synthetic and
 dataset metadata is reconstructed offline. The preview uses a fake empty memory
-update; it has not been retested against the paid API. The original successful
-smoke above predates this correction.
+update. The paid smoke tested MCU context v2; the v3 energy-wording correction
+is checked offline without another paid request.

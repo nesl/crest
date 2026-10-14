@@ -1,6 +1,6 @@
 # Plan: LLM optimizer on the CS3 STM32 study
 
-Draft, updated 2026-10-13 after offline CS3 preparation on `codex/llm-generator-mvp`. No CS3 LLM campaign
+Draft, updated 2026-10-14 after bounded API and hardware preflight on `codex/llm-generator-mvp`. No CS3 LLM campaign
 has been run. This document is an implementation plan, not launch authorization.
 
 ## Preparation status (steps 1–3)
@@ -18,8 +18,8 @@ has been run. This document is an implementation plan, not launch authorization.
   allowance and 8,192 output tokens. Pricing assumptions and limitations are in
   `experiments/cs3/README.md`.
 - Preparation steps 1–6 were offline. The user subsequently ran the bounded
-  paid API smoke successfully; no training, hardware preflight, deployment, or
-  campaign launch has been performed as part of this preparation.
+  paid API smoke and one-candidate hardware preflight successfully. The latter
+  included deployment and three-epoch training; no full campaign has launched.
   Step 5 offline campaign smoke now passes: 15 fixed plus 20 generated trials,
   summaries at 15/30, restart after warm-up, a partially evaluated batch, and
   trial 30. Synthetic objectives and blocked network access were used.
@@ -27,7 +27,7 @@ has been run. This document is an implementation plan, not launch authorization.
   costs are about $0.11–$0.38 at 300 attempts before retries, depending on
   output/reasoning use. The suspended backlog issue is resolved by setting
   `memory.max_pending_trials: 15`; the updated proxy fits at 51,109/100,000
-  input guard units. The user-run API smoke passed; next is deployment verification and bounded HIL preflight.
+  input guard units. Both bounded smokes passed; next is deploying the wording correction and preparing the fresh campaign launch.
 
 ## Question
 
@@ -62,9 +62,11 @@ new TPE run or replicated searches. This establishes feasibility and search
 behavior, not optimizer superiority. A fresh TPE campaign remains possible later.
 The 15 warm-up attempts count toward the existing 200-feasible/300-attempt budget;
 they are not 15 extra free evaluations. Cadenced telemetry is collected, but the
-score remains based on `energy_mj_per_inference`. In cadenced mode this metric
-represents measured window energy per release, including wait/Stop/wake overhead;
-active invocation latency is separate from the release period.
+score remains based on trial-level `energy_mj_per_inference`: back-to-back
+energy per inference, even when `runtime_mode` is cadenced. Separate telemetry
+`cadenced_energy_mj_per_window` is energy per release including wait/Stop/wake
+overhead; `cadenced_energy_mj_per_trial` is aggregate energy across measured
+releases. Active invocation latency is separate from the release period.
 
 ## What we compare (fixed before the run)
 
@@ -224,7 +226,7 @@ Freshly evaluate these configurations; do not inject historical scores.
 - Temperature omission is implemented with `temperature: null`; optional
   `reasoning_effort` and `service_tier` are passed to the provider and recorded in
   optimizer identity. The prepared Luna config uses medium/default. Offline
-  transport tests pass; real account/model acceptance still needs a paid smoke.
+  transport tests and the user-run bounded paid API smoke passed.
 - Spending/output limits are implemented on the LLM branch: `max_usd`, `max_output_tokens`, `output_token_parameter`,
   `max_input_tokens`, input/output per-million token prices, and `pricing_source`.
   One persistent tracker covers generation, repairs, memory, and every HTTP retry.
@@ -323,11 +325,13 @@ spending controls, deployment, or hardware preflight are complete.
    Local fixture mode is offline; `--count-api` uses network/credentials even
    though it performs no generation. Verify prices and include reasoning/output,
    repairs, and late-run history. Set an explicit cap before paid calls.
-7. **User-run paid smoke and HIL preflight.** Check provider acceptance and usage;
-   separately validate the integrated 2000 ms audio path, telemetry, raw evidence,
-   and eligibility on hardware. A fake-provider smoke cannot establish these.
-8. **User-run launch.** Deploy the frozen integrated source to the normal blinky
-   and m202-GPU repos using preserved backups and manual tmux/Python commands.
+7. **User-run paid smoke and HIL preflight complete.** Both passed on 2026-10-14;
+   measured costs and the one-candidate hardware evidence are recorded below.
+8. **User-run launch, pending authorization.** Update the isolated
+   `/home/joe/Projects/crest-cs3-llm` (blinky) and
+   `/home/joseph/Projects/crest-cs3-llm` (GPU) checkouts with the semantic correction.
+   Preserve the old dirty CS2 checkouts and preflight evidence. Use fresh campaign
+   outputs and the campaign YAML, with memory on and the full 15-trial warmup.
    Watch ledger growth, fallbacks, measurement failures, budgets, and spending.
    Include scalar final retraining/held-out evaluation in the runtime estimate;
    the 14-17 h historical estimate is not a guarantee.
@@ -343,35 +347,50 @@ spending controls, deployment, or hardware preflight are complete.
 
 ## Measured API smoke (2026-10-14)
 
-User-run bounded smoke passed: one memory update and five valid new candidates,
-with two paid requests and no training/hardware. Accounted total $0.000866375.
-Memory used 2,237 input / 35 output tokens (15 reasoning); generation used 2,714
-input / 460 output (47 reasoning). Usage and full exact prompts are saved in
-`experiments/cs3/api_smoke_usage.json` and `api_smoke_prompts.md` locally on the
-preparation computer; those two artifacts are not included in the repository push.
+The updated-context user-run bounded smoke passed at commit `fa1381a`: one
+memory update and five valid, distinct new candidates, with two paid requests
+and no training/hardware. Both usage reservations settled. This smoke used the
+shared MCU semantic context v2, synthetic trial history, and reconstructed
+offline dataset metadata.
 
-| Projection | 200 attempts | 300 attempts |
-|---|---:|---:|
-| Repeat smoke sizes | $0.025 | $0.038 |
-| Larger proxy inputs + measured outputs | $0.056 | $0.085 |
-| Proxy inputs + 4,096 outputs/call + 20% extra calls | $0.18 | $0.27 |
+| Request | Input tokens | Output tokens | Accounted USD |
+|---|---:|---:|---:|
+| Memory update | 4,055 | 671 | $0.000842375 |
+| Five candidate proposals | 4,855 | 512 | $0.000862875 |
+| Total | 8,910 | 1,183 | **$0.00170525** |
+
+Accounting uses the configured $0.125/M input and $0.50/M output rates; these
+are local usage-based estimates, not a verified provider invoice. The report,
+request/response ledgers, and offline preview remain local under
+`/var/folders/3v/p31p3k1x5vsb9mm2qv217ckh0000gn/T/crest-cs3-mcu-smoke.cV5WAD/`.
+
+| Projection at these request sizes | Candidate batches | Memory updates | Accounted USD |
+|---|---:|---:|---:|
+| 200 total attempts | 37 | 13 | $0.04287725 (~$0.043) |
+| 300 total attempts | 57 | 19 | $0.065189 (~$0.065) |
+
+These schedules include the 15 fixed warm-up attempts, batches of five, and
+memory updates every 15 attempts; they assume full accepted batches and no
+extra calls. The earlier smoke without shared semantic context cost
+$0.000866375; it is retained as historical evidence, not the current projection.
 
 The small synthetic smoke does not establish real campaign memory size, reasoning
 usage, or search quality. Keep the $0.10–$0.40 ordinary planning range and $5 cap;
-calibrate from saved campaign usage. Next: deployment verification and a bounded
-hardware preflight, not the full campaign. Full manual commands and the
+calibrate from saved campaign usage. Both bounded smokes passed. Full manual
+preflight commands and the
 config-generation helper are in `experiments/cs3/hardware_preflight.md`.
-Remote source must be staged first; existing workers must release the board.
+For launch, deploy the corrected context first and confirm exclusive board ownership.
 
 ## Costs
 
 - Board and GPU: one campaign, about 14-17 h.
 - API: offline proxy estimate about $0.11–$0.38 for 300 attempts before retries;
   full configured token limits imply $1.26 for the normal 76-call schedule.
-  These are assumptions, not measured bills. Keep the $5 cap and validate usage
-  in a separately authorized smoke.
+  These are assumptions, not measured bills. Keep the $5 cap; the updated-context smoke above now provides measured
+  request sizes, and campaign usage still needs monitoring.
 - Remaining work:
-  deployment verification and hardware preflight. Basic provider acceptance passed.
+  deploy the corrected semantic context, verify fresh campaign configuration and
+  key availability, and obtain explicit launch authorization. Both bounded smokes passed.
   Safeguards, baseline extraction, and campaign configuration are prepared.
 
 ## Limits
@@ -399,6 +418,33 @@ space builders; its history is synthetic and dataset metadata is reconstructed
 offline. Full prompts can be reviewed with `api_smoke.py --render-only`.
 
 The updated suspended-memory sizing proxy fits at 51,109/100,000 input guard
-units. The measured costs above came from the earlier smoke without this context;
-no paid API retest or hardware test has run for this revision. Context identity
-has changed to v2: start a fresh CS3 study rather than resuming a v1 study.
+units. The user subsequently passed the bounded paid API retest with this
+context; measured costs are recorded above. Hardware preflight also passed.
+The subsequent energy wording correction changes semantic context identity to
+v3; start a fresh CS3 study rather than resuming a v1/v2 study. No objective,
+measurement, or scientific setting changed in this correction.
+
+## Bounded hardware preflight pass (2026-10-14)
+
+The user ran the preflight at `fa1381a` on both hosts, using the existing
+`cs2-smoke-tunnel` on port 6001. Exactly one trial was COMPLETE, with
+`proposal_source=llm_warmup`, `warmup_index=0`, int8 PTQ, external weights,
+600 MHz clock, and three training epochs. The fake provider made no paid calls.
+The archived `export_variant: untrained` remained in effect for HIL.
+
+- Score: 0.0659719286103932; trained macro-F1: 0.0749536181103932.
+- Scored back-to-back energy: 35.926758 mJ/inference.
+- Cadenced energy: 1622.220703 mJ/release; aggregate 16222.20703 mJ.
+- Cadenced active latency: 43.56 ms versus a 2000 ms budget; zero deadline misses.
+- Both measurement phases recorded 10 runs, valid instrumentation, deployment
+  eligibility, and no acceptance failure reasons. Cadenced evidence recorded
+  nine Stop entries matching nine slept slots.
+- `hil_error_code=1` is `HIL_MASTER_SUCCESS`; cadenced error code 0 is OK.
+
+Evidence remains on the hosts under `models/cs3_hil_preflight_v1/`: client
+`CS3_audio_hil_preflight_v1_STM32_NUCLEO_N657X0_Q/optuna_smoke_test.db`; server
+request `72c2429b14ae4f74b0e4ef55d0f99cc1.json` and measurements
+`e69ebf9f13ca41b3ade86970affb2baa.json` (back-to-back),
+`becef9d48f4543c2bdb0a691d3ab82c0.json` (cadenced).
+This validates the operational path, not campaign model quality or optimizer
+superiority. The preflight must not be resumed as the campaign.

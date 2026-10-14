@@ -12,7 +12,7 @@ from crest.devices import get_device_spec
 
 from .search_space import SearchSpaceDescriptor
 
-SEMANTIC_CONTEXT_VERSION = "v2"
+SEMANTIC_CONTEXT_VERSION = "v3"
 SEMANTIC_CONTEXT_GUIDANCE = (
     "Parameter effects are architectural priors, not measured facts or guaranteed outcomes.",
     "Actual CREST and HIL observations take precedence over semantic priors.",
@@ -366,8 +366,11 @@ def _stm32_context(device_config: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         "min_sleep_us": options.min_sleep_us,
         "measurement_semantics": (
             "Active invocation latency differs from the release period. Cadenced mode uses latency_budget_ms "
-            "as release period and active-latency limit; energy_mj_per_inference is measured window energy "
-            "per release, including wait/Stop/wake overhead. Back-to-back mode repeats invocations without cadence sleep."
+            "as release period and active-latency limit. Trial-level energy_mj_per_inference remains "
+            "back-to-back energy per inference, including when runtime_mode is cadenced; this is the energy "
+            "metric used by the CS3 score. Cadenced energy is separate: cadenced_energy_mj_per_window "
+            "is energy per release including wait/Stop/wake overhead, and cadenced_energy_mj_per_trial "
+            "is aggregate energy across measured releases. Back-to-back mode repeats invocations without cadence sleep."
         ),
         "measurement_scope": (
             "Default firmware invokes the network on zero-filled input; sensor capture, feature extraction, "

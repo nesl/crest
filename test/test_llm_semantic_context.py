@@ -232,6 +232,10 @@ class SemanticContextTests(unittest.TestCase):
         self.assertEqual(runtime["latency_budget_ms"], 2000.0)
         self.assertEqual(runtime["wake_margin_us"], 7000)
         self.assertEqual(runtime["min_sleep_us"], 8000)
+        # Keep the scored back-to-back metric distinct from cadenced telemetry.
+        self.assertIn("back-to-back energy per inference", runtime["measurement_semantics"])
+        self.assertIn("cadenced_energy_mj_per_window", runtime["measurement_semantics"])
+        self.assertIn("cadenced_energy_mj_per_trial", runtime["measurement_semantics"])
         self.assertIn("per release", runtime["measurement_semantics"])
         self.assertIn("feature extraction", runtime["measurement_scope"])
         memory = payload["device_context"]["memory_semantics"]
