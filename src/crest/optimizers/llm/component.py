@@ -82,6 +82,9 @@ class LLMGeneratorOptimizer(OptimizerABC):
             "phase_policy_version": 1,
             "fallback_policy": {"type": "unique_random", "max_attempts": 100},
         })
+        if llm.get("max_output_tokens") is not None:
+            identity["max_output_tokens"] = llm["max_output_tokens"]
+            identity["output_token_parameter"] = llm["output_token_parameter"]
         if self._warmup_params:
             identity["warmup_params_hash"] = digest(self._warmup_params)
         if llm["provider"] == "fake":
@@ -95,6 +98,10 @@ class LLMGeneratorOptimizer(OptimizerABC):
             identity.update({key: llm[key] for key in (
                 "temperature", "json_response_mode",
             )})
+            # Add opt-in request controls only when set, preserving old studies.
+            for name in ("reasoning_effort", "service_tier"):
+                if llm.get(name) is not None:
+                    identity[name] = llm[name]
             # Credentials and optional auth headers are not study identity.
             identity["base_url"] = urlunsplit((endpoint.scheme, host, endpoint.path, "", ""))
         return identity
@@ -147,8 +154,15 @@ class LLMGeneratorOptimizer(OptimizerABC):
             )
         self.context = context
         self.config = llm
-        self.provider = build_provider(llm)
         self.ledger = LLMLedger(Path(context.artifact_dir) / "llm_optimizer")
+        spend_tracker = None
+        if llm.get("max_usd") is not None:
+            from .spending import SpendTracker
+            spend_tracker = SpendTracker(self.ledger.root, llm)
+        elif (self.ledger.root / "spend_state.json").exists():
+            raise ValueError("This campaign has spend accounting; retain max_usd when resuming.")
+        self.provider = (build_provider(llm, spend_tracker=spend_tracker)
+                         if spend_tracker is not None else build_provider(llm))
         self.rng = random.Random(llm["random_seed"])
         memory_config = MemoryConfig.from_config(llm["memory"])
         self.memory = (ExperimentalMemory(self.ledger.root / "memory", memory_config)

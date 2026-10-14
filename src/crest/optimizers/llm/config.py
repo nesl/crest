@@ -36,6 +36,34 @@ def normalize_llm_config(optimizer_config) -> Dict:
             raise ValueError(f"optimizer.llm.{field_name} must be an integer >= {minimum}.")
         llm[field_name] = raw_value
 
+    # Omitted limits preserve existing campaigns and their optimizer identity.
+    output_limit = llm.get("max_output_tokens")
+    if output_limit is not None:
+        if type(output_limit) is not int or output_limit < 1:
+            raise ValueError("optimizer.llm.max_output_tokens must be a positive integer.")
+        output_parameter = llm.get("output_token_parameter", "max_completion_tokens")
+        if not isinstance(output_parameter, str) or output_parameter not in {"max_tokens", "max_completion_tokens"}:
+            raise ValueError("optimizer.llm.output_token_parameter must be max_tokens or max_completion_tokens.")
+        llm.output_token_parameter = output_parameter
+    elif llm.get("output_token_parameter") is not None:
+        raise ValueError("optimizer.llm.output_token_parameter requires max_output_tokens.")
+
+    max_usd = llm.get("max_usd")
+    if max_usd is not None:
+        if provider == "fake":
+            raise ValueError("optimizer.llm.max_usd requires a paid provider with token usage accounting.")
+        if output_limit is None:
+            raise ValueError("optimizer.llm.max_usd requires max_output_tokens.")
+        for name in ("max_usd", "input_usd_per_million_tokens", "output_usd_per_million_tokens"):
+            value = llm.get(name)
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) or value < 0 or (name != "max_usd" and value == 0)):
+                raise ValueError(f"optimizer.llm.{name} must be finite and nonnegative (token prices must be positive).")
+        if type(llm.get("max_input_tokens")) is not int or llm.max_input_tokens < 1:
+            raise ValueError("optimizer.llm.max_input_tokens must be a positive integer with max_usd.")
+        if not isinstance(llm.get("pricing_source"), str) or not llm.pricing_source.strip():
+            raise ValueError("optimizer.llm.pricing_source must document the configured token prices.")
+
     warmup_file = llm.get("warmup_params_file")
     if warmup_file is not None and (not isinstance(warmup_file, str) or not warmup_file.strip()):
         raise ValueError("optimizer.llm.warmup_params_file must be a non-empty path or null.")
@@ -95,6 +123,13 @@ def normalize_llm_config(optimizer_config) -> Dict:
         if type(raw_retries) is not int or raw_retries < 0:
             raise ValueError("optimizer.llm.max_transport_retries must be an integer >= 0.")
         llm.max_transport_retries = raw_retries
+        for field_name, allowed in (
+            ("reasoning_effort", {"none", "minimal", "low", "medium", "high", "xhigh", "max"}),
+            ("service_tier", {"auto", "default", "flex", "scale", "priority", "fast"}),
+        ):
+            value = llm.get(field_name)
+            if value is not None and (not isinstance(value, str) or value not in allowed):
+                raise ValueError(f"optimizer.llm.{field_name} must be one of {sorted(allowed)} or null.")
         for field_name, default, minimum in (
             ("retry_backoff_s", 5.0, 0.0),
             ("retry_backoff_cap_s", 60.0, 0.0),
@@ -102,6 +137,10 @@ def normalize_llm_config(optimizer_config) -> Dict:
             ("timeout_s", 60.0, 0.001),
         ):
             raw_value = llm.get(field_name, default)
+            # Reasoning models may require temperature to be absent from requests.
+            if field_name == "temperature" and raw_value is None:
+                llm[field_name] = None
+                continue
             if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
                 raise ValueError(f"optimizer.llm.{field_name} must be a number >= {minimum}.")
             normalized_value = float(raw_value)

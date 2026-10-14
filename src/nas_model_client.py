@@ -75,6 +75,7 @@ from crest.model_metrics import StaticMemoryEstimate
 from crest.optimizer_history import build_trial_snapshot, freeze_plain_data
 from crest.search_space import build_search_space_descriptor, validate_candidate
 from crest.semantic_context import build_semantic_context
+from crest.interfaces import OptimizerBudgetExhausted
 from crest.pipeline_types import (
     BudgetSnapshot, CandidateProposal, DataSplit, DatasetBundle, ExplicitRound,
     ModelBuildContext, NativeRound, SearchContext,
@@ -2430,6 +2431,9 @@ class NASModelClient:
                             measurement_failure_guard=measurement_failure_guard,
                         )
                     remaining -= size
+            except OptimizerBudgetExhausted as exc:
+                logger.info("[SMOKE] Stopped by optimizer budget: %s; proposal_sources=%s",
+                            exc, self._proposal_source_counts(single_trial_study))
             except Exception as exc:
                 completed = sum(1 for t in single_trial_study.trials if t.state == TrialState.COMPLETE)
                 pruned = sum(1 for t in single_trial_study.trials if t.state == TrialState.PRUNED)
@@ -2580,6 +2584,7 @@ class NASModelClient:
             study.set_metric_names(self._study_metric_names())
 
             self._recover_orphaned_trials(study, optimizer_config)
+            study.set_user_attr("crest_optimizer_budget_stop", None)
             while True:
                 completed, feasible, infeasible, pruned, failed = _trial_counts()
                 total = len(study.trials)
@@ -2630,6 +2635,10 @@ class NASModelClient:
                     BudgetSnapshot(total, feasible, target_completions, max_total_trials, next_batch),
                     measurement_failure_guard=measurement_failure_guard,
                 )
+        except OptimizerBudgetExhausted as exc:
+            stop_reason = "optimizer_budget_exhausted"
+            study.set_user_attr("crest_optimizer_budget_stop", str(exc))
+            logger.info("[NAS] Stopped by optimizer budget: %s", exc)
         except Exception as exc:
             completed, feasible, infeasible, pruned, failed = _trial_counts()
             logger.exception(
@@ -2712,6 +2721,12 @@ class NASModelClient:
         trials_csv = artifacts_dir / "trials.csv"
         trials_df.to_csv(trials_csv, index=False)
         logger.info("[run_scoring_nas] Saved trials dataframe to %s", trials_csv)
+
+        if (getattr(study, "user_attrs", {}).get("crest_optimizer_budget_stop")
+                and not self._qualifying_complete_count(study.trials)):
+            logger.info("[run_scoring_nas] Optimizer budget stopped search before any eligible completion; "
+                        "saved trial history and skipped final training.")
+            return
 
         if self._score_is_multiobjective():
             # Multi-objective: keep this as a “scoring + analysis” run.

@@ -269,3 +269,19 @@ continued rejection retains stored evidence and exposes a bounded pending window
 with explicit omission counts instead of crashing on backlog size. After three consecutive exhausted summary chunks, summarization remains
 suspended across restarts until explicit reset; candidate prompts use the newest
 bounded pending records and report suspension. Transport errors still stop. See `src/config/README.md` for the configuration contract.
+
+## LLM spending limits
+
+Optional `max_output_tokens` and `output_token_parameter` control the provider
+completion ceiling and are part of optimizer identity. Enabling `max_usd` also
+requires input/output token prices, their `pricing_source`, and `max_input_tokens`.
+The shared provider reserves funds before every HTTP attempt, including retries,
+repairs, and memory calls. Unknown usage retains the reservation across restart;
+known usage settles configured cost. Insufficient funds stop proposal generation
+cleanly without random fallback. Fixed warm-up requires no API reservations.
+
+Accounting is stored atomically in `llm_optimizer/spend_state.json`. Retain it on
+resume; the dollar cap can increase, while the tariff and token-bound settings
+must match. The local bound depends on supplied prices, the conservative prompt
+check, and the provider honoring its completion limit. See `src/config/README.md`
+for settings, limitations, and resume rules. No provider prices are built in.

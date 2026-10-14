@@ -1,0 +1,527 @@
+{
+  "study_name": "UrbanSound8K_DSCNN_STM32_AUDIO_case3_2_t1",
+  "source_inspection_date": "2026-10-13",
+  "authoritative_source": "Optuna SQLite trial_params decoded using recorded distribution_json",
+  "remote_host": "m202-GPU",
+  "remote_directory": "/home/joseph/Projects/tinyodom-ex/models/UrbanSound8K_DSCNN_STM32_AUDIO_case3_2_t1",
+  "extracted_trial_numbers": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14
+  ],
+  "warmup_params_hash": "f1d5025c7e742f64e0d8c8e1b9c2cfb11b50ec04e02eec674d9f0ab4a7a6407e",
+  "warmup_file_sha256": "e7d7c363e605da016637bf2dc4deadf634f9b5fd18e918d8d0da8a29a34e8d9e",
+  "inputs": {
+    "optuna.db": {
+      "bytes": 2088960,
+      "sha256": "c61b740f80571b16c5def16f6d82d5278515567682d3f4d0f79b4daa84cab969"
+    },
+    "trials.csv": {
+      "bytes": 506566,
+      "sha256": "16514a1f43c3abcd4c338f69b20e8f64086810f81a4a9d33b4468481b36b49be"
+    },
+    "nas_config_case3_2_t1_stm32_audio.yaml": {
+      "bytes": 4270,
+      "sha256": "36453963b44198fdbb34d9a4ae8b2a5df9829b0b86d5701f46b5833ae28888e1"
+    }
+  },
+  "csv_crosscheck": "All 15 trial numbers, states, and every nonempty params_* field match decoded DB parameters; hyperparameters attributes also match.",
+  "descriptor_validation": {
+    "all_candidates_valid": true,
+    "library_version_for_decoding_and_startup_check": "4.6.0",
+    "collect_compile_metrics": true,
+    "input_shape": [
+      201,
+      64
+    ],
+    "parameters": [
+      {
+        "name": "base_channels",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          4,
+          8,
+          12,
+          16,
+          20,
+          24,
+          32
+        ],
+        "description": "Controls the initial channel width of the DS-CNN feature extractor.",
+        "units": "channels",
+        "typical_effects": [
+          "A wider base typically increases feature capacity, parameters, compute, and tensor memory."
+        ]
+      },
+      {
+        "name": "num_blocks",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "description": "Controls the number of depthwise-plus-pointwise convolution blocks.",
+        "units": "blocks",
+        "typical_effects": [
+          "Additional blocks typically increase depth, receptive-field processing, and compute."
+        ]
+      },
+      {
+        "name": "kernel_time",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          3,
+          5
+        ],
+        "description": "Controls convolution-kernel extent along the log-mel time axis.",
+        "units": "frames",
+        "typical_effects": [
+          "Larger temporal kernels typically combine information across more adjacent frames."
+        ]
+      },
+      {
+        "name": "kernel_freq",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          3,
+          5
+        ],
+        "description": "Controls convolution-kernel extent along the mel-frequency axis.",
+        "units": "mel bins",
+        "typical_effects": [
+          "Larger frequency kernels typically combine information across more adjacent mel bins."
+        ]
+      },
+      {
+        "name": "stride_schedule",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          "light",
+          "balanced",
+          "aggressive",
+          "early_time",
+          "early_freq",
+          "late"
+        ],
+        "description": "Controls where time and frequency downsampling occurs across blocks.",
+        "units": null,
+        "typical_effects": [
+          "The schedule typically changes intermediate feature-map shapes, retained resolution, and compute."
+        ]
+      },
+      {
+        "name": "channel_growth",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          1.0,
+          1.5,
+          2.0
+        ],
+        "description": "Controls nominal channel-width growth across successive blocks.",
+        "units": "ratio",
+        "typical_effects": [
+          "Higher growth typically shifts more channel capacity and compute into later blocks."
+        ]
+      },
+      {
+        "name": "max_channels",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          64,
+          96,
+          128
+        ],
+        "description": "Caps the pointwise output width of every DS-CNN block.",
+        "units": "channels",
+        "typical_effects": [
+          "The cap typically limits late-stage parameters, compute, and activation width."
+        ]
+      },
+      {
+        "name": "depth_multiplier",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          1,
+          2
+        ],
+        "description": "Controls the channel multiplier used by depthwise convolutions.",
+        "units": "multiplier",
+        "typical_effects": [
+          "A larger multiplier typically increases depthwise features, intermediate tensors, and compute."
+        ]
+      },
+      {
+        "name": "pointwise_scale",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          0.75,
+          1.0,
+          1.25,
+          1.5
+        ],
+        "description": "Scales the nominal pointwise-convolution output widths.",
+        "units": "ratio",
+        "typical_effects": [
+          "A larger scale typically increases pointwise parameters, compute, and activation width."
+        ]
+      },
+      {
+        "name": "dropout_rate",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          0.0,
+          0.1,
+          0.2,
+          0.3
+        ],
+        "description": "Controls the training-time dropout probability before classification.",
+        "units": "probability",
+        "typical_effects": [
+          "Dropout typically changes regularization during training rather than input feature dimensions."
+        ]
+      },
+      {
+        "name": "norm_flag",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          true,
+          false
+        ],
+        "description": "Controls whether batch normalization is used after convolutions.",
+        "units": null,
+        "typical_effects": [
+          "Normalization typically affects training dynamics and adds normalization operations and state."
+        ]
+      },
+      {
+        "name": "dense_units",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          0,
+          16,
+          32,
+          64
+        ],
+        "description": "Controls the optional hidden classifier-head width; zero disables that hidden layer.",
+        "units": "units",
+        "typical_effects": [
+          "A larger hidden head typically increases classifier parameters and compute."
+        ]
+      },
+      {
+        "name": "global_pool_type",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          "avg",
+          "max"
+        ],
+        "description": "Controls how spatial time-frequency features are aggregated before classification.",
+        "units": null,
+        "typical_effects": [
+          "Average and maximum pooling typically emphasize different summaries without changing class count."
+        ]
+      },
+      {
+        "name": "activation",
+        "kind": "categorical",
+        "low": null,
+        "high": null,
+        "choices": [
+          "relu",
+          "relu6"
+        ],
+        "description": "Controls the hidden rectified activation variant used in convolution blocks.",
+        "units": null,
+        "typical_effects": [
+          "The activation typically affects feature range and deployment arithmetic characteristics."
+        ]
+      }
+    ]
+  },
+  "historical_states": [
+    {
+      "number": 0,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 18:50:54.472666",
+      "datetime_complete": "2026-05-17 18:56:02.011194",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 1,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 18:56:02.038881",
+      "datetime_complete": "2026-05-17 18:58:57.560561",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 2,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 18:58:57.579376",
+      "datetime_complete": "2026-05-17 19:03:06.659223",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 3,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 19:03:06.678654",
+      "datetime_complete": "2026-05-17 19:06:42.050354",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 4,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 19:06:42.068789",
+      "datetime_complete": "2026-05-17 19:10:52.723240",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 5,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 19:10:52.747656",
+      "datetime_complete": "2026-05-17 19:13:51.502646",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 6,
+      "state": "PRUNED",
+      "datetime_start": "2026-05-17 19:13:51.525610",
+      "datetime_complete": "2026-05-17 19:15:16.737597",
+      "raw_parameter_count": 14,
+      "error_code": 3,
+      "error_label": "HIL_MASTER_FATAL",
+      "prune_reason": "HIL fatal error",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 7,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 19:15:16.760880",
+      "datetime_complete": "2026-05-17 19:22:18.554452",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 8,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 19:22:18.575726",
+      "datetime_complete": "2026-05-17 19:26:19.005575",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 9,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 19:26:19.025072",
+      "datetime_complete": "2026-05-17 19:30:57.296415",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 10,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 19:30:57.318869",
+      "datetime_complete": "2026-05-17 19:36:02.855847",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 11,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 19:36:02.873512",
+      "datetime_complete": "2026-05-17 19:40:09.025635",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 12,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 19:40:09.044625",
+      "datetime_complete": "2026-05-17 19:42:50.697910",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 13,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 19:42:50.719340",
+      "datetime_complete": "2026-05-17 19:46:35.185685",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    },
+    {
+      "number": 14,
+      "state": "COMPLETE",
+      "datetime_start": "2026-05-17 19:46:35.204910",
+      "datetime_complete": "2026-05-17 19:50:42.630450",
+      "raw_parameter_count": 14,
+      "error_code": 1,
+      "error_label": "HIL_MASTER_SUCCESS",
+      "prune_reason": "",
+      "input_shape": [
+        201,
+        64
+      ]
+    }
+  ],
+  "state_counts": {
+    "COMPLETE": 201,
+    "FAIL": 1,
+    "PRUNED": 5
+  },
+  "startup_boundary": {
+    "configured_n_startup_trials": 15,
+    "first_post_startup_trial_number": 15,
+    "preceding_complete_or_pruned_count": 15,
+    "evidence": "The pre-run committed sampler source and current remote source both set n_startup_trials=15; trials 0-14 are 14 COMPLETE plus one PRUNED, sequential without overlap. Optuna TPE counts COMPLETE and PRUNED trials toward startup.",
+    "certainty": "Source-supported boundary inference. No deployed run commit, sampler state, Optuna version, or per-trial sampling-method trace was retained; exact historical execution cannot be independently certified.",
+    "historical_source": {
+      "commit": "31d27ba7235846a23313f9765fbf841a2e918efd",
+      "path": "src/nas_model_client.py",
+      "sha256": "62854b213fcc8b2d8d504c7df69d9226b9c65bb7d35343f8534a618751ad7d7a",
+      "lines": [
+        1711,
+        1712
+      ],
+      "selection": "Last commit changing this path before 2026-05-17 18:50:54; not a proven run revision."
+    },
+    "observed_remote_source": {
+      "head": "20d578d2f86e1821c4216a18b620cf7ff49d73d5",
+      "path": "src/nas_model_client.py",
+      "sha256": "ea4fce91dd3e9d7e3788132ee680382a18ea71b66bfd87fc0627813987fd2914",
+      "n_startup_trials_line": 796
+    }
+  },
+  "limitations": [
+    "No missing parameters were filled or inferred.",
+    "Historical scores are not injected into the new campaign.",
+    "Trial 6 retains its recorded PRUNED HIL_MASTER_FATAL attempt and its complete raw parameters."
+  ]
+}

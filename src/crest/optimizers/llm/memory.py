@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,9 @@ from .history import build_terminal_trial_history
 from .ledger import LLMLedger
 from .prompt_builder import PromptContext
 from .provider import LLMRequest, LLMProvider, ProviderResponseError
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -113,6 +117,38 @@ class ExperimentalMemory:
         self.ledger = LLMLedger(self.root)
         self.state_path = self.root / "state.json"
         self.state = json.loads(self.state_path.read_text()) if self.state_path.exists() else None
+        self._summary_suspension_warned = False
+
+    def _warn_summary_suspended(self, pending_trial_count: int) -> None:
+        """Report a suspended summary circuit once per owner and suspension.
+
+        Parameters
+        ----------
+        pending_trial_count : int
+            Number of terminal trials still awaiting accepted summarization.
+
+        Returns
+        -------
+        None
+            A warning is emitted through the application's Python run logger.
+
+        Notes
+        -----
+        Reopened owners report persisted suspension again. Provider responses,
+        rejection details, and experimental content remain in the memory ledger.
+        """
+        if (self.state["summary_failure_count"] >= SUMMARY_MAX_CONSECUTIVE_FAILURES
+                and not self._summary_suspension_warned):
+            logger.warning(
+                "LLM EXPERIMENTAL MEMORY SUMMARIZATION SUSPENDED after %s consecutive "
+                "failed summary chunks; %s trials remain uncovered. Candidate generation "
+                "continues using the last accepted memory and bounded pending evidence. "
+                "Memory state: %s. Inspect optimizer_events.jsonl in %s and correct the "
+                "rejection cause, then explicitly call "
+                "ExperimentalMemory.reset_summary_failures() on this memory owner to resume.",
+                self.state["summary_failure_count"], pending_trial_count, self.state_path, self.root,
+            )
+            self._summary_suspension_warned = True
 
     def _save_state(self, state: dict[str, Any]) -> None:
         """Atomically persist accepted memory and summary retry disposition.
@@ -146,6 +182,7 @@ class ExperimentalMemory:
             self._save_state({**self.state, "summary_failure_count": 0,
                               "summary_failure_reason": None})
             self.ledger.record_event({"event": "summary_failures_reset"})
+            self._summary_suspension_warned = False
 
     def _merge(self, update: MemoryUpdate, covered: set[int]) -> list[dict]:
         findings = {f["id"]: f for f in self.state["findings"]}
@@ -300,6 +337,8 @@ class ExperimentalMemory:
                                       "version": self.state["version"], "retired": [r.model_dump() for r in update.retire]})
             pending = [r for r in pending if str(r["number"]) not in covered]
             threshold = self.config.interval_trials
+        # Emit both new and restored suspensions without repeating every NAS round.
+        self._warn_summary_suspended(len(pending))
         recent_ids = {r["number"] for r in context.recent_trials}
         prompt_pending = [r for r in pending if r["number"] not in recent_ids]
         # Keep the freshest unsummarized measurements alongside the recent window.

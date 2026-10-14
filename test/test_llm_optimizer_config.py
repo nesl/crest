@@ -146,6 +146,31 @@ class OptimizerConfigTests(unittest.TestCase):
         self.assertTrue(optimizer.llm.json_response_mode)
         self.assertEqual(optimizer.llm.extra_headers["X-Title"], "CREST")
 
+    def test_optional_reasoning_settings_preserve_defaults_and_bind_identity(self) -> None:
+        """Explicit request controls affect identity while omissions retain defaults."""
+        component = LLMGeneratorOptimizer()
+        base = Dict(llm=Dict(provider="openrouter", model="test"))
+        baseline = component.identity_config(base)
+        self.assertEqual(baseline["temperature"], 0.4)
+        self.assertNotIn("reasoning_effort", baseline)
+        self.assertNotIn("service_tier", baseline)
+        # Null optional controls are equivalent to their absence.
+        self.assertEqual(component.identity_config(Dict(llm={**base.llm,
+            "reasoning_effort": None, "service_tier": None})), baseline)
+        changed = component.identity_config(Dict(llm={**base.llm,
+            "temperature": None, "reasoning_effort": "medium", "service_tier": "default"}))
+        self.assertIsNone(changed["temperature"])
+        self.assertEqual(changed["reasoning_effort"], "medium")
+        self.assertEqual(changed["service_tier"], "default")
+        for field, values in (
+            ("temperature", [True, -1, "0.4", float("nan"), float("inf")]),
+            ("reasoning_effort", [True, 1, "", "unsupported", []]),
+            ("service_tier", [True, 1, "", "unsupported", []]),
+        ):
+            for value in values:
+                with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, field):
+                    component.identity_config(Dict(llm={**base.llm, field: value}))
+
     def test_transport_settings_are_validated_and_excluded_from_study_identity(self) -> None:
         """Operators can tune retry policy when resuming the same search study."""
         component = LLMGeneratorOptimizer()

@@ -271,6 +271,50 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(result.knowledge_base['summary_status'], 'active')
         self.assertEqual(result.knowledge_base['summary_failure_count'], 0)
 
+    def test_summary_suspension_warns_once_on_transition_resume_and_after_reset(self):
+        """Expose suspended summarization in run logs without per-round spam.
+
+        Notes
+        -----
+        Log output includes actionable paths and recovery but excludes rejected
+        provider content, even when that content appears in the audit ledger.
+        """
+        for _ in range(2):
+            add(self.study)
+        memory = ExperimentalMemory(self.root, self.config)
+        logger_name = 'crest.optimizers.llm.memory'
+        private_content = 'private-provider-response-marker'
+        invalid = {'updates': [{'id': private_content}], 'retire': []}
+        with self.assertLogs(logger_name, level='WARNING') as captured:
+            for _ in range(3):
+                memory.enrich(self.study, context(self.study), FakeProvider([invalid] * 2))
+        self.assertEqual(len(captured.records), 1)
+        message = captured.records[0].getMessage()
+        self.assertIn('SUMMARIZATION SUSPENDED', message)
+        self.assertIn('2 trials remain uncovered', message)
+        self.assertIn(str(memory.state_path), message)
+        self.assertIn('optimizer_events.jsonl', message)
+        self.assertIn('ExperimentalMemory.reset_summary_failures()', message)
+        self.assertNotIn(private_content, message)
+        # Growing evidence cannot emit another warning from the same owner.
+        with self.assertNoLogs(logger_name, level='WARNING'):
+            for _ in range(2):
+                add(self.study)
+                memory.enrich(self.study, context(self.study), FakeProvider([]))
+        # A new process/owner must surface the existing suspension once again.
+        restored = ExperimentalMemory(self.root, self.config)
+        with self.assertLogs(logger_name, level='WARNING') as resumed:
+            restored.enrich(self.study, context(self.study), FakeProvider([]))
+            restored.enrich(self.study, context(self.study), FakeProvider([]))
+        self.assertEqual(len(resumed.records), 1)
+        self.assertIn('4 trials remain uncovered', resumed.records[0].getMessage())
+        # An explicit reset re-arms visibility if corrected attempts fail again.
+        restored.reset_summary_failures()
+        with self.assertLogs(logger_name, level='WARNING') as retripped:
+            for _ in range(3):
+                restored.enrich(self.study, context(self.study), FakeProvider([invalid] * 2))
+        self.assertEqual(len(retripped.records), 1)
+
     def test_scope_or_changed_history_cannot_reuse_old_memory(self):
         for _ in range(2):
             add(self.study)

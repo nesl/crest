@@ -507,8 +507,8 @@ The MVP transport is `/chat/completions`. OpenRouter defaults
 `response_format: {type: json_object}`. Generic `openai_compatible` providers
 default it to `false` because that option is not universally supported; set it
 to `true` only when the selected endpoint and model accept JSON response mode.
-The runtime always sends `temperature` and does not expose a provider output-token
-cap. `provider: fake` uses a required non-empty `responses` list to exercise the
+The runtime always sends `temperature`. The optional output-token limit below
+is sent using the selected provider field. `provider: fake` uses a required non-empty `responses` list to exercise the
 same validation/ledger path without network access; memory summary responses must
 be included when memory is enabled.
 
@@ -529,6 +529,58 @@ stage and reason; deduplication consumes that evidence. Resource/transport and
 unknown backend exceptions are not labeled deterministic. Float descriptors
 normalize numeric values before deduplication; categorical types stay strict.
 
+### Output-token and spending limits
+
+Set `max_output_tokens` to limit each completion, including memory and repair
+calls. `output_token_parameter` selects `max_completion_tokens` (default) or
+`max_tokens`; verify which field the chosen model accepts and that it covers all
+billable completion/reasoning tokens. The limit is part of optimizer identity;
+changing it requires a new study. Omitting it preserves existing behavior.
+
+For a monetary cap, supply all of these additional fields. Prices below are
+**illustrative test values**, not a quote for any model:
+
+```yaml
+optimizer:
+  type: llm_generator
+  llm:
+    # Keep the verified provider/model/authentication settings.
+    max_output_tokens: 4096
+    output_token_parameter: max_completion_tokens
+    max_usd: 10.0
+    max_input_tokens: 100000
+    input_usd_per_million_tokens: 1.0  # Replace with verified upper-bound price.
+    output_usd_per_million_tokens: 4.0 # Include all billed output/reasoning tokens.
+    pricing_source: "REPLACE with provider pricing URL, model/tier and date"
+```
+
+One shared `llm_optimizer/spend_state.json` accounts for generation, candidate
+repairs, memory summaries, summary repairs, and every HTTP retry. Before an
+attempt, it atomically reserves the full configured input/output token ceilings
+at the supplied prices. It rejects prompts whose serialized message-byte bound
+plus 1024 framing tokens exceeds `max_input_tokens`; this deliberately
+conservative check is not a model-specific tokenizer or a universal billing
+bound. Choose a ceiling large enough for real saved prompts. The provider receives
+the output ceiling; input size is checked locally.
+
+Valid `prompt_tokens`/`completion_tokens` usage settles actual configured cost;
+unused reservation is released. Missing/malformed usage, transport errors, and
+crashes retain the full reservation, including failed HTTP attempts that may
+ultimately be unbilled. Thus the tracked total can exceed the actual invoice.
+An observed token overrun is recorded and stops further requests. This is a
+local accounting cap under the configured tariff and token-limit assumptions,
+not a provider-enforced dollar limit; taxes, extra fees, incorrect prices, and
+provider violations are not bounded by it.
+
+When the next reservation cannot fit, NAS/smoke stops cleanly before HTTP or new
+candidate enqueue, with no random fallback. `max_usd: 0` allows fixed warm-up
+without paid calls. Already queued candidates use no new API call and still run
+under the normal evaluation budget. To continue a capped study, retain its state
+file and increase `max_usd`; model, prices, provenance and token limits must match.
+Removing the cap from a tracked study is rejected. Enabling a cap over existing
+request logs without spend state is also rejected: use a new study rather than
+silently resetting earlier cost. Use one writer per study, as with the runner.
+
 Each prompt includes attempted and feasible-trial budgets. Its phase guidance is
 `exploration` below 35% of the total-attempt budget, `specification` below 85%,
 and `finalization` afterward. These are prompt instructions; CREST still evaluates
@@ -544,12 +596,15 @@ optimizer:
     warmup_params_file: experiments/cs3/warmup_params.json
     recent_trial_window: 15
     memory:
-      enabled: false
+      enabled: true
+      start_after_trials: 15
+      interval_trials: 15
 ```
 
 The file must contain a nonempty JSON list of complete raw parameter dictionaries
 for the active search space. For CS3, supply the 15 baseline configurations in
-order; the path above is illustrative, not a bundled dataset. When loaded from YAML, relative paths
+order; the path above is illustrative. The prepared campaign and validated baseline
+parameters are in `experiments/cs3/`; its YAML uses a sibling-relative path. When loaded from YAML, relative paths
 resolve from the YAML file directory (and `~` expands to the home directory).
 Direct component callers should supply an absolute path. All entries are validated before
 execution. One fixed candidate runs per round through the same objective before
@@ -839,3 +894,10 @@ Use these files together:
   for model-family selection and extension
 - [`../crest/microcontrollers/README.md`](../crest/microcontrollers/README.md)
   for backend-owned hardware options
+
+For a prepared memory-on, 15-trial CS3 warm-up configuration, see
+`experiments/cs3/README.md`. Paid providers accept `temperature: null` to omit
+temperature, plus optional `reasoning_effort` and `service_tier` request fields.
+These settings must match the chosen provider/model. The Luna campaign uses
+medium reasoning and the default service tier. Memory-summary suspension emits
+a warning in the Python/NAS run log as well as preserving ledger evidence.

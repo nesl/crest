@@ -18,6 +18,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Protocol
 
 from ...component_selection import cfg_get
+from ...interfaces import OptimizerBudgetExhausted
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,10 @@ class ProviderTransportError(ProviderError):
 
 class ProviderResponseError(ProviderError):
     """The provider returned a malformed completion envelope; repair is allowed."""
+
+
+class SpendLimitExceeded(ProviderError, OptimizerBudgetExhausted):
+    """The next billable request would exceed the configured spend limit."""
 
 
 class LLMProvider(Protocol):
@@ -115,10 +120,15 @@ class OpenAICompatibleProvider:
         base_url: str,
         api_key_env: str,
         model: str,
-        temperature: float = 0.4,
+        temperature: float | None = 0.4,
+        reasoning_effort: str | None = None,
+        service_tier: str | None = None,
         timeout_s: float = 60.0,
         json_response_mode: bool = True,
         extra_headers: dict[str, str] | None = None,
+        max_output_tokens: int | None = None,
+        output_token_parameter: str = "max_completion_tokens",
+        spend_tracker: Any = None,
         urlopen: Any = urllib.request.urlopen,
         max_transport_retries: int = 5,
         retry_backoff_s: float = 5.0,
@@ -126,15 +136,55 @@ class OpenAICompatibleProvider:
         sleep: Any = time.sleep,
         wall_clock: Any = time.time,
     ) -> None:
-        """Store provider settings without reading or persisting the API key."""
+        """Store provider settings without reading or persisting the API key.
+
+        Parameters
+        ----------
+        temperature : float or None, optional
+            Sampling temperature; ``None`` omits the API field.
+        reasoning_effort : str or None, optional
+            Explicit reasoning effort; ``None`` uses the provider default.
+        service_tier : str or None, optional
+            Explicit service tier; ``None`` uses the provider default.
+        max_output_tokens : int or None, optional
+            Positive completion-token ceiling; ``None`` omits the API limit.
+        output_token_parameter : str, optional
+            API limit field, either ``max_completion_tokens`` or ``max_tokens``.
+        spend_tracker : Any, optional
+            Shared persistent ledger reserving and settling every HTTP attempt.
+        """
         self.provider_name = provider_name
         self.base_url = base_url.rstrip("/")
         self.api_key_env = api_key_env
         self.model = model
-        self.temperature = float(temperature)
+        if temperature is not None and (
+            isinstance(temperature, bool) or not isinstance(temperature, (int, float))
+            or not math.isfinite(temperature) or temperature < 0
+        ):
+            raise ValueError("temperature must be a finite nonnegative number or None")
+        self.temperature = None if temperature is None else float(temperature)
+        for name, value, allowed in (
+            ("reasoning_effort", reasoning_effort, {"none", "minimal", "low", "medium", "high", "xhigh", "max"}),
+            ("service_tier", service_tier, {"auto", "default", "flex", "scale", "priority", "fast"}),
+        ):
+            if value is not None and (not isinstance(value, str) or value not in allowed):
+                raise ValueError(f"{name} must be one of {sorted(allowed)} or None")
+        self.reasoning_effort = reasoning_effort
+        self.service_tier = service_tier
         self.timeout_s = float(timeout_s)
         self.json_response_mode = bool(json_response_mode)
         self.extra_headers = dict(extra_headers or {})
+        if max_output_tokens is not None and (
+            type(max_output_tokens) is not int or max_output_tokens <= 0
+        ):
+            raise ValueError("max_output_tokens must be a positive integer or None")
+        if not isinstance(output_token_parameter, str) or output_token_parameter not in {
+            "max_tokens", "max_completion_tokens"
+        }:
+            raise ValueError("output_token_parameter must be max_tokens or max_completion_tokens")
+        self.max_output_tokens = max_output_tokens
+        self.output_token_parameter = output_token_parameter
+        self.spend_tracker = spend_tracker
         if type(max_transport_retries) is not int or max_transport_retries < 0:
             raise ValueError("max_transport_retries must be a nonnegative integer")
         for name, value in (("retry_backoff_s", retry_backoff_s),
@@ -184,10 +234,16 @@ class OpenAICompatibleProvider:
         payload = {
             "model": self.model,
             "messages": request.messages(),
-            "temperature": self.temperature,
         }
+        # Explicit null temperature supports models that reject sampling controls.
+        for name in ("temperature", "reasoning_effort", "service_tier"):
+            value = getattr(self, name)
+            if value is not None:
+                payload[name] = value
         if self.json_response_mode:
             payload["response_format"] = {"type": "json_object"}
+        if self.max_output_tokens is not None:
+            payload[self.output_token_parameter] = self.max_output_tokens
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -221,12 +277,21 @@ class OpenAICompatibleProvider:
             A request is nonretryable or its transient retry budget is exhausted.
         ProviderResponseError
             The received envelope is malformed and content repair is permitted.
+        SpendLimitExceeded
+            Reserving another HTTP attempt would exceed the configured spend cap.
         """
         http_request = self.build_http_request(request)
+        payload = json.loads(http_request.data)
         started = time.monotonic()
         backoff_s = min(self.retry_backoff_s, self.retry_backoff_cap_s)
         for attempt in range(self.max_transport_retries + 1):
             retry_after_s = None
+            # Reserve each HTTP attempt independently. Failed or ambiguous
+            # attempts remain charged because the server may have processed them.
+            reservation_id = (
+                self.spend_tracker.reserve(payload)
+                if self.spend_tracker is not None else None
+            )
             try:
                 with self._urlopen(http_request, timeout=self.timeout_s) as response:
                     raw_bytes = response.read()
@@ -269,13 +334,20 @@ class OpenAICompatibleProvider:
         latency_ms = (time.monotonic() - started) * 1000.0
         try:
             raw_response = json.loads(raw_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ProviderResponseError(f"{self.provider_name} returned an invalid chat-completions response.") from exc
+        usage = raw_response.get("usage") if isinstance(raw_response, dict) else None
+        spending = (
+            self.spend_tracker.settle(reservation_id, usage)
+            if self.spend_tracker is not None else None
+        )
+        try:
             choice = raw_response["choices"][0]
             content = choice["message"]["content"]
         except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
             raise ProviderResponseError(f"{self.provider_name} returned an invalid chat-completions response.") from exc
         if not isinstance(content, str):
             raise ProviderResponseError(f"{self.provider_name} returned non-string message content.")
-        usage = raw_response.get("usage")
         return LLMResponse(
             content=content,
             provider=self.provider_name,
@@ -288,14 +360,30 @@ class OpenAICompatibleProvider:
                 "transport_attempts": attempt + 1,
                 "base_url": self.base_url,
                 "temperature": self.temperature,
+                **({"reasoning_effort": self.reasoning_effort} if self.reasoning_effort is not None else {}),
+                **({"service_tier": self.service_tier} if self.service_tier is not None else {}),
                 "timeout_s": self.timeout_s,
                 "json_response_mode": self.json_response_mode,
+                **({"spending": spending} if spending is not None else {}),
             },
         )
 
 
-def build_provider(config: Any) -> LLMProvider:
-    """Build the configured provider while keeping choices out of the NAS loop."""
+def build_provider(config: Any, *, spend_tracker: Any = None) -> LLMProvider:
+    """Build a provider with optional per-attempt spend accounting.
+
+    Parameters
+    ----------
+    config : Any
+        Normalized LLM configuration including provider and output-token settings.
+    spend_tracker : Any, optional
+        Persistent tracker exposing ``reserve(payload)`` and ``settle(id, usage)``.
+
+    Returns
+    -------
+    LLMProvider
+        Configured provider using the shared tracker for every HTTP attempt.
+    """
     provider_name = str(cfg_get(config, "provider", "")).strip().lower()
     if provider_name == "fake":
         return FakeProvider(list(cfg_get(config, "responses", [])), model=str(cfg_get(config, "model", "fake-model")))
@@ -305,12 +393,17 @@ def build_provider(config: Any) -> LLMProvider:
             base_url=str(cfg_get(config, "base_url")),
             api_key_env=str(cfg_get(config, "api_key_env")),
             model=str(cfg_get(config, "model")),
-            temperature=float(cfg_get(config, "temperature", 0.4)),
+            temperature=cfg_get(config, "temperature", 0.4),
+            reasoning_effort=cfg_get(config, "reasoning_effort", None),
+            service_tier=cfg_get(config, "service_tier", None),
             timeout_s=float(cfg_get(config, "timeout_s", 60.0)),
             json_response_mode=bool(
                 cfg_get(config, "json_response_mode", provider_name == "openrouter")
             ),
             extra_headers=dict(cfg_get(config, "extra_headers", {})),
+            max_output_tokens=cfg_get(config, "max_output_tokens", None),
+            output_token_parameter=cfg_get(config, "output_token_parameter", "max_completion_tokens"),
+            spend_tracker=spend_tracker,
             max_transport_retries=cfg_get(config, "max_transport_retries", 5),
             retry_backoff_s=cfg_get(config, "retry_backoff_s", 5.0),
             retry_backoff_cap_s=cfg_get(config, "retry_backoff_cap_s", 60.0),

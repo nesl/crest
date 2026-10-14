@@ -25,6 +25,7 @@ from crest.optimizers.llm.provider import (  # noqa: E402
     ProviderAuthenticationError,
     ProviderResponseError,
     ProviderTransportError,
+    SpendLimitExceeded,
     build_provider,
 )
 
@@ -87,6 +88,165 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
         self.assertEqual(payload["messages"], request().messages())
         self.assertEqual(payload["temperature"], 0.25)
         self.assertEqual(payload["response_format"], {"type": "json_object"})
+        self.assertNotIn("max_tokens", payload)
+        self.assertNotIn("max_completion_tokens", payload)
+
+    def test_optional_reasoning_settings_reach_payload_without_temperature(self) -> None:
+        """Luna reasoning requests omit temperature and preserve explicit billing tier."""
+        provider = build_provider(Dict(provider="openai_compatible",
+            base_url="https://llm.example/v1", api_key_env="TEST_LLM_KEY", model="gpt-6-luna",
+            temperature=None, reasoning_effort="medium", service_tier="default"))
+        with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+            payload = json.loads(provider.build_http_request(request()).data)
+        self.assertNotIn("temperature", payload)
+        self.assertEqual(payload["reasoning_effort"], "medium")
+        self.assertEqual(payload["service_tier"], "default")
+        # Existing callers still send 0.4 without adding new API options.
+        legacy = build_provider(Dict(provider="openrouter", base_url="https://llm.example/v1",
+            api_key_env="TEST_LLM_KEY", model="test"))
+        with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+            legacy_payload = json.loads(legacy.build_http_request(request()).data)
+        self.assertEqual(legacy_payload["temperature"], 0.4)
+        self.assertNotIn("reasoning_effort", legacy_payload)
+        self.assertNotIn("service_tier", legacy_payload)
+
+    def test_direct_optional_request_settings_validate_values(self) -> None:
+        """Direct providers enforce the same request option domain as config loading."""
+        for settings in ({"temperature": True}, {"temperature": float("nan")},
+                         {"reasoning_effort": []}, {"reasoning_effort": "unsupported"},
+                         {"service_tier": "unsupported"}):
+            with self.subTest(settings=settings), self.assertRaises(ValueError):
+                OpenAICompatibleProvider(provider_name="test", base_url="https://llm.example/v1",
+                    api_key_env="TEST_LLM_KEY", model="test", **settings)
+        # Supported advanced values are passed through without coercion.
+        provider = OpenAICompatibleProvider(provider_name="test", base_url="https://llm.example/v1",
+            api_key_env="TEST_LLM_KEY", model="test", reasoning_effort="max", service_tier="fast")
+        with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+            payload = json.loads(provider.build_http_request(request()).data)
+        self.assertEqual(payload["reasoning_effort"], "max")
+        self.assertEqual(payload["service_tier"], "fast")
+
+    def test_output_limit_uses_only_the_configured_parameter(self) -> None:
+        """Output ceilings work independently of a configured spend tracker."""
+        for field in ("max_tokens", "max_completion_tokens"):
+            with self.subTest(field=field):
+                provider = OpenAICompatibleProvider(
+                    provider_name="test", base_url="https://llm.example/v1",
+                    api_key_env="TEST_LLM_KEY", model="test", max_output_tokens=123,
+                    output_token_parameter=field)
+                with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+                    payload = json.loads(provider.build_http_request(request()).data)
+                self.assertEqual(payload[field], 123)
+                self.assertNotIn(({"max_tokens", "max_completion_tokens"} - {field}).pop(), payload)
+
+    def test_invalid_output_limits_and_parameter_names_are_rejected(self) -> None:
+        """Direct construction rejects invalid API limit configuration."""
+        for settings in ({"max_output_tokens": 0}, {"max_output_tokens": True},
+                         {"max_output_tokens": 1.5}, {"output_token_parameter": "limit"}):
+            with self.subTest(settings=settings), self.assertRaises(ValueError):
+                OpenAICompatibleProvider(
+                    provider_name="test", base_url="https://llm.example/v1",
+                    api_key_env="TEST_LLM_KEY", model="test", **settings)
+
+    def test_each_transport_attempt_reserves_before_network_and_settles_usage(self) -> None:
+        """Ambiguous failures retain a reservation and retries reserve afresh."""
+        usage = {"prompt_tokens": 10, "completion_tokens": 8}
+        tracker = Mock()
+        tracker.reserve.side_effect = ["first", "second", "third"]
+        tracker.settle.return_value = {"charged_usd": 0.01}
+        transport = Mock(side_effect=[
+            TimeoutError("response lost"),
+            urllib.error.HTTPError("https://llm.example/v1", 503, "busy", {}, io.BytesIO(b"busy")),
+            FakeHTTPResponse({"choices": [{"message": {"content": "{}"}}], "usage": usage}),
+        ])
+        events = Mock()
+        events.attach_mock(tracker.reserve, "reserve")
+        events.attach_mock(transport, "network")
+        events.attach_mock(tracker.settle, "settle")
+        provider = OpenAICompatibleProvider(
+            provider_name="test", base_url="https://llm.example/v1",
+            api_key_env="TEST_LLM_KEY", model="test", urlopen=transport,
+            sleep=Mock(), spend_tracker=tracker, max_output_tokens=100)
+        with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+            response = provider.complete_json(request())
+        self.assertEqual([event[0] for event in events.mock_calls],
+                         ["reserve", "network", "reserve", "network", "reserve", "network", "settle"])
+        for reservation in tracker.reserve.call_args_list:
+            self.assertEqual(reservation.args[0]["max_completion_tokens"], 100)
+            self.assertEqual(reservation.args[0]["messages"], request().messages())
+        tracker.settle.assert_called_once_with("third", usage)
+        self.assertEqual(response.metadata["spending"], {"charged_usd": 0.01})
+
+    def test_spend_exhaustion_prevents_initial_network_and_later_retry(self) -> None:
+        """A rejected reservation propagates immediately without HTTP or repair."""
+        for retry in (False, True):
+            with self.subTest(retry=retry):
+                tracker = Mock()
+                exhausted = SpendLimitExceeded("budget exhausted")
+                tracker.reserve.side_effect = ["first", exhausted] if retry else exhausted
+                transport = Mock(side_effect=TimeoutError("response lost"))
+                provider = OpenAICompatibleProvider(
+                    provider_name="test", base_url="https://llm.example/v1",
+                    api_key_env="TEST_LLM_KEY", model="test", urlopen=transport,
+                    sleep=Mock(), spend_tracker=tracker)
+                with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+                    with self.assertRaises(SpendLimitExceeded):
+                        provider.complete_json(request())
+                self.assertEqual(transport.call_count, int(retry))
+                tracker.settle.assert_not_called()
+
+    def test_received_usage_settles_before_malformed_envelope_validation(self) -> None:
+        """Billable malformed completions still reconcile provider usage."""
+        usage = {"prompt_tokens": 10, "completion_tokens": 8}
+        for payload in ({"choices": [], "usage": usage},
+                        {"choices": [{"message": {"content": None}}], "usage": usage}):
+            with self.subTest(payload=payload):
+                tracker = Mock()
+                tracker.reserve.return_value = "reservation"
+                provider = OpenAICompatibleProvider(
+                    provider_name="test", base_url="https://llm.example/v1",
+                    api_key_env="TEST_LLM_KEY", model="test",
+                    urlopen=Mock(return_value=FakeHTTPResponse(payload)), spend_tracker=tracker)
+                with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+                    with self.assertRaises(ProviderResponseError):
+                        provider.complete_json(request())
+                tracker.settle.assert_called_once_with("reservation", usage)
+
+    def test_missing_or_non_json_usage_keeps_conservative_accounting(self) -> None:
+        """Missing usage reaches the tracker; unreadable JSON retains its reserve."""
+        for raw_json in (True, False):
+            with self.subTest(raw_json=raw_json):
+                response = FakeHTTPResponse({"choices": [{"message": {"content": "{}"}}]})
+                if not raw_json:
+                    response.payload = b"not JSON"
+                tracker = Mock()
+                tracker.reserve.return_value = "reservation"
+                provider = OpenAICompatibleProvider(
+                    provider_name="test", base_url="https://llm.example/v1",
+                    api_key_env="TEST_LLM_KEY", model="test",
+                    urlopen=Mock(return_value=response), spend_tracker=tracker)
+                with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+                    if raw_json:
+                        provider.complete_json(request())
+                        tracker.settle.assert_called_once_with("reservation", None)
+                    else:
+                        with self.assertRaises(ProviderResponseError):
+                            provider.complete_json(request())
+                        tracker.settle.assert_not_called()
+
+    def test_unexpected_transport_exception_retains_reservation(self) -> None:
+        """Unknown transport failures propagate without releasing potential spend."""
+        tracker = Mock()
+        transport = Mock(side_effect=RuntimeError("unexpected transport failure"))
+        provider = OpenAICompatibleProvider(
+            provider_name="test", base_url="https://llm.example/v1",
+            api_key_env="TEST_LLM_KEY", model="test", urlopen=transport, spend_tracker=tracker)
+        with patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}):
+            with self.assertRaisesRegex(RuntimeError, "unexpected transport"):
+                provider.complete_json(request())
+        tracker.reserve.assert_called_once()
+        tracker.settle.assert_not_called()
+        transport.assert_called_once()
 
     def test_generic_provider_can_omit_json_response_format(self) -> None:
         """Compatibility mode avoids an option unsupported by some models."""
@@ -325,6 +485,7 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
 
     def test_provider_factory_passes_configured_openrouter_settings(self) -> None:
         """The NAS loop can remain unaware of provider-specific constructors."""
+        tracker = Mock()
         provider = build_provider(
             Dict(
                 provider="openrouter",
@@ -338,7 +499,10 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
                 max_transport_retries=7,
                 retry_backoff_s=8.0,
                 retry_backoff_cap_s=90.0,
-            )
+                max_output_tokens=150,
+                output_token_parameter="max_tokens",
+            ),
+            spend_tracker=tracker,
         )
 
         self.assertIsInstance(provider, OpenAICompatibleProvider)
@@ -348,6 +512,9 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
         self.assertEqual(provider.max_transport_retries, 7)
         self.assertEqual(provider.retry_backoff_s, 8.0)
         self.assertEqual(provider.retry_backoff_cap_s, 90.0)
+        self.assertEqual(provider.max_output_tokens, 150)
+        self.assertEqual(provider.output_token_parameter, "max_tokens")
+        self.assertIs(provider.spend_tracker, tracker)
 
 
 if __name__ == "__main__":

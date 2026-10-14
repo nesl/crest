@@ -745,6 +745,10 @@ class ModelFamilyABC(ABC):
         return True
 
 
+class OptimizerBudgetExhausted(RuntimeError):
+    """Stop proposing when an optimizer-owned resource budget cannot fund a round."""
+
+
 class OptimizerABC(ABC):
     """Choose search rounds within CREST's shared Optuna execution lifecycle.
 
