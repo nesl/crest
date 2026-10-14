@@ -202,6 +202,42 @@ class SemanticContextTests(unittest.TestCase):
             "external_flash",
         )
 
+    def test_stm32_profile_resolves_defaults_and_separates_memory_budgets(self) -> None:
+        """Board capacity and address arithmetic never claim a usable budget."""
+        payload = _semantic_record()["payload"]
+        device = payload["device_context"]
+        memory = device["memory_semantics"]
+        self.assertEqual(device["cpu_architecture"], "Arm Cortex-M55")
+        self.assertEqual(device["configured_cpu_clock_mhz"], 600)
+        self.assertIn("legacy", device["execution_backend"])
+        self.assertIn("unverified", device["acceleration_semantics"])
+        self.assertEqual(memory["registered_ram_bytes"], 4 * 1024**2)
+        self.assertEqual(memory["code_image_region_bytes"], 16 * 1024**2)
+        self.assertEqual(memory["board_external_flash_capacity_bytes"], 64 * 1024**2)
+        self.assertEqual(memory["default_address_physical_tail_bytes"], 48 * 1024**2)
+        self.assertIsNone(memory["usable_weights_budget_bytes"])
+        self.assertEqual(payload["runtime_context"]["runtime_mode"], "back_to_back")
+        self.assertEqual(payload["runtime_context"]["latency_budget_ms"], 200.0)
+
+    def test_stm32_cadence_uses_shared_options_and_configured_blob_limit(self) -> None:
+        """Top-level cadence overrides and backend guards follow execution."""
+        payload = _semantic_record(device_config=Dict(
+            name="STM32_NUCLEO_N657X0_Q", hil=True,
+            runtime_mode="cadenced", latency_budget_ms=2000.0,
+            stm32=Dict(weight_storage_mode="external_flash", wake_margin_us=7000,
+                       min_sleep_us=8000, max_external_flash_bytes=123456),
+        ))["payload"]
+        runtime = payload["runtime_context"]
+        self.assertEqual(runtime["runtime_mode"], "cadenced")
+        self.assertEqual(runtime["latency_budget_ms"], 2000.0)
+        self.assertEqual(runtime["wake_margin_us"], 7000)
+        self.assertEqual(runtime["min_sleep_us"], 8000)
+        self.assertIn("per release", runtime["measurement_semantics"])
+        self.assertIn("feature extraction", runtime["measurement_scope"])
+        memory = payload["device_context"]["memory_semantics"]
+        self.assertEqual(memory["configured_external_blob_limit_bytes"], 123456)
+        self.assertEqual(memory["board_external_flash_capacity_bytes"], 64 * 1024**2)
+
     def test_audio_context_contains_classification_and_input_features(self) -> None:
         """Audio semantics expose log-mel shape and class-output meaning."""
         bundle = _bundle(
@@ -344,7 +380,7 @@ class SemanticContextTests(unittest.TestCase):
         ):
             self.assertNotIn(omitted, prompt)
         self.assertFalse(request.metadata["semantic_context_enabled"])
-        self.assertEqual(request.metadata["semantic_context_version"], "v1")
+        self.assertEqual(request.metadata["semantic_context_version"], SEMANTIC_CONTEXT_VERSION)
         self.assertEqual(request.metadata["semantic_context_hash"], disabled["hash"])
 
     def test_enabled_prompt_places_semantics_on_existing_search_schema(self) -> None:

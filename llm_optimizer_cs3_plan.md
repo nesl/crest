@@ -26,7 +26,7 @@ has been run. This document is an implementation plan, not launch authorization.
   Step 6 is complete: see `experiments/cs3/cost_estimate.md`. Offline proxy
   costs are about $0.11–$0.38 at 300 attempts before retries, depending on
   output/reasoning use. The suspended backlog issue is resolved by setting
-  `memory.max_pending_trials: 15`; the updated proxy fits at 48,860/100,000
+  `memory.max_pending_trials: 15`; the updated proxy fits at 51,109/100,000
   input guard units. The user-run API smoke passed; next is deployment verification and bounded HIL preflight.
 
 ## Question
@@ -62,7 +62,9 @@ new TPE run or replicated searches. This establishes feasibility and search
 behavior, not optimizer superiority. A fresh TPE campaign remains possible later.
 The 15 warm-up attempts count toward the existing 200-feasible/300-attempt budget;
 they are not 15 extra free evaluations. Cadenced telemetry is collected, but the
-score remains based on `energy_mj_per_inference`, not energy per cadence release.
+score remains based on `energy_mj_per_inference`. In cadenced mode this metric
+represents measured window energy per release, including wait/Stop/wake overhead;
+active invocation latency is separate from the release period.
 
 ## What we compare (fixed before the run)
 
@@ -385,3 +387,18 @@ Remote source must be staged first; existing workers must release the board.
 
 1. Fourth case study or part of CS3 in the paper.
 2. Whether a Portenta run is wanted later.
+
+## Shared MCU prompt context (2026-10-14)
+
+Semantic context v2 now describes the resolved 600 MHz Cortex-M55 configuration,
+legacy ST Edge AI execution path, external weights placement, memory-region
+meanings, cadence/sleep settings, and measurement scope. NPU use and the usable
+weights budget remain explicitly unverified. Both memory and candidate prompts
+use this shared builder. The smoke now reuses the production context and search
+space builders; its history is synthetic and dataset metadata is reconstructed
+offline. Full prompts can be reviewed with `api_smoke.py --render-only`.
+
+The updated suspended-memory sizing proxy fits at 51,109/100,000 input guard
+units. The measured costs above came from the earlier smoke without this context;
+no paid API retest or hardware test has run for this revision. Context identity
+has changed to v2: start a fresh CS3 study rather than resuming a v1 study.

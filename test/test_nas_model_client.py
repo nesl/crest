@@ -1967,7 +1967,7 @@ class SmokeTestTests(unittest.TestCase):
             self.assertTrue(request_record["metadata"]["semantic_context_enabled"])
             self.assertEqual(
                 request_record["metadata"]["semantic_context_version"],
-                "v1",
+                "v2",
             )
             self.assertEqual(
                 len(request_record["metadata"]["semantic_context_hash"]),

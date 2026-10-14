@@ -61,7 +61,7 @@ Offline cost estimation is complete; see [cost_estimate.md](cost_estimate.md).
 CS3 bounds pending prompt history and catch-up summary chunks to 15 records with
 `memory.max_pending_trials: 15`. Suspended memory retains the newest 15 pending
 records outside the recent 15 and reports omissions; saved evidence is preserved.
-The updated backlog proxy fits the 100,000 input guard at 48,860 guard units.
+The updated backlog proxy fits the 100,000 input guard at 51,109 guard units (semantic context v2).
 
 The user-run bounded API smoke passed on 2026-10-14 (two requests; $0.000866375
 at configured accounting rates). See `api_smoke_usage.json` and the full exact
@@ -73,3 +73,14 @@ do not start the full campaign. Do not run this HIL-enabled YAML for an offline 
 The complete manual hardware-preflight commands and stop conditions are in
 [hardware_preflight.md](hardware_preflight.md). The config generator prepares
 files only; it does not start hardware, training, or a campaign.
+
+The corrected `api_smoke.py` now uses the campaign's shared search-space and
+semantic-context builders, including parameter semantics and a versioned MCU
+profile: configured clock/runtime, memory-region meanings, external weights,
+cadence, and measurement scope. NPU use and usable weights capacity are explicitly
+unverified; measured observations take precedence over architectural priors.
+Use `--render-only --output /path/to/new-directory` to save both complete prompts
+without a provider connection or API key. Scores/states remain synthetic and
+dataset metadata is reconstructed offline. The preview uses a fake empty memory
+update; it has not been retested against the paid API. The original successful
+smoke above predates this correction.
