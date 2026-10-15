@@ -136,3 +136,5 @@ incomplete. The first coverage-complete prefix is recorded. Two networks per
 resolved cell is block-count/stride breadth, not full search-space coverage; the
 fixed phase allocation is a hypothesis, with no adaptive plateau mechanism.
 Archive the input snapshot and output provenance when publishing comparisons.
+
+Cache counters omitted by the API remain unknown. `cache_counter_completeness` and `cache_evidence_status` report whether read and write evidence is available; candidate-generation status is independent. Zero writes are confirmed only when every response supplies an explicit zero write counter. The back-to-back fixed-prefix probe does not establish reuse as history grows or retention across hardware-paced delays. Exact secret-free HTTP bodies are durably saved under `wire_requests/` before capped requests are sent, including requests rejected with HTTP 400.

@@ -186,7 +186,7 @@ optimizer:
     max_usd: 5.0
     max_input_tokens: 100000
     max_output_tokens: 8192  # Includes reasoning tokens.
-    output_token_parameter: max_completion_tokens
+    output_token_parameter: max_output_tokens
     # Conservative input rate includes the documented 1.25x cache-write price.
     # Standard, short-context, nonregional pricing verified 2026-10-13.
     input_usd_per_million_tokens: 0.125

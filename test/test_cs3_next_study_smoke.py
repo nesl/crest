@@ -210,3 +210,32 @@ def test_paid_cache_probe_requires_second_response_api_hit(saved, monkeypatch, c
     assert len(calls) == 2
     assert report["status"] == expected
     assert report["cache_confirmed"] == (cached_tokens > 0)
+
+
+def test_missing_cache_writes_remain_unknown_with_confirmed_reads(saved, monkeypatch):
+    # Purpose: a real read can confirm reuse while absent write evidence stays unknown.
+    import io
+    saved.test_cache = True
+    saved.run_paid = True
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-test-key")
+    original_build = smoke.build_provider
+
+    def build(*args, **kwargs):
+        provider = original_build(*args, **kwargs)
+
+        def transport(request, timeout=None):
+            raw = json.loads(smoke.cache_fixture_transport(request).read())
+            raw["usage"]["input_tokens_details"] = {"cached_tokens": 1280}
+            return io.BytesIO(json.dumps(raw).encode())
+
+        provider._urlopen = transport
+        return provider
+
+    monkeypatch.setattr(smoke, "build_provider", build)
+    report = smoke.run(saved)
+    assert report["status"] == "passed"
+    assert report["cache_confirmed"]
+    assert report["cache_writes"] is None
+    assert report["cache_reads"] == 2560
+    assert report["cache_evidence_status"] == "incomplete"
+    assert not report["no_cache_writes_confirmed"]

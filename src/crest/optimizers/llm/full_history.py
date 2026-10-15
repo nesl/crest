@@ -177,7 +177,7 @@ def outcome_class(trial: Any) -> str:
     classification = failure_class(trial)
     if classification == "infrastructure":
         return "infrastructure"
-    if attrs.get("feasibility_status") == "infeasible" or attrs.get("feasible") is False:
+    if attrs.get("feasibility_status") == "infeasible":
         return "infeasible"
     if classification == "deterministic":
         return "deterministic"
@@ -188,6 +188,59 @@ def outcome_class(trial: Any) -> str:
             and values and any(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in values)):
         return "successful"
     return "unclassified"
+
+
+def outcome_reason(trial: Any) -> Any:
+    """Select useful failure evidence without presenting success as a failure.
+
+    Parameters
+    ----------
+    trial : Any
+        Trial carrying persisted outcome attributes.
+
+    Returns
+    -------
+    Any
+        Failure reason, or None for successful and pending work.
+    """
+    if outcome_class(trial) in {"successful", "pending"}:
+        return None
+    attrs = getattr(trial, "user_attrs", {}) or {}
+    for value in (attrs.get("feasibility_reason"), attrs.get("failure_reason"),
+                  attrs.get("prune_reason"), attrs.get("error_code_label"),
+                  (getattr(trial, "system_attrs", {}) or {}).get("fail_reason")):
+        if value not in (None, "", HIL_MASTER_SUCCESS, "HIL_MASTER_SUCCESS"):
+            return value
+    return None
+
+
+def observed_measurement(trial: Any, name: str) -> Any:
+    """Hide ambiguous penalty defaults while preserving supported real readings.
+
+    Parameters
+    ----------
+    trial : Any
+        Persisted measurement and feasibility evidence.
+    name : str
+        Measurement attribute name.
+
+    Returns
+    -------
+    Any
+        Available reading, or None when missing or a possible penalty sentinel.
+    """
+    attrs = getattr(trial, "user_attrs", {}) or {}
+    value = attrs.get(name)
+    if not _available_measurement(value):
+        return None
+    # Old producers set absent timing/energy to 10000 on the penalty path.
+    # Explicit evaluated feasibility or successful completion supports a real
+    # reading; older failed records without that evidence remain unknown.
+    if (name in {"latency_ms", "energy_mj_per_inference"} and value == 10000
+            and attrs.get("feasibility_status") not in {"feasible", "infeasible"}
+            and outcome_class(trial) != "successful"):
+        return None
+    return value
 
 
 def _compact_metric(value: Any) -> Any:
@@ -219,23 +272,53 @@ def build_full_history(history: Any, *, directions: tuple[str, ...] = ()) -> dic
         score = values[0] if values and len(values) == 1 and isinstance(values[0], (int, float)) and math.isfinite(values[0]) else None
         metrics = attrs.get("task_metrics", {})
         macro = metrics.get("macro_f1") if isinstance(metrics, Mapping) else None
-        reason = (attrs.get("failure_reason") or attrs.get("prune_reason") or attrs.get("error_code_label")
-                  or (getattr(trial, "system_attrs", {}) or {}).get("fail_reason"))
+        reason = outcome_reason(trial)
         state = _state_name(trial).lower()
-        successful = outcome_class(trial) == "successful"
+        outcome = outcome_class(trial)
         row = [trial.number, *[params.get(name) for name in RAW_FIELDS],
                decoded["widths"] if decoded else None,
                decoded_fingerprint(params).rsplit(":", 1)[-1] if decoded else None, state,
                attrs.get("feasibility_status", attrs.get("feasible")),
-               None if successful else failure_class(trial), None if successful else reason,
+               None if outcome in {"successful", "pending"} else outcome, reason,
                _compact_metric(score), _compact_metric(macro) if _available_measurement(macro) else None,
-               *[_compact_metric(attrs.get(name)) if _available_measurement(attrs.get(name)) else None for name in MEASUREMENT_FIELDS]]
+               *[_compact_metric(observed_measurement(trial, name)) for name in MEASUREMENT_FIELDS]]
         if state in {"complete", "fail", "pruned"}:
             rows.append(row)
         elif state in {"running", "waiting"}:
             pending.append(row)
-    return to_plain({"columns": list(HISTORY_COLUMNS), "rows": rows, "pending": pending,
-                     "directions": list(directions), "decoded_schema": DECODED_SCHEMA_VERSION}, nonfinite_to_none=True)
+    table = {"columns": list(HISTORY_COLUMNS), "rows": rows, "pending": pending,
+             "directions": list(directions), "decoded_schema": DECODED_SCHEMA_VERSION}
+    _intern_failure_reasons(table)
+    return to_plain(table, nonfinite_to_none=True)
+
+
+def _intern_failure_reasons(table: dict[str, Any]) -> None:
+    """Assign IDs to observed explanations in first-appearance order.
+
+    Parameters
+    ----------
+    table : dict
+        Columnar history containing only explanations observed so far.
+
+    Returns
+    -------
+    None
+        Integer references replace reason strings with an explicit encoding key.
+    """
+    index = table["columns"].index("failure_reason")
+    rows = table["rows"] + table["pending"]
+    values = [row[index] for row in rows]
+    if any(value is not None and not isinstance(value, str) for value in values):
+        return
+    reasons = list(dict.fromkeys(value for value in values if value is not None))
+    if not reasons:
+        return
+    mapping = {reason: number for number, reason in enumerate(reasons)}
+    encoded = [mapping[value] if value is not None else None for value in values]
+    metadata = {"failure_reason_encoding": "dictionary_index", "failure_reasons": reasons}
+    for row, value in zip(rows, encoded):
+        row[index] = value
+    table.update(metadata)
 
 
 def _choices(descriptor: Any, name: str) -> tuple[Any, ...]:

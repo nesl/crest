@@ -320,7 +320,7 @@ def run(args):
         max_transport_retries=0, max_output_tokens=8192, max_input_tokens=100000, max_usd="0.05",
         input_usd_per_million_tokens="0.125", output_usd_per_million_tokens="0.50",
         pricing_source="Configured conservative smoke prices; verify before any paid call",
-        output_token_parameter="max_completion_tokens")
+        output_token_parameter="max_output_tokens")
     tracker = SpendTracker(output, settings)
     provider = build_provider(settings, spend_tracker=tracker)
     if not args.run_paid:
@@ -374,7 +374,7 @@ def run(args):
         "cache_policy": "explicit_no_breakpoints", "cache_reads": 0, "cache_writes": 0}
     if test_cache:
         confirmed = bool(args.run_paid and len(cache_usages) == 2
-            and cache_usages[1].get("cached_tokens", 0) > 0 and not failure)
+            and (cache_usages[1].get("cached_tokens") or 0) > 0 and not failure)
         report.update(status="rendered" if args.render_only and not failure else "passed" if confirmed else "inconclusive",
             cache_policy="explicit_fixed_prefix_probe", cache_confirmed=confirmed,
             cache_probe_usage=cache_usages,
@@ -383,10 +383,22 @@ def run(args):
     report["http_attempts"] = len(report["spending"]["reservations"])
     report["conservative_per_attempt_reservation_usd"] = str(tracker.reservation_usd)
     report["cache_savings_assumed"] = False
+    counters_complete = {"cache_reads": True, "cache_writes": True}
     for response_path in (output / "requests").glob("*.response.json"):
         usage = json.loads(response_path.read_text()).get("usage") or {}
-        report["cache_reads"] += usage.get("cached_tokens", 0) or 0
-        report["cache_writes"] += usage.get("cache_write_tokens", 0) or 0
+        for total, counter in (("cache_reads", "cached_tokens"), ("cache_writes", "cache_write_tokens")):
+            value = usage.get(counter)
+            if value is None:
+                counters_complete[total] = False
+            else:
+                report[total] += value
+    report["cache_counter_completeness"] = counters_complete
+    for total, complete in counters_complete.items():
+        if not complete:
+            report[total] = None
+    report["no_cache_writes_confirmed"] = bool(counters_complete["cache_writes"] and
+        report["http_attempts"] > 0 and report["cache_writes"] == 0)
+    report["cache_evidence_status"] = "complete" if all(counters_complete.values()) and report["http_attempts"] else "incomplete"
     (output / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     return report
 

@@ -124,3 +124,118 @@ def test_300_columnar_trials_with_pending_and_repair_fit_guard(tmp_path, monkeyp
     assert len(wire.data) + 1024 <= 100000
     assert len(context.full_history["rows"]) == 300
     assert len(context.full_history["pending"]) == 2
+
+
+def test_real_component_300_rows_bounded_refill_and_malformed_repair(tmp_path, monkeypatch):
+    from crest.optimizers.llm.full_history import decoded_fingerprint
+    from crest.optimizers.llm.provider import build_provider
+    # Exercise actual enrichment, real decoding, local parents, and worst-case
+    # duplicate feedback rather than injecting a hand-written feedback string.
+    saved = json.loads((ROOT / "test/fixtures/cs3_legacy_request_000088.json").read_text())
+    payload = json.loads(saved["messages"][1]["content"])
+    path = tmp_path / "context.jsonl"
+    path.write_text(json.dumps(payload) + "\n")
+    base = SMOKE.load_context(path)
+    seeds = payload["recent_trials"]
+    history = []
+    for number in range(300):
+        seed = seeds[number % len(seeds)]
+        attrs = {"task_metrics": {"macro_f1": 0.712345678901234},
+                 "latency_ms": 13.1234567890123, "energy_mj_per_inference": 0.123456789012345,
+                 "feasibility_status": "feasible" if number < 2 else "infeasible",
+                 "feasible": number < 2,
+                 "feasibility_reason": "Latency exceeds deployment constraint" if number >= 2 else ""}
+        history.append(TrialRecord(number, "COMPLETE", seed["params"], (0.712345678901234,), attrs))
+    enriched = enrich_full_history(replace(base, attempted_trials=300, feasible_completed_trials=2), history)
+    assert enriched.eligible_parents
+    parent = enriched.eligible_parents[0]
+    # Choose a valid unused graph through descriptor choices and the real decoder.
+    used = {decoded_fingerprint(t.params) for t in history}
+    local = dict(parent["params"])
+    for name in ("dropout_rate", "activation", "dense_units", "base_channels"):
+        for value in base.descriptor[name].choices:
+            candidate = {**local, name: value}
+            if decoded_fingerprint(candidate) not in used:
+                local = candidate
+                break
+        if decoded_fingerprint(local) not in used:
+            break
+    assert decoded_fingerprint(local) not in used
+    duplicate = {"params": history[0].params, "intent": "exploration", "rationale": "r" * 2000}
+    accepted = {"params": local, "intent": "local", "parent_trial": parent["trial_number"],
+                "rationale": "r" * 2000, "intended_change": "Probe one decoded graph change."}
+    responses = [{"candidates": [accepted] + [duplicate] * 5},
+                 {"candidates": ["malformed" * 2000] * 20},
+                 {"candidates": [duplicate] * 5}, {"candidates": [duplicate] * 5}]
+    config = {"type": "llm_generator", "llm": {"provider": "fake", "responses": responses,
+        "history_mode": "full", "require_rationale": True, "memory": {"enabled": False}, "batch_size": 5}}
+    optimizer = LLMGeneratorOptimizer()
+    optimizer.initialize(SearchContext(base.study_name, tmp_path / "campaign", ("score",),
+        ("maximize",), base.objective_summary, base.semantic_context, base.descriptor,
+        "audio_dscnn", True), config)
+    result = optimizer.propose_round(tuple(history), BudgetSnapshot(300, 2, 200, 305, 5))
+    assert len(result.candidates) == 1 and result.candidates[0].params == local
+    assert result.candidates[0].provenance["parent_trial"] == parent["trial_number"]
+    requests = optimizer.provider.requests
+    assert len(requests) == 4
+    monkeypatch.setenv("CREST_TEST_KEY", "offline")
+    wire_provider = build_provider({"provider": "openai_responses", "base_url": "https://api.openai.com/v1",
+        "model": "gpt-6-luna", "api_key_env": "CREST_TEST_KEY", "temperature": None,
+        "reasoning_effort": "medium", "max_output_tokens": 8192})
+    bounds = []
+    for request in requests:
+        # Use the same compact secret-free wire body as the spending guard.
+        wire = wire_provider.build_http_request(request)
+        wire_payload = json.loads(wire.data)
+        bound = len(json.dumps(wire_payload, separators=(",", ":")).encode()) + 1024
+        bounds.append(bound)
+        assert bound <= 100000
+    assert enriched.full_history["failure_reason_encoding"] == "dictionary_index"
+    reasons = enriched.full_history["failure_reasons"]
+    reason_index = enriched.full_history["columns"].index("failure_reason")
+    for row in enriched.full_history["rows"][2:]:
+        assert reasons[row[reason_index]] == "Latency exceeds deployment constraint"
+    for request in requests[1:]:
+        feedback = json.loads(json.loads(request.user_prompt)["current_request"]["repair_feedback"])
+        assert len(json.dumps(feedback)) < 4000
+        assert "rationale" not in feedback["retained_candidates"][0]
+        assert feedback["rejections"][0]["code"] == "duplicate_raw"
+    repair_feedback = json.loads(json.loads(requests[2].user_prompt)["current_request"]["repair_feedback"])
+    assert "repair" in repair_feedback
+    assert len(enriched.full_history["rows"]) == 300
+
+
+def test_coverage_completion_transition_labels_python_policy(tmp_path):
+    from crest.optimizers.llm.full_history import candidate_cell
+    from crest.optimizers.llm.search_space import SearchParam, SearchSpaceDescriptor
+    from crest.optimizers.llm.enqueue import generate_llm_batch
+    from crest.optimizers.llm.provider import FakeProvider
+    from crest.optimizers.llm.ledger import LLMLedger
+    import random
+    # Restrict to one real decoded cell: a success plus explicit infeasibility
+    # completes coverage; pending reservations alone never complete it.
+    saved = json.loads((ROOT / "test/fixtures/cs3_legacy_request_000088.json").read_text())
+    path = tmp_path / "context.jsonl"
+    path.write_text(saved["messages"][1]["content"] + "\n")
+    base = SMOKE.load_context(path)
+    raw = {name: param.choices[0] for name, param in base.descriptor.items()}
+    descriptor = SearchSpaceDescriptor(tuple(SearchParam(name, "categorical", choices=(raw[name],))
+        if name in {"num_blocks", "stride_schedule"} else param for name, param in base.descriptor.items()))
+    base = replace(base, descriptor=descriptor, batch_size=2, attempted_trials=0,
+                   feasible_completed_trials=0)
+    altered = {**raw, "activation": base.descriptor["activation"].choices[-1]}
+    history = (TrialRecord(0, "COMPLETE", raw, (0.7,), {"feasibility_status": "feasible"}),
+               TrialRecord(1, "PRUNED", altered, None, {"feasibility_status": "infeasible"}))
+    before = enrich_full_history(base, history[:1])
+    assert not before.coverage["goal_complete"] and len(before.exploration_targets) == 1
+    after = enrich_full_history(base, history)
+    assert after.coverage["goal_complete"] and not after.exploration_targets
+    candidate = {**raw, "dropout_rate": base.descriptor["dropout_rate"].choices[-1]}
+    provider = FakeProvider([{"candidates": [{"params": candidate, "intent": "exploration", "rationale": "Explore after coverage."}]}])
+    result = generate_llm_batch(history, provider, replace(after, allocation={"exploration": 1}, batch_size=1),
+        LLMLedger(tmp_path / "ledger"), prompt_version="test", max_repair_attempts=0,
+        max_refill_attempts=0, rng=random.Random(0))
+    assert result[0].provenance["exploration_policy"] == "post_coverage"
+    pending = (TrialRecord(2, "WAITING", raw, None), TrialRecord(3, "RUNNING", altered, None))
+    with pytest.raises(ValueError, match="already pending"):
+        enrich_full_history(replace(base, batch_size=1), pending)

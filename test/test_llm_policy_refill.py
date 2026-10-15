@@ -111,9 +111,9 @@ def test_random_fallback_rejects_decoded_alias():
 
 
 
-def test_confirmed_boolean_infeasibility_blocks_reproposal():
+def test_boolean_only_failure_is_retryable():
     from crest.pipeline_types import TrialRecord
-    # Failed-but-confirmed infeasible designs remain blocked in full mode.
+    # A negative boolean without explicit status is not confirmed infeasibility.
     prior = TrialRecord(number=0, state="FAIL", params={"width": 2, "mode": "small"},
                         values=None, user_attrs={"feasible": False}, system_attrs={})
     provider = FakeProvider([{"candidates": [entry(2), entry(3)]}])
@@ -121,7 +121,7 @@ def test_confirmed_boolean_infeasibility_blocks_reproposal():
     with tempfile.TemporaryDirectory() as directory:
         proposals = generate_llm_batch((prior,), provider, ctx, LLMLedger(Path(directory)),
             prompt_version="test", max_repair_attempts=0, max_refill_attempts=0, rng=random.Random(0))
-    assert proposals[0].params["width"] == 3
+    assert proposals[0].params["width"] == 2
 
 
 
@@ -156,7 +156,7 @@ def test_duplicate_feedback_excludes_unrelated_artifact_logs():
         feedback = (Path(directory)/"rejected_candidates.jsonl").read_text()
         assert "UNRELATED_BUILD_ARTIFACT" not in feedback and len(feedback) < 3000
         assert str(score) in feedback and "1.23456789012345" in feedback
-        assert "truncated failure detail" in feedback
+        assert "truncated failure detail" not in feedback  # Successful work has no failure label.
 
 
 def test_many_duplicate_matches_keep_ids_without_repeating_details():
@@ -171,3 +171,72 @@ def test_many_duplicate_matches_keep_ids_without_repeating_details():
     assert len(feedback["match_details"]) == 3
     assert feedback["additional_details_in_full_history"] == 297
     assert len(message) < 3000
+
+
+def test_direct_full_mode_budget_limits(tmp_path):
+    import pytest
+    # The public generation boundary rejects excessive budgets before any call.
+    ctx = replace(context(1), full_history_mode=True, allocation={"exploration": 1})
+    for repairs, refills in [(2, 0), (0, 3), (-1, 0), (True, 0)]:
+        provider = FakeProvider([])
+        with pytest.raises(ValueError, match="repair attempts"):
+            generate_llm_batch((), provider, ctx, LLMLedger(tmp_path), prompt_version="test",
+                max_repair_attempts=repairs, max_refill_attempts=refills, rng=random.Random(0))
+        assert not provider.requests
+
+
+def test_partial_input_guard_preserves_accepted_and_actual_reason(tmp_path):
+    from crest.optimizers.llm.spending import SpendTracker
+    from crest.optimizers.llm.prompt_builder import build_candidate_request
+    from test.test_llm_spending import configuration
+    # Exercise the real pre-send size guard: initial request fits exactly, while
+    # the retained-candidate refill exceeds it without reaching another fake call.
+    ctx = replace(context(2), full_history_mode=True, allocation={"exploration": 2})
+    initial = build_candidate_request(ctx, prompt_version="test")
+    bound = len(json.dumps(initial.messages(), separators=(",", ":")).encode()) + 1024
+    tracker = SpendTracker(tmp_path / "spend", configuration(max_usd="1", max_input_tokens=bound))
+    class GuardedProvider(FakeProvider):
+        def complete_json(self, request):
+            """Apply the production size guard before any simulated content call."""
+            tracker.reserve({"messages": request.messages()})
+            return super().complete_json(request)
+    provider = GuardedProvider([{"candidates": [entry(2)]}])
+    result = generate_llm_batch((), provider, ctx, LLMLedger(tmp_path), prompt_version="test",
+        max_repair_attempts=1, max_refill_attempts=2, rng=random.Random(0))
+    assert [p.params["width"] for p in result] == [2]
+    assert len(provider.requests) == 1
+    events = [json.loads(x) for x in (tmp_path / "optimizer_events.jsonl").read_text().splitlines()]
+    assert events[-1]["unfilled_reason"] == "input_guard"
+
+
+def test_penalty_pruned_retry_eligibility_matches_rows_and_coverage(tmp_path):
+    from test.test_llm_full_history import params, trial
+    from test.test_llm_full_context import SMOKE, ROOT
+    from crest.optimizers.llm.full_history import build_full_history, build_coverage, candidate_cell
+    from crest.optimizers.llm.prompt_builder import enrich_full_history
+    # Use actual penalty-shaped attributes and real decoder identity throughout.
+    saved = json.loads((ROOT / "test/fixtures/cs3_legacy_request_000088.json").read_text())
+    path = tmp_path / "context.jsonl"
+    path.write_text(saved["messages"][1]["content"] + "\n")
+    base = SMOKE.load_context(path)
+    raw = {name: param.choices[0] for name, param in base.descriptor.items()}
+    penalty = dict(feasible=False, feasibility_status="not_evaluated", pruned=True,
+        prune_reason="HIL fatal error", latency_ms=10000.0, energy_mj_per_inference=10000.0)
+    history = [trial(0, "PRUNED", raw, **penalty)]
+    coverage = build_coverage(history, base.descriptor)
+    cell = next(c for c in coverage["cells"] if c["cell_id"] == candidate_cell(raw))
+    assert cell["informative"] == 0 and cell["unclassified"] == 1
+    row = dict(zip(build_full_history(history)["columns"], build_full_history(history)["rows"][0]))
+    assert row["failure_class"] == "unclassified" and row["latency_ms"] is None
+    ctx = replace(enrich_full_history(base, history), allocation={"exploration": 1}, batch_size=1,
+                  exploration_targets=({"cell_id": candidate_cell(raw)},))
+    for state, classification, accepted in [("PRUNED", None, True), ("FAIL", None, True),
+            ("PRUNED", "infrastructure", True), ("FAIL", "deterministic", False)]:
+        attrs = dict(penalty)
+        if classification:
+            attrs["measurement_failure_class"] = classification
+        prior = trial(0, state, raw, **attrs)
+        provider = FakeProvider([{"candidates": [{"params": raw, "intent": "exploration", "rationale": "Retry unknown evidence"}]}])
+        result = generate_llm_batch((prior,), provider, ctx, LLMLedger(tmp_path / f"{state}-{classification}"),
+            prompt_version="test", max_repair_attempts=0, max_refill_attempts=0, rng=random.Random(0))
+        assert (result[0].provenance["proposal_source"] == "llm") == accepted

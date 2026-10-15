@@ -41,7 +41,7 @@ def test_columnar_partial_reconstruction_and_failure_visibility():
     assert [row[0] for row in table["rows"]] == [3, 200]
     row = dict(zip(table["columns"], table["rows"][1]))
     assert row["base_channels"] == 8 and row["num_blocks"] == 3
-    assert row["failure_class"] == "unclassified" and row["failure_reason"] == "lost worker"
+    assert row["failure_class"] == "unclassified" and table["failure_reasons"][row["failure_reason"]] == "lost worker"
     assert row["score"] is None and row["macro_f1"] is None
     assert table["pending"][0][0] == 201
     assert dict(zip(table["columns"], table["rows"][0]))["latency_ms"] is None
@@ -114,5 +114,49 @@ def test_successful_rows_have_no_failure_while_real_errors_remain_visible():
     table = build_full_history([good, bad, trial(2, "FAIL")])
     rows = [dict(zip(table["columns"], row)) for row in table["rows"]]
     assert rows[0]["failure_class"] is None and rows[0]["failure_reason"] is None
-    assert rows[1]["failure_class"] == "unclassified" and rows[1]["failure_reason"] == "device error"
+    assert rows[1]["failure_class"] == "unclassified" and table["failure_reasons"][rows[1]["failure_reason"]] == "device error"
     assert rows[2]["failure_class"] == "unclassified"
+
+
+def test_penalty_outcomes_reasons_and_real_sentinel_readings():
+    from crest.optimizers.llm.full_history import outcome_class
+    # Distinguish the actual penalty convention from confirmed constraint evidence.
+    penalty = dict(feasible=False, feasibility_status="not_evaluated", pruned=True,
+        latency_ms=10000.0, energy_mj_per_inference=10000.0, prune_reason="HIL fatal error")
+    cases = [trial(0, "PRUNED", **penalty), trial(1, "FAIL", **penalty,
+                 measurement_failure_class="infrastructure"),
+             trial(2, "PRUNED", **penalty, candidate_failure_class="deterministic"),
+             trial(3, "PRUNED", feasibility_status="infeasible", feasible=False,
+                 feasibility_reason="latency exceeds limit", error_code_label="HIL_MASTER_SUCCESS",
+                 latency_ms=10000.0),
+             trial(4, "WAITING", **penalty),
+             trial(5, latency_ms=10000.0, energy_mj_per_inference=10000.0)]
+    assert [outcome_class(t) for t in cases] == ["unclassified", "infrastructure", "deterministic",
+                                               "infeasible", "pending", "successful"]
+    table = build_full_history(cases)
+    rows = {r[0]: dict(zip(table["columns"], r)) for r in table["rows"] + table["pending"]}
+    for number in (0, 1, 2):
+        assert rows[number]["latency_ms"] is None and rows[number]["energy_mj_per_inference"] is None
+    assert rows[3]["failure_class"] == "infeasible"
+    assert table["failure_reasons"][rows[3]["failure_reason"]] == "latency exceeds limit"
+    assert rows[3]["latency_ms"] == 10000
+    assert rows[4]["failure_class"] is None and rows[4]["failure_reason"] is None
+    assert rows[5]["latency_ms"] == 10000 and rows[5]["energy_mj_per_inference"] == 10000
+
+
+def test_reason_dictionary_grows_only_when_a_new_error_is_observed():
+    # New errors append; repeated errors reuse an ID without rewriting earlier rows.
+    evidence = [trial(0, "FAIL", failure_reason="x error"),
+                trial(1, "FAIL", failure_reason="x error"),
+                trial(2, "FAIL", failure_reason="y error"),
+                trial(3, "FAIL", failure_reason="x error")]
+    previous = []
+    for count, expected in ((1, ["x error"]), (2, ["x error"]),
+                            (3, ["x error", "y error"]), (4, ["x error", "y error"])):
+        table = build_full_history(evidence[:count])
+        assert table["failure_reasons"] == expected
+        assert table["rows"][:len(previous)] == previous
+        previous = table["rows"]
+    index = table["columns"].index("failure_reason")
+    assert [row[index] for row in table["rows"]] == [0, 0, 1, 0]
+    assert "failure_reasons" not in build_full_history([trial(0)])

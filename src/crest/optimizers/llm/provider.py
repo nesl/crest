@@ -180,12 +180,13 @@ class OpenAICompatibleProvider:
             type(max_output_tokens) is not int or max_output_tokens <= 0
         ):
             raise ValueError("max_output_tokens must be a positive integer or None")
-        if not isinstance(output_token_parameter, str) or output_token_parameter not in {
-            "max_tokens", "max_completion_tokens"
-        }:
-            raise ValueError("output_token_parameter must be max_tokens or max_completion_tokens")
+        allowed_parameters = {"max_tokens", "max_completion_tokens"}
+        if self.provider_name == "openai_responses":
+            allowed_parameters.add("max_output_tokens")
+        if not isinstance(output_token_parameter, str) or output_token_parameter not in allowed_parameters:
+            raise ValueError(f"output_token_parameter must be one of {sorted(allowed_parameters)}")
         self.max_output_tokens = max_output_tokens
-        self.output_token_parameter = output_token_parameter
+        self.output_token_parameter = "max_output_tokens" if self.provider_name == "openai_responses" else output_token_parameter
         self.spend_tracker = spend_tracker
         if type(max_transport_retries) is not int or max_transport_retries < 0:
             raise ValueError("max_transport_retries must be a nonnegative integer")
@@ -284,6 +285,25 @@ class OpenAICompatibleProvider:
         """
         http_request = self.build_http_request(request)
         payload = json.loads(http_request.data)
+        def transport_error(error_type, message):
+            """Attach the exact secret-free request to a transport failure.
+
+            Parameters
+            ----------
+            error_type : type
+                Provider exception class.
+            message : str
+                Transport diagnostic.
+
+            Returns
+            -------
+            ProviderError
+                Exception carrying the request body for ledger persistence.
+            """
+            error = error_type(message)
+            error.wire_payload = payload
+            return error
+
         started = time.monotonic()
         backoff_s = min(self.retry_backoff_s, self.retry_backoff_cap_s)
         for attempt in range(self.max_transport_retries + 1):
@@ -306,11 +326,11 @@ class OpenAICompatibleProvider:
                     error_body = "error response body could not be read"
                 message = f"{self.provider_name} HTTP {exc.code}: {error_body}"
                 if exc.code in {401, 402, 403}:
-                    raise ProviderAuthenticationError(
+                    raise transport_error(ProviderAuthenticationError,
                         f"{message}. Check {self.api_key_env}, account access, and available credits."
                     ) from exc
                 if not (exc.code == 429 or 500 <= exc.code <= 599):
-                    raise ProviderTransportError(
+                    raise transport_error(ProviderTransportError,
                         f"{message}. Check provider/model configuration before resuming."
                     ) from exc
                 failure = exc
@@ -320,12 +340,12 @@ class OpenAICompatibleProvider:
                 failure = exc
                 reason = f"{self.provider_name} request failed: {exc}"
             if attempt == self.max_transport_retries:
-                raise ProviderTransportError(
+                raise transport_error(ProviderTransportError,
                     f"{reason}. Exhausted {attempt + 1} transport attempts; "
                     "check provider availability before resuming."
                 ) from failure
             if retry_after_s is not None and retry_after_s > self.retry_backoff_cap_s:
-                raise ProviderTransportError(
+                raise transport_error(ProviderTransportError,
                     f"{reason}. Retry-After requires {retry_after_s:g}s, exceeding "
                     f"retry_backoff_cap_s={self.retry_backoff_cap_s:g}s; stopped "
                     "without retrying before the server deadline. Increase the cap "
@@ -458,8 +478,8 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
             **usage,
             "prompt_tokens": usage.get("input_tokens"),
             "completion_tokens": usage.get("output_tokens"),
-            "cached_tokens": details.get("cached_tokens", 0),
-            "cache_write_tokens": details.get("cache_write_tokens", 0),
+            "cached_tokens": details.get("cached_tokens"),
+            "cache_write_tokens": details.get("cache_write_tokens"),
         }
 
     def normalize_response(self, raw: Any, usage: Any, payload: dict[str, Any],
@@ -554,7 +574,7 @@ def build_provider(config: Any, *, spend_tracker: Any = None) -> LLMProvider:
             base_url=str(cfg_get(config, "base_url")),
             api_key_env=str(cfg_get(config, "api_key_env")),
             model=str(cfg_get(config, "model")),
-            temperature=cfg_get(config, "temperature", 0.4),
+            temperature=cfg_get(config, "temperature", None if provider_name == "openai_responses" else 0.4),
             reasoning_effort=cfg_get(config, "reasoning_effort", None),
             service_tier=cfg_get(config, "service_tier", None),
             timeout_s=float(cfg_get(config, "timeout_s", 60.0)),

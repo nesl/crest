@@ -112,7 +112,7 @@ def test_normalized_response_and_conservative_cache_accounting(tmp_path, llm_req
     assert result.metadata["service_tier"] == "default"
     assert result.metadata["spending"]["charged_usd"] == "0.00004"
     saved = json.loads((tmp_path / "spend_state.json").read_text())
-    assert saved["reservations"]["1"]["wire_payload"] == result.metadata["wire_payload"]
+    assert json.loads((tmp_path / saved["reservations"]["1"]["wire_payload_path"]).read_text()) == result.metadata["wire_payload"]
     assert saved["reservations"]["1"]["cached_tokens"] == 10
     SpendTracker(tmp_path, config())
 
@@ -165,12 +165,12 @@ def test_spend_cap_stops_before_network_and_input_guard_is_unchanged(tmp_path, l
 
 
 def test_cache_miss_counters_are_explicit(llm_request):
-    # Purpose: no-cache accounting retains zero counters when details are absent.
+    # Purpose: absent cache counters remain unknown rather than measured zeros.
     provider = build_provider(config())
     provider._urlopen = Mock(return_value=HTTPResponse(envelope(usage={"input_tokens": 4, "output_tokens": 2})))
     result = provider.complete_json(llm_request)
-    assert result.usage["cached_tokens"] == 0
-    assert result.usage["cache_write_tokens"] == 0
+    assert result.usage["cached_tokens"] is None
+    assert result.usage["cache_write_tokens"] is None
 
 
 def test_malformed_raw_usage_keeps_reservation(tmp_path, llm_request):
@@ -181,3 +181,105 @@ def test_malformed_raw_usage_keeps_reservation(tmp_path, llm_request):
     result = provider.complete_json(llm_request)
     assert result.metadata["spending"]["status"] == "unknown"
     assert result.metadata["spending"]["charged_usd"] == "0.002248"
+
+
+def test_http_400_preserves_durable_exact_body(tmp_path, llm_request):
+    # Purpose: rejected paid requests remain diagnosable without credentials.
+    cfg = config()
+    tracker = SpendTracker(tmp_path, cfg)
+    provider = build_provider(cfg, spend_tracker=tracker)
+    sent = []
+
+    def reject(request, timeout=None):
+        sent.append(request.data)
+        saved = json.loads((tmp_path / "spend_state.json").read_text())
+        record = saved["reservations"]["1"]
+        assert "wire_payload" not in record
+        assert (tmp_path / record["wire_payload_path"]).read_bytes() == request.data
+        raise urllib.error.HTTPError(request.full_url, 400, "unsupported field", {}, io.BytesIO(b"bad field"))
+
+    provider._urlopen = reject
+    with pytest.raises(ProviderTransportError) as raised:
+        provider.complete_json(llm_request)
+    assert raised.value.wire_payload == json.loads(sent[0])
+    assert "offline-secret" not in (tmp_path / "spend_state.json").read_text()
+    assert "offline-secret" not in next((tmp_path / "wire_requests").glob("*.json")).read_text()
+
+
+def test_old_embedded_wire_state_remains_readable(tmp_path, llm_request):
+    # Purpose: pre-migration reservations remain charged on resume.
+    cfg = config()
+    tracker = SpendTracker(tmp_path, cfg)
+    provider = build_provider(cfg, spend_tracker=tracker)
+    payload = json.loads(provider.build_http_request(llm_request).data)
+    tracker.reserve(payload)
+    path = tmp_path / "spend_state.json"
+    state = json.loads(path.read_text())
+    record = state["reservations"]["1"]
+    record.pop("wire_payload_path")
+    record.pop("wire_payload_sha256")
+    record["wire_payload"] = payload
+    path.write_text(json.dumps(state))
+    resumed = SpendTracker(tmp_path, cfg)
+    resumed.reserve(payload)
+    saved = json.loads(path.read_text())
+    assert saved["reservations"]["1"]["wire_payload"] == payload
+    assert "wire_payload" not in saved["reservations"]["2"]
+
+
+def test_responses_omitted_temperature_and_output_provenance(llm_request):
+    # Purpose: direct builds omit unsupported sampling defaults and name wire limits.
+    cfg = config()
+    cfg.pop("temperature")
+    provider = build_provider(cfg)
+    assert "temperature" not in json.loads(provider.build_http_request(llm_request).data)
+    assert provider.output_token_parameter == "max_output_tokens"
+
+
+@pytest.mark.parametrize("counter", [0, 12])
+def test_cache_counters_preserve_explicit_values(counter):
+    # Purpose: distinguish measured zeros and hits from missing evidence.
+    usage = OpenAIResponsesProvider.normalize_usage({"input_tokens_details": {
+        "cached_tokens": counter, "cache_write_tokens": counter}})
+    assert usage["cached_tokens"] == counter
+    assert usage["cache_write_tokens"] == counter
+
+
+@pytest.mark.parametrize("history_mode", [[], {}])
+def test_history_mode_rejects_unhashable_values(history_mode):
+    # Purpose: malformed configuration produces the documented validation error.
+    from crest.optimizers.llm.config import normalize_llm_config
+    with pytest.raises(ValueError, match="history_mode"):
+        normalize_llm_config({"llm": {"provider": "fake", "history_mode": history_mode}})
+
+
+@pytest.mark.parametrize("updates", [{"max_repair_attempts": 2}, {"max_refill_attempts": 3}])
+def test_full_mode_caps_content_budgets(updates):
+    # Purpose: every accepted full-history configuration respects four content calls.
+    from crest.optimizers.llm.config import normalize_llm_config
+    cfg = {"provider": "fake", "responses": [{}], "history_mode": "full",
+           "require_rationale": True, "memory": {"enabled": False}, **updates}
+    with pytest.raises(ValueError):
+        normalize_llm_config({"llm": cfg})
+
+
+def test_request_artifact_failure_stops_before_http(tmp_path, llm_request, monkeypatch):
+    # Purpose: diagnostic durability is required before a paid attempt.
+    from crest.optimizers.llm.spending import SpendAccountingError
+    from pathlib import Path
+    cfg = config()
+    tracker = SpendTracker(tmp_path, cfg)
+    provider = build_provider(cfg, spend_tracker=tracker)
+    provider._urlopen = Mock(side_effect=AssertionError("network forbidden"))
+    original_mkdir = Path.mkdir
+
+    def fail_artifact(path, *args, **kwargs):
+        if path.name == "wire_requests":
+            raise OSError("offline write failure")
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", fail_artifact)
+    with pytest.raises(SpendAccountingError, match="exact request body"):
+        provider.complete_json(llm_request)
+    provider._urlopen.assert_not_called()
+    assert not json.loads((tmp_path / "spend_state.json").read_text())["reservations"]

@@ -8,6 +8,8 @@ Status: Implemented on `codex/llm-generator-mvp` after user approval, with offli
 
 ## Objective
 
+Review correction (October 15): full-mode coverage and dedup use explicit outcome classification, not `feasible=False` alone. Penalty-path unknown measurements are not interpreted as hardware readings. Repair/refill feedback is bounded and partial accepted batches survive an additional request's input guard. Error explanations are added to a first-observed dictionary as they appear: rows reference their integer IDs, repeated text is stored once, and a new explanation adds a new entry. The dictionary is reconstructed deterministically from the saved chronological history; it is not generated memory. No unseen error explanations are preloaded.
+
 Give Luna access to exact historical architectures and outcomes, make exploration an explicit part of each batch, reduce duplicate proposals, and reuse prompt prefixes through the Responses API. Keep the implementation simple and reuse the existing optimizer and ranker-replay code.
 
 Implementation belongs on `codex/llm-generator-mvp`, in `/Users/jzales/.codex/worktrees/llm-token-estimator/fall-2026-nesl-crest`. Use explicitly selected non-Astra subagents for implementation and review.
@@ -183,10 +185,12 @@ The saved TPE baseline contains 12 exact-raw-configuration repeat groups with 28
 
 This is substantial observed within-configuration variability. It is not a standard error for the difference between optimizers, nor proof that every policy effect is undetectable. Small single-run best-score differences are weak evidence; the estimate does not by itself partition training randomness from every other source of variation.
 
+Report exact-raw and decoded-network repeat dispersion separately. Reproduced from the saved snapshots: baseline decoded pooled macro-F1 SD is 0.048604 (15 groups, 36 observations, 21 degrees of freedom); t2 decoded SD is 0.063985 (3 groups, 6 observations, 3 degrees of freedom). The t2 snapshot has no exact-raw repeat estimate. Preserve both definitions rather than silently replacing the original raw estimate. Report best-network identity/observation count and the number of single-observation networks among the top ten; ties use decoded identity for deterministic ordering. Duration sums with missing observations are incomplete observed lower bounds, with separate completeness flags for completed-only and all-attempt time.
+
 Before launching, save the evaluation definitions and baseline values from the completed current study. The following are implementation checks and behavioral diagnostics, not search-quality success criteria:
 
 - Unique decoded training networks evaluated at matched attempt and feasible-completion budgets.
-- Duplicate proposal rate: duplicate rejected entries divided by all parsed candidate entries, with raw repeats and decoded aliases reported separately; report malformed responses separately.
+- Duplicate proposal rate: duplicate rejected entries divided by observed candidate decisions (returned LLM candidates plus candidate-level rejections), with raw repeats and decoded aliases reported separately. Exclude malformed calls and random fallbacks and report them separately. This saved-ledger denominator is not necessarily every raw response entry: interrupted rounds or missing streams make it incomplete. Do not infer proposal rejection rates from the Optuna database alone.
 - `num_blocks × resolved strides` coverage and its trajectory, counting distinct networks and separating informative outcomes from successful evaluations.
 - Valid batch fill rate, refill calls per accepted architecture, and fallback count.
 - Distribution of nearest-prior distances. Report raw-parameter Hamming distance separately from decoded structural distance; freeze the decoded comparison fields and variable-length width handling before launch. Use neither as an acceptance threshold.

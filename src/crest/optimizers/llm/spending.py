@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import tempfile
@@ -341,10 +342,38 @@ class SpendTracker:
         state = copy.deepcopy(self._state)
         reservation_id = str(state["next_reservation_id"])
         state["next_reservation_id"] += 1
+        # Persist the secret-free body before charging or attempting the HTTP call.
+        body = json.dumps(request_payload, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        digest = hashlib.sha256(body).hexdigest()
+        artifact_dir = self.root / "wire_requests"
+        artifact = artifact_dir / f"{digest}.json"
+        temporary_body = None
+        try:
+            artifact_dir.mkdir(exist_ok=True)
+            if artifact.exists():
+                if artifact.read_bytes() != body:
+                    raise SpendAccountingError("Saved request body does not match its hash.")
+            else:
+                with tempfile.NamedTemporaryFile(dir=artifact_dir, prefix=".wire-", delete=False) as handle:
+                    temporary_body = Path(handle.name)
+                    handle.write(body)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary_body, artifact)
+                directory_fd = os.open(artifact_dir, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+        except OSError as exc:
+            raise SpendAccountingError("Cannot persist exact request body; provider attempt stopped.") from exc
+        finally:
+            if temporary_body is not None:
+                temporary_body.unlink(missing_ok=True)
         state["reservations"][reservation_id] = {
             "status": "reserved", "reserved_usd": _text(self.reservation_usd),
             "charged_usd": _text(self.reservation_usd), "usage_known": False,
-            **({"wire_payload": request_payload} if "input" in request_payload else {}),
+            "wire_payload_sha256": digest, "wire_payload_path": str(artifact.relative_to(self.root)),
         }
         state["charged_usd"] = _text(total)
         self._persist(state)
@@ -396,8 +425,8 @@ class SpendTracker:
                 ))
                 record.update(prompt_tokens=prompt, completion_tokens=completion, charged_usd=_text(actual))
                 if "input_tokens" in usage:
-                    record.update(cached_tokens=usage.get("cached_tokens", 0),
-                                  cache_write_tokens=usage.get("cache_write_tokens", 0))
+                    record.update(cached_tokens=usage.get("cached_tokens"),
+                                  cache_write_tokens=usage.get("cache_write_tokens"))
                 exceeded = prompt > self.max_input_tokens or completion > self.max_output_tokens
                 record["status"] = "exceeded" if exceeded else "settled"
                 state["halted"] = exceeded

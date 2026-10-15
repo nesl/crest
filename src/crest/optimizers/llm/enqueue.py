@@ -220,6 +220,38 @@ def generate_llm_batch(
 
 
 
+def _policy_feedback(retained, rejections, *, malformed=False):
+    """Build structurally bounded feedback without repeated history or rationales.
+
+    Parameters
+    ----------
+    retained, rejections : object
+        Accepted entries and validation failures. Missing slots and targets
+        already appear in the current request.
+    malformed : bool
+        Add a constant envelope repair instruction, retaining prior rejections.
+
+    Returns
+    -------
+    str
+        Compact JSON feedback bounded independently of provider response text.
+    """
+    compact = []
+    for rejection in rejections[:5]:
+        item = {"index": rejection.index, "code": rejection.code}
+        if rejection.code in {"duplicate_raw", "duplicate_decoded"}:
+            detail = json.loads(rejection.message.split(": ", 1)[1])
+            ids = detail["matching_trials"]
+            item.update(matching_trials=ids[:8], additional_matches=max(0, len(ids) - 8))
+        compact.append(item)
+    return json.dumps({"retained_candidates": [{k: entry[k] for k in
+                           ("params", "intent", "parent_trial", "assigned_target") if k in entry}
+                           for entry in retained],
+                       "rejections": compact, "additional_rejections": max(0, len(rejections) - 5),
+                       **({"repair": "Return only the required valid CandidateBatch JSON envelope."}
+                          if malformed else {})}, separators=(",", ":"), default=str)
+
+
 def _generate_policy_batch(history, provider, context, ledger, *, prompt_version,
                            max_repair_attempts, max_refill_attempts, rng):
     """Generate a retained subset under shared repair and refill budgets.
@@ -243,12 +275,16 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
     from dataclasses import replace
     from .schemas import validate_policy_batch
     from .full_history import (reconstruct_params, decoded_architecture, decoded_fingerprint,
-                               parameter_differences, nearest_prior_distances, outcome_class, failure_class)
-    completed = _history_candidates(history, context.descriptor, {"COMPLETE", "PRUNED", "FAIL"})
-    # Full mode also honors the boolean confirmed-infeasibility convention.
-    # Leave the legacy path's retry eligibility byte-for-byte unchanged.
+                               parameter_differences, nearest_prior_distances, outcome_class, outcome_reason, observed_measurement)
+    from .spending import SpendInputLimitExceeded
+    if not (isinstance(max_repair_attempts, int) and not isinstance(max_repair_attempts, bool)
+            and 0 <= max_repair_attempts <= 1
+            and isinstance(max_refill_attempts, int) and not isinstance(max_refill_attempts, bool)
+            and 0 <= max_refill_attempts <= 2):
+        raise ValueError("Full history mode requires repair attempts <= 1 and refill attempts <= 2.")
+    completed = []
     for trial in history:
-        if outcome_class(trial) == "infeasible":
+        if outcome_class(trial) in {"successful", "deterministic", "infeasible"}:
             params = reconstruct_params(trial, context.descriptor)
             if all(name in params for name in context.descriptor) and params not in completed:
                 completed.append(params)
@@ -265,8 +301,7 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
             attrs = trial.user_attrs
             metrics = attrs.get("task_metrics", {})
             decoded = decoded_architecture(params)
-            reason = (attrs.get("failure_reason") or attrs.get("prune_reason")
-                      or attrs.get("error_code_label") or trial.system_attrs.get("fail_reason"))
+            reason = outcome_reason(trial)
             if reason is not None:
                 reason = str(reason)
                 if len(reason) > 512:
@@ -276,15 +311,17 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
                             "state": str(trial.state), "outcome": {
                                 "score": trial.values[0] if trial.values and len(trial.values) == 1 else None,
                                 "macro_f1": metrics.get("macro_f1") if isinstance(metrics, Mapping) else None,
-                                "latency_ms": attrs.get("latency_ms"),
-                                "energy_mj_per_inference": attrs.get("energy_mj_per_inference"),
+                                "latency_ms": observed_measurement(trial, "latency_ms"),
+                                "energy_mj_per_inference": observed_measurement(trial, "energy_mj_per_inference"),
                                 "feasibility": attrs.get("feasibility_status", attrs.get("feasible")),
-                                "failure_class": failure_class(trial), "failure_reason": reason}})
+                                "failure_class": None if outcome_class(trial) in {"successful", "pending"} else outcome_class(trial), "failure_reason": reason}})
     retained, proposals, targets = [], [], list(context.exploration_targets)
     quotas = dict(context.allocation)
     repairs = refills = 0
     feedback = None
     used_parents = set()
+    stop_reason = None
+    last_rejections = []
     while True:
         current = replace(context, batch_size=sum(quotas.values()), allocation=dict(quotas),
                           exploration_targets=tuple(targets))
@@ -303,6 +340,9 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
                                                  ("raw_response", "wire_payload", "usage", "spending")
                                                  if getattr(exc, name, None) is not None}})
             ledger.record_event({"event": "provider_error", "request_id": request_id})
+            if isinstance(exc, SpendInputLimitExceeded) and proposals:
+                stop_reason = "input_guard"
+                break
             if not isinstance(exc, ProviderResponseError): raise
             malformed = str(exc)
         else:
@@ -313,9 +353,11 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
                 malformed = str(exc)
         if malformed is not None:
             ledger.record_rejected({"request_id": request_id, "code": "malformed_response", "message": malformed})
-            if repairs >= max_repair_attempts: break
+            if repairs >= max_repair_attempts:
+                stop_reason = "repair_budget_exhausted"
+                break
             repairs += 1
-            feedback = "Repair malformed envelope: " + malformed + "; retained: " + json.dumps(retained, default=str)
+            feedback = _policy_feedback(retained, last_rejections, malformed=True)
             continue
         accepted, rejected = validate_policy_batch(
             batch, context.descriptor, quotas=quotas, targets=targets, parents=context.eligible_parents,
@@ -331,6 +373,9 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
                           "request_id": request_id, "batch_id": f"llm-{request_id:06d}",
                           "batch_index": index, **{k: v for k, v in entry.items() if k != "params"},
                           "nearest_prior_distances": nearest_prior_distances(entry["params"], history)}
+            if intent == "exploration":
+                provenance["exploration_policy"] = ("compulsory_coverage" if "assigned_target" in entry
+                    else "post_coverage" if context.coverage.get("goal_complete") else "untargeted")
             if intent == "local":
                 parent = next(p for p in context.eligible_parents if p["trial_number"] == entry["parent_trial"])
                 used_parents.add(decoded_fingerprint(parent["params"]))
@@ -340,14 +385,17 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
                                          "parent_trial": entry["parent_trial"]})
             retained.append(entry)
             proposals.append(CandidateProposal(entry["params"], provenance))
-        if sum(quotas.values()) == 0 or refills >= max_refill_attempts: break
+        if sum(quotas.values()) == 0:
+            break
+        if refills >= max_refill_attempts:
+            stop_reason = "refill_budget_exhausted"
+            break
         refills += 1
-        feedback = json.dumps({"remaining_allocation": quotas, "remaining_targets": targets,
-                               "retained_candidates": retained,
-                               "rejections": [r.__dict__ for r in rejected]}, default=str)
+        last_rejections = rejected
+        feedback = _policy_feedback(retained, rejected)
     ledger.record_event({"event": "batch_policy_exhausted" if sum(quotas.values()) else "batch_policy_filled",
                          "accepted": len(proposals), "unfilled": quotas, "unfilled_targets": targets,
-                         "unfilled_reason": "content_request_budget_exhausted" if sum(quotas.values()) else None,
+                         "unfilled_reason": stop_reason if sum(quotas.values()) else None,
                          "repair_calls": repairs, "refill_calls": refills})
     if proposals:
         for proposal in proposals:

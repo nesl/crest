@@ -42,9 +42,12 @@ def normalize_llm_config(optimizer_config) -> Dict:
         if type(output_limit) is not int or output_limit < 1:
             raise ValueError("optimizer.llm.max_output_tokens must be a positive integer.")
         output_parameter = llm.get("output_token_parameter", "max_completion_tokens")
-        if not isinstance(output_parameter, str) or output_parameter not in {"max_tokens", "max_completion_tokens"}:
-            raise ValueError("optimizer.llm.output_token_parameter must be max_tokens or max_completion_tokens.")
-        llm.output_token_parameter = output_parameter
+        allowed_parameters = {"max_tokens", "max_completion_tokens"}
+        if provider == "openai_responses":
+            allowed_parameters.add("max_output_tokens")
+        if not isinstance(output_parameter, str) or output_parameter not in allowed_parameters:
+            raise ValueError(f"optimizer.llm.output_token_parameter must be one of {sorted(allowed_parameters)}.")
+        llm.output_token_parameter = "max_output_tokens" if provider == "openai_responses" else output_parameter
     elif llm.get("output_token_parameter") is not None:
         raise ValueError("optimizer.llm.output_token_parameter requires max_output_tokens.")
 
@@ -85,7 +88,7 @@ def normalize_llm_config(optimizer_config) -> Dict:
     llm.memory = Dict(asdict(MemoryConfig.from_config(raw_memory)))
 
     history_mode = llm.get("history_mode", "bounded")
-    if history_mode not in {"bounded", "full"}:
+    if not isinstance(history_mode, str) or history_mode not in {"bounded", "full"}:
         raise ValueError("optimizer.llm.history_mode must be bounded or full.")
     # New policy settings are opt-in so existing normalized identities stay stable.
     if history_mode == "full":
@@ -97,8 +100,10 @@ def normalize_llm_config(optimizer_config) -> Dict:
         if llm.batch_size > 5:
             raise ValueError("Full-history allocation supports batch sizes 1 through 5.")
         refill = llm.get("max_refill_attempts", 2)
-        if type(refill) is not int or refill < 0:
-            raise ValueError("optimizer.llm.max_refill_attempts must be an integer >= 0.")
+        if type(refill) is not int or not 0 <= refill <= 2:
+            raise ValueError("optimizer.llm.max_refill_attempts must be an integer from 0 through 2.")
+        if llm.max_repair_attempts > 1:
+            raise ValueError("Full history requires max_repair_attempts <= 1.")
         llm.max_refill_attempts = refill
     elif "max_refill_attempts" in llm:
         raise ValueError("max_refill_attempts requires history_mode=full.")
@@ -157,7 +162,7 @@ def normalize_llm_config(optimizer_config) -> Dict:
         for field_name, default, minimum in (
             ("retry_backoff_s", 5.0, 0.0),
             ("retry_backoff_cap_s", 60.0, 0.0),
-            ("temperature", 0.4, 0.0),
+            ("temperature", None if provider == "openai_responses" else 0.4, 0.0),
             ("timeout_s", 60.0, 0.001),
         ):
             raw_value = llm.get(field_name, default)
