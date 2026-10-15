@@ -82,6 +82,7 @@ from crest.pipeline_types import (
 )
 from crest.registry import dataset_registry, model_family_registry
 from crest.runtime_bootstrap import bootstrap_pipeline
+from crest.training_randomness import reset_training_randomness, training_randomness_policy
 
 tf.get_logger().setLevel(logging.ERROR)
 absl.logging.set_verbosity(absl.logging.ERROR)
@@ -307,6 +308,7 @@ class NASModelClient:
         self.config_path = Path(config_path)
         ensure_builtin_components_registered()
         self.config = load_config(self.config_path)
+        reset_training_randomness(cfg_get(self.config, "training", {}))
         self._attach_bootstrapped_pipeline(bootstrap_pipeline(self.config))
 
         if self.config.device.hil is False:
@@ -863,6 +865,9 @@ class NASModelClient:
             "sampler": {"class": sampler_name, "options": options},
         }
         # Round-trip rejects non-JSON settings and ensures detached ordinary data.
+        training_policy = training_randomness_policy(self.config.training)
+        if training_policy is not None:
+            signature["training_randomness"] = training_policy
         signature = json.loads(json.dumps(signature, sort_keys=True, allow_nan=False))
         stored = study.user_attrs.get(OPTIMIZER_SIGNATURE_ATTR)
         if stored is None:
@@ -1567,6 +1572,7 @@ class NASModelClient:
         split_name: str,
         quantization_mode: str,
         evaluation_backend: str = "keras",
+        inference_diagnostics: dict | None = None,
     ):
         """Evaluate a model through the selected host backend.
 
@@ -1582,6 +1588,8 @@ class NASModelClient:
             Deployment quantization mode used by TFLite evaluation.
         evaluation_backend : {"keras", "tflite"}, optional
             Host evaluation backend.
+        inference_diagnostics : dict, optional
+            Receives TFLite interpreter policy and any delegate fallback reason.
 
         Returns
         -------
@@ -1602,7 +1610,9 @@ class NASModelClient:
             split_name=split_name,
             quantization_mode=quantization_mode,
         )
-        predictions = predict_tflite_model_subprocess(tflite_path, split.inputs)
+        diagnostics = inference_diagnostics if inference_diagnostics is not None else {}
+        predictions = predict_tflite_model_subprocess(tflite_path, split.inputs, diagnostics=diagnostics)
+        tflite_path.with_suffix(".evaluation.json").write_text(json.dumps(diagnostics, indent=2) + "\n")
         return self.task.evaluate_predictions(
             predictions,
             split,
@@ -1866,6 +1876,9 @@ class NASModelClient:
             self.model_build_context,
             self.model_config,
         )
+        training_policy = reset_training_randomness(self.config.training)
+        if training_policy is not None:
+            trial.set_user_attr("training_randomness", training_policy)
         try:
             self.model_family.validate_hparams(
                 family_hparams,
@@ -2252,6 +2265,7 @@ class NASModelClient:
                     quantization_mode=quantization_mode,
                 )
             else:
+                reset_training_randomness(self.config.training)
                 fit_plan = self.task.build_fit_plan(
                     self.dataset_bundle,
                     self.task_config,
@@ -2270,19 +2284,23 @@ class NASModelClient:
                     self.model_build_context,
                     self.model_config,
                 )
+                inference_diagnostics = {}
                 try:
                     evaluation_result = self._evaluate_model_with_backend(
                         model=model,
                         split=self.dataset_bundle.val,
-                        split_name="validation",
+                        split_name=f"validation_trial_{trial.number}",
                         quantization_mode=quantization_mode,
                         evaluation_backend="tflite",
+                        inference_diagnostics=inference_diagnostics,
                     )
                 except TFLiteSubprocessError as exc:
+                    trial.set_user_attr("tflite_evaluation", {"status": "failed", "error": str(exc)})
                     prune_reason = "TFLite evaluation failed"
                     if not self._score_is_multiobjective():
                         prune_reason = f"{prune_reason}: {exc}"
                     return _fail_with_penalty(prune_reason)
+                trial.set_user_attr("tflite_evaluation", {"status": "passed", **inference_diagnostics})
                 task_metrics = dict(evaluation_result.metrics)
                 keras_evaluation_result = self._evaluate_model_with_backend(
                     model=model,
@@ -2986,6 +3004,10 @@ class NASModelClient:
         history_path = Path(history_path)
         history_path.parent.mkdir(parents=True, exist_ok=True)
         ckpt_path = Path(checkpoint_path)
+        training_policy = reset_training_randomness(self.config.training)
+        if training_policy is not None:
+            history_path.with_suffix(".randomness.json").write_text(
+                json.dumps(training_policy, indent=2) + "\n", encoding="utf-8")
         batch_size = 256
         fit_task = self._instantiate_task(
             self.task_name,

@@ -127,3 +127,31 @@ bounded refill with generated memory disabled. It is prepared locally only;
 do not use it to resume an existing study. See
 [next_study_smoke.md](next_study_smoke.md) for offline prompt review and the
 explicitly opt-in $0.05 Luna capability test, which never trains or uses hardware.
+
+## Seeded replacement study (prepared, not launched)
+
+The next-study draft targets a fresh `cs3_luna_production_v4` output directory.
+`training.random_seed: 0` resets Python, NumPy and TensorFlow before model
+construction and search fitting, independently of optimizer and trial number.
+`training.deterministic_ops` remains false: enabling it failed on the GPU's
+unequal-stride depthwise convolution kernel during an isolated reproduction.
+Seeds are controlled, but GPU execution is not guaranteed bitwise deterministic.
+The policy is stored in each trial and the study identity; final
+fits save a `.randomness.json` sidecar. Changing that policy requires a new
+study. The optimizer's `random_seed` is separate. Exact replay still requires
+matching data, software and hardware; a single fixed seed does not estimate
+training variability or reconstruct historical unseeded runs.
+
+Full-history prompts now balance capacity against the actual score tradeoff;
+coverage ties use stable hashed cell ordering instead of shallow-first ordering.
+The draft requires rerunning all 15 warmups, not importing their old outcomes.
+Completed v2 outputs are archived under `cs3_luna_production_v2_memory_complete`
+on both machines, including the GPU's `tinyodom-ex/models` copy. Internal
+database study names and comparison-report labels remain unchanged.
+
+Host TFLite evaluation retries XNNPACK-specific runtime errors once with built-in
+kernels on the same flatbuffer, restarting the entire split. Other errors and
+failed retries still fail evaluation. Each NAS trial keeps its own validation
+flatbuffer; interpreter policy and fallback reasons are recorded in trial attrs
+and an `.evaluation.json` sidecar. This does not change MCU execution or use
+Keras predictions as a substitute for quantized predictions.

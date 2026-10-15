@@ -475,6 +475,18 @@ def build_semantic_context(
         device_facts, runtime_facts = _stm32_context(device_config)
         payload["device_context"].update(device_facts)
         payload["runtime_context"].update(runtime_facts)
+        # Seeded studies explicitly describe their actual training policy;
+        # legacy prompts remain byte-identical when the option is absent.
+        seed = _cfg_get(training_config, "random_seed", None)
+        if seed is not None:
+            payload["runtime_context"]["training_random_seed"] = seed
+            payload["runtime_context"]["training_deterministic_ops"] = bool(
+                _cfg_get(training_config, "deterministic_ops", False))
+            payload["runtime_context"]["nas_max_epochs"] = _cfg_get(training_config, "nas_epochs")
+            payload["guidance"][-1] = (
+                "Both insufficient and excessive model capacity can reduce accuracy; "
+                "use measured outcomes and the stated training budget rather than "
+                "assuming smaller or larger models are better.")
     return {
         "enabled": bool(enabled),
         "version": SEMANTIC_CONTEXT_VERSION,

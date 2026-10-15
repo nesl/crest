@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
@@ -55,8 +56,10 @@ def main() -> None:
     args = _parse_args()
     with np.load(args.inputs, allow_pickle=False) as input_archive:
         inputs = np.asarray(input_archive["inputs"], dtype=np.float32)
-    predictions = _ordered_outputs(predict_tflite_model(args.model, inputs))
-    output_payload = {"num_outputs": np.asarray(len(predictions), dtype=np.int64)}
+    diagnostics = {}
+    predictions = _ordered_outputs(predict_tflite_model(args.model, inputs, diagnostics=diagnostics))
+    output_payload = {"num_outputs": np.asarray(len(predictions), dtype=np.int64),
+                      "diagnostics": np.asarray(json.dumps(diagnostics))}
     for output_index, output in enumerate(predictions):
         output_payload[f"output_{output_index}"] = output
     np.savez(args.outputs, **output_payload)

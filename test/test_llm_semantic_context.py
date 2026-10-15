@@ -36,6 +36,17 @@ from crest.pipeline_types import (  # noqa: E402
 )
 
 
+def test_seeded_context_states_actual_training_budget():
+    # Capacity advice must use the configured evaluation budget rather than a guess.
+    record = _semantic_record(training_config=Dict(train=True, nas_epochs=55,
+        random_seed=0, deterministic_ops=True, quantization=Dict(mode="float", search=False)))
+    context = record["payload"]["runtime_context"]
+    assert context["nas_max_epochs"] == 55
+    assert context["training_random_seed"] == 0
+    assert context["training_deterministic_ops"] is True
+    assert "insufficient and excessive" in record["payload"]["guidance"][-1]
+
+
 def _bundle(
     *,
     input_shape: tuple[int, ...],

@@ -63,6 +63,9 @@ def test_full_context_orders_evidence_and_omits_memory(tmp_path, monkeypatch):
     assert len(context.exploration_targets) == 5
     assert "knowledge_base" not in request.user_prompt
     assert "MCU" in request.system_prompt or "device_context" in request.system_prompt
+    # Full-history exploration optimizes the score, not implicit model smallness.
+    assert "not model smallness" in request.system_prompt
+    assert "does not require a small or cheap model" in request.system_prompt
     assert "columns" in payload["current_request"]["coverage"]["cells"]
     # Responses JSON mode checks input itself, not just top-level instructions.
     from crest.optimizers.llm.provider import build_provider

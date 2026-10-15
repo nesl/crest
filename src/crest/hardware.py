@@ -11,6 +11,7 @@ device classes is in progress.
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -423,8 +424,13 @@ def _ordered_tflite_output_details(interpreter: tf.lite.Interpreter) -> list[dic
 def predict_tflite_model(
     tflite_path: Union[str, Path],
     inputs,
+    *,
+    diagnostics: dict | None = None,
 ) -> np.ndarray | list[np.ndarray]:
     """Run host-side TFLite inference over a split input batch.
+
+    XNNPACK runtime failures are retried once using built-in kernels on the
+    same model. The entire split is rerun, never mixed with partial results.
 
     Parameters
     ----------
@@ -432,6 +438,8 @@ def predict_tflite_model(
         TFLite flatbuffer path.
     inputs : array-like
         Split inputs with a leading sample dimension.
+    diagnostics : dict, optional
+        Populated with the interpreter policy and any XNNPACK fallback reason.
 
     Returns
     -------
@@ -445,10 +453,45 @@ def predict_tflite_model(
     ValueError
         If existing validation or execution checks fail.
     """
+    evidence = diagnostics if diagnostics is not None else {}
+    evidence.pop("fallback_reason", None)
+    evidence.update(backend="default", tensorflow_version=tf.__version__)
+    try:
+        return _predict_tflite_model(tflite_path, inputs)
+    except RuntimeError as exc:
+        # A delegate limitation is not proof that the quantized model is invalid.
+        # Retry the entire split with a fresh interpreter; never mix predictions.
+        if "xnnpack" not in str(exc).lower():
+            raise
+        evidence.update(backend="builtin_without_default_delegates", fallback_reason=str(exc))
+        logger.warning("XNNPACK failed for %s; retrying with TFLite built-in kernels: %s", tflite_path, exc)
+        return _predict_tflite_model(tflite_path, inputs, disable_default_delegates=True)
+
+
+def _predict_tflite_model(tflite_path, inputs, *, disable_default_delegates=False):
+    """Evaluate a whole split with one interpreter policy.
+
+    Parameters
+    ----------
+    tflite_path : str or pathlib.Path
+        Unmodified quantized or float model artifact.
+    inputs : array-like
+        Split inputs with a leading sample dimension.
+    disable_default_delegates : bool, optional
+        Use TFLite built-in kernels without XNNPACK when true.
+
+    Returns
+    -------
+    numpy.ndarray or list[numpy.ndarray]
+        Predictions in model signature order.
+    """
     data = np.asarray(inputs, dtype=np.float32)
     if data.ndim < 1:
         raise ValueError("TFLite evaluation inputs must include a sample dimension.")
-    interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
+    options = {}
+    if disable_default_delegates:
+        options["experimental_op_resolver_type"] = tf.lite.experimental.OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES
+    interpreter = tf.lite.Interpreter(model_path=str(tflite_path), **options)
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
     if len(input_details) != 1:
@@ -483,6 +526,8 @@ def predict_tflite_model_subprocess(
     tflite_path: Union[str, Path],
     inputs,
     timeout_sec: float = 900.0,
+    *,
+    diagnostics: dict | None = None,
 ) -> np.ndarray | list[np.ndarray]:
     """Run host-side TFLite inference in an isolated Python subprocess.
 
@@ -494,6 +539,8 @@ def predict_tflite_model_subprocess(
         Split inputs with a leading sample dimension.
     timeout_sec : float, optional
         Maximum number of seconds to wait for the worker process.
+    diagnostics : dict, optional
+        Populated with worker interpreter policy and fallback evidence.
 
     Returns
     -------
@@ -556,6 +603,11 @@ def predict_tflite_model_subprocess(
 
         try:
             with np.load(outputs_path, allow_pickle=False) as output_archive:
+                evidence = json.loads(str(output_archive["diagnostics"].item())) if "diagnostics" in output_archive else {}
+                if diagnostics is not None:
+                    diagnostics.update(evidence)
+                if evidence.get("fallback_reason"):
+                    logger.warning("TFLite evaluation used built-in kernels for %s after XNNPACK failure: %s", model_path, evidence["fallback_reason"])
                 num_outputs = int(np.asarray(output_archive["num_outputs"]).item())
                 if num_outputs < 1:
                     raise ValueError("TFLite worker wrote no outputs.")

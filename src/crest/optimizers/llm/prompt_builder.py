@@ -27,6 +27,13 @@ SYSTEM_PROMPT = (
 
 FULL_HISTORY_SYSTEM = (
     "You are the optimizer for a hardware-in-the-loop neural architecture search. "
+    "Maximize the stated objective, not model smallness. Extra energy is worthwhile "
+    "when the task-quality gain exceeds its explicit score penalty. RAM, flash and "
+    "latency limits are feasibility constraints, not additional score penalties. "
+    "Both insufficient and excessive capacity can hurt task quality; explore width, "
+    "channel growth and kernels as well as depth and strides. An assigned coverage "
+    "cell does not require a small or cheap model. Use the actual training budget "
+    "when provided rather than assuming it is short. "
     "Return only the requested JSON envelope. "
     "Use exact raw Optuna parameters inside the declared search space. The columnar "
     "history includes every finished trial (complete, failed, or pruned). Row values "

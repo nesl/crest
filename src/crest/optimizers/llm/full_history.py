@@ -441,8 +441,8 @@ def assign_coverage_targets(coverage: Mapping[str, Any], count: int) -> list[dic
     Returns
     -------
     list of dict
-        At most ``count`` target cells. Ties use block count then resolved
-        strides; cells with two informative or reserved networks are skipped.
+        At most ``count`` target cells. Ties use a stable hash rather than
+        shallow-first ordering; fully reserved cells are skipped.
     """
     cells = coverage["cells"]
     reserved = {c["cell_id"]: c["informative"] + c["pending"] for c in cells}
@@ -451,7 +451,8 @@ def assign_coverage_targets(coverage: Mapping[str, Any], count: int) -> list[dic
         available = [c for c in cells if reserved[c["cell_id"]] < coverage.get("target_per_cell", 2)]
         if not available:
             break
-        cell = min(available, key=lambda c: (reserved[c["cell_id"]], c["num_blocks"], c["strides"]))
+        cell = min(available, key=lambda c: (reserved[c["cell_id"]],
+                   hashlib.sha256(c["cell_id"].encode()).hexdigest()))
         result.append(dict(cell))
         reserved[cell["cell_id"]] += 1
     return result

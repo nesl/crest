@@ -68,6 +68,16 @@ def test_coverage_resolves_aliases_and_counts_informative_union():
     assert cell["cell_id"] not in {t["cell_id"] for t in targets}
 
 
+def test_coverage_ties_are_stable_without_shallow_first_order():
+    # Tie handling must not turn breadth exploration into a shallow-first sweep.
+    coverage = build_coverage([])
+    targets = assign_coverage_targets(coverage, 5)
+    reversed_cells = {**coverage, "cells": list(reversed(coverage["cells"]))}
+    assert targets == assign_coverage_targets(reversed_cells, 5)
+    assert len({t["num_blocks"] for t in targets}) > 1
+    assert [t["num_blocks"] for t in targets] != sorted(t["num_blocks"] for t in targets)
+
+
 def test_finite_target_reserves_pending_and_supports_restricted_space():
     # A single restricted cell stops targeting after two reservations/outcomes.
     from crest.optimizers.llm.search_space import SearchParam

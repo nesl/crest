@@ -304,6 +304,7 @@ class DummyTrial:
     def __init__(self) -> None:
         """Initialize the instance."""
         self.report_calls = []
+        self.number = 0
         self.params = {}
         self.user_attrs = {}
 
@@ -652,6 +653,36 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(logged["prune_rule"], "measurement_integrity")
         self.client.task.build_fit_plan.assert_not_called()
 
+    def test_training_seed_recorded_before_model_build(self):
+        # Even a later hardware failure must retain the model's actual seed policy.
+        self.client.config.training.random_seed = 0
+        self.client.config.training.deterministic_ops = True
+        trial = DummyTrial()
+        policy = {"seed": 0, "deterministic_ops": True,
+                  "policy": "fixed_per_evaluation_v1", "tensorflow_version": "test"}
+        original_build = self.client.model_family.build_model
+        def checked_build(*args, **kwargs):
+            """Check seed provenance before delegating to the fixture model.
+
+            Parameters
+            ----------
+            args, kwargs : object
+                Model-family build arguments.
+
+            Returns
+            -------
+            object
+                Fixture model.
+            """
+            self.assertEqual(trial.user_attrs["training_randomness"], policy)
+            return original_build(*args, **kwargs)
+        self.client.model_family.build_model = checked_build
+        self.client._hil_request = MagicMock(return_value={"error_code": HIL_MASTER_INFRASTRUCTURE})
+        with patch("nas_model_client.reset_training_randomness", return_value=policy) as reset:
+            with self.assertRaises(MeasurementInfrastructureError):
+                self.client.objective(trial)
+        reset.assert_called_once_with(self.client.config.training)
+
     def test_multiobjective_infrastructure_failure_has_no_penalty_return(self) -> None:
         """Multiobjective infrastructure failures must raise instead of returning penalties."""
         self.client.config.nas.score = Dict(
@@ -811,6 +842,10 @@ class ObjectiveTests(unittest.TestCase):
             combine_train_val=False,
         )
         self.assertEqual(self.client._evaluate_model_with_backend.call_count, 2)
+        # Each trial retains its own flatbuffer instead of overwriting failures.
+        tflite_call = self.client._evaluate_model_with_backend.call_args_list[0]
+        self.assertEqual(tflite_call.kwargs["split_name"], "validation_trial_0")
+        self.assertEqual(trial.user_attrs["tflite_evaluation"]["status"], "passed")
         self.assertEqual(
             [call.kwargs["evaluation_backend"] for call in self.client._evaluate_model_with_backend.call_args_list],
             ["tflite", "keras"],

@@ -55,6 +55,8 @@ model:
   search: {}  # Empty search uses AudioDSCNNFamily.AUDIO_DSCNN_SEARCH_CHOICES.
 
 training:
+  random_seed: 0  # Reset Python/NumPy/TensorFlow for each evaluation, not trial-number-derived.
+  deterministic_ops: false  # GPU deterministic depthwise kernel rejects unequal strides.
   nas_epochs: 55
   model_epochs: 990
   nas_trials: 200
@@ -134,10 +136,10 @@ nas:
         reason: "External flash weight storage exceeds target capacity"
 
 outputs:
-  models_dir: "models/cs3_next_study/client"
+  models_dir: "models/cs3_luna_production_v4/client"
   candidate_dir: "audio_dscnn"
-  artifact_stem: "UrbanSound8K_DSCNN_STM32_AUDIO_case3_llm_full_history"
-  log_file_name: "log_NAS_UrbanSound8K_DSCNN_STM32_AUDIO_case3_llm_full_history.csv"
+  artifact_stem: "UrbanSound8K_DSCNN_STM32_AUDIO_case3_llm_t4"
+  log_file_name: "log_NAS_UrbanSound8K_DSCNN_STM32_AUDIO_case3_llm_t4.csv"
 
 network:
   host: "127.0.0.1"
@@ -165,7 +167,7 @@ optimizer:
     max_transport_retries: 5
     retry_backoff_s: 5
     retry_backoff_cap_s: 60
-    prompt_version: full-history-v1
+    prompt_version: full-history-v2
     history_mode: full
     max_refill_attempts: 2
     random_seed: 0
