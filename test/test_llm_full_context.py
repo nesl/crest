@@ -50,7 +50,7 @@ def test_new_policy_is_explicit_and_identity_separated():
         normalize_llm_config(new)
 
 
-def test_full_context_orders_evidence_and_omits_memory(tmp_path):
+def test_full_context_orders_evidence_and_omits_memory(tmp_path, monkeypatch):
     # The shared enrichment path emits all evidence without summary calls.
     saved = json.loads((ROOT / "test/fixtures/cs3_legacy_request_000088.json").read_text())
     path = tmp_path / "context.jsonl"
@@ -64,6 +64,16 @@ def test_full_context_orders_evidence_and_omits_memory(tmp_path):
     assert "knowledge_base" not in request.user_prompt
     assert "MCU" in request.system_prompt or "device_context" in request.system_prompt
     assert "columns" in payload["current_request"]["coverage"]["cells"]
+    # Responses JSON mode checks input itself, not just top-level instructions.
+    from crest.optimizers.llm.provider import build_provider
+    monkeypatch.setenv("CREST_TEST_KEY", "offline")
+    provider = build_provider({"provider": "openai_responses", "base_url": "https://api.openai.com/v1",
+        "model": "gpt-6-luna", "api_key_env": "CREST_TEST_KEY", "json_response_mode": True})
+    for feedback in (None, "Replace the duplicate candidate"):
+        wire = json.loads(provider.build_http_request(build_candidate_request(context,
+            prompt_version="test", repair_feedback=feedback)).data)
+        assert wire["text"]["format"]["type"] == "json_object"
+        assert "JSON" in json.loads(wire["input"])["current_request"]["response_instruction"]
 
 
 def test_unknown_failure_retry_is_enforced_by_real_generation(tmp_path):

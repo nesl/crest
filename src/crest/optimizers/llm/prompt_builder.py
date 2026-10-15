@@ -235,6 +235,7 @@ class PromptContext:
                 "history": {key: value for key, value in self.full_history.items()
                             if key not in {"columns", "pending"}},
                 "current_request": {
+                    "response_instruction": "Return only JSON matching output_contract.",
                     "trial_budget": payload["trial_budget"],
                     "candidate_count": self.batch_size,
                     "allocation": self.allocation,
