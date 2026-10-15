@@ -8,6 +8,8 @@ Status: Implemented on `codex/llm-generator-mvp` after user approval, with offli
 
 ## Objective
 
+Second review correction: the next-study and bounded-smoke input guard is 120,000 conservative serialized-input units; the smoke cap remains $0.05. At the configured $0.125/M input rate, this adds $0.0025 to the maximum per-call input reservation, not to every actual bill. Repair feedback includes at most 500 characters of specific error detail, without rejected response bodies. Unclassified failures are still not coverage evidence, but the same decoded network may be attempted at most twice after unclassified terminal failures (original attempt plus one retry); explicit infrastructure failures do not consume this unknown-failure retry budget. Exhausted identities are exposed through the history's `retry_exhausted_trials`. Existing bounded-history campaigns retain their prior behavior.
+
 Review correction (October 15): full-mode coverage and dedup use explicit outcome classification, not `feasible=False` alone. Penalty-path unknown measurements are not interpreted as hardware readings. Repair/refill feedback is bounded and partial accepted batches survive an additional request's input guard. Error explanations are added to a first-observed dictionary as they appear: rows reference their integer IDs, repeated text is stored once, and a new explanation adds a new entry. The dictionary is reconstructed deterministically from the saved chronological history; it is not generated memory. No unseen error explanations are preloaded.
 
 Give Luna access to exact historical architectures and outcomes, make exploration an explicit part of each batch, reduce duplicate proposals, and reuse prompt prefixes through the Responses API. Keep the implementation simple and reuse the existing optimizer and ranker-replay code.
@@ -84,7 +86,7 @@ Include:
 - State, feasibility, and failure reason/classification.
 - Score, macro-F1, energy, latency, and relevant memory measurements.
 
-Measure the actual serialized request at 300 trials, including decoded widths, fixed context, coverage, pending candidates, and repair feedback, against the existing 100,000-byte-based conservative input guard (including its overhead). The review's roughly 37 KB columnar estimate is illustrative, not an acceptance result. If necessary, reduce redundant formatting and verbose metadata while preserving every trial's required evidence; do not silently truncate history or raise the guard without reviewing the budget.
+Measure the actual serialized request at 300 trials, including decoded widths, fixed context, coverage, pending candidates, and repair feedback, against the approved 120,000-byte-based conservative input guard (including its overhead). The review's roughly 37 KB columnar estimate is illustrative, not an acceptance result. Reduce redundant formatting and verbose metadata while preserving every trial's required evidence; do not silently truncate history. This guard increase was approved with the unchanged smoke spending cap and explicit reservation calculation.
 
 Preserve exact parameter values. Missing measurements remain explicitly missing. Failed and pruned trials remain visible, with infrastructure failures distinguished from architecture failures. Missing failure classifications must appear as `unclassified`, never inferred to be architecture failures; trial 200 is a reported example. Partially populated trial parameters should be reconstructed from existing proposal metadata where possible; unknown values must not be invented.
 

@@ -273,11 +273,37 @@ def proposal_audit(ledger_dir):
     missing = legacy or not (root / "rejected_candidates.jsonl").exists()
     events = records("optimizer_events.jsonl")
     refill_known = any("refill_calls" in e for e in events)
-    provider_errors = sum(e.get("event") == "provider_error" for e in events)
-    missing = missing or bool(provider_errors) or not (root / "optimizer_events.jsonl").exists()
+    provider_error_events = [(i, e) for i, e in enumerate(events) if e.get("event") == "provider_error"]
+    # Explicit recovery plus a later final event for this round proves that
+    # retained candidates reached a decision. Legacy errors remain unknown.
+    def recovered(index, error):
+        """Check explicit recovery against a later final event for this round.
+
+        Parameters
+        ----------
+        index : int
+            Error position in the saved event stream.
+        error : dict
+            Provider error event with its request identity and recovery marker.
+
+        Returns
+        -------
+        bool
+            Whether the saved stream establishes a finalized repaired round.
+        """
+        request_id = error.get("request_id")
+        return error.get("recoverable") is True and request_id is not None and any(
+            event.get("event") in {"batch_policy_filled", "batch_policy_exhausted"}
+            and isinstance(event.get("request_ids"), list)
+            and request_id in event["request_ids"]
+            for event in events[index + 1:])
+    unrecovered_errors = sum(not recovered(i, e) for i, e in provider_error_events)
+    provider_errors = len(provider_error_events)
+    missing = missing or bool(unrecovered_errors) or not (root / "optimizer_events.jsonl").exists()
     return {"missing_data": missing, "provider_error_rounds": provider_errors,
+            "unresolved_provider_errors": unrecovered_errors,
             "legacy_acceptance_stream": legacy,
-            "population_completeness": "saved decisions only; retained candidates lost before return are not observable; provider errors or missing streams make the population rate unknown",
+            "population_completeness": "saved decisions only; retained candidates lost before return are not observable; provider errors without explicit recovery and a later matching finalized batch, including legacy errors, or missing streams make the population rate unknown",
             "denominator_definition": "saved LLM returned candidates plus candidate-level rejection records; excludes malformed calls and random fallback; not evaluated trials or all raw response entries",
             "observed_candidate_decisions": denominator, "llm_returned_candidates": accepted,
             "raw_duplicate_rejections": raw, "decoded_duplicate_rejections": decoded,

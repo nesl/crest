@@ -52,6 +52,28 @@ def test_retains_candidates_and_shared_budgets():
         assert final["repair_calls"] == 1 and final["refill_calls"] == 2
 
 
+def test_malformed_repair_has_specific_bounded_error():
+    # Repair explains the missing field without echoing the rejected response body.
+    provider = FakeProvider([{"unexpected": "PRIVATE_RESPONSE_TEXT" * 1000},
+                             {"candidates": [entry(2)]}])
+    ctx = replace(context(1), full_history_mode=True, allocation={"local": 0, "exploration": 1})
+    with tempfile.TemporaryDirectory() as directory:
+        result = generate_llm_batch((), provider, ctx, LLMLedger(Path(directory)),
+            prompt_version="test", max_repair_attempts=1, max_refill_attempts=2, rng=random.Random(0))
+    assert len(result) == 1
+    feedback = json.loads(json.loads(provider.requests[1].user_prompt)["current_request"]["repair_feedback"])
+    assert "candidates" in feedback["error"] and "missing" in feedback["error"]
+    assert len(feedback["error"]) <= 500 and "PRIVATE_RESPONSE_TEXT" not in feedback["error"]
+
+
+def test_provider_error_feedback_is_capped():
+    # A verbose provider error cannot consume the late-history request allowance.
+    from crest.optimizers.llm.enqueue import _policy_feedback
+    feedback = json.loads(_policy_feedback([], [], malformed="Incomplete output: " + "detail " * 10000))
+    assert feedback["error"].startswith("Incomplete output: ")
+    assert len(feedback["error"]) == 500
+
+
 def test_target_membership_and_parent_diversity():
     from unittest.mock import patch
     # Distinct decoded parents remain mandatory across refills until exhausted.

@@ -66,6 +66,46 @@ def test_full_context_orders_evidence_and_omits_memory(tmp_path):
     assert "columns" in payload["current_request"]["coverage"]["cells"]
 
 
+def test_unknown_failure_retry_is_enforced_by_real_generation(tmp_path):
+    # Unknown failures get one retry, then decoded dedup blocks aliases operationally.
+    import random
+    from crest.optimizers.llm.enqueue import generate_llm_batch
+    from crest.optimizers.llm.provider import FakeProvider
+    from crest.optimizers.llm.ledger import LLMLedger
+    saved = json.loads((ROOT / "test/fixtures/cs3_legacy_request_000088.json").read_text())
+    path = tmp_path / "context.jsonl"
+    path.write_text(saved["messages"][1]["content"] + "\n")
+    base = SMOKE.load_context(path, 1)
+    raw = {name: param.choices[0] for name, param in base.descriptor.items()}
+    raw.update(num_blocks=2, stride_schedule="light")
+    alias = {**raw, "stride_schedule": "late"}
+    novel = {**raw, "activation": "relu6" if raw["activation"] == "relu" else "relu"}
+    history = [TrialRecord(0, "PRUNED", raw, None,
+                          {"feasible": False, "feasibility_status": "not_evaluated"}),
+               TrialRecord(1, "FAIL", alias, None, {})]
+    def candidate(params):
+        """Wrap architecture parameters for the fake provider.
+
+        Parameters
+        ----------
+        params : dict
+            Raw architecture.
+
+        Returns
+        -------
+        dict
+            Exploration proposal envelope.
+        """
+        return {"params": params, "intent": "exploration", "parent_trial": None, "rationale": "Test this design."}
+    for count in (1, 2):
+        ctx = replace(enrich_full_history(base, history[:count]), exploration_targets=())
+        provider = FakeProvider([{"candidates": [candidate(alias)]}, {"candidates": [candidate(novel)]}])
+        result = generate_llm_batch(tuple(history[:count]), provider, ctx, LLMLedger(tmp_path / str(count)),
+            prompt_version="test", max_repair_attempts=1, max_refill_attempts=2, rng=random.Random(0))
+        assert result[0].params == (alias if count == 1 else novel)
+        assert len(provider.requests) == count
+
+
 def test_component_runs_full_policy_with_fake_provider(tmp_path):
     # Exercise normalized config -> initialize -> shared prompt -> real validation.
     saved = json.loads((ROOT / "test/fixtures/cs3_legacy_request_000088.json").read_text())

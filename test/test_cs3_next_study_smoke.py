@@ -83,7 +83,7 @@ def test_render_never_calls_network_or_imports_training(saved, monkeypatch):
     report = smoke.run(saved)
     assert report["status"] == "rendered"
     assert report["content_calls"] == 0
-    assert report["input_guard_bound"] < 100000
+    assert report["input_guard_bound"] < 120000
     assert report["spending"]["charged_usd"] == "0"
     assert hashlib.sha256(saved.history_db.read_bytes()).hexdigest() == before
     wire = json.loads((saved.output / "wire_payload.json").read_text())
@@ -145,12 +145,12 @@ def test_existing_output_is_never_overwritten(saved):
 def test_guard_exhaustion_is_reported_without_calls(saved, monkeypatch):
     # Purpose: over-limit history/context produces a review artifact, never a request.
     payload = json.loads(saved.prompt_context.read_text())
-    payload["task_context"]["large_evidence"] = "x" * 100000
+    payload["task_context"]["large_evidence"] = "x" * 120000
     saved.prompt_context.write_text(json.dumps(payload) + "\n")
     monkeypatch.setattr(smoke, "generate_llm_batch", Mock(side_effect=AssertionError("generation forbidden")))
     report = smoke.run(saved)
     assert report["status"] == "inconclusive"
-    assert "unchanged 100000 guard" in report["error"]
+    assert "120000 guard" in report["error"]
     assert report["content_calls"] == 0
     assert (saved.output / "report.json").exists()
 
@@ -239,3 +239,19 @@ def test_missing_cache_writes_remain_unknown_with_confirmed_reads(saved, monkeyp
     assert report["cache_reads"] == 2560
     assert report["cache_evidence_status"] == "incomplete"
     assert not report["no_cache_writes_confirmed"]
+
+
+def test_input_guard_reservation_preserves_five_cent_cap(saved, monkeypatch):
+    from decimal import Decimal
+    original = smoke.SpendTracker
+    trackers = []
+    def capture(*args, **kwargs):
+        tracker = original(*args, **kwargs)
+        trackers.append(tracker)
+        return tracker
+    monkeypatch.setattr(smoke, "SpendTracker", capture)
+    saved.render_only = True
+    smoke.run(saved)
+    assert trackers[0].max_input_tokens == 120000
+    assert trackers[0].max_usd == Decimal("0.05")
+    assert trackers[0].reservation_usd == Decimal("0.019096")

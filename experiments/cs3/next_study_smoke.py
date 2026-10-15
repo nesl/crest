@@ -317,7 +317,7 @@ def run(args):
     settings = dict(provider="openai_responses", model="gpt-6-luna", base_url="https://api.openai.com/v1",
         api_key_env="OPENAI_API_KEY" if args.run_paid else "CREST_SMOKE_OFFLINE_KEY",
         temperature=None, reasoning_effort="medium", service_tier="default", json_response_mode=True,
-        max_transport_retries=0, max_output_tokens=8192, max_input_tokens=100000, max_usd="0.05",
+        max_transport_retries=0, max_output_tokens=8192, max_input_tokens=120000, max_usd="0.05",
         input_usd_per_million_tokens="0.125", output_usd_per_million_tokens="0.50",
         pricing_source="Configured conservative smoke prices; verify before any paid call",
         output_token_parameter="max_output_tokens")
@@ -343,7 +343,7 @@ def run(args):
     proposals, failure = (), None
     cache_usages = []
     if input_bound > settings["max_input_tokens"]:
-        failure = f"Conservative serialized input bound {input_bound} exceeds unchanged 100000 guard"
+        failure = f"Conservative serialized input bound {input_bound} exceeds 120000 guard"
     if not args.render_only and not failure:
         try:
             if test_cache:

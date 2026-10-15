@@ -89,7 +89,7 @@ class LLMGeneratorOptimizer(OptimizerABC):
             identity.update(history_mode="full", candidate_schema_version=3,
                             phase_policy_version=3, decoded_fingerprint_version=1,
                             coverage_policy_version=2, coverage_target_per_cell=2,
-                            feedback_policy_version=2,
+                            feedback_policy_version=3, unclassified_failure_max_attempts=2,
                             max_refill_attempts=llm["max_refill_attempts"])
         if llm.get("max_output_tokens") is not None:
             identity["max_output_tokens"] = llm["max_output_tokens"]

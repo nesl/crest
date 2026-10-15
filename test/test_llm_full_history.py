@@ -160,3 +160,17 @@ def test_reason_dictionary_grows_only_when_a_new_error_is_observed():
     index = table["columns"].index("failure_reason")
     assert [row[index] for row in table["rows"]] == [0, 0, 1, 0]
     assert "failure_reasons" not in build_full_history([trial(0)])
+
+
+def test_unknown_retry_budget_is_decoded_and_not_coverage():
+    # Two unknown failures block another attempt; aliases count, infrastructure does not.
+    from crest.optimizers.llm.full_history import exhausted_unknown_retries
+    first = trial(0, "PRUNED", params(num_blocks=2, stride_schedule="light"),
+                  feasible=False, feasibility_status="not_evaluated", prune_reason="HIL fatal error")
+    second = trial(1, "FAIL", params(num_blocks=2, stride_schedule="late"))
+    assert not exhausted_unknown_retries([first])
+    assert exhausted_unknown_retries([first, second]) == {decoded_fingerprint(first.params)}
+    assert build_full_history([first, second])["retry_exhausted_trials"] == [0, 1]
+    assert all(c["informative"] == 0 for c in build_coverage([first, second])["cells"])
+    infra = trial(2, "FAIL", first.params, measurement_failure_class="infrastructure")
+    assert not exhausted_unknown_retries([first, infra])

@@ -71,7 +71,7 @@ latest saved evidence. Each separate invocation has its own cap.
 Limits per invocation: **$0.05**, at most **four HTTP/content attempts**, no
 transport retries, one shared malformed-response repair, two refills, and 8192
 output tokens per request. Reservations are conservative and may stop the test
-before four calls. Input uses the unchanged 100000 conservative byte-based
+before four calls. Input uses the 120000 conservative byte-based
 guard, not a tokenizer estimate. Prices are configured conservatively at
 $0.125/M input and $0.50/M output; verify current pricing before paid execution.
 Explicit no-breakpoint caching avoids speculative whole-prompt cache writes;
@@ -84,7 +84,7 @@ paid command to make exactly two controlled requests. For example, reuse the
 paths above with `--trials 100 --run-paid --test-cache` and a new output directory
 such as `"$CREST_NEXT_SMOKE_ROOT/cache-paid"`. This mode replaces proposal
 generation for that invocation. It uses the same $0.05 tracker, conservative
-reservation, 100000 input guard, four-call ceiling, and zero transport retries.
+reservation, 120000 input guard, four-call ceiling, and zero transport retries.
 No cache savings are assumed in reservations.
 
 The probe follows the existing ranker replay `full_log` wire convention: a

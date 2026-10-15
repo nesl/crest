@@ -213,3 +213,29 @@ def test_progressive_coverage_counts_informative_outcomes_separately():
     assert rows[-1]["coverage_informative_goal_slots_filled"] == 2
     assert rows[-1]["coverage_cells_meeting_goal"] == 1
     assert not rows[-1]["coverage_goal_complete"]
+
+
+def test_repaired_provider_response_error_has_complete_duplicate_rate(tmp_path):
+    import json
+    def stream(name, values):
+        (tmp_path / name).write_text("".join(json.dumps(v) + "\n" for v in values))
+    stream("returned_candidates.jsonl", [{"proposal_source": "llm"}])
+    stream("rejected_candidates.jsonl", [{"code": "duplicate_raw"}, {"code": "malformed_response"}])
+    error = {"event": "provider_error", "request_id": "repair-1", "recoverable": True}
+    final = {"event": "batch_policy_filled", "request_ids": ["repair-1", "repair-2"], "refill_calls": 0}
+    stream("optimizer_events.jsonl", [error, final])
+    report = audit.proposal_audit(tmp_path)
+    assert not report["missing_data"]
+    assert report["duplicate_rejection_rate"] == .5
+    assert report["provider_error_rounds"] == 1
+    assert report["unresolved_provider_errors"] == 0
+    # Fatal errors, unfinished repairs, other rounds, and legacy markers stay unknown.
+    for events in ([{**error, "recoverable": False}, final], [error],
+                   [error, {**final, "request_ids": ["different-round"]}],
+                   [{"event": "provider_error", "request_id": "repair-1"}, final],
+                   [final, error]):
+        stream("optimizer_events.jsonl", events)
+        report = audit.proposal_audit(tmp_path)
+        assert report["missing_data"]
+        assert report["duplicate_rejection_rate"] is None
+        assert report["observed_duplicate_rejection_rate"] == .5

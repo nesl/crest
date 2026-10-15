@@ -220,7 +220,7 @@ def generate_llm_batch(
 
 
 
-def _policy_feedback(retained, rejections, *, malformed=False):
+def _policy_feedback(retained, rejections, *, malformed=None):
     """Build structurally bounded feedback without repeated history or rationales.
 
     Parameters
@@ -228,8 +228,8 @@ def _policy_feedback(retained, rejections, *, malformed=False):
     retained, rejections : object
         Accepted entries and validation failures. Missing slots and targets
         already appear in the current request.
-    malformed : bool
-        Add a constant envelope repair instruction, retaining prior rejections.
+    malformed : str or None
+        Specific error, capped at 500 characters, retaining prior rejections.
 
     Returns
     -------
@@ -248,7 +248,8 @@ def _policy_feedback(retained, rejections, *, malformed=False):
                            ("params", "intent", "parent_trial", "assigned_target") if k in entry}
                            for entry in retained],
                        "rejections": compact, "additional_rejections": max(0, len(rejections) - 5),
-                       **({"repair": "Return only the required valid CandidateBatch JSON envelope."}
+                       **({"repair": "Return only the required valid CandidateBatch JSON envelope.",
+                           "error": malformed[:500]}
                           if malformed else {})}, separators=(",", ":"), default=str)
 
 
@@ -275,7 +276,8 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
     from dataclasses import replace
     from .schemas import validate_policy_batch
     from .full_history import (reconstruct_params, decoded_architecture, decoded_fingerprint,
-                               parameter_differences, nearest_prior_distances, outcome_class, outcome_reason, observed_measurement)
+                               parameter_differences, nearest_prior_distances, outcome_class, outcome_reason, observed_measurement,
+                               exhausted_unknown_retries)
     from .spending import SpendInputLimitExceeded
     if not (isinstance(max_repair_attempts, int) and not isinstance(max_repair_attempts, bool)
             and 0 <= max_repair_attempts <= 1
@@ -283,8 +285,10 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
             and 0 <= max_refill_attempts <= 2):
         raise ValueError("Full history mode requires repair attempts <= 1 and refill attempts <= 2.")
     completed = []
+    exhausted = exhausted_unknown_retries(history)
     for trial in history:
-        if outcome_class(trial) in {"successful", "deterministic", "infeasible"}:
+        if (outcome_class(trial) in {"successful", "deterministic", "infeasible"}
+                or decoded_fingerprint(reconstruct_params(trial)) in exhausted):
             params = reconstruct_params(trial, context.descriptor)
             if all(name in params for name in context.descriptor) and params not in completed:
                 completed.append(params)
@@ -322,10 +326,12 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
     used_parents = set()
     stop_reason = None
     last_rejections = []
+    request_ids = []
     while True:
         current = replace(context, batch_size=sum(quotas.values()), allocation=dict(quotas),
                           exploration_targets=tuple(targets))
         request_id = ledger.next_request_id()
+        request_ids.append(request_id)
         request = build_candidate_request(current, prompt_version=prompt_version, repair_feedback=feedback)
         ledger.record_prompt_context({**current.as_prompt_payload(), "request_id": request_id,
                                      "repair_attempt": repairs, "refill_attempt": refills,
@@ -339,7 +345,8 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
                                               **{name: getattr(exc, name) for name in
                                                  ("raw_response", "wire_payload", "usage", "spending")
                                                  if getattr(exc, name, None) is not None}})
-            ledger.record_event({"event": "provider_error", "request_id": request_id})
+            ledger.record_event({"event": "provider_error", "request_id": request_id,
+                                 "recoverable": isinstance(exc, ProviderResponseError)})
             if isinstance(exc, SpendInputLimitExceeded) and proposals:
                 stop_reason = "input_guard"
                 break
@@ -351,13 +358,16 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
                 batch = CandidateBatch.model_validate(json.loads(response.content))
             except (ValueError, TypeError, ValidationError) as exc:
                 malformed = str(exc)
+                if isinstance(exc, ValidationError):
+                    malformed = json.dumps(exc.errors(include_input=False, include_url=False,
+                                                       include_context=False), default=str)
         if malformed is not None:
             ledger.record_rejected({"request_id": request_id, "code": "malformed_response", "message": malformed})
             if repairs >= max_repair_attempts:
                 stop_reason = "repair_budget_exhausted"
                 break
             repairs += 1
-            feedback = _policy_feedback(retained, last_rejections, malformed=True)
+            feedback = _policy_feedback(retained, last_rejections, malformed=malformed)
             continue
         accepted, rejected = validate_policy_batch(
             batch, context.descriptor, quotas=quotas, targets=targets, parents=context.eligible_parents,
@@ -394,6 +404,7 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
         last_rejections = rejected
         feedback = _policy_feedback(retained, rejected)
     ledger.record_event({"event": "batch_policy_exhausted" if sum(quotas.values()) else "batch_policy_filled",
+                         "request_ids": request_ids,
                          "accepted": len(proposals), "unfilled": quotas, "unfilled_targets": targets,
                          "unfilled_reason": stop_reason if sum(quotas.values()) else None,
                          "repair_calls": repairs, "refill_calls": refills})

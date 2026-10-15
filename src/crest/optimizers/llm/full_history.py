@@ -248,6 +248,30 @@ def _compact_metric(value: Any) -> Any:
     return int(value) if isinstance(value, float) and math.isfinite(value) and value.is_integer() else value
 
 
+def exhausted_unknown_retries(history: Any) -> set[str]:
+    """Find decoded networks with two unclassified terminal failures.
+
+    Parameters
+    ----------
+    history : Any
+        Saved trial evidence; infrastructure failures are excluded.
+
+    Returns
+    -------
+    set[str]
+        Identities blocked after the original attempt and one retry. This
+        operational limit does not make these failures architecture evidence.
+    """
+    counts = defaultdict(int)
+    for trial in _trials(history):
+        if (_state_name(trial).upper() in {"COMPLETE", "FAIL", "PRUNED"}
+                and outcome_class(trial) == "unclassified"):
+            identity = decoded_fingerprint(reconstruct_params(trial))
+            if identity is not None:
+                counts[identity] += 1
+    return {identity for identity, count in counts.items() if count >= 2}
+
+
 def build_full_history(history: Any, *, directions: tuple[str, ...] = ()) -> dict[str, Any]:
     """Serialize every terminal trial chronologically, keeping pending work separate.
 
@@ -288,6 +312,9 @@ def build_full_history(history: Any, *, directions: tuple[str, ...] = ()) -> dic
             pending.append(row)
     table = {"columns": list(HISTORY_COLUMNS), "rows": rows, "pending": pending,
              "directions": list(directions), "decoded_schema": DECODED_SCHEMA_VERSION}
+    exhausted = exhausted_unknown_retries(history)
+    table["retry_exhausted_trials"] = [trial.number for trial in _trials(history)
+        if decoded_fingerprint(reconstruct_params(trial)) in exhausted]
     _intern_failure_reasons(table)
     return to_plain(table, nonfinite_to_none=True)
 

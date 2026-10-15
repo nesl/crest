@@ -35,6 +35,8 @@ FULL_HISTORY_SYSTEM = (
     "index history.failure_reasons. Infrastructure and unclassified failures are not "
     "architecture evidence. "
     "Failure or infeasibility penalty scores are not measured task quality. "
+    "Unclassified failures permit one retry per decoded network; retry_exhausted_trials "
+    "identify networks blocked after two such failures, without counting as coverage. "
     "Raw parameter aliases can decode to the same network; avoid both exact and decoded "
     "duplicates. widths lists actual pointwise channels per block: base_channels is "
     "scaled by pointwise_scale, and raising a nonbinding max_channels changes nothing. "
