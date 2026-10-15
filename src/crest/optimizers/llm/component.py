@@ -82,6 +82,9 @@ class LLMGeneratorOptimizer(OptimizerABC):
             "phase_policy_version": 2,
             "fallback_policy": {"type": "unique_random", "max_attempts": 100},
         })
+        if llm["require_rationale"]:
+            identity["require_rationale"] = True
+            identity["candidate_schema_version"] = 2
         if llm.get("max_output_tokens") is not None:
             identity["max_output_tokens"] = llm["max_output_tokens"]
             identity["output_token_parameter"] = llm["output_token_parameter"]
@@ -215,6 +218,7 @@ class LLMGeneratorOptimizer(OptimizerABC):
                 directions=context.objective_directions,
             ),
             semantic_context=self.semantic_context,
+            require_rationale=llm["require_rationale"],
         )
         if self.memory is not None:
             prompt = self.memory.enrich(history, prompt, self.provider,

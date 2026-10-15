@@ -89,7 +89,7 @@ def run(output: Path, paid: bool, render_only: bool = False) -> None:
     context = PromptContext(study_name=study.study_name, model_family='audio_dscnn',
         descriptor=descriptor, objective_summary='API smoke ONLY: scores are synthetic arbitrary numbers, not measured model quality. Trial states are synthetic too. Dataset metadata is a reconstructed offline proxy; no dataset loaded. Do not infer scientific findings. Campaign score: ' + json.dumps(cfg.nas.score, sort_keys=True),
         attempted_trials=30, feasible_completed_trials=30, target_feasible_trials=200,
-        max_total_attempts=300, batch_size=5,
+        max_total_attempts=300, batch_size=5, require_rationale=llm.require_rationale,
         recent_trials=build_recent_trial_history(study, window_size=15),
         anchors=build_best_trial_anchors(study, anchor_count=5), semantic_context=semantic)
     if render_only:
@@ -122,7 +122,10 @@ def run(output: Path, paid: bool, render_only: bool = False) -> None:
         candidate = {p.name: rng.choice(p.choices) for p in descriptor.params}
         if candidate not in warmup and candidate not in candidates:
             candidates.append(candidate)
-    offline_responses = iter([{'updates': [], 'retire': []}, {'candidates': candidates}])
+    candidate_envelopes = ([{'params': params, 'rationale':
+        'Synthetic offline fixture: exercise a distinct architecture; no model quality claim.'}
+        for params in candidates] if llm.require_rationale else candidates)
+    offline_responses = iter([{'updates': [], 'retire': []}, {'candidates': candidate_envelopes}])
     transport = provider._urlopen
     calls = []
 
@@ -168,7 +171,8 @@ def run(output: Path, paid: bool, render_only: bool = False) -> None:
         if response.finish_reason != 'stop':
             raise RuntimeError(f'Candidate response incomplete: {response.finish_reason}')
         result = validate_candidate_batch(CandidateBatch.model_validate_json(response.content),
-            descriptor, batch_size=5, completed_candidates=warmup)
+            descriptor, batch_size=5, completed_candidates=warmup,
+            require_rationale=llm.require_rationale)
         report['candidate_validation'] = asdict(result)
         if len(result.accepted) != 5 or result.rejected:
             raise RuntimeError('Expected five valid, distinct, new candidates; inspect report.json.')

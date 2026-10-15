@@ -68,6 +68,11 @@ def normalize_llm_config(optimizer_config) -> Dict:
     if warmup_file is not None and (not isinstance(warmup_file, str) or not warmup_file.strip()):
         raise ValueError("optimizer.llm.warmup_params_file must be a non-empty path or null.")
 
+    require_rationale = llm.get("require_rationale", False)
+    if not isinstance(require_rationale, bool):
+        raise ValueError("optimizer.llm.require_rationale must be a boolean.")
+    llm.require_rationale = require_rationale
+
     raw_semantic_context = llm.get("semantic_context", True)
     if not isinstance(raw_semantic_context, bool):
         raise ValueError("optimizer.llm.semantic_context must be a boolean.")

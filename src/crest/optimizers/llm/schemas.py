@@ -38,6 +38,7 @@ class CandidateValidationResult:
 
     accepted: tuple[dict[str, Any], ...]
     rejected: tuple[CandidateRejection, ...]
+    rationales: tuple[str | None, ...] = ()
 
 
 def candidate_fingerprint(candidate: Mapping[str, Any]) -> str:
@@ -106,6 +107,7 @@ def validate_candidate_batch(
     batch_size: int,
     completed_candidates: Iterable[Mapping[str, Any]] = (),
     queued_candidates: Iterable[Mapping[str, Any]] = (),
+    require_rationale: bool = False,
 ) -> CandidateValidationResult:
     """Validate exact keys, values, batch bounds, and duplicate identities."""
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
@@ -115,6 +117,7 @@ def validate_candidate_batch(
     queued_fingerprints = _history_fingerprints(queued_candidates, descriptor)
     accepted_fingerprints: set[str] = set()
     accepted: list[dict[str, Any]] = []
+    rationales: list[str | None] = []
     rejected: list[CandidateRejection] = []
 
     def reject(index: int, code: str, message: str, candidate: Mapping[str, Any]) -> None:
@@ -131,6 +134,19 @@ def validate_candidate_batch(
         if index >= batch_size:
             reject(index, "batch_size_exceeded", f"Only {batch_size} candidate(s) were requested.", candidate)
             continue
+
+        rationale = None
+        if require_rationale:
+            if (set(candidate) != {"params", "rationale"}
+                    or not isinstance(candidate.get("params"), dict)
+                    or not isinstance(candidate.get("rationale"), str)
+                    or not candidate["rationale"].strip()
+                    or len(candidate["rationale"]) > 2000):
+                reject(index, "invalid_rationale_envelope",
+                       "Each candidate requires exactly params and a nonempty rationale of at most 2000 characters.", candidate)
+                continue
+            rationale = candidate["rationale"].strip()
+            candidate = candidate["params"]
 
         invalid_value = candidate_error(candidate, descriptor)
         if invalid_value is not None:
@@ -150,6 +166,7 @@ def validate_candidate_batch(
             continue
 
         accepted.append(normalized)
+        rationales.append(rationale)
         accepted_fingerprints.add(fingerprint)
 
-    return CandidateValidationResult(tuple(accepted), tuple(rejected))
+    return CandidateValidationResult(tuple(accepted), tuple(rejected), tuple(rationales))

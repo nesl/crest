@@ -996,6 +996,7 @@ class NASModelClient:
             model_family_name=self.model_family_name, feasibility_enabled=self._feasibility_enabled(),
         )
         optimizer.initialize(context, config)
+        self._progress_warmup_count = len(getattr(optimizer, "warmup_params", []) or [])
         return descriptor
 
     @staticmethod
@@ -1073,6 +1074,26 @@ class NASModelClient:
             count += 1
         return count
 
+    def _refresh_progress(self, study, trial):
+        """Refresh score artifacts after a committed trial without stopping NAS.
+
+        Parameters
+        ----------
+        study : optuna.study.Study
+            Active study, providing the current committed trial snapshot.
+        trial : optuna.trial.FrozenTrial
+            Finished attempt supplied by Optuna's callback protocol.
+        """
+        try:
+            if [direction.name for direction in study.directions] != ["MAXIMIZE"]:
+                return
+            from crest.progress import trial_records, write_progress
+            write_progress(trial_records(study.get_trials(deepcopy=False)),
+                           self._artifacts_dir(), study.study_name,
+                           warmup_count=getattr(self, "_progress_warmup_count", None))
+        except Exception:
+            logger.warning("Unable to refresh NAS progress plots", exc_info=True)
+
     def _execute_search_round(self, study: optuna.Study, optimizer: Any, name: str,
                               descriptor: Any, budget: BudgetSnapshot,
                               measurement_failure_guard=None) -> int:
@@ -1109,7 +1130,7 @@ class NASModelClient:
         else:
             raise ValueError("Optimizer must return NativeRound or ExplicitRound.")
         study.optimize(self.objective, n_trials=size,
-                       callbacks=[measurement_failure_guard or _ConsecutiveMeasurementFailureGuard()],
+                       callbacks=[self._refresh_progress, measurement_failure_guard or _ConsecutiveMeasurementFailureGuard()],
                        catch=(MeasurementInfrastructureError,))
         return size
 
@@ -2412,6 +2433,7 @@ class NASModelClient:
                 self._validate_or_store_feasibility_signature(single_trial_study)
                 self._store_optimizer_signature(single_trial_study, signature)
                 self._recover_orphaned_trials(single_trial_study, optimizer_config)
+                self._refresh_progress(single_trial_study, None)
                 single_trial_study.set_metric_names(self._study_metric_names())
                 remaining = trials
                 initial_completed = self._qualifying_complete_count(single_trial_study.trials)
@@ -2421,7 +2443,7 @@ class NASModelClient:
                     waiting_size = self._waiting_round_size(single_trial_study)
                     if waiting_size:
                         size = min(waiting_size, remaining)
-                        single_trial_study.optimize(self.objective, n_trials=size, callbacks=[measurement_failure_guard], catch=(MeasurementInfrastructureError,))
+                        single_trial_study.optimize(self.objective, n_trials=size, callbacks=[self._refresh_progress, measurement_failure_guard], catch=(MeasurementInfrastructureError,))
                     else:
                         completed = self._qualifying_complete_count(single_trial_study.trials)
                         size = self._execute_search_round(
@@ -2434,7 +2456,8 @@ class NASModelClient:
             except OptimizerBudgetExhausted as exc:
                 logger.info("[SMOKE] Stopped by optimizer budget: %s; proposal_sources=%s",
                             exc, self._proposal_source_counts(single_trial_study))
-            except Exception as exc:
+            except (Exception, KeyboardInterrupt) as exc:
+                self._refresh_progress(single_trial_study, None)
                 completed = sum(1 for t in single_trial_study.trials if t.state == TrialState.COMPLETE)
                 pruned = sum(1 for t in single_trial_study.trials if t.state == TrialState.PRUNED)
                 failed = sum(1 for t in single_trial_study.trials if t.state == TrialState.FAIL)
@@ -2584,6 +2607,7 @@ class NASModelClient:
             study.set_metric_names(self._study_metric_names())
 
             self._recover_orphaned_trials(study, optimizer_config)
+            self._refresh_progress(study, None)
             study.set_user_attr("crest_optimizer_budget_stop", None)
             while True:
                 completed, feasible, infeasible, pruned, failed = _trial_counts()
@@ -2608,7 +2632,7 @@ class NASModelClient:
 
                 waiting_size = self._waiting_round_size(study)
                 if waiting_size:
-                    study.optimize(self.objective, n_trials=waiting_size, callbacks=[measurement_failure_guard], catch=(MeasurementInfrastructureError,))
+                    study.optimize(self.objective, n_trials=waiting_size, callbacks=[self._refresh_progress, measurement_failure_guard], catch=(MeasurementInfrastructureError,))
                     continue
 
                 remaining_needed = target_completions - feasible
@@ -2639,7 +2663,8 @@ class NASModelClient:
             stop_reason = "optimizer_budget_exhausted"
             study.set_user_attr("crest_optimizer_budget_stop", str(exc))
             logger.info("[NAS] Stopped by optimizer budget: %s", exc)
-        except Exception as exc:
+        except (Exception, KeyboardInterrupt) as exc:
+            self._refresh_progress(study, None)
             completed, feasible, infeasible, pruned, failed = _trial_counts()
             logger.exception(
                 "[NAS] Aborting after %s trials (%s feasible, %s infeasible, %s completed, "

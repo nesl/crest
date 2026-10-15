@@ -63,6 +63,8 @@ class PromptContext:
     knowledge_base: dict[str, Any] = field(default_factory=dict)
     semantic_context: dict[str, Any] = field(default_factory=dict)
 
+    require_rationale: bool = False
+
     def phase(self) -> PhaseState:
         """Resolve the deterministic current budget phase."""
         return resolve_phase(
@@ -110,6 +112,16 @@ class PromptContext:
                 "json_only": True,
             },
         }
+        if self.require_rationale:
+            payload["output_contract"]["format"] = {"candidates": [{
+                "params": "exact raw parameter dictionary",
+                "rationale": "nonempty explanation, at most 2000 characters",
+            }]}
+            payload["output_contract"]["rationale_instruction"] = (
+                "For each architecture explain the design hypothesis, expected objective "
+                "tradeoffs, and relevant evidence or uncertainty. Keep this concise. "
+                "Place exactly the search-space keys inside params."
+            )
         if semantic_record:
             payload["semantic_context"] = {
                 "enabled": bool(semantic_record["enabled"]),

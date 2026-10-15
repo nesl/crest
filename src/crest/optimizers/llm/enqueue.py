@@ -164,6 +164,7 @@ def generate_llm_batch(
             batch_size=context.batch_size,
             completed_candidates=completed,
             queued_candidates=queued,
+            require_rationale=context.require_rationale,
         )
         for rejection in validation.rejected:
             ledger.record_rejected({"request_id": request_id, **rejection.__dict__})
@@ -177,6 +178,8 @@ def generate_llm_batch(
             "proposal_source": "llm", "optimizer": "llm_generator",
             "request_id": request_id, "batch_id": f"llm-{request_id:06d}",
             "batch_index": index,
+            **({"rationale": validation.rationales[index]}
+               if validation.rationales[index] is not None else {}),
         }) for index, candidate in enumerate(validation.accepted))
         for proposal in proposals:
             ledger.record_returned({**proposal.provenance, "candidate": proposal.params})

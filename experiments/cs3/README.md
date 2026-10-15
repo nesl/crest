@@ -92,3 +92,29 @@ at 30 attempts, then every 15 eligible records. Repair feedback reports actual
 character counts; missing `retire` means no retirements. The memory-v2 identity
 requires a fresh campaign rather than silently resuming the preserved old run.
 This policy change is being validated offline; no restart is authorized.
+
+
+### Architecture rationales and automatic progress plots
+
+The draft CS3 config enables `optimizer.llm.require_rationale: true`. New Luna
+candidates use `{"params": {"...": "raw search values"}, "rationale": "short design hypothesis"}`.
+The rationale must be nonempty and at most 2,000 characters. It is saved in
+`crest_proposal.rationale` on the Optuna trial and in
+`llm_optimizer/returned_candidates.jsonl`. Historical proposals and random
+fallbacks are not assigned invented Luna explanations.
+
+Single-objective maximize runs now refresh `progress/score_vs_time.{png,pdf}`,
+`progress/score_vs_trial.{png,pdf}`, and `progress/score_progress.csv` under the
+study directory after terminal attempts and on resume/interruption. These show
+feasible scores, the incumbent, and the warmup boundary. Failed/pruned attempts
+retain their positions; elapsed time includes API calls and operator downtime.
+Plotting errors are logged without stopping NAS. The read-only standalone tool
+`analysis_scripts/plot_cs3_progress.py` regenerates the same artifacts.
+
+Existing studies require an explicit, stopped-writer contract migration before
+turning on rationales. `python -m crest.optimizers.llm.rationale_migration --help`
+describes the backup-first helper. Generate both signatures through the normal
+runner identity code, retain all other settings, and preserve memory/spend files.
+The helper permits only candidate schema 1 to 2 plus `require_rationale: true`,
+rejects RUNNING trials, and records the historical trial boundary. Old queued
+proposals, if any, remain explicitly grandfathered without retrospective reasons.

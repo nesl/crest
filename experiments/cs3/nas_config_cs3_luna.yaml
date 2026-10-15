@@ -166,6 +166,7 @@ optimizer:
     prompt_version: v1
     random_seed: 0
     semantic_context: true
+    require_rationale: true  # Persist a short hypothesis with each new Luna architecture.
     warmup_params_file: warmup_params.json  # Relative to this YAML.
     recent_trial_window: 15
     anchor_count: 5
