@@ -323,9 +323,13 @@ class SpendTracker:
         if self._state["halted"]:
             raise SpendAccountingError("Provider previously exceeded reserved token limits; spend accounting is halted.")
         try:
-            messages = request_payload["messages"]
-            if not isinstance(messages, list):
-                raise TypeError("messages must be a list")
+            if "input" in request_payload:
+                # Bound the entire Responses payload, including formatting/options.
+                messages = request_payload
+            else:
+                messages = request_payload["messages"]
+                if not isinstance(messages, list):
+                    raise TypeError("messages must be a list")
             input_bound = len(json.dumps(messages, separators=(",", ":"), allow_nan=False).encode("utf-8")) + 1024
         except (KeyError, TypeError, ValueError, UnicodeError) as exc:
             raise SpendAccountingError("Cannot bound serialized request messages.") from exc
@@ -340,6 +344,7 @@ class SpendTracker:
         state["reservations"][reservation_id] = {
             "status": "reserved", "reserved_usd": _text(self.reservation_usd),
             "charged_usd": _text(self.reservation_usd), "usage_known": False,
+            **({"wire_payload": request_payload} if "input" in request_payload else {}),
         }
         state["charged_usd"] = _text(total)
         self._persist(state)
@@ -390,6 +395,9 @@ class SpendTracker:
                     _decimal(record["charged_usd"], "charged_usd").copy_negate(), actual,
                 ))
                 record.update(prompt_tokens=prompt, completion_tokens=completion, charged_usd=_text(actual))
+                if "input_tokens" in usage:
+                    record.update(cached_tokens=usage.get("cached_tokens", 0),
+                                  cache_write_tokens=usage.get("cache_write_tokens", 0))
                 exceeded = prompt > self.max_input_tokens or completion > self.max_output_tokens
                 record["status"] = "exceeded" if exceeded else "settled"
                 state["halted"] = exceeded

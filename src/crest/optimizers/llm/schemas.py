@@ -170,3 +170,110 @@ def validate_candidate_batch(
         accepted_fingerprints.add(fingerprint)
 
     return CandidateValidationResult(tuple(accepted), tuple(rejected), tuple(rationales))
+
+
+
+def validate_policy_batch(batch, descriptor, *, quotas, targets=(), parents=(),
+                          completed_candidates=(), queued_candidates=(), retained=(),
+                          used_parents=(), distinct_parents=True, history_matches=()):
+    """Validate next-study entries independently, retaining valid quota subsets.
+
+    Parameters
+    ----------
+    batch : CandidateBatch
+        Parsed provider envelope.
+    descriptor : SearchSpaceDescriptor
+        Active search parameters.
+    quotas : dict
+        Remaining local and exploration slots.
+    targets, parents, retained, used_parents, history_matches : iterable
+        Fixed target cells, eligible parents, accepted entries, used decoded
+        parent identities, and rich terminal duplicate records.
+    completed_candidates, queued_candidates : iterable
+        Architectures which cannot be proposed again.
+    distinct_parents : bool
+        Require a different decoded parent while enough parents exist.
+
+    Returns
+    -------
+    tuple
+        Accepted metadata entries and candidate rejection records.
+    """
+    from .full_history import candidate_cell, decoded_fingerprint
+    remaining = dict(quotas)
+    targeted = bool(targets)
+    accepted, rejected = [], []
+    blocked = list(completed_candidates) + list(queued_candidates) + [x["params"] for x in retained]
+    raw_seen = {candidate_fingerprint(_canonical_candidate(p, descriptor)) for p in blocked
+                if candidate_error(p, descriptor) is None}
+    decoded_seen = {decoded_fingerprint(p) for p in blocked} - {None}
+    parent_map = {p["trial_number"]: p for p in parents}
+    used = set(used_parents)
+    available_parent_ids = {decoded_fingerprint(p["params"]) for p in parents} - {None}
+    for index, entry in enumerate(batch.candidates):
+        def reject(code, message):
+            """Append a rejection for the current response entry.
+
+            Parameters
+            ----------
+            code : str
+                Stable validation failure category.
+            message : str
+                Candidate-specific explanation returned in refill feedback.
+
+            Returns
+            -------
+            None
+                Appends to this validation call's rejection list.
+            """
+            rejected.append(CandidateRejection(index, code, message, dict(entry)))
+        intent = entry.get("intent")
+        allowed = {"params", "rationale", "intent", "parent_trial", "intended_change", "target_cell"}
+        if (set(entry) - allowed or not isinstance(entry.get("params"), dict)
+                or not isinstance(entry.get("rationale"), str)
+                or not entry["rationale"].strip() or len(entry["rationale"]) > 2000
+                or intent not in ("local", "exploration")):
+            reject("invalid_policy_envelope", "Require params, rationale, and local/exploration intent.")
+            continue
+        params = entry["params"]
+        error = candidate_error(params, descriptor)
+        if error:
+            reject(*error); continue
+        params = _canonical_candidate(params, descriptor)
+        raw, decoded = candidate_fingerprint(params), decoded_fingerprint(params)
+        if raw in raw_seen or (decoded is not None and decoded in decoded_seen):
+            matches = [p for p in history_matches if
+                       candidate_fingerprint(p["params"]) == raw or
+                       (decoded is not None and decoded_fingerprint(p["params"]) == decoded)]
+            # Keep every matched trial ID while bounding repeated architecture details.
+            feedback = {"matching_trials": [p["trial"] for p in matches],
+                        "match_details": matches[:3],
+                        "additional_details_in_full_history": max(0, len(matches) - 3)}
+            reject("duplicate_raw" if raw in raw_seen else "duplicate_decoded",
+                   "Matching terminal/pending/retained architecture: " + json.dumps(feedback, default=str, separators=(",", ":")))
+            continue
+        if remaining.get(intent, 0) <= 0:
+            reject("quota_overflow", f"No remaining {intent} slots."); continue
+        metadata = dict(entry, params=params)
+        if intent == "local":
+            parent_number = entry.get("parent_trial")
+            parent = parent_map.get(parent_number) if isinstance(parent_number, int) and not isinstance(parent_number, bool) else None
+            if parent is None or isinstance(entry.get("parent_trial"), bool):
+                reject("invalid_parent", "Local candidates require an eligible feasible historical trial."); continue
+            parent_id = decoded_fingerprint(parent["params"])
+            if distinct_parents and parent_id in used and available_parent_ids - used:
+                reject("parent_reused", "Choose a distinct decoded feasible parent while one remains available."); continue
+            metadata["parent_diversity_exception"] = parent_id in used
+            used.add(parent_id)
+        elif entry.get("parent_trial") is not None:
+            reject("invalid_parent", "Exploration candidates must use a null parent_trial."); continue
+        elif targeted:
+            target = next((t for t in targets if t["cell_id"] == candidate_cell(params)), None)
+            if target is None:
+                reject("wrong_exploration_target", "Candidate must belong to a remaining Python-assigned cell."); continue
+            metadata["assigned_target"] = target
+            targets = list(targets); targets.remove(target)
+        remaining[intent] -= 1
+        accepted.append(metadata); raw_seen.add(raw)
+        if decoded is not None: decoded_seen.add(decoded)
+    return tuple(accepted), tuple(rejected)

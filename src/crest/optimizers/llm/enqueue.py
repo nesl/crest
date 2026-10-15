@@ -97,8 +97,13 @@ def generate_llm_batch(
     prompt_version: str,
     max_repair_attempts: int,
     rng: random.Random,
+    max_refill_attempts: int = 2,
 ) -> tuple[CandidateProposal, ...]:
     """Return validated candidates with source provenance and one fallback."""
+    if getattr(context, "full_history_mode", False):
+        return _generate_policy_batch(history, provider, context, ledger, prompt_version=prompt_version,
+                                      max_repair_attempts=max_repair_attempts,
+                                      max_refill_attempts=max_refill_attempts, rng=rng)
     completed = _history_candidates(history, context.descriptor, {"COMPLETE", "PRUNED", "FAIL"})
     queued = _history_candidates(history, context.descriptor, {"WAITING"})
     repair_feedback = None
@@ -210,5 +215,156 @@ def generate_llm_batch(
             ledger.record_event({"event": "random_fallback", "schema_version": 2,
                                  "status": "returned_to_runner", "request_id": request_id,
                                  "candidate": candidate})
+            return (proposal,)
+    raise RuntimeError("Unable to sample a unique random fallback candidate after 100 attempts.")
+
+
+
+def _generate_policy_batch(history, provider, context, ledger, *, prompt_version,
+                           max_repair_attempts, max_refill_attempts, rng):
+    """Generate a retained subset under shared repair and refill budgets.
+
+    Parameters
+    ----------
+    history, provider, context, ledger : object
+        Study snapshot and existing generation services.
+    prompt_version : str
+        Version recorded with each request.
+    max_repair_attempts, max_refill_attempts : int
+        Shared malformed-response and missing-slot budgets.
+    rng : random.Random
+        Existing explicit fallback random source.
+
+    Returns
+    -------
+    tuple[CandidateProposal, ...]
+        Valid retained proposals, or an explicitly attributed random fallback.
+    """
+    from dataclasses import replace
+    from .schemas import validate_policy_batch
+    from .full_history import (reconstruct_params, decoded_architecture, decoded_fingerprint,
+                               parameter_differences, nearest_prior_distances, outcome_class, failure_class)
+    completed = _history_candidates(history, context.descriptor, {"COMPLETE", "PRUNED", "FAIL"})
+    # Full mode also honors the boolean confirmed-infeasibility convention.
+    # Leave the legacy path's retry eligibility byte-for-byte unchanged.
+    for trial in history:
+        if outcome_class(trial) == "infeasible":
+            params = reconstruct_params(trial, context.descriptor)
+            if all(name in params for name in context.descriptor) and params not in completed:
+                completed.append(params)
+    queued = []
+    for trial in history:
+        if str(trial.state).strip().upper() in {"WAITING", "RUNNING"}:
+            params = reconstruct_params(trial, context.descriptor)
+            if all(name in params for name in context.descriptor):
+                queued.append(params)
+    matches = []
+    for trial in history:
+        params = reconstruct_params(trial, context.descriptor)
+        if params in completed or params in queued:
+            attrs = trial.user_attrs
+            metrics = attrs.get("task_metrics", {})
+            decoded = decoded_architecture(params)
+            reason = (attrs.get("failure_reason") or attrs.get("prune_reason")
+                      or attrs.get("error_code_label") or trial.system_attrs.get("fail_reason"))
+            if reason is not None:
+                reason = str(reason)
+                if len(reason) > 512:
+                    reason = reason[:512] + " [truncated failure detail]"
+            matches.append({"trial": trial.number, "params": params,
+                            "decoded_widths": decoded["widths"] if decoded else None,
+                            "state": str(trial.state), "outcome": {
+                                "score": trial.values[0] if trial.values and len(trial.values) == 1 else None,
+                                "macro_f1": metrics.get("macro_f1") if isinstance(metrics, Mapping) else None,
+                                "latency_ms": attrs.get("latency_ms"),
+                                "energy_mj_per_inference": attrs.get("energy_mj_per_inference"),
+                                "feasibility": attrs.get("feasibility_status", attrs.get("feasible")),
+                                "failure_class": failure_class(trial), "failure_reason": reason}})
+    retained, proposals, targets = [], [], list(context.exploration_targets)
+    quotas = dict(context.allocation)
+    repairs = refills = 0
+    feedback = None
+    used_parents = set()
+    while True:
+        current = replace(context, batch_size=sum(quotas.values()), allocation=dict(quotas),
+                          exploration_targets=tuple(targets))
+        request_id = ledger.next_request_id()
+        request = build_candidate_request(current, prompt_version=prompt_version, repair_feedback=feedback)
+        ledger.record_prompt_context({**current.as_prompt_payload(), "request_id": request_id,
+                                     "repair_attempt": repairs, "refill_attempt": refills,
+                                     "retained_candidates": retained, "repair_feedback": feedback})
+        ledger.write_request(request_id, request)
+        malformed = None
+        try:
+            response = provider.complete_json(request)
+        except Exception as exc:
+            ledger.write_response(request_id, {"error_type": type(exc).__name__, "error": str(exc),
+                                              **{name: getattr(exc, name) for name in
+                                                 ("raw_response", "wire_payload", "usage", "spending")
+                                                 if getattr(exc, name, None) is not None}})
+            ledger.record_event({"event": "provider_error", "request_id": request_id})
+            if not isinstance(exc, ProviderResponseError): raise
+            malformed = str(exc)
+        else:
+            ledger.write_response(request_id, response)
+            try:
+                batch = CandidateBatch.model_validate(json.loads(response.content))
+            except (ValueError, TypeError, ValidationError) as exc:
+                malformed = str(exc)
+        if malformed is not None:
+            ledger.record_rejected({"request_id": request_id, "code": "malformed_response", "message": malformed})
+            if repairs >= max_repair_attempts: break
+            repairs += 1
+            feedback = "Repair malformed envelope: " + malformed + "; retained: " + json.dumps(retained, default=str)
+            continue
+        accepted, rejected = validate_policy_batch(
+            batch, context.descriptor, quotas=quotas, targets=targets, parents=context.eligible_parents,
+            completed_candidates=completed, queued_candidates=queued, retained=retained,
+            used_parents=used_parents, history_matches=matches)
+        for rejection in rejected:
+            ledger.record_rejected({"request_id": request_id, **rejection.__dict__})
+        for index, entry in enumerate(accepted):
+            intent = entry["intent"]
+            quotas[intent] -= 1
+            if "assigned_target" in entry: targets.remove(entry["assigned_target"])
+            provenance = {"proposal_source": "llm", "optimizer": "llm_generator",
+                          "request_id": request_id, "batch_id": f"llm-{request_id:06d}",
+                          "batch_index": index, **{k: v for k, v in entry.items() if k != "params"},
+                          "nearest_prior_distances": nearest_prior_distances(entry["params"], history)}
+            if intent == "local":
+                parent = next(p for p in context.eligible_parents if p["trial_number"] == entry["parent_trial"])
+                used_parents.add(decoded_fingerprint(parent["params"]))
+                provenance["parent_differences"] = parameter_differences(entry["params"], parent["params"])
+                if entry.get("parent_diversity_exception"):
+                    ledger.record_event({"event": "parent_diversity_exception", "request_id": request_id,
+                                         "parent_trial": entry["parent_trial"]})
+            retained.append(entry)
+            proposals.append(CandidateProposal(entry["params"], provenance))
+        if sum(quotas.values()) == 0 or refills >= max_refill_attempts: break
+        refills += 1
+        feedback = json.dumps({"remaining_allocation": quotas, "remaining_targets": targets,
+                               "retained_candidates": retained,
+                               "rejections": [r.__dict__ for r in rejected]}, default=str)
+    ledger.record_event({"event": "batch_policy_exhausted" if sum(quotas.values()) else "batch_policy_filled",
+                         "accepted": len(proposals), "unfilled": quotas, "unfilled_targets": targets,
+                         "unfilled_reason": "content_request_budget_exhausted" if sum(quotas.values()) else None,
+                         "repair_calls": repairs, "refill_calls": refills})
+    if proposals:
+        for proposal in proposals:
+            ledger.record_returned({**proposal.provenance, "candidate": proposal.params})
+        return tuple(proposals)
+    # Reuse the legacy fallback path without making another content request.
+    for _ in range(100):
+        candidate = sample_random_candidate(context.descriptor, rng=rng)
+        valid, _ = validate_policy_batch(
+            CandidateBatch(candidates=[{"params": candidate, "rationale": "Explicit random fallback", "intent": "exploration"}]),
+            context.descriptor, quotas={"exploration": 1}, completed_candidates=completed,
+            queued_candidates=queued)
+        if valid:
+            proposal = CandidateProposal(candidate, {"proposal_source": "random_fallback", "optimizer": "llm_generator",
+                         "request_id": request_id, "batch_id": f"llm-{request_id:06d}", "batch_index": 0,
+                         "fallback_reason": "no_valid_llm_candidates_after_bounded_requests"})
+            ledger.record_returned({**proposal.provenance, "candidate": candidate})
+            ledger.record_event({"event": "random_fallback", **proposal.provenance})
             return (proposal,)
     raise RuntimeError("Unable to sample a unique random fallback candidate after 100 attempts.")

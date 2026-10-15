@@ -19,7 +19,7 @@ from .enqueue import generate_llm_batch
 from .history import build_best_trial_anchors, build_recent_trial_history
 from .ledger import LLMLedger
 from .memory import MEMORY_PROMPT_VERSION, ExperimentalMemory, MemoryConfig, digest
-from .prompt_builder import PromptContext
+from .prompt_builder import PromptContext, enrich_full_history
 from .provider import build_provider
 
 
@@ -85,6 +85,11 @@ class LLMGeneratorOptimizer(OptimizerABC):
         if llm["require_rationale"]:
             identity["require_rationale"] = True
             identity["candidate_schema_version"] = 2
+        if llm.get("history_mode") == "full":
+            identity.update(history_mode="full", candidate_schema_version=3,
+                            phase_policy_version=3, decoded_fingerprint_version=1,
+                            coverage_policy_version=1, coverage_target_per_cell=2,
+                            max_refill_attempts=llm["max_refill_attempts"])
         if llm.get("max_output_tokens") is not None:
             identity["max_output_tokens"] = llm["max_output_tokens"]
             identity["output_token_parameter"] = llm["output_token_parameter"]
@@ -156,6 +161,8 @@ class LLMGeneratorOptimizer(OptimizerABC):
                 f"Required API key environment variable '{llm['api_key_env']}' is not set."
             )
         self.context = context
+        if llm.get("history_mode") == "full" and context.model_family_name != "audio_dscnn":
+            raise ValueError("Full-history decoded policy currently supports audio_dscnn only.")
         self.config = llm
         self.ledger = LLMLedger(Path(context.artifact_dir) / "llm_optimizer")
         spend_tracker = None
@@ -220,11 +227,19 @@ class LLMGeneratorOptimizer(OptimizerABC):
             semantic_context=self.semantic_context,
             require_rationale=llm["require_rationale"],
         )
-        if self.memory is not None:
+        if llm.get("history_mode") == "full":
+            prompt = enrich_full_history(prompt, history)
+            self.ledger.record_event({"event": "full_history_policy", "phase": prompt.phase().name,
+                "attempted": budget.attempted_count, "allocation": prompt.allocation,
+                "coverage_goal_complete": prompt.coverage["goal_complete"],
+                "exploration_targets": list(prompt.exploration_targets)})
+        elif self.memory is not None:
             prompt = self.memory.enrich(history, prompt, self.provider,
                                         directions=context.objective_directions)
+        options = ({"max_refill_attempts": llm["max_refill_attempts"]}
+                   if llm.get("history_mode") == "full" else {})
         return ExplicitRound(generate_llm_batch(
             history, self.provider, prompt, self.ledger,
             prompt_version=llm["prompt_version"],
-            max_repair_attempts=llm["max_repair_attempts"], rng=self.rng,
+            max_repair_attempts=llm["max_repair_attempts"], rng=self.rng, **options,
         ))

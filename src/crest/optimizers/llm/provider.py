@@ -29,6 +29,8 @@ class LLMRequest:
     user_prompt: str
     prompt_version: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    cache_fixed_prefix: bool = False
+    prompt_cache_key: str | None = None
 
     def messages(self) -> list[dict[str, str]]:
         """Return the OpenAI-compatible chat message shape."""
@@ -337,10 +339,22 @@ class OpenAICompatibleProvider:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ProviderResponseError(f"{self.provider_name} returned an invalid chat-completions response.") from exc
         usage = raw_response.get("usage") if isinstance(raw_response, dict) else None
-        spending = (
-            self.spend_tracker.settle(reservation_id, usage)
-            if self.spend_tracker is not None else None
-        )
+        if isinstance(self, OpenAIResponsesProvider):
+            usage = self.normalize_usage(usage)
+        try:
+            spending = (
+                self.spend_tracker.settle(reservation_id, usage)
+                if self.spend_tracker is not None else None
+            )
+        except ProviderError as exc:
+            if isinstance(self, OpenAIResponsesProvider):
+                # Preserve the paid response even when accounting halts on overrun.
+                exc.raw_response = raw_response
+                exc.wire_payload = payload
+                exc.usage = usage
+            raise
+        if isinstance(self, OpenAIResponsesProvider):
+            return self.normalize_response(raw_response, usage, payload, latency_ms, attempt + 1, spending)
         try:
             choice = raw_response["choices"][0]
             content = choice["message"]["content"]
@@ -369,6 +383,152 @@ class OpenAICompatibleProvider:
         )
 
 
+class OpenAIResponsesProvider(OpenAICompatibleProvider):
+    """Responses wire format with the existing transport and durable accounting."""
+
+    def build_http_request(self, request: LLMRequest) -> urllib.request.Request:
+        """Build explicit caching wire, with no breakpoints unless opted in.
+
+        Parameters
+        ----------
+        request : LLMRequest
+            Fixed system context and chronological user context.
+
+        Returns
+        -------
+        urllib.request.Request
+            Authenticated POST whose JSON body contains no secrets.
+        """
+        # Reuse credential/header handling without changing the legacy chat wire.
+        legacy = super().build_http_request(request)
+        payload = {
+            "model": self.model,
+            "instructions": request.system_prompt,
+            "input": request.user_prompt,
+            "prompt_cache_options": {"mode": "explicit"},
+            "store": False,
+        }
+        if request.cache_fixed_prefix:
+            # Reuse ranker replay's explicit developer block, stable key, and TTL.
+            payload.pop("instructions")
+            payload["input"] = [
+                {"role": "developer", "content": [{"type": "input_text",
+                    "text": request.system_prompt,
+                    "prompt_cache_breakpoint": {"mode": "explicit"}}]},
+                {"role": "user", "content": [{"type": "input_text", "text": request.user_prompt}]},
+            ]
+            payload["prompt_cache_options"] = {"mode": "explicit", "ttl": "30m"}
+            if request.prompt_cache_key:
+                payload["prompt_cache_key"] = request.prompt_cache_key
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+        if self.reasoning_effort is not None:
+            payload["reasoning"] = {"effort": self.reasoning_effort}
+        if self.service_tier is not None:
+            payload["service_tier"] = self.service_tier
+        if self.max_output_tokens is not None:
+            payload["max_output_tokens"] = self.max_output_tokens
+        if self.json_response_mode:
+            payload["text"] = {"format": {"type": "json_object"}}
+        return urllib.request.Request(
+            f"{self.base_url}/responses",
+            data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+            headers=dict(legacy.header_items()), method="POST",
+        )
+
+    @staticmethod
+    def normalize_usage(usage: Any) -> dict[str, Any] | None:
+        """Preserve Responses counters and add the common accounting names.
+
+        Parameters
+        ----------
+        usage : object
+            Raw Responses usage object or missing value.
+
+        Returns
+        -------
+        dict or None
+            Common token names alongside original usage and cache counters.
+        """
+        if not isinstance(usage, dict):
+            return None
+        details = usage.get("input_tokens_details")
+        details = details if isinstance(details, dict) else {}
+        return {
+            **usage,
+            "prompt_tokens": usage.get("input_tokens"),
+            "completion_tokens": usage.get("output_tokens"),
+            "cached_tokens": details.get("cached_tokens", 0),
+            "cache_write_tokens": details.get("cache_write_tokens", 0),
+        }
+
+    def normalize_response(self, raw: Any, usage: Any, payload: dict[str, Any],
+                           latency_ms: float, attempts: int, spending: Any) -> LLMResponse:
+        """Extract only completed assistant text and preserve complete provenance.
+
+        Parameters
+        ----------
+        raw : object
+            Decoded server envelope.
+        usage : object
+            Normalized token usage.
+        payload : dict
+            Secret-free exact wire JSON.
+        latency_ms : float
+            Total transport time.
+        attempts : int
+            Number of reserved HTTP attempts.
+        spending : object
+            Durable settlement result.
+
+        Returns
+        -------
+        LLMResponse
+            Completed text, raw response, usage, status, and returned tier.
+
+        Raises
+        ------
+        ProviderResponseError
+            Refused, incomplete, failed, empty, or malformed response.
+        """
+        try:
+            if raw["status"] != "completed":
+                raise ValueError("response did not complete")
+            texts = []
+            for item in raw["output"]:
+                if item.get("type") != "message":
+                    continue
+                if item.get("role") != "assistant" or item.get("status") != "completed":
+                    raise ValueError("assistant message did not complete")
+                for block in item["content"]:
+                    if block.get("type") == "refusal":
+                        raise ValueError("response refused")
+                    if block.get("type") == "output_text":
+                        if not isinstance(block.get("text"), str):
+                            raise ValueError("non-string output text")
+                        texts.append(block["text"])
+            content = "".join(texts)
+            if not content:
+                raise ValueError("missing assistant text")
+        except (KeyError, TypeError, AttributeError, ValueError) as exc:
+            error = ProviderResponseError(f"{self.provider_name} returned an invalid Responses envelope: {exc}.")
+            error.raw_response = raw
+            error.wire_payload = payload
+            error.usage = usage
+            error.spending = spending
+            raise error from exc
+        return LLMResponse(
+            content=content, provider=self.provider_name,
+            model=str(raw.get("model", self.model)), raw_response=raw, usage=usage,
+            finish_reason=raw["status"], latency_ms=latency_ms,
+            metadata={"wire_payload": payload, "transport_attempts": attempts,
+                      "base_url": self.base_url, "status": raw["status"],
+                      "service_tier": raw.get("service_tier"),
+                      "requested_service_tier": self.service_tier,
+                      **({"spending": spending} if spending is not None else {})},
+        )
+
+
 def build_provider(config: Any, *, spend_tracker: Any = None) -> LLMProvider:
     """Build a provider with optional per-attempt spend accounting.
 
@@ -387,8 +547,9 @@ def build_provider(config: Any, *, spend_tracker: Any = None) -> LLMProvider:
     provider_name = str(cfg_get(config, "provider", "")).strip().lower()
     if provider_name == "fake":
         return FakeProvider(list(cfg_get(config, "responses", [])), model=str(cfg_get(config, "model", "fake-model")))
-    if provider_name in {"openrouter", "openai_compatible"}:
-        return OpenAICompatibleProvider(
+    if provider_name in {"openrouter", "openai_compatible", "openai_responses"}:
+        provider_type = OpenAIResponsesProvider if provider_name == "openai_responses" else OpenAICompatibleProvider
+        return provider_type(
             provider_name=provider_name,
             base_url=str(cfg_get(config, "base_url")),
             api_key_env=str(cfg_get(config, "api_key_env")),
@@ -398,7 +559,7 @@ def build_provider(config: Any, *, spend_tracker: Any = None) -> LLMProvider:
             service_tier=cfg_get(config, "service_tier", None),
             timeout_s=float(cfg_get(config, "timeout_s", 60.0)),
             json_response_mode=bool(
-                cfg_get(config, "json_response_mode", provider_name == "openrouter")
+                cfg_get(config, "json_response_mode", provider_name in {"openrouter", "openai_responses"})
             ),
             extra_headers=dict(cfg_get(config, "extra_headers", {})),
             max_output_tokens=cfg_get(config, "max_output_tokens", None),

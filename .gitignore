@@ -82,6 +82,7 @@ tools/arduino-user/libraries/Adafruit_INA228_Library/
 *.keras
 *.json
 !src/config/stm32_nucleo_mypool.json
+!test/fixtures/cs3_legacy_request_000088.json
 
 # Probe summaries
 analysis_scripts/micro_workload_energy_probe/.staged_sketch/

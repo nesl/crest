@@ -118,3 +118,12 @@ runner identity code, retain all other settings, and preserve memory/spend files
 The helper permits only candidate schema 1 to 2 plus `require_rationale: true`,
 rejects RUNNING trials, and records the historical trial boundary. Old queued
 proposals, if any, remain explicitly grandfathered without retrospective reasons.
+
+## Next-study full-history mode
+
+The opt-in `nas_config_cs3_next_study.yaml` uses Responses, exact columnar
+history, decoded deduplication, finite Python-assigned coverage targets, and
+bounded refill with generated memory disabled. It is prepared locally only;
+do not use it to resume an existing study. See
+[next_study_smoke.md](next_study_smoke.md) for offline prompt review and the
+explicitly opt-in $0.05 Luna capability test, which never trains or uses hardware.

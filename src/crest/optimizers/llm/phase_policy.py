@@ -72,3 +72,38 @@ def resolve_phase(
         max_attempts=max_attempts,
         remaining=max(0, max_attempts - attempted),
     )
+
+
+# Explicit local/exploration counts keep reduced batches scientifically defined.
+PHASE_ALLOCATIONS = {
+    "exploration": ((0, 1), (1, 1), (1, 2), (2, 2), (2, 3)),
+    "specification": ((1, 0), (1, 1), (2, 1), (2, 2), (3, 2)),
+    "finalization": ((1, 0), (1, 1), (2, 1), (3, 1), (4, 1)),
+}
+
+
+def resolve_allocation(phase: str | PhaseState, batch_size: int, *, has_feasible_parent: bool = True) -> dict[str, int]:
+    """Resolve the explicit next-study intent quotas.
+
+    Parameters
+    ----------
+    phase : str or PhaseState
+        Existing budget phase.
+    batch_size : int
+        Requested candidates, from one through five.
+    has_feasible_parent : bool, optional
+        Whether a measured feasible historical parent is available.
+
+    Returns
+    -------
+    dict[str, int]
+        Local and exploration counts summing to the requested batch size.
+    """
+    name = phase.name if isinstance(phase, PhaseState) else phase
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or not 1 <= batch_size <= 5:
+        raise ValueError("next-study batch_size must be an integer from 1 through 5.")
+    if name not in PHASE_ALLOCATIONS:
+        raise ValueError(f"Unknown phase: {name}")
+    local, exploration = PHASE_ALLOCATIONS[name][batch_size - 1]
+    return {"local": local if has_feasible_parent else 0,
+            "exploration": exploration if has_feasible_parent else batch_size}

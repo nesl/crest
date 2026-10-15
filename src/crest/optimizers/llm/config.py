@@ -18,9 +18,9 @@ def normalize_llm_config(optimizer_config) -> Dict:
         raise ValueError("optimizer.llm must be a mapping for optimizer.type=llm_generator.")
     llm = Dict(raw_llm)
     provider = str(llm.get("provider", "")).strip().lower()
-    if provider not in {"fake", "openrouter", "openai_compatible"}:
+    if provider not in {"fake", "openrouter", "openai_compatible", "openai_responses"}:
         raise ValueError(
-            "optimizer.llm.provider must be one of: fake, openrouter, openai_compatible."
+            "optimizer.llm.provider must be one of: fake, openrouter, openai_compatible, openai_responses."
         )
     llm.provider = provider
 
@@ -83,6 +83,25 @@ def normalize_llm_config(optimizer_config) -> Dict:
     if not isinstance(raw_memory, (dict, Dict)):
         raise ValueError("optimizer.llm.memory must be a mapping")
     llm.memory = Dict(asdict(MemoryConfig.from_config(raw_memory)))
+
+    history_mode = llm.get("history_mode", "bounded")
+    if history_mode not in {"bounded", "full"}:
+        raise ValueError("optimizer.llm.history_mode must be bounded or full.")
+    # New policy settings are opt-in so existing normalized identities stay stable.
+    if history_mode == "full":
+        llm.history_mode = history_mode
+        if llm.memory.enabled:
+            raise ValueError("Full history requires optimizer.llm.memory.enabled=false.")
+        if not llm.require_rationale:
+            raise ValueError("Full history requires optimizer.llm.require_rationale=true.")
+        if llm.batch_size > 5:
+            raise ValueError("Full-history allocation supports batch sizes 1 through 5.")
+        refill = llm.get("max_refill_attempts", 2)
+        if type(refill) is not int or refill < 0:
+            raise ValueError("optimizer.llm.max_refill_attempts must be an integer >= 0.")
+        llm.max_refill_attempts = refill
+    elif "max_refill_attempts" in llm:
+        raise ValueError("max_refill_attempts requires history_mode=full.")
 
     prompt_version = str(llm.get("prompt_version", "v1")).strip()
     if not prompt_version:
