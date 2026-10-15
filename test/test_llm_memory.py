@@ -14,7 +14,7 @@ from optuna.trial import TrialState, create_trial
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from crest.optimizers.llm.history import build_terminal_trial_history
-from crest.optimizers.llm.memory import ExperimentalMemory, MemoryConfig
+from crest.optimizers.llm.memory import ExperimentalMemory, MemoryConfig, MemoryUpdate, summary_text
 from crest.optimizers.llm.prompt_builder import PromptContext, build_candidate_request
 from crest.optimizers.llm.provider import FakeProvider, LLMRequest, ProviderAuthenticationError, ProviderTransportError
 from crest.optimizers.llm.search_space import SearchParam, SearchSpaceDescriptor
@@ -73,6 +73,50 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(len(provider.requests), 2)
         self.assertIn('threshold has not been isolated', result.knowledge_base['summary'])
         self.assertEqual([r['number'] for r in json.loads(provider.requests[1].user_prompt)['new_trials']], [2, 3])
+
+    def test_lagged_summary_preserves_recent_blocks_across_resume(self):
+        """Keep fifteen recent trials while summarizing older full blocks.
+
+        Notes
+        -----
+        Reopening at each boundary also verifies persisted coverage on resume.
+        """
+        config = MemoryConfig(start_after_trials=15, interval_trials=15, lag_trials=15)
+        provider = FakeProvider([{'updates': []}] * 2)
+        for target in (15, 29, 30, 44, 45):
+            while len(self.study.trials) < target:
+                add(self.study)
+            # Resume from disk before every boundary to expose early reprocessing.
+            memory = ExperimentalMemory(self.root, config)
+            result = memory.enrich(self.study, context(self.study, 15), provider)
+            expected_calls = 0 if target < 30 else (1 if target < 45 else 2)
+            with self.subTest(terminal_trials=target):
+                self.assertEqual(len(provider.requests), expected_calls)
+                self.assertEqual(result.knowledge_base['covered_trial_count'], 15 * expected_calls)
+                self.assertEqual([r['number'] for r in result.recent_trials],
+                                 list(range(target - 15, target)))
+        for request, expected in zip(provider.requests, (range(15), range(15, 30))):
+            self.assertEqual([r['number'] for r in json.loads(request.user_prompt)['new_trials']],
+                             list(expected))
+
+    def test_missing_retire_defaults_to_no_retirements(self):
+        """An omitted retirement list preserves prior findings.
+
+        Notes
+        -----
+        Initial and subsequent updates both exercise provider JSON validation.
+        """
+        memory = ExperimentalMemory(self.root, self.config)
+        provider = FakeProvider([{'updates': [finding()]}, {'updates': []}])
+        for _ in range(2):
+            add(self.study)
+        memory.enrich(self.study, context(self.study), provider)
+        for _ in range(2):
+            add(self.study)
+        result = memory.enrich(self.study, context(self.study), provider)
+        self.assertEqual(len(provider.requests), 2)
+        self.assertEqual(result.knowledge_base['covered_trial_count'], 4)
+        self.assertEqual(memory.state['findings'][0]['id'], 'memory-risk')
 
     def test_interval_larger_than_recent_window_keeps_gap_visible(self):
         memory = ExperimentalMemory(self.root, MemoryConfig(start_after_trials=4, interval_trials=4))
@@ -137,6 +181,70 @@ class MemoryTests(unittest.TestCase):
         self.assertIn('Float on this board', result.knowledge_base['summary'])
         self.assertIn('allocation failure', result.knowledge_base['summary'])
 
+    def test_revised_finding_retains_prior_references_across_resume(self):
+        """A revision citing only new trials preserves accepted older evidence."""
+        for _ in range(2):
+            add(self.study)
+        ExperimentalMemory(self.root, self.config).enrich(
+            self.study, context(self.study), FakeProvider([{'updates': [finding()]}]))
+        for _ in range(2):
+            add(self.study)
+        revised = {**finding(), 'trial_numbers': [3, 2, 2],
+                   'observation': 'Allocation risk depends on precision.'}
+        memory = ExperimentalMemory(self.root, self.config)
+        memory.enrich(self.study, context(self.study), FakeProvider([{'updates': [revised]}]))
+        restored = ExperimentalMemory(self.root, self.config)
+        self.assertEqual(restored.state['findings'][0]['trial_numbers'], [0, 2, 3])
+        self.assertEqual(restored.state['findings'][0]['observation'], revised['observation'])
+        self.assertEqual(len(restored.state['covered']), 4)
+
+    def test_replacements_inherit_references_from_all_retired_findings(self):
+        """Preserve retired sources conservatively without a replacement mapping."""
+        memory = ExperimentalMemory(self.root, self.config)
+        memory.state = {'findings': [
+            {**finding(), 'id': 'first', 'trial_numbers': [0]},
+            {**finding(), 'id': 'second', 'trial_numbers': [1]},
+            {**finding(), 'id': 'retained', 'trial_numbers': [2]},
+        ]}
+        update = MemoryUpdate.model_validate({
+            'updates': [{**finding(), 'id': 'combined', 'trial_numbers': [3]},
+                        {**finding(), 'id': 'retained', 'trial_numbers': [4]}],
+            'retire': [{'id': 'first', 'reason': 'Merged into replacements.'},
+                       {'id': 'second', 'reason': 'Merged into replacements.'}],
+        })
+        merged = {item['id']: item for item in memory._merge(update, set(range(5)))}
+        self.assertEqual(set(merged), {'combined', 'retained'})
+        self.assertEqual(merged['combined']['trial_numbers'], [0, 1, 3])
+        self.assertEqual(merged['retained']['trial_numbers'], [0, 1, 2, 4])
+
+    def test_inherited_references_do_not_mask_invalid_provider_references(self):
+        """Reject unavailable citations even when merging accepted source findings."""
+        memory = ExperimentalMemory(self.root, self.config)
+        memory.state = {'findings': [finding()]}
+        for retired in (False, True):
+            with self.subTest(retired=retired):
+                update = MemoryUpdate.model_validate({
+                    'updates': [{**finding(), 'id': 'replacement' if retired else 'memory-risk',
+                                 'trial_numbers': [2, 999]}],
+                    'retire': [{'id': 'memory-risk', 'reason': 'Merged.'}] if retired else [],
+                })
+                with self.assertRaisesRegex(ValueError, 'outside available evidence'):
+                    memory._merge(update, {0, 1, 2})
+                self.assertEqual(memory.state['findings'], [finding()])
+
+    def test_reference_union_is_included_in_character_limit(self):
+        """Reject a compact revision whose retained references exceed the cap."""
+        incoming = {**finding(), 'trial_numbers': [100]}
+        incoming_size = len(json.dumps([incoming], ensure_ascii=False))
+        memory = ExperimentalMemory(self.root, replace(self.config, max_chars=incoming_size))
+        prior = {**finding(), 'trial_numbers': list(range(100))}
+        memory.state = {'findings': [prior]}
+        update = MemoryUpdate.model_validate({'updates': [incoming]})
+        self.assertLessEqual(len(summary_text([incoming])), incoming_size)
+        with self.assertRaisesRegex(ValueError, 'exceeds max_chars'):
+            memory._merge(update, set(range(101)))
+        self.assertEqual(memory.state['findings'], [prior])
+
     def test_provider_execution_failure_propagates_and_retains_evidence(self):
         """A dead provider stops before stale memory can hide the outage."""
         memory = ExperimentalMemory(self.root, self.config)
@@ -169,6 +277,11 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(len(provider.requests), 2)
         self.assertEqual(first['new_trials'], repair['new_trials'])
         self.assertIn('max_chars', repair['repair_feedback']['reason'])
+        feedback = repair['repair_feedback']
+        self.assertIn(f'resulting JSON={len(json.dumps([oversized], ensure_ascii=False))}', feedback['reason'])
+        self.assertIn(f'resulting prose={len(summary_text([oversized]))}', feedback['reason'])
+        self.assertIn(f'cap={self.config.max_chars}', feedback['reason'])
+        self.assertIn(f'Target at most {int(self.config.max_chars * 0.8)}', feedback['reason'])
         self.assertEqual(result.knowledge_base['covered_trial_count'], 2)
         # Both responses, including the rejected evidence, remain auditable.
         self.assertEqual(len(list((self.root/'requests').glob('*.response.json'))), 2)
@@ -357,12 +470,14 @@ class MemoryTests(unittest.TestCase):
         normalized = _normalize_optimizer_config(base)
         self.assertTrue(normalized.llm.memory.enabled)
         self.assertEqual(normalized.llm.memory.interval_trials, 5)
+        self.assertEqual(normalized.llm.memory.lag_trials, 0)
+        self.assertEqual(MemoryConfig.from_config({'lag_trials': 15}).lag_trials, 15)
         base.optimizer.llm.memory = Dict(enabled=False, start_after_trials=15, interval_trials=20)
         normalized = _normalize_optimizer_config(base)
         self.assertFalse(normalized.llm.memory.enabled)
         self.assertEqual(normalized.llm.memory.interval_trials, 20)
         for bad in [{'enabled': 'yes'}, {'interval_trials': 0}, {'start_after_trials': True},
-                    {'max_pending_trials': 2}, {'typo': 5}]:
+                    {'max_pending_trials': 2}, {'lag_trials': -1}, {'lag_trials': True}, {'typo': 5}]:
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 MemoryConfig.from_config(bad)
 

@@ -80,14 +80,15 @@ def run(output: Path, paid: bool, render_only: bool = False) -> None:
         model_family_name=cfg.model.family, descriptor=descriptor, device_config=cfg.device,
         training_config=cfg.training, collect_compile_metrics=True)
     warmup = json.loads((base / 'warmup_params.json').read_text())
-    # Deliberately synthetic scores; do not read historical outcomes or evaluate models.
+    # Deliberately synthetic scores and repeated warmup fixtures reconstruct 30 trials.
+    # Repetitions exercise memory cadence only; no historical outcomes or models are used.
     trials = [SimpleNamespace(number=i, state='COMPLETE', params=params,
               values=[i / 100], user_attrs={'synthetic_smoke_only': True})
-              for i, params in enumerate(warmup)]
+              for i, params in enumerate(warmup * 2)]
     study = SimpleNamespace(study_name='cs3_api_smoke_synthetic', trials=trials, directions=('maximize',))
     context = PromptContext(study_name=study.study_name, model_family='audio_dscnn',
         descriptor=descriptor, objective_summary='API smoke ONLY: scores are synthetic arbitrary numbers, not measured model quality. Trial states are synthetic too. Dataset metadata is a reconstructed offline proxy; no dataset loaded. Do not infer scientific findings. Campaign score: ' + json.dumps(cfg.nas.score, sort_keys=True),
-        attempted_trials=15, feasible_completed_trials=15, target_feasible_trials=200,
+        attempted_trials=30, feasible_completed_trials=30, target_feasible_trials=200,
         max_total_attempts=300, batch_size=5,
         recent_trials=build_recent_trial_history(study, window_size=15),
         anchors=build_best_trial_anchors(study, anchor_count=5), semantic_context=semantic)

@@ -81,7 +81,7 @@ def test_cs3_offline_campaign_memory_and_partial_batch_restart(campaign, tmp_pat
         "provider": "fake", "responses": [_batch(17)], "batch_size": 5,
         "warmup_params_file": str(warmup_path), "semantic_context": False,
         "recent_trial_window": 15, "anchor_count": 5,
-        "memory": {"enabled": True, "start_after_trials": 15, "interval_trials": 15},
+        "memory": {"enabled": True, "start_after_trials": 15, "interval_trials": 15, "lag_trials": 15},
     })
     client.config.training.nas_trials = 15
     client.config.training.max_total_trials = 40
@@ -96,9 +96,9 @@ def test_cs3_offline_campaign_memory_and_partial_batch_restart(campaign, tmp_pat
     }
     summary = {"updates": [finding], "retire": []}
     warmup_provider = FakeProvider([])
-    first_provider = FakeProvider([summary, _batch(17)])
+    first_provider = FakeProvider([_batch(17)])
     middle_provider = FakeProvider([_batch(22), _batch(27)])
-    final_provider = FakeProvider([{"updates": [], "retire": []}, _batch(32)])
+    final_provider = FakeProvider([summary, _batch(32)])
     original_optimize = optuna.Study.optimize
 
     def interrupt_partial_batch(study, objective, **kwargs):
@@ -139,9 +139,7 @@ def test_cs3_offline_campaign_memory_and_partial_batch_restart(campaign, tmp_pat
         interrupted = optuna.load_study(study_name="campaign", storage=storage)
         assert [t.state for t in interrupted.trials] == [TrialState.COMPLETE] * 17 + [TrialState.WAITING] * 3
         assert interrupted.trials[:15] == warmup_trials
-        first_snapshot_path = root / "memory" / "snapshots" / "000001.json"
-        first_snapshot = first_snapshot_path.read_bytes()
-        assert len(json.loads(first_snapshot)["covered"]) == 15
+        assert not (root / "memory" / "state.json").exists()
 
         with patch("crest.optimizers.llm.component.build_provider", return_value=middle_provider):
             middle = client.run_nas("campaign", storage)
@@ -151,7 +149,8 @@ def test_cs3_offline_campaign_memory_and_partial_batch_restart(campaign, tmp_pat
         assert middle_trials[:17] == interrupted.trials[:17]
         # The preserved reservations consume widths 19..21 before fresh work.
         assert [t.params["width"] for t in middle_trials] == list(range(2, 32))
-        assert len(list((root / "memory" / "snapshots").glob("*.json"))) == 1
+        # Summary starts on the next proposal at thirty completed trials.
+        assert not (root / "memory" / "state.json").exists()
 
         client.config.training.nas_trials = 35
         with patch("crest.optimizers.llm.component.build_provider", return_value=final_provider):
@@ -161,20 +160,18 @@ def test_cs3_offline_campaign_memory_and_partial_batch_restart(campaign, tmp_pat
     assert len(final.trials) == 35
     assert all(t.state == TrialState.COMPLETE for t in final.trials)
     assert [t.params["width"] for t in final.trials] == list(range(2, 37))
-    assert first_snapshot_path.read_bytes() == first_snapshot
     snapshots = sorted((root / "memory" / "snapshots").glob("*.json"))
-    assert [len(json.loads(p.read_text())["covered"]) for p in snapshots] == [15, 30]
+    assert [len(json.loads(p.read_text())["covered"]) for p in snapshots] == [15]
     state = json.loads((root / "memory" / "state.json").read_text())
     assert state == json.loads(snapshots[-1].read_text())
-    assert state["version"] == 2
+    assert state["version"] == 1
     assert state["findings"] == [finding]
-    assert json.loads(first_snapshot)["findings"] == [finding]
-    assert set(state["covered"]) == {str(n) for n in range(30)}
+    assert set(state["covered"]) == {str(n) for n in range(15)}
 
     requests = first_provider.requests + middle_provider.requests + final_provider.requests
     summaries = [r for r in requests if r.metadata.get("purpose") == "summarization"]
-    assert [r.metadata["new_trial_numbers"] for r in summaries] == [list(range(15)), list(range(15, 30))]
-    assert len(requests) == 6  # Two summaries and four five-candidate generations.
+    assert [r.metadata["new_trial_numbers"] for r in summaries] == [list(range(15))]
+    assert len(requests) == 5  # One summary and four five-candidate generations.
     for index, trial in enumerate(final.trials[:15]):
         provenance = trial.user_attrs[PROPOSAL_ATTR]
         assert provenance["proposal_source"] == "llm_warmup"
@@ -190,11 +187,11 @@ def test_cs3_offline_campaign_memory_and_partial_batch_restart(campaign, tmp_pat
         assert provenance["batch_id"] == record["batch_id"]
         assert provenance["batch_index"] == record["batch_index"]
     assert {r["request_id"] for r in returned} == {1, 2, 3, 4}
-    for ledger_root, count in ((root, 4), (root / "memory", 2)):
+    for ledger_root, count in ((root, 4), (root / "memory", 1)):
         assert len(list((ledger_root / "requests").glob("*.request.json"))) == count
         assert len(list((ledger_root / "requests").glob("*.response.json"))) == count
     assert [r["event"] for r in _jsonl(root / "memory" / "optimizer_events.jsonl")] == [
-        "summary_committed", "summary_committed"]
+        "summary_committed"]
 
 
 def test_cs3_suspended_backlog_uses_configured_fifteen_record_bound(tmp_path):
@@ -217,9 +214,10 @@ def test_cs3_suspended_backlog_uses_configured_fifteen_record_bound(tmp_path):
     assert settings["anchor_count"] == 5
     memory_config = MemoryConfig.from_config(settings["memory"])
     assert memory_config.start_after_trials == memory_config.interval_trials == 15
+    assert memory_config.lag_trials == 15
     assert memory_config.max_pending_trials == 15
     study = optuna.create_study(study_name="cs3-suspended-backlog")
-    for _ in range(15):
+    for _ in range(30):
         add(study)
     root = tmp_path / "memory"
     accepted_provider = FakeProvider([{"updates": [finding()], "retire": []}])
@@ -250,12 +248,12 @@ def test_cs3_suspended_backlog_uses_configured_fifteen_record_bound(tmp_path):
                 anchors=build_best_trial_anchors(study, anchor_count=settings["anchor_count"]),
             )
             result = restored.enrich(study, prompt_context, provider)
-            assert [r["number"] for r in result.pending_trials] == list(range(120, 135))
-            assert [r["number"] for r in result.recent_trials] == list(range(135, 150))
+            assert [r["number"] for r in result.pending_trials] == list(range(135, 150))
+            assert [r["number"] for r in result.recent_trials] == list(range(150, 165))
             assert len(result.anchors) == 5
             assert result.knowledge_base["summary_status"] == "suspended"
-            assert result.knowledge_base["pending_trial_count"] == 135
-            assert result.knowledge_base["omitted_pending_trial_count"] == 105
+            assert result.knowledge_base["pending_trial_count"] == 150
+            assert result.knowledge_base["omitted_pending_trial_count"] == 120
             assert result.knowledge_base["covered_trial_count"] == 15
             assert "No int8 model has been tested." in result.knowledge_base["summary"]
             for field in ("covered", "findings", "version"):
@@ -263,8 +261,8 @@ def test_cs3_suspended_backlog_uses_configured_fifteen_record_bound(tmp_path):
             assert restored.state_path.read_bytes() == suspended_state
             assert snapshot_path.read_bytes() == snapshot
         assert provider.requests == []
-    assert len(study.trials) == 150
+    assert len(study.trials) == 165
     assert len(list((root / "snapshots").glob("*.json"))) == 1
     backlog_events = [r for r in _jsonl(root / "optimizer_events.jsonl")
                       if r["event"] == "summary_backlog"]
-    assert [r["omitted_pending_trial_count"] for r in backlog_events] == [105, 105]
+    assert [r["omitted_pending_trial_count"] for r in backlog_events] == [120, 120]

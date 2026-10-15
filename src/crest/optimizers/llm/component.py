@@ -18,7 +18,7 @@ from .config import normalize_llm_config
 from .enqueue import generate_llm_batch
 from .history import build_best_trial_anchors, build_recent_trial_history
 from .ledger import LLMLedger
-from .memory import ExperimentalMemory, MemoryConfig, digest
+from .memory import MEMORY_PROMPT_VERSION, ExperimentalMemory, MemoryConfig, digest
 from .prompt_builder import PromptContext
 from .provider import build_provider
 
@@ -78,7 +78,7 @@ class LLMGeneratorOptimizer(OptimizerABC):
             "candidate_schema_version": 1,
             "semantic_context_version": SEMANTIC_CONTEXT_VERSION,
             "memory_schema_version": 1,
-            "memory_prompt_version": "memory-v1",
+            "memory_prompt_version": MEMORY_PROMPT_VERSION,
             "phase_policy_version": 2,
             "fallback_policy": {"type": "unique_random", "max_attempts": 100},
         })

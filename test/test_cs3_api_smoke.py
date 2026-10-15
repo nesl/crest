@@ -33,6 +33,12 @@ def test_render_only_full_campaign_context_without_provider(tmp_path):
         assert ledger['messages'] == request['messages']
         body = json.loads(request['messages'][1]['content'])
         context = body['context'] if index == 1 else body
+        # First summary covers the older half; the latest fifteen stay raw.
+        if index == 1:
+            assert request['metadata']['new_trial_numbers'] == list(range(15))
+        else:
+            assert [t['number'] for t in context['recent_trials']] == list(range(15, 30))
+            assert context['knowledge_base']['covered_trial_count'] == 15
         assert context['semantic_context']['enabled'] is True
         device = context['device_context']
         assert device['name'] == 'STM32_NUCLEO_N657X0_Q'

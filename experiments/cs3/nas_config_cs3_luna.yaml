@@ -171,6 +171,7 @@ optimizer:
     anchor_count: 5
     memory:
       enabled: true
+      lag_trials: 15  # Keep newest 15 terminal trials raw; first summary at 30.
       start_after_trials: 15
       interval_trials: 15
       max_findings: 12

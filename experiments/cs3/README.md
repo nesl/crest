@@ -85,3 +85,10 @@ without a provider connection or API key. Scores/states remain synthetic and
 dataset metadata is reconstructed offline. The preview uses a fake empty memory
 update. The paid smoke tested MCU context v2; the v3 energy-wording correction
 is checked offline without another paid request.
+
+The stopped launch exposed summary length/schema failures. The revised config
+holds back the newest 15 terminal trials (`memory.lag_trials: 15`): first summary
+at 30 attempts, then every 15 eligible records. Repair feedback reports actual
+character counts; missing `retire` means no retirements. The memory-v2 identity
+requires a fresh campaign rather than silently resuming the preserved old run.
+This policy change is being validated offline; no restart is authorized.

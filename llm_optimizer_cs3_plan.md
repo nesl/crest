@@ -14,7 +14,7 @@ has been run. This document is an implementation plan, not launch authorization.
 - `experiments/cs3/nas_config_cs3_luna.yaml` preserves archived scientific settings,
   including `export_variant: untrained`, with relocated STM32 project/memory-pool paths and new
   output names. It selects Luna/medium, standard tier, omitted temperature,
-  memory on at 15/15, recent15/anchors5, batches5, a $5 local cap, 100,000 input
+  memory on with lag15/start15/interval15, recent15/anchors5, batches5, a $5 local cap, 100,000 input
   allowance and 8,192 output tokens. Pricing assumptions and limitations are in
   `experiments/cs3/README.md`.
 - Preparation steps 1–6 were offline. The user subsequently ran the bounded
@@ -53,7 +53,7 @@ optimizer fixed" would become "keeps the evaluation boundary fixed".
 | Trials 15+ | TPE (multivariate, constraints) | LLM proposals, 5 per request |
 
 Proposed LLM settings: `gpt-6-luna` (verify the provider model ID, supported request
-fields, and pricing before use), standard tier, memory on with summaries every 15 terminal attempts, `recent_trial_window: 15` (first request sees
+fields, and pricing before use), standard tier, memory on with summaries every 15 eligible terminal attempts, holding back the newest 15, `recent_trial_window: 15` (first request sees
 the whole warm-up), `anchor_count: 5`, semantic context on, temperature omitted
 unless the model accepts it, one repair attempt then CREST's random fallback.
 
@@ -448,3 +448,86 @@ request `72c2429b14ae4f74b0e4ef55d0f99cc1.json` and measurements
 `becef9d48f4543c2bdb0a691d3ab82c0.json` (cadenced).
 This validates the operational path, not campaign model quality or optimizer
 superiority. The preflight must not be resumed as the campaign.
+
+## Memory policy correction after stopped launch
+
+The initial launch is stopped and preserved. Warmup trials 0–14 matched the
+fixed parameters; two LLM batches were proposed before any memory summary was
+accepted. Three summary responses exceeded 6000 characters; a fourth fit but
+omitted `retire`. Trial 20 was interrupted by the operator and marked FAIL;
+exclude it from claims of model infeasibility. No automatic restart is authorized.
+
+The revised configuration uses `memory.lag_trials: 15`, with startup and interval
+still 15 eligible terminal trials. At 15 completed attempts there is no summary;
+at 30, memory covers trials 0–14 while recent history shows 15–29; at 45, memory
+extends through 29 while recent history shows 30–44. These numbers assume
+sequential terminal trials. The newest 15 terminal records are held out of
+summarization, including after resume. All evidence remains saved.
+
+The summary prompt defines the entire-memory character accounting and targets
+80% of the hard limit. Rejections report measured structured/prose sizes and
+the cap. An omitted `retire` defaults to an empty list; invalid retirements and
+malformed findings remain rejected. Memory prompt identity changes to memory-v2,
+so the old campaign cannot silently resume with this changed policy. Do not
+edit its saved identity or rewrite its history to bypass that check.
+
+Next: review offline regression/replay results, then separately authorize a
+bounded real summary check and decide how to start a fresh corrected campaign.
+No paid requests, hardware runs, or remote deployment accompany this change.
+The earlier cost tables describe the old schedule; lagging summaries reduce
+normal counts to 12 at 200 attempts and 18 at 300 attempts (before extra calls).
+
+Offline saved-response replay: responses 1–3 remain rejected at structured
+lengths 7790, 6545, and 6429 characters, now with explicit size/cap feedback.
+Response 4 validates with two findings and an empty retirement list. The replay
+used local temporary state with network connections blocked and did not modify
+the original campaign memory. It verifies validation behavior, not how Luna
+will respond to the revised prompt.
+
+## Memory provenance and arithmetic correction
+
+The user-run 105-trial proxy test passed structural validation in one request
+($0.002954, 3841 structured characters) but a content audit found lost old trial
+references and an incorrect new group statistic. That response is not evidence
+of fully correct accumulated learning.
+
+Memory-v3 preserves old same-ID references automatically. When findings are
+retired alongside replacement updates, every replacement conservatively inherits
+all retired references because the response format has no source-to-target merge
+mapping. References are audit provenance, not claims of independent support for
+every sentence. Standalone intentional retirements remain logged and snapshotted.
+Character limits apply after references are restored.
+
+The prompt supplies Python-computed statistics for the new evidence chunk:
+counts and finite metric means/minima/maxima overall and by varying parameter.
+These are descriptive, confounded group comparisons, not causal effects. Recorded
+scores include any penalties; each metric has its own sample count. Statistics
+are scoped to the new trial numbers and must not be counted again as independent
+evidence when merged with old findings.
+
+There is no blanket rejection of numerical claims. The user rejected that
+restriction and it was removed before deployment. Luna may retain old statistics,
+use the supplied aggregates, and cite individual measurements. Numerical truth
+is not guaranteed by schema validation; no new semantic rejection loop is added.
+
+Offline replay of the previous 105-trial response now accepts its numeric prose
+and retains all references 0–89. The previously erroneous light-stride statistic
+will be supplied by Python for a fresh bounded test, rather than inferred by Luna.
+No paid request or campaign restart accompanies implementation.
+
+## Bounded memory validation results (2026-10-14)
+
+The user-run first-15 memory test passed in one request ($0.001759375), with
+5318 structured characters and 4883 prose characters. The final 105-trial proxy
+retest with Python statistics passed after one size repair ($0.006556875), with
+3414 structured characters and 2979 prose characters. It retained references
+0–89. Reported aggregate values matched the supplied Python values to rounding.
+The summary used “scored 0.7174” for trial 75's macro-F1; its actual objective
+score is 0.70299, so metric-label precision remains a content-review limitation.
+These bounded tests do not prove every future memory update is correct.
+
+The complete offline suite passed: 1012 tests, 1 skipped. The campaign remains
+stopped. Recommend a fresh production study/output directory under the revised
+policy; retain the original run as pilot evidence rather than silently merging
+its memory-free proposal batches into the revised campaign. No restart is
+authorized by this plan update.
