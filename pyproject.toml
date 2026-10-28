@@ -27,6 +27,7 @@ dependencies = [
     "giotto-tda",
     "pydometer",
     "tqdm",
+    "pydantic>=2,<3",
     "soundata==1.0.1",
     "librosa==0.11.0",
     "soundfile==0.13.1"
@@ -34,3 +35,7 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+# Prefer this checkout over unrelated editable installs in the active environment.
+pythonpath = ["src"]

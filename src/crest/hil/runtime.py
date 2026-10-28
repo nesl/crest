@@ -11,9 +11,9 @@ from typing import Any
 
 from addict import Dict
 
-from .hardware import HIL_controller, describe_error_code
-from .microcontrollers import get_device as get_microcontroller_device
-from .microcontrollers.arduino_base import normalize_power_metrics
+from ..hardware import HIL_controller, describe_error_code
+from ..microcontrollers import get_device as get_microcontroller_device
+from ..microcontrollers.arduino_base import normalize_power_metrics
 
 logger = logging.getLogger(__name__)
 

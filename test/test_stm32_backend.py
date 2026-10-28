@@ -694,7 +694,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
             latency_s=0.0025,
             arena_bytes=4096,
             error_code=HIL_ERROR_OK,
-            power_metrics={"clock_hz": 600000000.0, "sequence": 1.0},
+            power_metrics={"clock_hz": 600000000.0, "sequence": 1.0, "energy_mj_per_inference": 0.25},
         )
         cadenced_result = DeviceMetrics(
             ram_bytes=1111,
@@ -746,6 +746,8 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         self.assertAlmostEqual(metrics.latency_s, 0.080)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_active_inference_latency_ms"], 80.0)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_window_latency_ms"], 20000.0)
+        # Scoring retains base energy even when cadence telemetry is also available.
+        self.assertAlmostEqual(metrics.power_metrics["energy_mj_per_inference"], 0.25)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_energy_mj_per_window"], 1.25)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_energy_mj_per_trial"], 12.5)
         self.assertAlmostEqual(metrics.power_metrics["cadenced_rtc_sleep_ms"], 1500.0)

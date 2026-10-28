@@ -12,7 +12,12 @@ pipeline onto one concrete backend representation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, TYPE_CHECKING
+from collections.abc import Mapping
+
+if TYPE_CHECKING:
+    from .optimizers.search_space import SearchSpaceDescriptor
 
 
 @dataclass(eq=False)
@@ -291,3 +296,152 @@ class TaskMetricContract:
     training_only_metric_names: set[str] = field(default_factory=set)
     nonnegative_metric_names: set[str] = field(default_factory=set)
     primary_metric_names: set[str] = field(default_factory=set)
+
+
+@dataclass(frozen=True)
+class SearchContext:
+    """Plain, stable run context supplied to proposal components.
+
+    No Study, Trial, dataset bundle, or client belongs in this payload. The
+    runner supplies detached, read-only plain data for the mapping fields.
+
+    Parameters
+    ----------
+    study_name : str
+        Stable Optuna study name.
+    artifact_dir : str or pathlib.Path
+        Per-study artifact directory.
+    objective_names : tuple[str, ...]
+        Objective names in value order.
+    objective_directions : tuple[str, ...]
+        Corresponding optimization directions.
+    objective_summary : str
+        Serialized description of the active scoring policy.
+    semantic_context : Mapping[str, Any]
+        Detached problem information requested by the component.
+    search_space : SearchSpaceDescriptor or None, optional
+        Raw parameter contract, when requested.
+    model_family_name : str, optional
+        Registered model-family identifier.
+    feasibility_enabled : bool, optional
+        Whether the runner applies feasibility policy.
+    """
+
+    study_name: str
+    artifact_dir: str | Path
+    objective_names: tuple[str, ...]
+    objective_directions: tuple[str, ...]
+    objective_summary: str
+    semantic_context: Mapping[str, Any]
+    search_space: SearchSpaceDescriptor | None = None
+    model_family_name: str = ""
+    feasibility_enabled: bool = False
+
+
+@dataclass(frozen=True)
+class BudgetSnapshot:
+    """Existing trial reservations and the runner's permitted round size.
+
+    Parameters
+    ----------
+    attempted_count : int
+        Attempts already charged to the campaign budget.
+    completed_target_count : int
+        Completed trials qualifying for the configured target.
+    target : int
+        Required qualifying completion count.
+    total_cap : int
+        Maximum permitted attempts.
+    permitted_round_size : int
+        Maximum number of trials the next round may request.
+    """
+
+    attempted_count: int
+    completed_target_count: int
+    target: int
+    total_cap: int
+    permitted_round_size: int
+
+
+@dataclass(frozen=True)
+class TrialRecord:
+    """Detached study evidence using stable trial numbers and actual params.
+
+    Snapshot producers freeze nested mappings and sequences as well as the
+    outer record. WAITING parameters are not reconstructed as sampled values.
+
+    Parameters
+    ----------
+    number : int
+        Stable study-local trial number.
+    state : str
+        Optuna trial-state name.
+    params : Mapping[str, Any]
+        Actual sampled parameters, excluding unconsumed enqueue intentions.
+    values : tuple[float, ...] or None
+        Objective values in study order, when available.
+    user_attrs : Mapping[str, Any], optional
+        Detached persisted user evidence and proposal metadata.
+    system_attrs : Mapping[str, Any], optional
+        Detached persisted Optuna system metadata.
+    """
+
+    number: int
+    state: str
+    params: Mapping[str, Any]
+    values: tuple[float, ...] | None
+    user_attrs: Mapping[str, Any] = field(default_factory=dict)
+    system_attrs: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CandidateProposal:
+    """Intended raw parameters and proposal metadata, separate from sampling.
+
+    Parameters
+    ----------
+    params : Mapping[str, Any]
+        Complete candidate in the family's declared raw parameter space.
+    provenance : Mapping[str, Any], optional
+        JSON-safe evidence recorded with the queued trial.
+    """
+
+    params: Mapping[str, Any]
+    provenance: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class NativeRound:
+    """Request a round from the existing Optuna sampler.
+
+    Parameters
+    ----------
+    n_trials : int
+        Positive number of trials, within the runner's permitted round size.
+    """
+
+    n_trials: int
+
+
+@dataclass(frozen=True)
+class ExplicitRound:
+    """Ordered explicit proposals; the trial count follows the candidates.
+
+    Parameters
+    ----------
+    candidates : tuple[CandidateProposal, ...]
+        Nonempty ordered proposals, all validated before any are enqueued.
+    """
+
+    candidates: tuple[CandidateProposal, ...]
+
+    @property
+    def n_trials(self) -> int:
+        """Return the candidate-derived round size.
+
+        Returns
+        -------
+        int
+            Number of ordered candidate proposals.
+        """
+        return len(self.candidates)

@@ -1,0 +1,324 @@
+# CREST optimizer system: proposals, shared evaluation, and trustworthy evidence
+
+CREST searches for models that work under a concrete deployment contract: a workload and task, a model family, a target device, a runtime schedule, and a scoring and feasibility policy. The optimizer chooses experiments within that contract. CREST retains responsibility for building, measuring, training, evaluating, and recording them.
+
+![CREST optimizer and shared evaluation flow](../../../assets/optimizer_flow.svg)
+
+Diagram downloads: [PNG](../../../assets/optimizer_flow.png) · [editable Mermaid source](../../../assets/optimizer_flow.mmd).
+
+## Why this boundary exists
+
+Embedded model search involves more than architecture. Quantization, CPU clock, inference cadence, memory limits, and short training schedules can change what a result means. Different workloads, models, devices, schedules, and proposal algorithms should remain understandable experiments. AI-generated candidates especially need comparable evidence: an attractive explanation from a provider is not a deployment measurement or a trained-model result.
+
+The implemented boundary keeps one evaluation path and one authoritative trial store. A proposer supplies either a request for native sampling or an ordered set of exact raw parameters. It cannot quietly change training, bypass hardware gates, or redefine score evaluation. This makes proposal methods easier to compare while preserving the experiment configuration that gives their results meaning.
+
+The design deliberately reuses CREST's existing components, model-family sampling, Optuna studies, objective, logging, and replay code. There is no second LLM execution engine, result database, or custom trial-state machine. A small contract is easier to extend and inspect than duplicated evaluation loops.
+
+## Optuna remains the engine and store in both modes
+
+`optimizer.type: optuna` selects the native proposer. `optimizer.type: llm_generator` selects the LLM proposer. In either case, the runner opens an Optuna study, builds its sampler, and calls `study.optimize(self.objective, n_trials=...)`.
+
+| Responsibility | Owner |
+| --- | --- |
+| Choose a native round or explicit candidates | Registered optimizer component |
+| Select native parameter values | Optuna sampler through `trial.suggest_*` |
+| Validate every explicit candidate and enqueue it | `NASModelClient` runner |
+| Build, measure, gate, train, evaluate, and score | Shared `objective` and existing components |
+| Persist trial numbers, sampled parameters, values, states, and attributes | Optuna study/storage |
+| Record LLM prompts, responses, repair, fallback, and derived memory | LLM component's ledger |
+
+The LLM supplies fixed values to Optuna's queue. The same `suggest_*` calls then consume those values inside the objective. Native rounds enqueue nothing; the sampler chooses values when those calls execute. The sampler still exists in LLM mode, including its completion-time constraint handling, but it does not choose fields in a valid complete explicit proposal.
+
+Native scalar search uses `TPESampler(n_startup_trials=15, multivariate=True)`. Native multi-objective search uses `NSGAIISampler(population_size=training.nas_multiobjective_population_size, seed=42)`. Enabled feasibility adds `constraints_func` to either sampler. Scalar TPE has no explicit seed in this setup. Execution is sequential: native sampling can use feedback from each preceding trial within a round. An LLM batch is proposed together, so its next proposal call sees feedback after that batch executes.
+
+## The proposal contract
+
+An optimizer implements [`OptimizerABC`](../interfaces.py). The registry stores classes, constructs the selected class with no arguments, validates its normalized optimizer block, and initializes it once before execution. Registration and config validation do not resolve provider credentials or create clients.
+
+The component hooks are:
+
+```text
+validate_config(config)                  # optional local validation
+identity_config(config) -> dict          # deterministic proposal settings
+initialize(context, config)              # optional runtime setup
+propose_round(history, budget) -> NativeRound | ExplicitRound
+```
+
+`propose_round` is the required method. Components receive no `Study`, `Trial`, NAS client, live dataset bundle, or hardware connection. They must not enqueue candidates, evaluate them, or mutate trial evidence.
+
+The passive payloads live in [`pipeline_types.py`](../pipeline_types.py):
+
+| Payload | Meaning |
+| --- | --- |
+| `SearchContext` | Study/artifact location, ordered objective names and directions, serialized score configuration, optional raw search descriptor, stable semantic context, model-family name, and feasibility-enabled flag |
+| `TrialRecord` | Stable trial number, neutral state name, actual sampled `params`, values, user attributes, and system attributes |
+| `BudgetSnapshot` | Existing attempted count, completed-target count, total target, total cap, and permitted size of this fresh round |
+| `NativeRound(n_trials)` | Request native sampling for a positive integer count within the allowance |
+| `ExplicitRound(candidates)` | Nonempty ordered tuple of `CandidateProposal(params, provenance)`; its count is derived from tuple length |
+
+The runner supplies a fresh history snapshot on every proposal call, including after restart. Nested mappings and sequences in history and semantic context are detached and frozen. A stateful proposer can track processed trial numbers internally; there is no separate `observe` or restore-history API. WAITING trials may have empty sampled `params`; their intended proposal values must not be presented as measured or sampled history.
+
+Two capability hooks control setup. Explicit plugins default to `requires_search_space = True` and `requires_semantic_context(config) == True`. Native Optuna opts out of both: it never calls descriptor or semantic-context construction, preserving families with existing define-by-run sampling. LLM requires a descriptor. Setting `optimizer.llm.semantic_context: false` skips semantic construction while retaining the raw descriptor and a disabled semantic record in prompts. An invalid declared descriptor propagates as an error; it is not treated as missing optional support.
+
+## Exact raw parameters, then shared evaluation
+
+The family declares its raw search surface through `trial_search_space`, using [`SearchParam` and `SearchSpaceDescriptor`](search_space.py). The runner adds `quantization_mode` only when quantization search and the deployment path are active; it adds `cpu_clock_mhz_index` only when compile-derived metrics are collected and clock options are configured. These conditions match the objective.
+
+Explicit candidates must contain exactly every active raw field with legal types, finite numeric values, inclusive bounds, or declared categorical choices. For example, supply `dilations_index` and `cpu_clock_mhz_index`, rather than decoded dilation lists or MHz values. All members and their JSON-safe provenance are validated before any member is enqueued. This prevents a missing field from silently becoming a native-sampler choice credited to the proposer.
+
+Shared validation permits deliberate repeated experiments. Duplicate filtering belongs to the proposer. Queue mutation itself is not transactional: if enqueue fails partway, already reserved trials remain and are drained on restart.
+
+The runner writes namespaced `crest_proposal` user attributes, including the resolved optimizer name, `round_id`, batch index, intended `proposal_params`, and source metadata. It keeps these separate from actual `trial.params` and decoded family hyperparameters. A build failure can occur before deployment fields are sampled; provenance then describes intent while `params` truthfully describes the fields actually consumed.
+
+Every executed candidate follows the existing objective:
+
+1. Sample and decode family hyperparameters; validate them; build the model; validate task outputs and compile through the task.
+2. Count FLOPs, resolve quantization, estimate static memory, and assemble runtime metadata. Resolve a clock index separately from architecture when that runtime search is active.
+3. Request compile/HIL metrics when required by the active policy, or synthesize the desktop success payload. Compile-derived collection and physical HIL execution are separate decisions.
+4. Check returned HIL status, flash/RAM limits, and applicable tensor-arena validity. Apply configured post-build, pre-fit prune rules, then feasibility rules.
+5. When training is enabled, use the task's search fit plan, inject `nas_epochs` and batch size 256, train, reload the checkpoint, evaluate validation predictions through TFLite, and record companion Keras metrics. When training is disabled, supply task metric sentinels and evaluate the configured non-training score.
+6. Validate objective values; log the outcome and evidence; return a scalar or ordered objective tuple. Optuna records terminal state and invokes sampler completion processing, including persisted feasibility constraints.
+
+`training.train: false` is supported when the score and policy do not require unavailable training metrics. Use a score based solely on available static or compile metrics, such as FLOPs, rather than merely disabling training in an accuracy-dependent score.
+
+## Rejection, feasibility, and aborts mean different things
+
+Do not interpret `COMPLETE` as proof that a model was trained successfully or was feasible.
+
+| Event | Scalar study | Multi-objective study |
+| --- | --- | --- |
+| Returned HIL failure, resource/arena failure, configured prune hit, or handled invalid evaluation metrics | Log `pruned=True`, report `-inf` at step 0, raise `TrialPruned` | Log `pruned=True`, return direction-aware penalties; Optuna records `COMPLETE` |
+| Infeasible candidate with `train_if_infeasible: false` | Skip fit and return scalar penalty `-100`; `COMPLETE` | Skip fit and return direction-aware penalty tuple; `COMPLETE` |
+| Infeasible candidate with `train_if_infeasible: true` | Continue training/scoring; retain infeasible status | Continue training/scoring; retain infeasible status |
+| Device not found or uncaught build/runtime/training exception | Exception aborts the run | Exception aborts the run |
+
+Multi-objective penalties are `1e12` for minimized objectives and `-1e12` for maximized objectives. A returned fatal HIL status uses the candidate rejection path; a transport/runtime exception can propagate and stop the study. No new optimizer-specific abort policy is introduced.
+
+Feasibility constraints are persisted in trial attributes. The sampler callback reads that evidence rather than re-evaluating old measurements against the current config. Pre-fit failures carry `not_evaluated` feasibility and positive constraint sentinels. Feasibility signatures separately guard policy compatibility on resume.
+
+## How the LLM chooses candidates
+
+[`LLMGeneratorOptimizer`](llm/component.py) owns provider setup, prompt construction, local validation, repair, fallback, and persistent memory. Its provider-neutral prompt combines the active raw descriptor and objective summary with budget counters and four different evidence views:
+
+- **Recent trials:** the newest configured window, including state and useful failure/measurement information.
+- **Anchors:** the best eligible scalar candidates, or a bounded feasible Pareto representation near the two-objective knee. Degenerate or higher-dimensional fronts use a normalized ideal-point compromise; stable trial numbers break ties.
+- **Accumulated memory:** structured findings derived from older terminal evidence, with conditions, measurements, exceptions, uncertainty, and cited trial numbers.
+- **Pending trials:** a bounded window of unsummarized terminal evidence outside the recent window, with explicit counts when older evidence is omitted.
+
+Repeated references to a trial across these views represent one observation. Semantic context supplies bounded workload/task/model/device/runtime explanations and parameter priors, with a version and hash. It distinguishes registered device capacities from available application or tensor-arena budgets. Priors and memory are fallible guidance; neither changes the legal search space or measured evidence.
+
+The prompt phase uses the greater of attempted trials / total cap and feasible completions / feasible target (policy version 2): exploration below 35%, specification below 85%, and finalization thereafter. These are proposal instructions, not changes to the objective or final-training procedure.
+
+Memory defaults to starting after 10 terminal trials and updating every 5, with at most 12 findings, 6000 characters, and 100 pending trials. Valid updates retain untouched findings, explicitly replace existing IDs, and retire findings only with a reason. State records coverage hashes and snapshots. Restored memory must match its context and covered trial evidence. Rejected summaries receive one repair attempt. Persistent content rejection retains prior state and all study evidence, while bounding the pending prompt and explicitly reporting omissions. Provider execution errors stop the study.
+
+The provider must return `{"candidates": [{...}]}`. LLM validation checks the envelope, count, exact raw fields, and duplicates. Deduplication covers COMPLETE, PRUNED, known deterministic FAIL, queued fixed parameters, and earlier accepted candidates in the batch. Infrastructure and unknown FAIL attempts remain retryable. Full candidate provenance fills parameters absent from early rejections. Numeric float descriptors canonicalize values; categorical types remain strict. Anchors retain their separate success/feasibility filters. The serial runner drains queued trials before requesting more proposals.
+
+A partially accepted batch runs at its accepted size without filling rejected slots. A batch with zero accepted candidates gets up to `max_repair_attempts` additional calls after the initial call. Provider errors, invalid JSON, and validation errors contribute repair feedback. After exhaustion, the component tries up to 100 locally sampled candidates and returns one legal unique random fallback. Failure to find one raises an error. `random_seed` controls this local RNG, not remote provider randomness.
+
+### Fixed measured warm-up
+
+Optional `optimizer.llm.warmup_params_file` supplies an ordered JSON list of raw
+parameter dictionaries. Set `recent_trial_window` to the warm-up length to expose every warm-up attempt. The LLM component returns one fixed `ExplicitRound`
+entry at a time, reusing runner validation, enqueueing, evaluation, and budget
+accounting. Provider requests begin only after those attempts are terminal;
+failed/pruned entries remain evidence. Provenance records `llm_warmup`, its index,
+and the content hash. Resume uses saved provenance and the existing waiting
+queue; orphan RUNNING warm-up trials require recovery. The content hash guards
+study identity, while runs without this option retain their previous identity.
+
+## Budgeting and restart behavior
+
+Production targets and caps are totals for the study, not additional work requested by this invocation:
+
+```text
+T = training.nas_trials
+A = len(study.trials)                 # includes WAITING and RUNNING
+C = qualifying COMPLETE trials
+M = max(training.max_total_trials, A at study open)
+needed = T - C
+remaining = M - A
+scalar allowance = min(needed, remaining)
+multi allowance = min(max(needed, population_size), remaining)
+```
+
+With feasibility rules, `C` counts only COMPLETE trials marked `feasible`. Without them, it counts every COMPLETE trial, including multi-objective penalty completions. Failed, pruned, infeasible, RUNNING, and reserved WAITING trials consume the attempt cap. The LLM caps the fresh allowance by its configured `batch_size`; accepted count determines actual execution size.
+
+At each production boundary, the runner first stops if the completion target is satisfied, leaving any WAITING work untouched. Otherwise it consumes the oldest contiguous WAITING group before checking the cap for new proposals. Tagged groups use `crest_proposal.round_id`; untagged entries are consumed deterministically without inventing provenance. `n_trials` equals the selected group's waiting remainder, preventing execution from spilling into new native samples.
+
+WAITING trials already reserve attempts, so draining them remains possible when reservations have reached the cap. Target and cap are rechecked between rounds, not midway through an ordinary group. Multi-objective population sizing can therefore exceed the remaining completion need. Orphan RUNNING trials still consume attempts; the runner does not recover them automatically. Concurrent writers and exactly-once physical measurement are outside this serial runner's guarantees.
+
+Smoke testing differs: `smoke_test(trials=N)` executes exactly N additional attempts, including consumed waiting work, rather than retrying until N successful completions. It uses per-study `optuna_smoke_test.db`, appends on repeated calls, and restores temporary training/HIL/epoch settings afterward. It uses the same selection, proposal, queue, and objective path.
+
+## Configure and extend an experiment
+
+The following YAML blocks are **merge snippets**, not complete runnable configurations. Start from an appropriate file in [`src/config`](../../config/README.md), retaining its dataset, task, model, device, score, and output settings.
+
+```yaml
+optimizer:
+  type: optuna
+training:
+  nas_trials: 50
+  max_total_trials: 80
+```
+
+An LLM snippet using the implemented OpenAI-compatible transport:
+
+```yaml
+optimizer:
+  type: llm_generator
+  llm:
+    provider: openrouter
+    model: your-provider-model-id
+    api_key_env: OPENROUTER_API_KEY
+    batch_size: 5
+    max_repair_attempts: 1
+    random_seed: 0
+    recent_trial_window: 10
+    anchor_count: 5
+    semantic_context: true
+    memory:
+      enabled: true
+```
+
+OpenRouter defaults its base URL and JSON response mode. Generic `openai_compatible` providers require an explicit clean `base_url`, `model`, and `api_key_env`; the transport appends `/chat/completions`. URL userinfo, query parameters, and fragments are rejected. Credentials are checked during component initialization, before new study signatures are stored; the fake provider requires none. A `fake` provider with configured response fixtures supports local checks without paid calls.
+
+Each study stores a versioned optimizer signature: resolved registration name, deterministic non-secret `identity_config`, and effective sampler class/options. LLM identity includes provider/model, generation settings, prompt/schema/context/memory versions, history/anchor/memory settings, and fallback policy. Credentials, output paths, completion/attempt budgets, and the provider transport `timeout_s` are excluded. `json_response_mode` remains part of identity because it changes the provider request. Exact older built-in version-1 signatures for `openrouter` or `openai_compatible`, with otherwise matching identity and a valid `timeout_s`, compare after excluding only that transport field; existing stored signatures remain unchanged. Known older private TPE/NSGA-II class paths compare through exact public-name aliases; options and remaining identity stay strict.
+
+To extend a signed study, keep the study name, database, and original scientific configuration, then raise the total target and cap. For example, raising 250 completions to 300 requests progress toward 300 total. A matching signed native or LLM study resumes before new proposals. Stored optimizer and feasibility identity is checked before component initialization or queued execution. New optimizer/feasibility signatures and legacy-adoption attributes are persisted only after component initialization succeeds, so a failed initialization leaves an unsigned study unsigned. Already signed studies retain strict compatibility checks, including empty ones.
+
+**This signature is not a fingerprint of the whole scientific experiment.** The optional training randomness policy is included, but the signature does not certify unchanged dataset, model, training budgets, device, or score settings. Retain and compare the original experiment configuration yourself; budget-only extension is the supported use.
+
+Migration of unsigned LLM studies is unsupported; existing signed LLM studies extend normally when identity matches. Nonempty unsigned studies fail by default. Native-only `optimizer.adopt_legacy_study: true` is a one-time attestation that the active configuration matches the original native experiment. It rejects WAITING trials, explicit-proposer attributes, any `fixed_params` system-attribute key even when empty, and an existing per-study `llm_optimizer` artifact path. It also checks ordered study directions, feasibility signatures, and required COMPLETE feasibility evidence before stamping identity. Legacy adoption preserves trial evidence and does not itself recover RUNNING work. Remove the flag after adoption. These checks are conservative counterevidence guards, not proof of native provenance; unsigned LLM/plugin adoption and optimizer switching within a study are unsupported.
+
+## Add a simple proposer
+
+Register a class before `load_config()` so custom fields survive normalization and validation. Custom names are case-sensitive after whitespace stripping; historical built-in names accept case aliases only when no exact registration exists. This example deliberately repeats a fixed experiment and imports no Optuna API:
+
+```python
+from collections.abc import Mapping
+from crest.interfaces import OptimizerABC
+from crest.pipeline_types import CandidateProposal, ExplicitRound
+from crest.registry import optimizer_registry
+from crest.optimizers.search_space import validate_candidate
+from crest.model import load_config
+
+class FixedCandidate(OptimizerABC):
+    def validate_config(self, config):
+        if not isinstance(config.get("candidate"), Mapping):
+            raise ValueError("optimizer.candidate must be a mapping")
+
+    def identity_config(self, config):
+        return {"candidate": dict(config["candidate"])}
+
+    def requires_semantic_context(self, config):
+        return False
+
+    def initialize(self, context, config):
+        self.params = dict(config["candidate"])
+        validate_candidate(self.params, context.search_space)
+
+    def propose_round(self, history, budget):
+        return ExplicitRound((CandidateProposal(self.params),))
+
+optimizer_registry.register("fixed_candidate", FixedCandidate)
+config = load_config("experiment.yaml")
+```
+
+Supply `optimizer.type: fixed_candidate` and an `optimizer.candidate` mapping containing every active descriptor field for your chosen family and runtime. The example returns one trial per call and needs no `llm` block. Use the usual runner after registration. Configurable plugins must include every proposal-affecting setting in JSON-safe `identity_config`; default `{}` is appropriate only when there are no such settings. Explicit plugins retain the descriptor requirement. A proposer returning native rounds can opt out through the capability hooks.
+
+## Inspect results, finalize, and replay
+
+The per-study artifact directory is `outputs.models_dir/<study_name>/`. Optuna storage contains the authoritative state and provenance. The configured trial CSV records measurements, objective outcomes, task metrics, and rejection/feasibility evidence through existing `log_trial`; it does not gain dedicated `crest_proposal` columns. `trials.csv` exports the Optuna dataframe, including parameter and attribute columns. Inspect both state and eligibility evidence when interpreting results.
+
+LLM artifacts under `llm_optimizer/` include numbered request/response JSON pairs, `prompt_contexts.jsonl`, `returned_candidates.jsonl`, `rejected_candidates.jsonl`, `optimizer_events.jsonl`, and memory state/snapshots. Responses retain raw output and available usage, finish reason, and latency. `returned_to_runner` means a proposal passed component validation and was returned; it does not prove queue acceptance or execution. Study trial attributes establish queue acceptance. Older `accepted_candidates.jsonl` and `batch_enqueued` artifacts retain their historical meanings.
+
+Scalar `run_scoring_nas` selects a feasible completed trial when feasibility is enabled, retrains it on the longer schedule, evaluates held-out test data, exports TFLite, and writes training plots, task closeout artifacts, and a summary; optional fold rotation follows the fixed-split closeout. Without feasibility, selection uses Optuna's best scalar trial. Multi-objective closeout exports the Pareto CSV and returns without automatic final retraining. Existing family decoding and Pareto replay continue using actual raw parameters; runtime choices are handled separately, and proposal metadata stays in attributes.
+
+## Implementation and validation map
+
+| Read this source | For |
+| --- | --- |
+| [`interfaces.py`](../interfaces.py), [`pipeline_types.py`](../pipeline_types.py), [`registry.py`](../registry.py) | Public contract and passive payloads |
+| [`component_selection.py`](../component_selection.py), [`builtin_components.py`](../builtin_components.py), [`model.py`](../model.py) | Selection, lazy registration, configuration, scoring, and logging |
+| [`nas_model_client.py`](../../nas_model_client.py) | Sampler/signature setup, capability initialization, reservation draining, round execution, objective, smoke, budgets, and finalization |
+| [`search_space.py`](search_space.py), [`history.py`](history.py), [`context.py`](context.py) | Raw legality, immutable snapshots, and stable explanatory context |
+| [`optuna.py`](optuna.py), [`LLM component`](llm/component.py), [`generation`](llm/enqueue.py) | Native request and LLM proposal ownership |
+| [`history.py`](llm/history.py), [`memory.py`](llm/memory.py), [`prompt_builder.py`](llm/prompt_builder.py), [`provider.py`](llm/provider.py), [`ledger.py`](llm/ledger.py) | Evidence selection, summaries, prompt/transport, and audit artifacts |
+| [`pareto_replay.py`](../pareto_replay.py) | Existing candidate replay |
+
+Contract, context, runner, resume, and LLM regression tests cover custom registration, legal raw fields, immutable evidence, partial acceptance, real Optuna reservations, partial-enqueue restart, budget extensions, strict identity mismatches, legacy adoption counterevidence, scalar/multi-objective rejection, and fixed-candidate objective parity. A regression explicitly verifies that a rejected first candidate never trains and a subsequent viable candidate trains once while both consume attempts.
+
+The contract does not support arbitrary dynamic explicit spaces, streaming proposal feedback, different execution semantics, automatic stale-trial recovery, or identical stochastic trajectories across proposers.
+
+## Recovery and provider failures
+
+After confirming the workers for specific trials have stopped, list their exact
+numbers with `optimizer.recover_orphaned_trials: [12]`. Only listed RUNNING trials
+become FAIL through Optuna; a study audit records the target list and recovery.
+Warm-up resumes without replaying those slots. Recovery defaults to `[]`; legacy
+`false` also disables it, while `true` is rejected. A retained list leaves later
+trial numbers untouched, and unknown or WAITING trial numbers are rejected before recovery.
+Remove the list after recovery for clarity.
+YAML warm-up paths resolve relative to the YAML directory.
+
+Provider authentication/credit failures stop immediately; transient failures get
+bounded backoff retries before stopping. Content errors retain repair/fallback.
+Run summaries count proposal sources. Memory summaries get one content repair;
+continued rejection retains stored evidence and exposes a bounded pending window
+with explicit omission counts instead of crashing on backlog size. After three consecutive exhausted summary chunks, summarization remains
+suspended across restarts until explicit reset; candidate prompts use the newest
+bounded pending records and report suspension. Transport errors still stop. See `src/config/README.md` for the configuration contract.
+
+## LLM spending limits
+
+Optional `max_output_tokens` and `output_token_parameter` control the provider
+completion ceiling and are part of optimizer identity. Enabling `max_usd` also
+requires input/output token prices, their `pricing_source`, and `max_input_tokens`.
+The shared provider reserves funds before every HTTP attempt, including retries,
+repairs, and memory calls. Unknown usage retains the reservation across restart;
+known usage settles configured cost. Insufficient funds stop proposal generation
+cleanly without random fallback. Fixed warm-up requires no API reservations.
+
+Accounting is stored atomically in `llm_optimizer/spend_state.json`. Retain it on
+resume; the dollar cap can increase, while the tariff and token-bound settings
+must match. The local bound depends on supplied prices, the conservative prompt
+check, and the provider honoring its completion limit. See `src/config/README.md`
+for settings, limitations, and resume rules. No provider prices are built in.
+
+## Provider transports and full history
+
+`openrouter` and `openai_compatible` use Chat Completions. The
+`openai_responses` provider uses the Responses transport and requires explicit
+`base_url`, `model`, and `api_key_env` settings. It sends output ceilings as
+`max_output_tokens` and omits temperature by default. Select request fields
+supported by the configured endpoint and model; credentials are read from the
+named environment variable during initialization.
+
+The default `history_mode: bounded` combines recent records, anchors, and optional
+memory. `history_mode: full` provides exact columnar trial evidence and decoded
+network coverage for the audio DS-CNN search space. It requires
+`require_rationale: true`, `memory.enabled: false`, `batch_size` from 1 through 5,
+and `max_repair_attempts` at most 1. Optional `max_refill_attempts` accepts 0 through
+2 (default 2). Full-history allocation and decoded duplicate handling are
+implemented in [`llm/full_history.py`](llm/full_history.py); this mode is specific
+to that model family. Rationale is proposal metadata and does not affect measured
+scores or substitute for trial evidence.
+
+Run offline optimizer checks from the repository root with:
+
+```bash
+python -m unittest discover -s test -p 'test_llm_*.py'
+```
+
+## Package layout
+
+Shared proposal contracts live in `crest.optimizers.search_space`, immutable
+trial-history helpers in `crest.optimizers.history`, and semantic context in
+`crest.optimizers.context`. These modules do not depend on an LLM provider.
+`crest.optimizers.optuna` and `crest.optimizers.llm` implement proposal strategies.
+Import shared contracts from their canonical modules rather than the LLM package.
+
+Search execution utilities are separate: `crest.search.progress` renders saved
+study progress, and `crest.search.training_randomness` manages the optional
+training seed. Audio-specific graph decoding belongs to
+`crest.model_families.audio_dscnn.decode`; importing it does not load TensorFlow.
