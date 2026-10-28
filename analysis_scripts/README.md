@@ -48,6 +48,8 @@ prompt captures, measurements, cost reports or generated figures.
 - `plot_cs3_progress.py` plots feasible scores and the incumbent against trial
   number and elapsed time, supporting inspection of CS3 search progress. The
   study name, input directory and output directory must be supplied explicitly.
+  It reads `optuna.db` within the study directory and requires a scalar study
+  with one maximized objective.
 
 Run from the repository root, using your own study artifacts:
 

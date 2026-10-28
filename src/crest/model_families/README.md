@@ -132,7 +132,8 @@ concrete starting point.
   options activate that search. Explicit candidates must supply exactly every
   active raw field. Native Optuna skips descriptor and semantic-context setup;
   errors in an explicit family's declared descriptor propagate before evaluation.
-  The older LLM-local search-space module remains a compatibility re-export.
+  Import these declarations from `crest.optimizers.search_space`; the former
+  `crest.optimizers.llm.search_space` module has been removed.
   See the
   [optimizer config reference](../../config/README.md#optimizer).
 - `build_model(hparams, ctx, config)`
