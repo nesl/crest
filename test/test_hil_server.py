@@ -23,7 +23,7 @@ import hil_server as hil_server_module  # noqa: E402
 from hil_server import HILServer  # noqa: E402
 from crest.devices import CandidatePrepareRequest, arduino_staged_sketch_path  # noqa: E402
 from crest.errors import HIL_MASTER_SUCCESS, HIL_ERROR_OK  # noqa: E402
-from crest.hil_runtime import CollectMetricsRequest  # noqa: E402
+from crest.hil.runtime import CollectMetricsRequest  # noqa: E402
 from crest.pipeline_types import DataSplit, DatasetBundle, TargetSpec, TaskMetricContract  # noqa: E402
 
 

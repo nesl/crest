@@ -39,7 +39,7 @@ from crest.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
     describe_error_code,
 )
-from crest.hil_runtime import build_collect_metrics_request, collect_metrics
+from crest.hil.runtime import build_collect_metrics_request, collect_metrics
 from crest.errors import HIL_ERROR_OK, HIL_MASTER_FATAL, HIL_MASTER_SUCCESS
 from crest.microcontrollers import (
     get_device as get_microcontroller_device,

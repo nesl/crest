@@ -46,7 +46,7 @@ from crest.model import (
 )  # noqa: E402
 from crest.component_selection import resolve_component_selection  # noqa: E402
 from crest.hardware import convert_to_cpp_model, convert_to_tflite_model  # noqa: E402, E501
-from crest.hil_runtime import CollectMetricsRequest, HarnessConfig, build_collect_metrics_request, collect_metrics  # noqa: E402, E501
+from crest.hil.runtime import CollectMetricsRequest, HarnessConfig, build_collect_metrics_request, collect_metrics  # noqa: E402, E501
 from crest.microcontrollers import resolve_device_options  # noqa: E402
 import crest.model_families.odom_tcn as odom_tcn_module  # noqa: E402
 from crest.model_families.odom_tcn import OdomTCNFamily  # noqa: E402
@@ -372,7 +372,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["chosen_device"], "ARDUINO_NANO_33_BLE_SENSE")
             return (None, 4096, None, 2048, 0, None)
 
-        with patch("crest.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil.runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=False,
                 energy_aware=False,
@@ -418,7 +418,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["serial_port"], "ttyACM0")
             return (1024, 8192, 25.0, 4096, 0, None)
 
-        with patch("crest.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil.runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -461,7 +461,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["measured_inference_runs"], 7)
             return (1024, 8192, 0.025, 4096, 0, None)
 
-        with patch("crest.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil.runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -515,7 +515,7 @@ class CollectMetricsTests(unittest.TestCase):
                 },
             )
 
-        with patch("crest.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil.runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -577,7 +577,7 @@ class CollectMetricsTests(unittest.TestCase):
                 },
             )
 
-        with patch("crest.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil.runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -623,7 +623,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertTrue(run_hil)
             return (1024, 8192, 0.025, 4096, 0, {"runtime_mode": "back_to_back"})
 
-        with patch("crest.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil.runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,
@@ -676,7 +676,7 @@ class CollectMetricsTests(unittest.TestCase):
                     self.assertTrue(run_hil)
                     return (1024, 8192, 0.025, 4096, 0, {"runtime_mode": raw_runtime_mode})
 
-                with patch("crest.hil_runtime.HIL_controller", fake_controller):
+                with patch("crest.hil.runtime.HIL_controller", fake_controller):
                     request = CollectMetricsRequest(
                         hil_enabled=True,
                         energy_aware=False,
@@ -740,7 +740,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["harness_done_timeout_s"], 3.6)
             return (1024, 8192, 0.025, 4096, 0, None)
 
-        with patch("crest.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil.runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=True,
@@ -803,7 +803,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["device_options"]["split"], "75_25")
             return (1024, 2048, None, 4096, 0, None)
 
-        with patch("crest.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil.runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=False,
                 energy_aware=False,
@@ -838,7 +838,7 @@ class CollectMetricsTests(unittest.TestCase):
             device_options={"target_core": "cm4", "split": "50_50", "security": "none"},
         )
 
-        with patch("crest.hil_runtime.HIL_controller") as controller_mock:
+        with patch("crest.hil.runtime.HIL_controller") as controller_mock:
             with self.assertRaises(RuntimeError) as context:
                 collect_metrics(request)
 
@@ -882,7 +882,7 @@ class CollectMetricsTests(unittest.TestCase):
             self.assertEqual(kwargs["harness_done_timeout_s"], 3.6)
             return (1024, 2048, 0.01, 4096, 0, None)
 
-        with patch("crest.hil_runtime.HIL_controller", fake_controller):
+        with patch("crest.hil.runtime.HIL_controller", fake_controller):
             request = CollectMetricsRequest(
                 hil_enabled=True,
                 energy_aware=False,

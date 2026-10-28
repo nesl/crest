@@ -22,3 +22,21 @@ for prefix in ('tensorflow', 'keras', 'torch', 'openai', 'anthropic',
         capture_output=True,
         text=True,
     )
+
+
+def test_hil_protocol_import_does_not_load_device_runtime():
+    """Serial protocol helpers do not initialize device backends or HIL runtime."""
+    subprocess.run(
+        [sys.executable, '-c', '''
+import sys
+from crest.hil import protocol
+assert protocol.DUT_READY == 'DUT READY'
+for prefix in ('crest.hil.runtime', 'crest.hardware', 'crest.microcontrollers',
+               'tensorflow', 'keras'):
+    assert not any(name == prefix or name.startswith(prefix + '.')
+                   for name in sys.modules), prefix
+'''],
+        check=True,
+        capture_output=True,
+        text=True,
+    )

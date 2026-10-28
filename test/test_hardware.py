@@ -64,7 +64,7 @@ from crest.hardware import (  # noqa: E402
     return_hardware_specs,
     TFLiteSubprocessError,
 )
-from crest import hil_protocol  # noqa: E402
+from crest.hil import protocol as hil_protocol  # noqa: E402
 from crest.devices import ArduinoDevice, CandidatePrepareRequest  # noqa: E402
 import crest.microcontrollers.arduino_base as arduino_base_module  # noqa: E402
 from crest.microcontrollers.arduino_base import (  # noqa: E402
@@ -1719,9 +1719,9 @@ class ProtocolHandshakeTests(unittest.TestCase):
             raise AssertionError(f"Unexpected port: {port}")
 
         sent_commands: list[str] = []
-        with patch("crest.hil_protocol.serial.Serial", side_effect=serial_factory):
+        with patch("crest.hil.protocol.serial.Serial", side_effect=serial_factory):
             with patch(
-                "crest.hil_protocol._send_line",
+                "crest.hil.protocol._send_line",
                 side_effect=lambda _ser, text: sent_commands.append(text),
             ):
                 result = hil_protocol.run_handshake(
@@ -1842,7 +1842,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
             "crest.microcontrollers.arduino_base.upload_harness_sketch",
             return_value=upload_result,
         ), patch(
-            "crest.hil_protocol.run_handshake",
+            "crest.hil.protocol.run_handshake",
             return_value=handshake_result,
         ):
             result = measure_serial(
@@ -1890,7 +1890,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
             "crest.microcontrollers.arduino_base.upload_harness_sketch",
             return_value=upload_result,
         ), patch(
-            "crest.hil_protocol.run_handshake",
+            "crest.hil.protocol.run_handshake",
             return_value=handshake_result,
         ):
             result = measure_serial(
@@ -1933,7 +1933,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
             "crest.microcontrollers.arduino_base.upload_harness_sketch",
             return_value=upload_result,
         ), patch(
-            "crest.hil_protocol.run_handshake",
+            "crest.hil.protocol.run_handshake",
             return_value=handshake_result,
         ):
             result = measure_serial(
@@ -1987,7 +1987,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
             "crest.microcontrollers.arduino_base.upload_harness_sketch",
             return_value=upload_result,
         ), patch(
-            "crest.hil_protocol.run_handshake",
+            "crest.hil.protocol.run_handshake",
             return_value=handshake_result,
         ):
             result = measure_serial(
@@ -2033,7 +2033,7 @@ class HarnessMetricSelectionTests(unittest.TestCase):
             "crest.microcontrollers.arduino_base.upload_harness_sketch",
             return_value=upload_result,
         ), patch(
-            "crest.hil_protocol.run_handshake",
+            "crest.hil.protocol.run_handshake",
             return_value=handshake_result,
         ):
             measure_serial(
@@ -2796,7 +2796,7 @@ class HILSpecErrorTests(unittest.TestCase):
                 side_effect=[compile_result, upload_result],
             ):
                 with patch(
-                    "crest.hil_protocol.run_dut_only",
+                    "crest.hil.protocol.run_dut_only",
                     return_value=["boot ok"],
                 ):
                     ram, flash, latency, arena_bytes, err, _power = HIL_spec(
@@ -2888,7 +2888,7 @@ class HILSpecErrorTests(unittest.TestCase):
                     side_effect=[compile_result, upload_result],
                 ):
                 with patch(
-                    "crest.hil_protocol.run_dut_only",
+                    "crest.hil.protocol.run_dut_only",
                     return_value=["size is too small for all buffers"],
                 ):
                     ram, flash, latency, arena_bytes, err, _power = HIL_spec(
