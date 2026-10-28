@@ -32,7 +32,7 @@ workload and uses the CREST HIL harness.
 
 - `paper_plots/`
   - **Hardware requirement: no hardware required.** Publication figure
-    generators plus sidecar plotted-point and summary outputs from explicit
+    generators that write sidecar plotted-point and summary outputs from explicit
     input CSV/replay paths.
 
 ## Case Study 3: proposal strategies and search effort
@@ -70,3 +70,10 @@ python analysis_scripts/plot_cs3_progress.py \
 tool writes into `progress/` beneath the specified output directory. Both tools
 read saved artifacts without launching search, contacting a provider or accessing
 hardware. Keep their generated outputs outside the source checkout.
+
+For the current paper figure-to-script mapping, required input schemas, and
+reproduction commands, see [Publication Figure Scripts](paper_plots/README.md).
+
+For a study configured without feasibility rules, add `--feasibility-disabled`
+to `plot_cs3_progress.py`. Its default requires affirmative feasibility evidence;
+explicitly rejected trials are excluded in either mode.

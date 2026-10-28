@@ -90,7 +90,7 @@ def _datetime(value):
     return datetime.fromisoformat(value) if isinstance(value, str) else value
 
 
-def write_progress(trials, directory, study_name, warmup_count=None):
+def write_progress(trials, directory, study_name, warmup_count=None, *, feasibility_enabled=True):
     """Render a snapshot including every finished attempt and feasible incumbent.
 
     Parameters
@@ -104,6 +104,11 @@ def write_progress(trials, directory, study_name, warmup_count=None):
     warmup_count : int or None, optional
         Expected warmup size. Without it, a subsequent non-warmup attempt is
         required before declaring the warmup complete.
+
+    feasibility_enabled : bool, optional
+        Require affirmative feasibility evidence, default True. Set False only
+        for a study configured without feasibility rules. Explicit rejection
+        and infeasibility evidence still excludes a score.
 
     Returns
     -------
@@ -141,7 +146,11 @@ def write_progress(trials, directory, study_name, warmup_count=None):
     plotted, best = [], None
     for t in terminal:
         score = t['score']
-        feasible = (t['state'] == 'COMPLETE' and t['attrs'].get('feasibility_status') == 'feasible'
+        attrs = t['attrs']
+        status = attrs.get('feasibility_status')
+        eligible = (status == 'feasible' if feasibility_enabled else
+                    status in (None, '', 'not_evaluated', 'feasible'))
+        feasible = (t['state'] == 'COMPLETE' and eligible and not attrs.get('pruned', False)
                     and score is not None and math.isfinite(score))
         if feasible:
             best = max(best, score) if best is not None else score

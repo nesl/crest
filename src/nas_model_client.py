@@ -1183,7 +1183,8 @@ class NASModelClient:
             from crest.progress import trial_records, write_progress
             write_progress(trial_records(study.get_trials(deepcopy=False)),
                            self._artifacts_dir(), study.study_name,
-                           warmup_count=getattr(self, "_progress_warmup_count", None))
+                           warmup_count=getattr(self, "_progress_warmup_count", None),
+                           feasibility_enabled=self._feasibility_enabled())
         except Exception:
             logger.warning("Unable to refresh NAS progress plots", exc_info=True)
 

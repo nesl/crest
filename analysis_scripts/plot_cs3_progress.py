@@ -15,12 +15,15 @@ def main():
     parser.add_argument('--study-dir', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--warmup-count', type=int, default=0)
+    parser.add_argument('--feasibility-disabled', action='store_true',
+                        help='Include successful scores from a study configured without feasibility rules')
     args = parser.parse_args()
     if args.warmup_count < 0:
         parser.error('--warmup-count must be nonnegative')
     directory = args.study_dir
     rows = write_progress(read_trials(directory / 'optuna.db', args.study_name),
-                          args.output_dir, args.study_name, args.warmup_count)
+                          args.output_dir, args.study_name, args.warmup_count,
+                          feasibility_enabled=not args.feasibility_disabled)
     print(f'Saved {len(rows)} finished attempts to {args.output_dir / "progress"}')
 
 

@@ -40,6 +40,25 @@ class ProgressTests(unittest.TestCase):
             with (output / 'score_progress.csv').open() as stream:
                 self.assertEqual(len(list(csv.DictReader(stream))), 6)
 
+    def test_disabled_feasibility_includes_success_and_preserves_rejections(self):
+        """Unconstrained successes count while rejected or nonfinite attempts do not."""
+        trials = [dict(number=n, state=state, score=score, attrs=attrs,
+                       start='2026-01-01 00:00:00', end='2026-01-01 00:30:00')
+                  for n, (state, score, attrs) in enumerate([
+                      ('COMPLETE', .5, {}),
+                      ('COMPLETE', .6, {'feasibility_status': 'not_evaluated'}),
+                      ('COMPLETE', .9, {'feasibility_status': 'infeasible'}),
+                      ('COMPLETE', .95, {'pruned': True}),
+                      ('PRUNED', .99, {}),
+                      ('COMPLETE', float('inf'), {}),
+                  ])]
+        with tempfile.TemporaryDirectory() as directory:
+            rows = write_progress(trials, directory, 'unconstrained', feasibility_enabled=False)
+            self.assertEqual([r['score'] for r in rows], [.5, .6, None, None, None, None])
+            self.assertEqual(rows[-1]['best_so_far'], .6)
+            strict = write_progress(trials, directory, 'strict-default')
+            self.assertTrue(all(r['score'] is None for r in strict))
+
     def test_no_feasible_score_still_writes_snapshot(self):
         """A failed first attempt still yields reviewable progress files."""
         trial = dict(number=0, state='FAIL', score=None, attrs={},
@@ -68,10 +87,12 @@ class ProgressTests(unittest.TestCase):
         client = NASModelClient.__new__(NASModelClient)
         study = SimpleNamespace(directions=[SimpleNamespace(name='MAXIMIZE')],
                                 study_name='offline', get_trials=MagicMock(return_value=[]))
-        with patch.object(client, '_artifacts_dir', return_value=Path('/unused')):
+        with patch.object(client, '_artifacts_dir', return_value=Path('/unused')), \
+                patch.object(client, '_feasibility_enabled', return_value=False):
             with patch('crest.progress.write_progress', side_effect=OSError('disk full')) as writer:
                 NASModelClient._refresh_progress(client, study, None)
                 writer.assert_called_once()
+                self.assertFalse(writer.call_args.kwargs['feasibility_enabled'])
                 study.get_trials.assert_called_once_with(deepcopy=False)
 
     def test_readonly_sqlite_and_frozen_trial_adapters_agree(self):
