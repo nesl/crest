@@ -22,8 +22,8 @@ def synthetic_context(batch_size=5):
     PromptContext
         Full-history context without recorded measurements or private inputs.
     """
-    from crest.audio_dscnn_decode import AUDIO_DSCNN_SEARCH_CHOICES
-    from crest.search_space import SearchParam, SearchSpaceDescriptor
+    from crest.model_families.audio_dscnn.decode import AUDIO_DSCNN_SEARCH_CHOICES
+    from crest.optimizers.search_space import SearchParam, SearchSpaceDescriptor
     from crest.optimizers.llm.prompt_builder import PromptContext
     descriptor = SearchSpaceDescriptor(tuple(
         SearchParam(name, "categorical", choices=choices)
@@ -263,7 +263,7 @@ def test_real_component_300_rows_bounded_refill_and_malformed_repair(tmp_path, m
 
 def test_coverage_completion_transition_labels_python_policy(tmp_path):
     from crest.optimizers.llm.full_history import candidate_cell
-    from crest.optimizers.llm.search_space import SearchParam, SearchSpaceDescriptor
+    from crest.optimizers.search_space import SearchParam, SearchSpaceDescriptor
     from crest.optimizers.llm.enqueue import generate_llm_batch
     from crest.optimizers.llm.provider import FakeProvider
     from crest.optimizers.llm.ledger import LLMLedger

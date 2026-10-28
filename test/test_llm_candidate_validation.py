@@ -18,7 +18,7 @@ from crest.optimizers.llm.schemas import (  # noqa: E402
     CandidateBatch,
     validate_candidate_batch,
 )
-from crest.optimizers.llm.search_space import SearchParam, SearchSpaceDescriptor  # noqa: E402
+from crest.optimizers.search_space import SearchParam, SearchSpaceDescriptor  # noqa: E402
 
 
 DESCRIPTOR = SearchSpaceDescriptor(

@@ -6,12 +6,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from crest.interfaces import ModelFamilyABC
-from crest.optimizer_history import freeze_plain_data
+from crest.optimizers.history import freeze_plain_data
 from crest.optimizers.llm.component import LLMGeneratorOptimizer
 from crest.optimizers.optuna import OptunaOptimizer
 from crest.pipeline_types import BudgetSnapshot
-from crest.search_space import SearchParam
-from crest.semantic_context import build_semantic_context, disabled_semantic_context
+from crest.optimizers.search_space import SearchParam
+from crest.optimizers.context import build_semantic_context, disabled_semantic_context
 from test.proposal_plugin import ThirdProposer
 from test.test_nas_model_client import _build_test_client
 

@@ -80,7 +80,7 @@ def test_coverage_ties_are_stable_without_shallow_first_order():
 
 def test_finite_target_reserves_pending_and_supports_restricted_space():
     # A single restricted cell stops targeting after two reservations/outcomes.
-    from crest.optimizers.llm.search_space import SearchParam
+    from crest.optimizers.search_space import SearchParam
     descriptor = {"num_blocks": SearchParam(name="num_blocks", kind="categorical", choices=(2,)),
                   "stride_schedule": SearchParam(name="stride_schedule", kind="categorical", choices=("light", "late"))}
     coverage = build_coverage([trial(0, "WAITING", params(num_blocks=2, stride_schedule="light"))], descriptor)

@@ -10,7 +10,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from .pipeline_types import TrialRecord
+from ..pipeline_types import TrialRecord
 
 
 def to_plain(value: Any, *, freeze: bool = False, nonfinite_to_none: bool = False) -> Any:

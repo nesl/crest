@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from functools import partial
 
-from ...optimizer_history import to_plain
+from ..history import to_plain
 
 from .provider import LLMRequest, LLMResponse
 

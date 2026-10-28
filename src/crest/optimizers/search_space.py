@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import math
 from typing import Any, Literal
 
-from .pipeline_types import ModelBuildContext
+from ..pipeline_types import ModelBuildContext
 
 SearchParamKind = Literal["int", "float", "categorical"]
 

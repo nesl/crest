@@ -23,7 +23,7 @@ from crest.model_families.odom_tcn import (  # noqa: E402
     DROP_RATE_CHOICES,
     OdomTCNFamily,
 )
-from crest.optimizers.llm.search_space import (  # noqa: E402
+from crest.optimizers.search_space import (  # noqa: E402
     SearchParam,
     build_search_space_descriptor,
 )

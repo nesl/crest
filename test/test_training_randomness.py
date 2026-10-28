@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
-from crest.training_randomness import reset_training_randomness, training_randomness_policy
+from crest.search.training_randomness import reset_training_randomness, training_randomness_policy
 
 
 @pytest.mark.parametrize("seed", [True, -1, 2**32, 1.5, "0"])

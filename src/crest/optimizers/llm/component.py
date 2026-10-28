@@ -10,10 +10,10 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from ...interfaces import OptimizerABC
-from ...optimizer_history import to_plain as _plain
+from ..history import to_plain as _plain
 from ...pipeline_types import BudgetSnapshot, CandidateProposal, ExplicitRound, SearchContext, TrialRecord
-from ...search_space import validate_candidate
-from ...semantic_context import SEMANTIC_CONTEXT_VERSION, disabled_semantic_context
+from ..search_space import validate_candidate
+from ..context import SEMANTIC_CONTEXT_VERSION, disabled_semantic_context
 from .config import normalize_llm_config
 from .enqueue import generate_llm_batch
 from .history import build_best_trial_anchors, build_recent_trial_history

@@ -17,7 +17,7 @@ from typing import Any, TYPE_CHECKING
 from collections.abc import Mapping
 
 if TYPE_CHECKING:
-    from .search_space import SearchSpaceDescriptor
+    from .optimizers.search_space import SearchSpaceDescriptor
 
 
 @dataclass(eq=False)

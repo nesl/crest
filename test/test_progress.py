@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import optuna
 from optuna.trial import TrialState
 
-from crest.progress import read_trials, trial_records, write_progress
+from crest.search.progress import read_trials, trial_records, write_progress
 
 
 class ProgressTests(unittest.TestCase):
@@ -89,7 +89,7 @@ class ProgressTests(unittest.TestCase):
                                 study_name='offline', get_trials=MagicMock(return_value=[]))
         with patch.object(client, '_artifacts_dir', return_value=Path('/unused')), \
                 patch.object(client, '_feasibility_enabled', return_value=False):
-            with patch('crest.progress.write_progress', side_effect=OSError('disk full')) as writer:
+            with patch('crest.search.progress.write_progress', side_effect=OSError('disk full')) as writer:
                 NASModelClient._refresh_progress(client, study, None)
                 writer.assert_called_once()
                 self.assertFalse(writer.call_args.kwargs['feasibility_enabled'])

@@ -80,7 +80,7 @@ points above.
 - [`crest/model_families/`](crest/model_families)
   Model-family implementations. Built-ins include
   [`odom_tcn.py`](crest/model_families/odom_tcn.py) and
-  [`audio_dscnn.py`](crest/model_families/audio_dscnn.py). See
+  [`audio_dscnn/family.py`](crest/model_families/audio_dscnn/family.py). See
   [`crest/model_families/README.md`](crest/model_families/README.md) for the
   contributor guide.
 - [`crest/microcontrollers/`](crest/microcontrollers)
@@ -92,11 +92,16 @@ points above.
   rounds; the [`llm/`](crest/optimizers/llm) component owns provider transport,
   prompts, anchors, memory, repair, local fallback, and audit ledgers. It returns
   proposals to the runner, which owns enqueueing.
-- [`crest/search_space.py`](crest/search_space.py),
-  [`crest/optimizer_history.py`](crest/optimizer_history.py), and
-  [`crest/semantic_context.py`](crest/semantic_context.py)
+- [`crest/optimizers/search_space.py`](crest/optimizers/search_space.py),
+  [`crest/optimizers/history.py`](crest/optimizers/history.py), and
+  [`crest/optimizers/context.py`](crest/optimizers/context.py)
   Shared raw parameter legality, immutable trial snapshots, and deployment
   context for optimizer components.
+- [`crest/search/`](crest/search)
+  Shared search execution utilities: offline progress rendering and optional
+  per-evaluation training randomness. These are independent of proposal strategy.
+- [`crest/model_families/audio_dscnn/decode.py`](crest/model_families/audio_dscnn/decode.py)
+  Pure audio DS-CNN graph decoding, importable without the ML runtime.
 - [`crest/model.py`](crest/model.py)
   Shared runtime helpers for config loading, score evaluation, and generic
   metric normalization.
@@ -232,9 +237,9 @@ objective with the configured TPE/NSGA-II sampler. Native families can keep
 using define-by-run sampling without declaring a search descriptor. Explicit
 proposers require a valid descriptor and every active raw field, including
 run-activated quantization and CPU-clock fields. Shared legality validation in
-[`crest/search_space.py`](crest/search_space.py) checks the entire batch before
-enqueueing any candidate; it allows deliberate repeated experiments. The old
-LLM search-space import remains a compatibility re-export.
+[`crest/optimizers/search_space.py`](crest/optimizers/search_space.py) checks the entire batch before
+enqueueing any candidate; it allows deliberate repeated experiments. Shared
+contracts are imported directly from `crest.optimizers.search_space`.
 
 Proposal setup uses `requires_search_space` and
 `requires_semantic_context(config)` on `OptimizerABC`; both default to true for
@@ -292,7 +297,7 @@ status means a proposal was returned after component validation. Study trial
 attributes establish queue acceptance; actual parameters and state establish
 execution evidence.
 
-Implementation entry points are [`search_space.py`](crest/search_space.py),
+Implementation entry points are [`search_space.py`](crest/optimizers/search_space.py),
 [`component.py`](crest/optimizers/llm/component.py),
 [`prompt_builder.py`](crest/optimizers/llm/prompt_builder.py),
 [`history.py`](crest/optimizers/llm/history.py),
@@ -455,7 +460,7 @@ Key files:
   `ModelFamilyABC` defines the contract.
 - [`crest/model_families/odom_tcn.py`](crest/model_families/odom_tcn.py)
   Concrete example of the built-in odometry TCN family.
-- [`crest/model_families/audio_dscnn.py`](crest/model_families/audio_dscnn.py)
+- [`crest/model_families/audio_dscnn/family.py`](crest/model_families/audio_dscnn/family.py)
   Concrete example of a built-in classification family over cached log-mel
   tensors.
 - [`crest/builtin_components.py`](crest/builtin_components.py)

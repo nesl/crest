@@ -16,7 +16,7 @@ from .ledger import LLMLedger
 from .prompt_builder import PromptContext, build_candidate_request
 from .provider import LLMProvider, ProviderResponseError
 from .schemas import CandidateBatch, validate_candidate_batch
-from .search_space import SearchParam, SearchSpaceDescriptor
+from ..search_space import SearchParam, SearchSpaceDescriptor
 
 
 def _history_candidates(

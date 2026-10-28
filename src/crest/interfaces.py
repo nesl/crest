@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     import tensorflow as tf
 
     from .model_metrics import StaticMemoryEstimate
-    from .search_space import SearchParam
+    from .optimizers.search_space import SearchParam
 
 
 class DatasetABC(ABC):

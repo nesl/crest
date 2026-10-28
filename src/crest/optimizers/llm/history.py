@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 from functools import partial
 
-from ...optimizer_history import to_plain
+from ..history import to_plain
 
 from ...errors import HIL_MASTER_SUCCESS
 

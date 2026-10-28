@@ -7,7 +7,7 @@ from types import MappingProxyType
 import numpy as np
 import pytest
 
-from crest.optimizer_history import freeze_plain_data, to_plain
+from crest.optimizers.history import freeze_plain_data, to_plain
 from crest.optimizers.llm.ledger import LLMLedger
 from crest.optimizers.llm.provider import LLMRequest
 

@@ -14,7 +14,7 @@ import optuna
 from optuna.trial import TrialState, create_trial
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from crest.optimizer_history import build_trial_snapshot, freeze_plain_data
+from crest.optimizers.history import build_trial_snapshot, freeze_plain_data
 from crest.pipeline_types import BudgetSnapshot, SearchContext
 from crest.optimizers.llm.component import LLMGeneratorOptimizer
 from crest.optimizers.llm.enqueue import generate_llm_batch
@@ -23,7 +23,7 @@ from crest.optimizers.llm.history import (build_recent_trial_history,
 from crest.optimizers.llm.ledger import LLMLedger
 from crest.optimizers.llm.memory import ExperimentalMemory, MemoryConfig, digest
 from crest.optimizers.llm.provider import FakeProvider
-from crest.semantic_context import disabled_semantic_context
+from crest.optimizers.context import disabled_semantic_context
 from test.test_llm_enqueue import DESCRIPTOR, context
 from test.test_llm_memory import context as memory_context, finding, add
 

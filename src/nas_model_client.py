@@ -72,9 +72,9 @@ from crest.model import (
     set_error_code,
 )
 from crest.model_metrics import StaticMemoryEstimate
-from crest.optimizer_history import build_trial_snapshot, freeze_plain_data
-from crest.search_space import build_search_space_descriptor, validate_candidate
-from crest.semantic_context import build_semantic_context
+from crest.optimizers.history import build_trial_snapshot, freeze_plain_data
+from crest.optimizers.search_space import build_search_space_descriptor, validate_candidate
+from crest.optimizers.context import build_semantic_context
 from crest.interfaces import OptimizerBudgetExhausted
 from crest.pipeline_types import (
     BudgetSnapshot, CandidateProposal, DataSplit, DatasetBundle, ExplicitRound,
@@ -82,7 +82,7 @@ from crest.pipeline_types import (
 )
 from crest.registry import dataset_registry, model_family_registry
 from crest.runtime_bootstrap import bootstrap_pipeline
-from crest.training_randomness import reset_training_randomness, training_randomness_policy
+from crest.search.training_randomness import reset_training_randomness, training_randomness_policy
 
 tf.get_logger().setLevel(logging.ERROR)
 absl.logging.set_verbosity(absl.logging.ERROR)
@@ -1180,7 +1180,7 @@ class NASModelClient:
         try:
             if [direction.name for direction in study.directions] != ["MAXIMIZE"]:
                 return
-            from crest.progress import trial_records, write_progress
+            from crest.search.progress import trial_records, write_progress
             write_progress(trial_records(study.get_trials(deepcopy=False)),
                            self._artifacts_dir(), study.study_name,
                            warmup_count=getattr(self, "_progress_warmup_count", None),

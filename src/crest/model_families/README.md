@@ -38,7 +38,7 @@ candidate staging, compile/upload flows, or hardware telemetry.
 - [`odom_tcn.py`](odom_tcn.py)
   Registered as `odom_tcn`. Implements the built-in odometry TCN family and
   odometry-specific export/materialization variants.
-- [`audio_dscnn.py`](audio_dscnn.py)
+- [`audio_dscnn/family.py`](audio_dscnn/family.py)
   Registered as `audio_dscnn`. Implements the built-in audio DS-CNN family for
   cached UrbanSound8K log-mel inputs.
 
@@ -84,7 +84,7 @@ flow, and device telemetry.
 
 ## Add A New Model Family
 
-Use [`odom_tcn.py`](odom_tcn.py) or [`audio_dscnn.py`](audio_dscnn.py) as the
+Use [`odom_tcn.py`](odom_tcn.py) or [`audio_dscnn/family.py`](audio_dscnn/family.py) as the
 concrete starting point.
 
 1. Add a new module under [`src/crest/model_families/`](.).
@@ -120,7 +120,7 @@ concrete starting point.
 - `trial_search_space(ctx, config)`
   Required for explicit proposers such as `optimizer.type: llm_generator`;
   optional for native Optuna sampling. Returns ordered `SearchParam` declarations
-  from [`../search_space.py`](../search_space.py), using
+  from [`../optimizers/search_space.py`](../optimizers/search_space.py), using
   raw persisted trial names, inclusive numeric bounds, or categorical choices.
   Optional descriptions, units, and typical effects provide prompt semantics.
   The default hook raises `NotImplementedError`. Both shipped families reuse

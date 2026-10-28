@@ -6,7 +6,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
-from crest.progress import read_trials, write_progress
+from crest.search.progress import read_trials, write_progress
 
 def main():
     """Write PNG, PDF, and CSV progress artifacts without changing the database."""

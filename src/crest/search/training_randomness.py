@@ -1,6 +1,6 @@
 """Opt-in, recorded training randomness policy shared by all optimizers."""
 
-from .component_selection import cfg_get
+from ..component_selection import cfg_get
 
 
 def training_randomness_policy(training):

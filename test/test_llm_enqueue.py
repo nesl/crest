@@ -17,13 +17,13 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from crest.optimizer_history import build_trial_snapshot
+from crest.optimizers.history import build_trial_snapshot
 from crest.pipeline_types import TrialRecord
 from crest.optimizers.llm.enqueue import generate_llm_batch  # noqa: E402
 from crest.optimizers.llm.ledger import LLMLedger  # noqa: E402
 from crest.optimizers.llm.prompt_builder import PromptContext  # noqa: E402
 from crest.optimizers.llm.provider import FakeProvider, LLMResponse, ProviderResponseError  # noqa: E402
-from crest.optimizers.llm.search_space import SearchParam, SearchSpaceDescriptor  # noqa: E402
+from crest.optimizers.search_space import SearchParam, SearchSpaceDescriptor  # noqa: E402
 
 
 DESCRIPTOR = SearchSpaceDescriptor(

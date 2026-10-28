@@ -15,7 +15,7 @@ import pytest
 from crest.optimizers.llm.history import build_best_trial_anchors
 from crest.optimizers.llm.memory import ExperimentalMemory, MemoryConfig
 from crest.optimizers.llm.provider import FakeProvider
-from crest.search_space import SearchParam
+from crest.optimizers.search_space import SearchParam
 from nas_model_client import PROPOSAL_ATTR
 from test.test_optimizer_resume import campaign  # noqa: F401
 from test.test_llm_memory import add, context, finding

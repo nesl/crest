@@ -17,7 +17,7 @@ from crest.optimizers.llm.history import build_terminal_trial_history
 from crest.optimizers.llm.memory import ExperimentalMemory, MemoryConfig, MemoryUpdate, summary_text
 from crest.optimizers.llm.prompt_builder import PromptContext, build_candidate_request
 from crest.optimizers.llm.provider import FakeProvider, LLMRequest, ProviderAuthenticationError, ProviderTransportError
-from crest.optimizers.llm.search_space import SearchParam, SearchSpaceDescriptor
+from crest.optimizers.search_space import SearchParam, SearchSpaceDescriptor
 from crest.model import _normalize_optimizer_config
 from addict import Dict
 

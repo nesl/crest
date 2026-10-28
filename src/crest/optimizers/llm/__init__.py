@@ -14,8 +14,8 @@ from .provider import (
     OpenAICompatibleProvider,
     build_provider,
 )
-from .search_space import SearchParam, SearchSpaceDescriptor, build_search_space_descriptor
-from .semantic_context import SEMANTIC_CONTEXT_VERSION, build_semantic_context
+from ..search_space import SearchParam, SearchSpaceDescriptor, build_search_space_descriptor
+from ..context import SEMANTIC_CONTEXT_VERSION, build_semantic_context
 from .schemas import (
     CandidateBatch,
     CandidateRejection,

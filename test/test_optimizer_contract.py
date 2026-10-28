@@ -20,7 +20,7 @@ from crest.model import _normalize_optimizer_config, load_config
 from crest.optimizers.optuna import OptunaOptimizer
 from crest.pipeline_types import BudgetSnapshot, CandidateProposal, ExplicitRound, NativeRound
 from crest.registry import ComponentRegistry, optimizer_registry
-from crest.search_space import SearchParam, SearchSpaceDescriptor, candidate_error, validate_candidate
+from crest.optimizers.search_space import SearchParam, SearchSpaceDescriptor, candidate_error, validate_candidate
 from crest.optimizers.llm.schemas import CandidateBatch, validate_candidate_batch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -166,9 +166,9 @@ with patch('crest.optimizers.llm.provider.build_provider', side_effect=RuntimeEr
         llm = validate_candidate_batch(CandidateBatch(candidates=[{"width": 3}, {"width": 3}]), descriptor, batch_size=2)
         self.assertEqual(llm.rejected[0].code, "duplicate_batch")
 
-    def test_neutral_and_compatibility_search_declarations_are_identical(self):
-        from crest.optimizers.llm.search_space import SearchParam as CompatibilityParam
-        self.assertIs(CompatibilityParam, SearchParam)
+    def test_llm_public_search_declarations_use_shared_types(self):
+        from crest.optimizers.llm import SearchParam as PublicParam
+        self.assertIs(PublicParam, SearchParam)
         with self.assertRaisesRegex(ValueError, "finite bounds"):
             SearchParam("width", "float", low=0.0, high=float("inf"))
         with self.assertRaisesRegex(ValueError, "SearchParam"):
@@ -177,7 +177,7 @@ with patch('crest.optimizers.llm.provider.build_provider', side_effect=RuntimeEr
 
     def test_missing_family_descriptor_differs_from_invalid_declaration(self):
         from types import SimpleNamespace
-        from crest.search_space import build_search_space_descriptor
+        from crest.optimizers.search_space import build_search_space_descriptor
         with self.assertRaises(NotImplementedError):
             build_search_space_descriptor(SimpleNamespace(name="legacy"), None, {}, {}, collect_compile_metrics=False)
         with self.assertRaises(ValueError):

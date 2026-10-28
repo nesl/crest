@@ -12,7 +12,7 @@ import pytest
 
 from crest.model import _normalize_optimizer_config
 from crest.optimizers.llm.provider import FakeProvider
-from crest.search_space import SearchParam
+from crest.optimizers.search_space import SearchParam
 from nas_model_client import (
     FEASIBILITY_POLICY_SIGNATURE_ATTR, LEGACY_OPTIMIZER_ADOPTION_ATTR,
     NASModelClient, OPTIMIZER_SIGNATURE_ATTR, PROPOSAL_ATTR,

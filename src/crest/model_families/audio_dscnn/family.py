@@ -20,7 +20,7 @@ from tensorflow.keras.layers import (
     ReLU,
     Reshape,
 )
-from ..audio_dscnn_decode import (
+from .decode import (
     AUDIO_DSCNN_SEARCH_CHOICES, BASE_CHANNELS_CHOICES, NUM_BLOCKS_CHOICES,
     KERNEL_TIME_CHOICES, KERNEL_FREQ_CHOICES, STRIDE_SCHEDULE_CHOICES,
     CHANNEL_GROWTH_CHOICES, MAX_CHANNELS_CHOICES, DEPTH_MULTIPLIER_CHOICES,
@@ -28,10 +28,10 @@ from ..audio_dscnn_decode import (
     DENSE_UNITS_CHOICES, GLOBAL_POOL_TYPE_CHOICES, ACTIVATION_CHOICES,
     resolve_stride_schedule, _pointwise_filters,
 )
-from ..interfaces import ModelFamilyABC
-from ..model_metrics import count_flops_keras
-from ..optimizers.llm.search_space import SearchParam
-from ..pipeline_types import ModelBuildContext, TargetSpec
+from ...interfaces import ModelFamilyABC
+from ...model_metrics import count_flops_keras
+from ...optimizers.search_space import SearchParam
+from ...pipeline_types import ModelBuildContext, TargetSpec
 
 AUDIO_DSCNN_SEARCH_SEMANTICS: dict[str, dict[str, Any]] = {
     "base_channels": {

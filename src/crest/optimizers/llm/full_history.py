@@ -10,9 +10,9 @@ from itertools import zip_longest
 from typing import Any
 
 from ...errors import HIL_MASTER_SUCCESS
-from ...audio_dscnn_decode import AUDIO_DSCNN_SEARCH_CHOICES, _pointwise_filters, resolve_stride_schedule
+from ...model_families.audio_dscnn.decode import AUDIO_DSCNN_SEARCH_CHOICES, _pointwise_filters, resolve_stride_schedule
 from .history import MEASUREMENT_FIELDS, _available_measurement, _state_name
-from ...optimizer_history import to_plain
+from ..history import to_plain
 
 DECODED_SCHEMA_VERSION = "audio-dscnn-training-v1"
 RAW_FIELDS = tuple(AUDIO_DSCNN_SEARCH_CHOICES)

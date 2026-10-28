@@ -12,7 +12,7 @@ from addict import Dict
 from optuna.trial import TrialState
 from crest.model import load_config
 from crest.pipeline_types import BudgetSnapshot, CandidateProposal, ExplicitRound, NativeRound
-from crest.search_space import SearchParam, SearchSpaceDescriptor
+from crest.optimizers.search_space import SearchParam, SearchSpaceDescriptor
 from crest.registry import optimizer_registry
 from nas_model_client import NASModelClient, OPTIMIZER_SIGNATURE_ATTR, PROPOSAL_ATTR, _family_trial_params
 from test.proposal_plugin import ThirdProposer
@@ -56,7 +56,7 @@ def test_invalid_rounds_do_not_enqueue_or_evaluate(client, tmp_path, round):
 
 def test_third_proposer_values_provenance_context_and_partial_round(client, tmp_path):
     ThirdProposer.rounds = [[{"width":3}], [{"width":7}]]
-    with patch("nas_model_client.build_semantic_context", wraps=__import__("crest.semantic_context", fromlist=["build_semantic_context"]).build_semantic_context) as builder:
+    with patch("nas_model_client.build_semantic_context", wraps=__import__("crest.optimizers.context", fromlist=["build_semantic_context"]).build_semantic_context) as builder:
         study = execute(client, tmp_path)
     assert builder.call_count == 1
     assert [t.params for t in study.trials] == [{"width":3}, {"width":7}]

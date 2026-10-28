@@ -11,7 +11,7 @@ from typing import Any
 from .phase_policy import PhaseState, resolve_phase
 from .provider import LLMRequest
 from .objective_renderer import render_objective
-from .search_space import SearchParam, SearchSpaceDescriptor
+from ..search_space import SearchParam, SearchSpaceDescriptor
 
 SYSTEM_PROMPT = (
     "You are the CREST candidate generator. Return exact raw Optuna trial parameters "

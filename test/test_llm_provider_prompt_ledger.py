@@ -22,7 +22,7 @@ from crest.optimizers.llm.prompt_builder import (  # noqa: E402
 )
 from crest.optimizers.llm.provider import FakeProvider  # noqa: E402
 from crest.optimizers.llm.schemas import CandidateBatch, CandidateRejection  # noqa: E402
-from crest.optimizers.llm.search_space import SearchParam, SearchSpaceDescriptor  # noqa: E402
+from crest.optimizers.search_space import SearchParam, SearchSpaceDescriptor  # noqa: E402
 
 
 DESCRIPTOR = SearchSpaceDescriptor(

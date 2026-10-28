@@ -62,7 +62,7 @@ Two capability hooks control setup. Explicit plugins default to `requires_search
 
 ## Exact raw parameters, then shared evaluation
 
-The family declares its raw search surface through `trial_search_space`, using [`SearchParam` and `SearchSpaceDescriptor`](../search_space.py). The runner adds `quantization_mode` only when quantization search and the deployment path are active; it adds `cpu_clock_mhz_index` only when compile-derived metrics are collected and clock options are configured. These conditions match the objective.
+The family declares its raw search surface through `trial_search_space`, using [`SearchParam` and `SearchSpaceDescriptor`](search_space.py). The runner adds `quantization_mode` only when quantization search and the deployment path are active; it adds `cpu_clock_mhz_index` only when compile-derived metrics are collected and clock options are configured. These conditions match the objective.
 
 Explicit candidates must contain exactly every active raw field with legal types, finite numeric values, inclusive bounds, or declared categorical choices. For example, supply `dilations_index` and `cpu_clock_mhz_index`, rather than decoded dilation lists or MHz values. All members and their JSON-safe provenance are validated before any member is enqueued. This prevents a missing field from silently becoming a native-sampler choice credited to the proposer.
 
@@ -199,7 +199,7 @@ from collections.abc import Mapping
 from crest.interfaces import OptimizerABC
 from crest.pipeline_types import CandidateProposal, ExplicitRound
 from crest.registry import optimizer_registry
-from crest.search_space import validate_candidate
+from crest.optimizers.search_space import validate_candidate
 from crest.model import load_config
 
 class FixedCandidate(OptimizerABC):
@@ -241,7 +241,7 @@ Scalar `run_scoring_nas` selects a feasible completed trial when feasibility is 
 | [`interfaces.py`](../interfaces.py), [`pipeline_types.py`](../pipeline_types.py), [`registry.py`](../registry.py) | Public contract and passive payloads |
 | [`component_selection.py`](../component_selection.py), [`builtin_components.py`](../builtin_components.py), [`model.py`](../model.py) | Selection, lazy registration, configuration, scoring, and logging |
 | [`nas_model_client.py`](../../nas_model_client.py) | Sampler/signature setup, capability initialization, reservation draining, round execution, objective, smoke, budgets, and finalization |
-| [`search_space.py`](../search_space.py), [`optimizer_history.py`](../optimizer_history.py), [`semantic_context.py`](../semantic_context.py) | Raw legality, immutable snapshots, and stable explanatory context |
+| [`search_space.py`](search_space.py), [`history.py`](history.py), [`context.py`](context.py) | Raw legality, immutable snapshots, and stable explanatory context |
 | [`optuna.py`](optuna.py), [`LLM component`](llm/component.py), [`generation`](llm/enqueue.py) | Native request and LLM proposal ownership |
 | [`history.py`](llm/history.py), [`memory.py`](llm/memory.py), [`prompt_builder.py`](llm/prompt_builder.py), [`provider.py`](llm/provider.py), [`ledger.py`](llm/ledger.py) | Evidence selection, summaries, prompt/transport, and audit artifacts |
 | [`pareto_replay.py`](../pareto_replay.py) | Existing candidate replay |
@@ -309,3 +309,16 @@ Run offline optimizer checks from the repository root with:
 ```bash
 python -m unittest discover -s test -p 'test_llm_*.py'
 ```
+
+## Package layout
+
+Shared proposal contracts live in `crest.optimizers.search_space`, immutable
+trial-history helpers in `crest.optimizers.history`, and semantic context in
+`crest.optimizers.context`. These modules do not depend on an LLM provider.
+`crest.optimizers.optuna` and `crest.optimizers.llm` implement proposal strategies.
+Import shared contracts from their canonical modules rather than the LLM package.
+
+Search execution utilities are separate: `crest.search.progress` renders saved
+study progress, and `crest.search.training_randomness` manages the optional
+training seed. Audio-specific graph decoding belongs to
+`crest.model_families.audio_dscnn.decode`; importing it does not load TensorFlow.

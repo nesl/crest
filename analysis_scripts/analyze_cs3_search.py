@@ -387,7 +387,7 @@ def run(args):
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     report = {"input": {"path": str(path), "sha256": digest, **meta}, "code_revision": revision,
               "code_sha256": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
-                              for p in (Path(__file__).resolve(), ROOT / "src/crest/optimizers/llm/full_history.py", ROOT / "src/crest/audio_dscnn_decode.py")},
+                              for p in (Path(__file__).resolve(), ROOT / "src/crest/optimizers/llm/full_history.py", ROOT / "src/crest/model_families/audio_dscnn/decode.py")},
               "input_sidecars": {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
                                  for p in (Path(str(path) + "-wal"),) if p.exists()},
               "metric_definitions": METRIC_POLICY, "terminal_prefixes": len(rows) // 2,

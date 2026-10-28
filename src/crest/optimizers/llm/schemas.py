@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...search_space import SearchSpaceDescriptor, candidate_error
+from ..search_space import SearchSpaceDescriptor, candidate_error
 
 
 class CandidateBatch(BaseModel):

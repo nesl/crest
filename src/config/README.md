@@ -328,7 +328,7 @@ from collections.abc import Mapping
 from crest.interfaces import OptimizerABC
 from crest.pipeline_types import CandidateProposal, ExplicitRound
 from crest.registry import optimizer_registry
-from crest.search_space import validate_candidate
+from crest.optimizers.search_space import validate_candidate
 from crest.model import load_config
 
 class FixedCandidate(OptimizerABC):

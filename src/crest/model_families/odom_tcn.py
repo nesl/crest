@@ -25,7 +25,7 @@ from ..model_metrics import (
     tensor_shape_elements,
     unique_weight_bytes,
 )
-from ..optimizers.llm.search_space import SearchParam
+from ..optimizers.search_space import SearchParam
 from ..pipeline_types import ModelBuildContext
 
 logger = logging.getLogger(__name__)
