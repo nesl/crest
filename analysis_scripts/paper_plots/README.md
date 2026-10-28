@@ -258,6 +258,9 @@ python analysis_scripts/paper_plots/plot_training_budget.py \
 ```
 
 The default budgets are 15, 30, 55, 100, 200, and 300 epochs, with the
-55-epoch search budget highlighted. Repeated configurations must not be
+55-epoch search budget highlighted. Styling matches the other paper generators:
+DejaVu Sans typography, blue/orange highlights, light grids, and distinct front
+markers. Exports include a 7.05 × 3.5 inch PNG at 400 dpi and vector PDF/SVG;
+text bounds are checked before saving. Repeated configurations must not be
 duplicated across input files. The script writes figures and a computed JSON
 summary outside the checkout.

@@ -18,7 +18,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from matplotlib.ticker import ScalarFormatter
+from matplotlib.ticker import NullFormatter, ScalarFormatter
 from scipy.stats import spearmanr
 
 
@@ -136,28 +136,32 @@ def render(points, front_budgets, chosen_budget, output_dir):
         if len(set(errors)) < 2 or len(set(reference_errors)) < 2:
             raise ValueError('Spearman correlation requires nonconstant errors')
         correlations.append(float(spearmanr(errors, reference_errors).statistic))
-    with plt.rc_context({'font.family': 'DejaVu Sans', 'font.size': 12,
+    with plt.rc_context({'font.family': 'DejaVu Sans', 'font.size': 10.5,
+                         'axes.labelsize': 10.5, 'axes.titlesize': 11,
+                         'xtick.labelsize': 9.5, 'ytick.labelsize': 9.5,
+                         'axes.linewidth': .7, 'ps.fonttype': 42,
                          'pdf.fonttype': 42, 'svg.fonttype': 'none',
                          'axes.spines.top': False, 'axes.spines.right': False}):
-        fig, axes = plt.subplots(1, 2, figsize=(12.3, 6.1))
+        fig, axes = plt.subplots(1, 2, figsize=(7.05, 3.5))
         ax = axes[0]
-        ax.plot(budgets, correlations, '-o', color='#216D91', linewidth=2)
+        ax.plot(budgets, correlations, '-o', color='#1f77b4', linewidth=1.2, markersize=4)
         selected = correlations[budgets.index(chosen_budget)]
-        ax.scatter([chosen_budget], [selected], color='#B66C12', s=120, zorder=4)
+        ax.scatter([chosen_budget], [selected], color='#ff7f0e', s=48, zorder=4)
         for budget, rho in zip(budgets, correlations):
             if budget != chosen_budget:
-                ax.annotate(f'{rho:.3f}', (budget, rho), xytext=(5, 8),
-                            textcoords='offset points', fontsize=10)
+                ax.annotate(f'{rho:.3f}', (budget, rho), xytext=((0, -17) if budget == reference else (4, 7)),
+                            ha=('center' if budget == reference else 'left'),
+                            textcoords='offset points', fontsize=8.5)
         ax.annotate(f'Chosen search budget\n{chosen_budget} epochs ({selected:.3f})',
-                    (chosen_budget, selected), xytext=(.32, .18),
-                    textcoords='axes fraction', color='#A65E10', fontsize=11,
-                    arrowprops={'arrowstyle': '->', 'color': '#B66C12'})
+                    (chosen_budget, selected), xytext=(.30, .19),
+                    textcoords='axes fraction', color='#c65f00', fontsize=9,
+                    arrowprops={'arrowstyle': '->', 'color': '#ff7f0e', 'lw': .9})
         ax.set(title='(a) Ranking agreement', xlabel='Training budget (epochs)',
                ylabel='Spearman correlation')
         ax.set_xticks(sorted(set([min(budgets), chosen_budget, reference] +
                                 [b for b in budgets if b >= 100])))
         ax.margins(y=.18)
-        palette = ['#929BA5', '#B66C12', '#397EAF', '#237C61']
+        palette = ['#999999', '#ff7f0e', '#1f77b4', '#2ca02c']
         markers = ['s', 'o', '^', 'D']
         styles = ['--', '-', '-.', '-']
         memberships = {}
@@ -169,18 +173,34 @@ def render(points, front_budgets, chosen_budget, output_dir):
                          color=palette[index % len(palette)],
                          marker=markers[index % len(markers)],
                          linestyle=styles[index % len(styles)],
-                         label=f'{budget} epochs', linewidth=2)
+                         label=f'{budget} epochs', linewidth=1.2, markersize=3.5)
         axes[1].set(xscale='log', title='(b) Pareto fronts',
                     xlabel='Historical energy (mJ)', ylabel='Validation RMSE total')
+        energy_min = min(value[1] for panel in points.values() for value in panel.values())
+        energy_max = max(value[1] for panel in points.values() for value in panel.values())
+        energy_ticks = [tick for tick in (1, 2, 4, 10, 25, 50, 125, 250, 500)
+                        if energy_min * .95 <= tick <= energy_max * 1.05]
+        axes[1].set_xticks(energy_ticks)
         axes[1].xaxis.set_major_formatter(ScalarFormatter())
-        axes[1].legend()
+        axes[1].xaxis.set_minor_formatter(NullFormatter())
+        axes[1].legend(frameon=False, fontsize=8.5, handlelength=2,
+                       borderaxespad=.35, labelspacing=.35)
         for ax in axes:
-            ax.grid(alpha=.2)
+            ax.grid(color='#dddddd', linewidth=.4)
+            ax.tick_params(length=3, pad=2)
             ax.set_axisbelow(True)
-        fig.tight_layout()
+        fig.subplots_adjust(left=.085, right=.99, bottom=.17, top=.90, wspace=.32)
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        for label in fig.findobj(match=lambda item: isinstance(item, plt.Text)):
+            if label.get_visible() and label.get_text():
+                box = label.get_window_extent(renderer)
+                if (box.x0 < -1 or box.y0 < -1 or
+                        box.x1 > fig.bbox.width + 1 or box.y1 > fig.bbox.height + 1):
+                    raise ValueError(f'Clipped figure label {label.get_text()}')
         output_dir.mkdir(parents=True, exist_ok=True)
         for extension in ('png', 'pdf', 'svg'):
-            fig.savefig(output_dir / f'training_budget.{extension}', dpi=200,
+            fig.savefig(output_dir / f'training_budget.{extension}', dpi=400,
                         facecolor='white')
         plt.close(fig)
     summary = {'renderer': 'reconstructed; not original or pixel exact',
