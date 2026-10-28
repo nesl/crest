@@ -25,6 +25,7 @@ from ..model_metrics import (
     tensor_shape_elements,
     unique_weight_bytes,
 )
+from ..optimizers.llm.search_space import SearchParam
 from ..pipeline_types import ModelBuildContext
 
 logger = logging.getLogger(__name__)
@@ -384,16 +385,101 @@ class OdomTCNFamily(ModelFamilyABC):
         dict[str, Any]
             Sampled family hyperparameters without runner-owned fields.
         """
-        del ctx, config
-        dilations_index = trial.suggest_int("dilations_index", 0, len(DILATION_CANDIDATES) - 1)
+        search_space = {
+            param.name: param for param in self.trial_search_space(ctx, config)
+        }
+        dilations_index = search_space["dilations_index"].suggest(trial)
         return {
-            "nb_filters": trial.suggest_int("nb_filters", 2, 63),
-            "kernel_size": trial.suggest_int("kernel_size", 2, 15),
-            "dropout_rate": trial.suggest_categorical("dropout_rate", DROP_RATE_CHOICES),
-            "use_skip_connections": trial.suggest_categorical("use_skip_connections", [True, False]),
-            "norm_flag": trial.suggest_categorical("norm_flag", [True, False]),
+            "nb_filters": search_space["nb_filters"].suggest(trial),
+            "kernel_size": search_space["kernel_size"].suggest(trial),
+            "dropout_rate": search_space["dropout_rate"].suggest(trial),
+            "use_skip_connections": search_space["use_skip_connections"].suggest(trial),
+            "norm_flag": search_space["norm_flag"].suggest(trial),
             "dilations": DILATION_CANDIDATES[dilations_index],
         }
+
+    def trial_search_space(
+        self,
+        ctx: ModelBuildContext,
+        config: Any,
+    ) -> list[SearchParam]:
+        """Describe the raw Optuna parameters for Odom TCN sampling.
+
+        Parameters
+        ----------
+        ctx : ModelBuildContext
+            Build context, currently unused by this fixed search space.
+        config : Any
+            Model-family configuration subtree.
+
+        Returns
+        -------
+        list[SearchParam]
+            Ordered descriptors, including the raw dilation-schedule index.
+        """
+        del ctx, config
+        return [
+            SearchParam(
+                "dilations_index",
+                "int",
+                low=0,
+                high=len(DILATION_CANDIDATES) - 1,
+                description="Selects a predefined temporal dilation schedule for the TCN blocks.",
+                typical_effects=(
+                    "Different schedules typically change temporal coverage and convolution structure.",
+                ),
+            ),
+            SearchParam(
+                "nb_filters",
+                "int",
+                low=2,
+                high=63,
+                description="Controls the channel width of the temporal convolution blocks.",
+                units="channels",
+                typical_effects=(
+                    "Wider blocks typically increase representational capacity, parameters, compute, and tensor memory.",
+                ),
+            ),
+            SearchParam(
+                "kernel_size",
+                "int",
+                low=2,
+                high=15,
+                description="Controls the temporal extent of each convolution kernel.",
+                units="timesteps",
+                typical_effects=(
+                    "Larger kernels typically use more neighboring timesteps per convolution and more compute.",
+                ),
+            ),
+            SearchParam(
+                "dropout_rate",
+                "categorical",
+                choices=tuple(DROP_RATE_CHOICES),
+                description="Controls the training-time dropout probability in TCN blocks.",
+                units="probability",
+                typical_effects=(
+                    "Dropout typically changes regularization during training without changing the raw input window.",
+                ),
+            ),
+            SearchParam(
+                "use_skip_connections",
+                "categorical",
+                choices=(True, False),
+                description="Controls whether residual skip connections are enabled across TCN blocks.",
+                typical_effects=(
+                    "Skip connections typically affect feature reuse, gradient flow, and graph structure.",
+                ),
+            ),
+            SearchParam(
+                "norm_flag",
+                "categorical",
+                choices=(True, False),
+                description="Controls whether batch normalization is used in the TCN blocks.",
+                typical_effects=(
+                    "Normalization typically affects training dynamics and adds normalization operations and state.",
+                ),
+            ),
+        ]
 
     def decode_trial_hparams(
         self,

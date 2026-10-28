@@ -22,7 +22,7 @@ if str(SRC_DIR) not in sys.path:
 import hil_server as hil_server_module  # noqa: E402
 from hil_server import HILServer  # noqa: E402
 from crest.devices import CandidatePrepareRequest, arduino_staged_sketch_path  # noqa: E402
-from crest.errors import HIL_ERROR_OK  # noqa: E402
+from crest.errors import HIL_MASTER_SUCCESS, HIL_ERROR_OK  # noqa: E402
 from crest.hil_runtime import CollectMetricsRequest  # noqa: E402
 from crest.pipeline_types import DataSplit, DatasetBundle, TargetSpec, TaskMetricContract  # noqa: E402
 
@@ -843,8 +843,9 @@ class DetermineMetricsTests(HILServerTestCase):
         # Cadenced Arduino runs should only schedule the second pass after the base latency pass succeeds, otherwise follow-up telemetry hides the primary failure.
         """Validate determine metrics runs Arduino cadenced second pass after successful base run."""
         server = self.build_server()
-        self.config.device.name = "ARDUINO_NANO_33_BLE_SENSE"
+        self.config.device.name = "PORTENTA_H7"
         self.config.device.runtime_mode = "cadenced"
+        self.config.device.latency_budget_ms = 2000.0
         self.config.training.energy_aware = True
         self.config.training.input_mode = "uniform"
         fake_device = MagicMock()
@@ -863,7 +864,7 @@ class DetermineMetricsTests(HILServerTestCase):
             return_value=fake_device,
         ), patch("hil_server.collect_metrics",
             return_value={
-                "error_code": HIL_ERROR_OK,
+                "error_code": HIL_MASTER_SUCCESS,
                 "arena_bytes": 4096,
                 "runtime_mode": "back_to_back",
                 "cadenced_error_code": -1,
@@ -881,6 +882,7 @@ class DetermineMetricsTests(HILServerTestCase):
         fake_device.set_input_mode.assert_called_once()
         self.assertEqual(fake_device.set_input_mode.call_args.kwargs["runtime_phase"], "cadenced")
         fake_device.evaluate.assert_called_once()
+        self.assertGreaterEqual(fake_device.evaluate.call_args.kwargs["serial_timeout_s"], 25.0)
         self.assertEqual(metrics["runtime_mode"], "cadenced")
         self.assertEqual(metrics["cadenced_error_code"], HIL_ERROR_OK)
         self.assertAlmostEqual(metrics["cadenced_energy_mj_per_window"], 1.5)
@@ -911,7 +913,7 @@ class DetermineMetricsTests(HILServerTestCase):
             return_value=fake_device,
         ), patch("hil_server.collect_metrics",
             return_value={
-                "error_code": HIL_ERROR_OK,
+                "error_code": HIL_MASTER_SUCCESS,
                 "arena_bytes": 4096,
                 "runtime_mode": "back_to_back",
                 "cadenced_error_code": -1,

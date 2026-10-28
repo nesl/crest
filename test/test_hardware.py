@@ -407,6 +407,63 @@ class TFLiteSubprocessPredictionTests(TinyModelMixin, unittest.TestCase):
         self.assertTrue(env["PYTHONPATH"].startswith(str(SRC_DIR)))
         self.assertIn("existing", env["PYTHONPATH"])
 
+    def test_xnnpack_retry_restarts_whole_split_and_records_reason(self) -> None:
+        # Delegate failure may occur after partial inference: discard that attempt.
+        expected = np.zeros((3, 2), dtype=np.float32)
+        diagnostics = {}
+        with patch("crest.hardware._predict_tflite_model", side_effect=[
+            RuntimeError("failed to create XNNPACK runtime"), expected,
+        ]) as predict:
+            result = predict_tflite_model("model.tflite", self.train_x[:3], diagnostics=diagnostics)
+        self.assertIs(result, expected)
+        self.assertEqual(predict.call_count, 2)
+        self.assertTrue(predict.call_args.kwargs["disable_default_delegates"])
+        np.testing.assert_array_equal(predict.call_args.args[1], self.train_x[:3])
+        self.assertEqual(diagnostics["backend"], "builtin_without_default_delegates")
+        self.assertIn("XNNPACK", diagnostics["fallback_reason"])
+
+    def test_unrelated_interpreter_error_is_not_retried(self) -> None:
+        # Do not hide invalid-model or unrelated runtime failures behind a fallback.
+        with patch("crest.hardware._predict_tflite_model", side_effect=RuntimeError("invalid tensor")) as predict:
+            with self.assertRaisesRegex(RuntimeError, "invalid tensor"):
+                predict_tflite_model("model.tflite", self.train_x[:1])
+        self.assertEqual(predict.call_count, 1)
+
+    def test_builtin_failure_is_not_retried_again(self) -> None:
+        # One failed delegate retry must still fail the evaluation, not loop.
+        with patch("crest.hardware._predict_tflite_model", side_effect=[
+            RuntimeError("XNNPACK failed"), RuntimeError("builtin failed"),
+        ]) as predict:
+            with self.assertRaisesRegex(RuntimeError, "builtin failed"):
+                predict_tflite_model("model.tflite", self.train_x[:1])
+        self.assertEqual(predict.call_count, 2)
+
+    def test_dead_relu6_quantized_model_evaluates_in_worker(self) -> None:
+        """Recover zero-range XNNPACK failures with equivalent built-in inference."""
+        from crest.hardware import _predict_tflite_model
+
+        # Zero-range activations reproduce the TF 2.20 XNNPACK failure without training.
+        inputs = tf.keras.Input((8, 8, 1))
+        hidden = tf.keras.layers.Conv2D(
+            4, 3, activation=tf.nn.relu6, kernel_initializer="ones",
+            bias_initializer=tf.keras.initializers.Constant(-1000),
+        )(inputs)
+        hidden = tf.keras.layers.GlobalMaxPooling2D()(hidden)
+        model = tf.keras.Model(inputs, tf.keras.layers.Dense(2)(hidden))
+        data = np.random.default_rng(0).normal(size=(20, 8, 8, 1)).astype(np.float32)
+        diagnostics = {}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "dead_relu6.tflite"
+            convert_to_tflite_model(model, data, output_name=path, quantization_mode="int8_ptq")
+            expected = _predict_tflite_model(path, data[:3], disable_default_delegates=True)
+            predictions = predict_tflite_model_subprocess(path, data[:3], diagnostics=diagnostics)
+        # Compare the same quantized artifact: a dead float activation need not
+        # dequantize to exact zero when its calibrated range is degenerate.
+        np.testing.assert_array_equal(predictions, expected)
+        self.assertIn(diagnostics["backend"], {"default", "builtin_without_default_delegates"})
+        if diagnostics["backend"] == "builtin_without_default_delegates":
+            self.assertIn("XNNPACK", diagnostics["fallback_reason"])
+
     def test_subprocess_prediction_matches_direct_single_output(self) -> None:
         """Subprocess prediction should match direct single-output inference."""
         with tempfile.TemporaryDirectory() as tmpdir:

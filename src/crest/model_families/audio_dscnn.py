@@ -20,40 +20,114 @@ from tensorflow.keras.layers import (
     ReLU,
     Reshape,
 )
+from ..audio_dscnn_decode import (
+    AUDIO_DSCNN_SEARCH_CHOICES, BASE_CHANNELS_CHOICES, NUM_BLOCKS_CHOICES,
+    KERNEL_TIME_CHOICES, KERNEL_FREQ_CHOICES, STRIDE_SCHEDULE_CHOICES,
+    CHANNEL_GROWTH_CHOICES, MAX_CHANNELS_CHOICES, DEPTH_MULTIPLIER_CHOICES,
+    POINTWISE_SCALE_CHOICES, DROPOUT_RATE_CHOICES, NORM_FLAG_CHOICES,
+    DENSE_UNITS_CHOICES, GLOBAL_POOL_TYPE_CHOICES, ACTIVATION_CHOICES,
+    resolve_stride_schedule, _pointwise_filters,
+)
 from ..interfaces import ModelFamilyABC
 from ..model_metrics import count_flops_keras
+from ..optimizers.llm.search_space import SearchParam
 from ..pipeline_types import ModelBuildContext, TargetSpec
 
-BASE_CHANNELS_CHOICES = (4, 8, 12, 16, 20, 24, 32)
-NUM_BLOCKS_CHOICES = (2, 3, 4, 5, 6)
-KERNEL_TIME_CHOICES = (3, 5)
-KERNEL_FREQ_CHOICES = (3, 5)
-STRIDE_SCHEDULE_CHOICES = ("light", "balanced", "aggressive", "early_time", "early_freq", "late")
-CHANNEL_GROWTH_CHOICES = (1.0, 1.5, 2.0)
-MAX_CHANNELS_CHOICES = (64, 96, 128)
-DEPTH_MULTIPLIER_CHOICES = (1, 2)
-POINTWISE_SCALE_CHOICES = (0.75, 1.0, 1.25, 1.5)
-DROPOUT_RATE_CHOICES = (0.0, 0.1, 0.2, 0.3)
-NORM_FLAG_CHOICES = (True, False)
-DENSE_UNITS_CHOICES = (0, 16, 32, 64)
-GLOBAL_POOL_TYPE_CHOICES = ("avg", "max")
-ACTIVATION_CHOICES = ("relu", "relu6")
-
-AUDIO_DSCNN_SEARCH_CHOICES: dict[str, tuple[Any, ...]] = {
-    "base_channels": BASE_CHANNELS_CHOICES,
-    "num_blocks": NUM_BLOCKS_CHOICES,
-    "kernel_time": KERNEL_TIME_CHOICES,
-    "kernel_freq": KERNEL_FREQ_CHOICES,
-    "stride_schedule": STRIDE_SCHEDULE_CHOICES,
-    "channel_growth": CHANNEL_GROWTH_CHOICES,
-    "max_channels": MAX_CHANNELS_CHOICES,
-    "depth_multiplier": DEPTH_MULTIPLIER_CHOICES,
-    "pointwise_scale": POINTWISE_SCALE_CHOICES,
-    "dropout_rate": DROPOUT_RATE_CHOICES,
-    "norm_flag": NORM_FLAG_CHOICES,
-    "dense_units": DENSE_UNITS_CHOICES,
-    "global_pool_type": GLOBAL_POOL_TYPE_CHOICES,
-    "activation": ACTIVATION_CHOICES,
+AUDIO_DSCNN_SEARCH_SEMANTICS: dict[str, dict[str, Any]] = {
+    "base_channels": {
+        "description": "Controls the initial channel width of the DS-CNN feature extractor.",
+        "units": "channels",
+        "typical_effects": (
+            "A wider base typically increases feature capacity, parameters, compute, and tensor memory.",
+        ),
+    },
+    "num_blocks": {
+        "description": "Controls the number of depthwise-plus-pointwise convolution blocks.",
+        "units": "blocks",
+        "typical_effects": (
+            "Additional blocks typically increase depth, receptive-field processing, and compute.",
+        ),
+    },
+    "kernel_time": {
+        "description": "Controls convolution-kernel extent along the log-mel time axis.",
+        "units": "frames",
+        "typical_effects": (
+            "Larger temporal kernels typically combine information across more adjacent frames.",
+        ),
+    },
+    "kernel_freq": {
+        "description": "Controls convolution-kernel extent along the mel-frequency axis.",
+        "units": "mel bins",
+        "typical_effects": (
+            "Larger frequency kernels typically combine information across more adjacent mel bins.",
+        ),
+    },
+    "stride_schedule": {
+        "description": "Controls where time and frequency downsampling occurs across blocks.",
+        "typical_effects": (
+            "The schedule typically changes intermediate feature-map shapes, retained resolution, and compute.",
+        ),
+    },
+    "channel_growth": {
+        "description": "Controls nominal channel-width growth across successive blocks.",
+        "units": "ratio",
+        "typical_effects": (
+            "Higher growth typically shifts more channel capacity and compute into later blocks.",
+        ),
+    },
+    "max_channels": {
+        "description": "Caps the pointwise output width of every DS-CNN block.",
+        "units": "channels",
+        "typical_effects": (
+            "The cap typically limits late-stage parameters, compute, and activation width.",
+        ),
+    },
+    "depth_multiplier": {
+        "description": "Controls the channel multiplier used by depthwise convolutions.",
+        "units": "multiplier",
+        "typical_effects": (
+            "A larger multiplier typically increases depthwise features, intermediate tensors, and compute.",
+        ),
+    },
+    "pointwise_scale": {
+        "description": "Scales the nominal pointwise-convolution output widths.",
+        "units": "ratio",
+        "typical_effects": (
+            "A larger scale typically increases pointwise parameters, compute, and activation width.",
+        ),
+    },
+    "dropout_rate": {
+        "description": "Controls the training-time dropout probability before classification.",
+        "units": "probability",
+        "typical_effects": (
+            "Dropout typically changes regularization during training rather than input feature dimensions.",
+        ),
+    },
+    "norm_flag": {
+        "description": "Controls whether batch normalization is used after convolutions.",
+        "typical_effects": (
+            "Normalization typically affects training dynamics and adds normalization operations and state.",
+        ),
+    },
+    "dense_units": {
+        "description": "Controls the optional hidden classifier-head width; zero disables that hidden layer.",
+        "units": "units",
+        "typical_effects": (
+            "A larger hidden head typically increases classifier parameters and compute.",
+        ),
+    },
+    "global_pool_type": {
+        "description": "Controls how spatial time-frequency features are aggregated before classification.",
+        "typical_effects": (
+            "Average and maximum pooling typically emphasize different summaries without changing class count.",
+        ),
+    },
+    "activation": {
+        "description": "Controls the hidden rectified activation variant used in convolution blocks.",
+        "typical_effects": (
+            "The activation typically affects feature range and deployment arithmetic characteristics.",
+        ),
+    },
 }
 
 INTEGER_CATEGORICAL_FIELDS = frozenset(
@@ -278,67 +352,6 @@ def _normalize_bool_from_storage(name: str, value: Any) -> bool:
     raise ValueError(f"audio_dscnn '{name}' must decode to a real boolean.")
 
 
-def resolve_stride_schedule(name: str, num_blocks: int) -> tuple[tuple[int, int], ...]:
-    """Resolve a named stride schedule for a variable number of DS-CNN blocks.
-
-    Parameters
-    ----------
-    name : str
-        Schedule name from ``STRIDE_SCHEDULE_CHOICES``.
-    num_blocks : int
-        Number of repeated DS-CNN blocks in the model.
-
-    Returns
-    -------
-    tuple[tuple[int, int], ...]
-        Per-block ``(time_stride, freq_stride)`` pairs.
-
-    Raises
-    ------
-    ValueError
-        If the schedule name or block count is invalid.
-    """
-    if name not in STRIDE_SCHEDULE_CHOICES:
-        raise ValueError(f"audio_dscnn stride_schedule must be one of {STRIDE_SCHEDULE_CHOICES}.")
-    if isinstance(num_blocks, bool) or not isinstance(num_blocks, int) or num_blocks <= 0:
-        raise ValueError("audio_dscnn num_blocks must be a positive integer.")
-
-    strides = [(1, 1) for _ in range(num_blocks)]
-
-    def set_when_present(index: int, stride: tuple[int, int]) -> None:
-        """Assign one stride when its zero-based block index exists.
-
-        Parameters
-        ----------
-        index : int
-            Block index used to derive convolution naming and placement.
-        stride : tuple[int, int]
-            Temporal stride applied by the convolution block.
-        """
-        if 0 <= index < num_blocks:
-            strides[index] = stride
-
-    if name == "light":
-        set_when_present(1, (2, 2))
-    elif name == "balanced":
-        set_when_present(0, (2, 2))
-        set_when_present(2, (2, 2))
-    elif name == "aggressive":
-        set_when_present(0, (2, 2))
-        set_when_present(1, (2, 2))
-        set_when_present(2, (2, 2))
-    elif name == "early_time":
-        set_when_present(0, (2, 1))
-        set_when_present(1, (2, 1))
-    elif name == "early_freq":
-        set_when_present(0, (1, 2))
-        set_when_present(1, (1, 2))
-    elif name == "late":
-        set_when_present(num_blocks - 1, (2, 2))
-        if num_blocks >= 4:
-            set_when_present(num_blocks - 3, (2, 2))
-
-    return tuple(strides)
 
 
 def _hidden_activation(name: str, activation: str) -> ReLU:
@@ -368,24 +381,6 @@ def _hidden_activation(name: str, activation: str) -> ReLU:
     raise ValueError(f"audio_dscnn activation must be one of {ACTIVATION_CHOICES}.")
 
 
-def _pointwise_filters(hparams: dict[str, Any], block_index: int) -> int:
-    """Compute the pointwise output width for one DS-CNN block.
-
-    Parameters
-    ----------
-    hparams : dict[str, Any]
-        Validated audio DS-CNN hyperparameters.
-    block_index : int
-        Zero-based block index.
-
-    Returns
-    -------
-    int
-        Clamped pointwise ``Conv2D`` filter count.
-    """
-    nominal = round(hparams["base_channels"] * (hparams["channel_growth"] ** block_index))
-    filters = round(nominal * hparams["pointwise_scale"])
-    return min(hparams["max_channels"], max(1, filters))
 
 
 
@@ -490,12 +485,41 @@ class AudioDSCNNFamily(ModelFamilyABC):
         dict[str, Any]
             Sampled family hyperparameters.
         """
+        return {
+            param.name: param.suggest(trial)
+            for param in self.trial_search_space(ctx, config)
+        }
+
+    def trial_search_space(
+        self,
+        ctx: ModelBuildContext,
+        config: Any,
+    ) -> list[SearchParam]:
+        """Describe the ordered raw categorical surface for audio DS-CNN.
+
+        Parameters
+        ----------
+        ctx : ModelBuildContext
+            Build context with the classification target specification.
+        config : Any
+            Model-family configuration subtree.
+
+        Returns
+        -------
+        list[SearchParam]
+            Categorical parameter descriptors in stable sampling order.
+        """
         self.validate_config(config)
         self._validate_target_spec(ctx.target_spec)
-        return {
-            name: trial.suggest_categorical(name, self._choices_for(name, config))
+        return [
+            SearchParam(
+                name,
+                "categorical",
+                choices=self._choices_for(name, config),
+                **AUDIO_DSCNN_SEARCH_SEMANTICS[name],
+            )
             for name in AUDIO_DSCNN_SEARCH_CHOICES
-        }
+        ]
 
     def decode_trial_hparams(
         self,

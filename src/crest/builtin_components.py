@@ -8,7 +8,7 @@ and model-family implementations that ship with CREST.
 
 from __future__ import annotations
 
-from .registry import dataset_registry, model_family_registry, task_registry
+from .registry import dataset_registry, model_family_registry, optimizer_registry, task_registry
 
 
 def ensure_audio_components_registered() -> None:
@@ -62,3 +62,19 @@ def ensure_builtin_components_registered() -> None:
 
         model_family_registry.register("odom_tcn", OdomTCNFamily)
     ensure_audio_components_registered()
+
+
+def ensure_optimizer_components_registered() -> None:
+    """Register proposal classes without datasets, credentials, or clients.
+
+    Imports and registration are lazy and idempotent. Client construction is
+    deferred to the selected component's initialize hook.
+    """
+    if "optuna" not in optimizer_registry:
+        from .optimizers.optuna import OptunaOptimizer
+
+        optimizer_registry.register("optuna", OptunaOptimizer)
+    if "llm_generator" not in optimizer_registry:
+        from .optimizers.llm.component import LLMGeneratorOptimizer
+
+        optimizer_registry.register("llm_generator", LLMGeneratorOptimizer)

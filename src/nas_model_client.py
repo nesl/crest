@@ -17,6 +17,7 @@ import shutil
 import socket
 import time
 from datetime import datetime
+from uuid import uuid4
 from pathlib import Path
 from typing import Any
 
@@ -47,10 +48,11 @@ from crest.microcontrollers import (
     resolve_device_options,
 )
 from crest.builtin_components import ensure_builtin_components_registered
-from crest.component_selection import cfg_get, resolve_component_selection
+from crest.component_selection import cfg_get, resolve_component_selection, resolve_optimizer_selection
 from crest.cadence import resolve_batch_period_ms
 from crest.model import (
     NONNEGATIVE_METRICS,
+    _normalize_optimizer_config,
     ScoreConfigEvaluationError,
     configured_quantization_mode,
     build_trial_outcome,
@@ -70,9 +72,17 @@ from crest.model import (
     set_error_code,
 )
 from crest.model_metrics import StaticMemoryEstimate
-from crest.pipeline_types import DataSplit, DatasetBundle, ModelBuildContext
+from crest.optimizer_history import build_trial_snapshot, freeze_plain_data
+from crest.search_space import build_search_space_descriptor, validate_candidate
+from crest.semantic_context import build_semantic_context
+from crest.interfaces import OptimizerBudgetExhausted
+from crest.pipeline_types import (
+    BudgetSnapshot, CandidateProposal, DataSplit, DatasetBundle, ExplicitRound,
+    ModelBuildContext, NativeRound, SearchContext,
+)
 from crest.registry import dataset_registry, model_family_registry
 from crest.runtime_bootstrap import bootstrap_pipeline
+from crest.training_randomness import reset_training_randomness, training_randomness_policy
 
 tf.get_logger().setLevel(logging.ERROR)
 absl.logging.set_verbosity(absl.logging.ERROR)
@@ -161,6 +171,10 @@ RUNTIME_ONLY_METRICS = frozenset(
 )
 FEASIBILITY_POLICY_SIGNATURE_ATTR = "crest_feasibility_policy_signature"
 FEASIBILITY_NOT_EVALUATED_CONSTRAINT = 1e12
+OPTIMIZER_SIGNATURE_ATTR = "crest_optimizer_signature"
+LEGACY_OPTIMIZER_ADOPTION_ATTR = "crest_legacy_optimizer_adoption"
+ORPHAN_TRIAL_RECOVERY_ATTR = "crest_orphan_trial_recovery"
+PROPOSAL_ATTR = "crest_proposal"
 
 
 @dataclass(frozen=True)
@@ -294,6 +308,7 @@ class NASModelClient:
         self.config_path = Path(config_path)
         ensure_builtin_components_registered()
         self.config = load_config(self.config_path)
+        reset_training_randomness(cfg_get(self.config, "training", {}))
         self._attach_bootstrapped_pipeline(bootstrap_pipeline(self.config))
 
         if self.config.device.hil is False:
@@ -748,13 +763,16 @@ class NASModelClient:
             return tuple(FEASIBILITY_NOT_EVALUATED_CONSTRAINT for _ in range(self._feasibility_rule_count()))
         return tuple(FEASIBILITY_NOT_EVALUATED_CONSTRAINT for _ in range(self._feasibility_rule_count()))
 
-    def _validate_or_store_feasibility_signature(self, study: optuna.Study) -> None:
+    def _validate_or_store_feasibility_signature(self, study: optuna.Study, *, store: bool = True) -> None:
         """Validate persisted feasibility policy metadata for a study.
 
         Parameters
         ----------
         study : optuna.Study
             Study being created or resumed.
+        store : bool, optional
+            If false, validate without stamping a new empty-study policy. Setup
+            uses this before initialization and persists only after it succeeds.
 
         Returns
         -------
@@ -779,7 +797,8 @@ class NASModelClient:
                 raise RuntimeError(
                     "Active config enables nas.feasibility, but the existing study has no feasibility policy signature."
                 )
-            study.set_user_attr(FEASIBILITY_POLICY_SIGNATURE_ATTR, active_signature)
+            if store:
+                study.set_user_attr(FEASIBILITY_POLICY_SIGNATURE_ATTR, active_signature)
         elif stored_signature != active_signature:
             raise RuntimeError(
                 "Active nas.feasibility policy does not match the existing study feasibility signature."
@@ -788,7 +807,7 @@ class NASModelClient:
         for trial in study.trials:
             if trial.state != TrialState.COMPLETE:
                 continue
-            status = str(trial.user_attrs.get("feasibility_status", "")).strip()
+            status = str(trial.user_attrs.get("feasibility_status", "")).strip().lower()
             if status == "not_evaluated":
                 continue
             constraints = trial.user_attrs.get("feasibility_constraints")
@@ -806,22 +825,440 @@ class NASModelClient:
             NSGA-II or TPE sampler with feasibility constraints enabled when
             configured.
         """
+        sampler_class, kwargs = self._sampler_setup()
+        return sampler_class(**kwargs)
+
+    def _sampler_setup(self):
+        """Resolve the sampler declaration used for construction and identity.
+
+        Returns
+        -------
+        tuple[type[optuna.samplers.BaseSampler], dict[str, Any]]
+            Sampler class and constructor options, including the constraint
+            callback when feasibility is enabled.
+        """
         constraints_func = self._constraints_func if self._feasibility_enabled() else None
         if self._score_is_multiobjective():
-            kwargs = {
-                "population_size": self.config.training.nas_multiobjective_population_size,
-                "seed": 42,
-            }
-            if constraints_func is not None:
-                kwargs["constraints_func"] = constraints_func
-            return optuna.samplers.NSGAIISampler(**kwargs)
-        kwargs = {
-            "n_startup_trials": 15,
-            "multivariate": True,
-        }
+            sampler_class = optuna.samplers.NSGAIISampler
+            kwargs = {"population_size": self.config.training.nas_multiobjective_population_size, "seed": 42}
+        else:
+            sampler_class = optuna.samplers.TPESampler
+            kwargs = {"n_startup_trials": 15, "multivariate": True}
         if constraints_func is not None:
             kwargs["constraints_func"] = constraints_func
-        return optuna.samplers.TPESampler(**kwargs)
+        return sampler_class, kwargs
+
+    def _select_optimizer(self, study: optuna.Study, sampler: Any):
+        """Validate campaign identity before initializing the optimizer.
+
+        Parameters
+        ----------
+        study : optuna.Study
+            Study whose stored identity and legacy history are inspected.
+        sampler : optuna.samplers.BaseSampler
+            Effective sampler whose class is included in the identity.
+
+        Returns
+        -------
+        tuple[str, OptimizerABC, addict.Dict, dict[str, Any]]
+            Registered name, uninitialized component, normalized configuration,
+            and pending JSON-safe campaign signature.
+
+        Raises
+        ------
+        RuntimeError
+            If stored identity differs or legacy history cannot be adopted.
+        ValueError
+            If optimizer settings or their identity are invalid.
+        """
+        config = _normalize_optimizer_config(Dict(optimizer=self._cfg_get(self.config, "optimizer", {})))
+        name, component_cls = resolve_optimizer_selection(config.type)
+        adopt_legacy = config.adopt_legacy_study
+        optimizer = component_cls()
+        optimizer.validate_config(config)
+        _, options = self._sampler_setup()
+        options = dict(options)
+        if "constraints_func" in options:
+            options["constraints_func"] = "crest.persisted_feasibility_constraints.v1"
+        public_sampler_names = {
+            optuna.samplers.TPESampler: "optuna.samplers.TPESampler",
+            optuna.samplers.NSGAIISampler: "optuna.samplers.NSGAIISampler",
+        }
+        sampler_name = public_sampler_names.get(
+            type(sampler), type(sampler).__module__ + "." + type(sampler).__qualname__
+        )
+        signature = {
+            "version": 1, "optimizer": name,
+            "config": optimizer.identity_config(config),
+            "sampler": {"class": sampler_name, "options": options},
+        }
+        # Round-trip rejects non-JSON settings and ensures detached ordinary data.
+        training_policy = training_randomness_policy(self.config.training)
+        if training_policy is not None:
+            signature["training_randomness"] = training_policy
+        signature = json.loads(json.dumps(signature, sort_keys=True, allow_nan=False))
+        stored = study.user_attrs.get(OPTIMIZER_SIGNATURE_ATTR)
+        if stored is None:
+            trials = study.trials
+            if trials:
+                if not adopt_legacy:
+                    raise RuntimeError(
+                        "Existing nonempty study has no CREST optimizer signature. "
+                        "For matching native Optuna history, explicitly attest the original "
+                        "configuration with optimizer.adopt_legacy_study: true; otherwise "
+                        "select a new study name."
+                    )
+                if any(trial.state == TrialState.WAITING for trial in trials):
+                    raise RuntimeError("Cannot adopt a legacy study with WAITING trials.")
+                if any(PROPOSAL_ATTR in trial.user_attrs or "proposal_source" in trial.user_attrs
+                       for trial in trials):
+                    raise RuntimeError("Cannot adopt native legacy history with explicit-proposer provenance.")
+                # Older explicit proposals carried only Optuna's enqueue metadata.
+                if any("fixed_params" in trial.system_attrs for trial in trials):
+                    raise RuntimeError("Cannot adopt native legacy history with enqueued fixed_params.")
+                if (Path(self.config.outputs.models_dir) / study.study_name / "llm_optimizer").exists():
+                    raise RuntimeError("Cannot adopt native legacy history with llm_optimizer artifacts.")
+                stored_directions = [direction.name.lower() for direction in study.directions]
+                if stored_directions != self._study_directions():
+                    raise RuntimeError("Cannot adopt legacy history: study directions do not match the active score configuration.")
+        else:
+            # Only known version-1 private paths from the reviewed implementation alias
+            # public names. Keep optimizer/config/options and all other fields strict.
+            legacy_sampler_names = {
+                "optuna.samplers._tpe.sampler.TPESampler": "optuna.samplers.TPESampler",
+                "optuna.samplers.nsgaii._sampler.NSGAIISampler": "optuna.samplers.NSGAIISampler",
+            }
+            comparable = stored
+            if isinstance(stored, dict) and isinstance(stored.get("sampler"), dict):
+                stored_sampler = stored["sampler"]
+                old_name = stored_sampler.get("class")
+                if isinstance(old_name, str) and old_name in legacy_sampler_names:
+                    comparable = {**stored, "sampler": {
+                        **stored_sampler, "class": legacy_sampler_names[old_name],
+                    }}
+            comparable = optimizer.normalize_stored_identity(comparable, signature)
+            if comparable != signature:
+                raise RuntimeError(
+                    "Active optimizer or sampler settings do not match the existing study optimizer signature. "
+                    "Restore the original configuration or select a new study name."
+                )
+        return name, optimizer, config, signature
+
+    @staticmethod
+    def _store_optimizer_signature(study: optuna.Study, signature: dict[str, Any]) -> None:
+        """Persist campaign identity after successful component initialization.
+
+        Parameters
+        ----------
+        study : optuna.Study
+            Validated study. An existing signature is left unchanged.
+        signature : dict[str, Any]
+            Validated JSON-safe identity to store for future resume checks.
+
+        Notes
+        -----
+        A nonempty unsigned study also receives legacy-adoption evidence.
+        """
+        if study.user_attrs.get(OPTIMIZER_SIGNATURE_ATTR) is not None:
+            return
+        study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, signature)
+        if study.trials:
+            study.set_user_attr(LEGACY_OPTIMIZER_ADOPTION_ATTR, {
+                "version": 1, "attestation": "matching_original_config",
+                "trial_count": len(study.trials),
+            })
+
+    @staticmethod
+    def _proposal_source_counts(study: optuna.Study) -> dict[str, int]:
+        """Count persisted proposal sources for campaign closeout logging.
+
+        Parameters
+        ----------
+        study : optuna.Study
+            Study whose reserved and attempted proposals are counted.
+
+        Returns
+        -------
+        dict[str, int]
+            Counts by recorded source, including random fallback proposals.
+        """
+        counts = {}
+        for trial in study.trials:
+            provenance = trial.user_attrs.get(PROPOSAL_ATTR, {})
+            if not isinstance(provenance, Mapping):
+                continue
+            source = provenance.get("proposal_source")
+            if isinstance(source, str):
+                counts[source] = counts.get(source, 0) + 1
+        return counts
+
+    def _qualifying_complete_count(self, trials) -> int:
+        """Count completed trials eligible for the configured target.
+
+        Parameters
+        ----------
+        trials : iterable of optuna.trial.FrozenTrial
+            Trial snapshot to inspect.
+
+        Returns
+        -------
+        int
+            COMPLETE count, restricted to feasible trials when feasibility
+            policy is enabled.
+        """
+        feasibility_enabled = self._feasibility_enabled()
+        return sum(
+            trial.state == TrialState.COMPLETE and (
+                not feasibility_enabled
+                or str(trial.user_attrs.get("feasibility_status", "")).strip().lower() == "feasible"
+            ) for trial in trials
+        )
+
+    def _initialize_optimizer(self, optimizer: Any, config: Any) -> Any:
+        """Build detached proposal context and initialize the component.
+
+        Parameters
+        ----------
+        optimizer : OptimizerABC
+            Selected component, controlling descriptor and semantic needs.
+        config : Any
+            Validated optimizer configuration passed to initialization.
+
+        Returns
+        -------
+        SearchSpaceDescriptor or None
+            Declared raw parameter space, or None for a native component that
+            does not request one.
+
+        Raises
+        ------
+        ValueError
+            If the component requires an undeclared family search space.
+
+        Notes
+        -----
+        Initialization also records the component's warmup size for progress
+        plots. Model evaluation remains owned by the shared objective.
+        """
+        from crest.interfaces import ModelFamilyABC
+
+        descriptor = None
+        semantic_context = {}
+        if optimizer.requires_search_space:
+            hook = getattr(self.model_family, "trial_search_space", None)
+            if hook is None or getattr(hook, "__func__", None) is ModelFamilyABC.trial_search_space:
+                raise ValueError(
+                    f"Optimizer '{self._cfg_get(config, 'type', optimizer.name)}' requires a declared "
+                    "trial_search_space descriptor."
+                )
+            dependencies = self._classify_nas_metric_dependencies()
+            collect_compile_metrics = self._should_collect_compile_metrics(dependencies)
+            descriptor = build_search_space_descriptor(
+                self.model_family, self.model_build_context, self.model_config, self.config,
+                collect_compile_metrics=collect_compile_metrics,
+            )
+        if descriptor is not None and optimizer.requires_semantic_context(config):
+            semantic_context = build_semantic_context(
+                enabled=True,
+                dataset_name=self.dataset_name, dataset_config=self.dataset_config,
+                dataset_bundle=self.dataset_bundle, model_build_context=self.model_build_context,
+                task_name=self.task_name, target_spec=self.target_spec,
+                metric_contract=self.metric_contract, score_config=self.config.nas.score,
+                feasibility_config=self._feasibility_config(), model_family_name=self.model_family_name,
+                descriptor=descriptor, device_config=self.config.device,
+                training_config=self.config.training, collect_compile_metrics=collect_compile_metrics,
+            )
+        context = SearchContext(
+            study_name=self.study_name, artifact_dir=self._artifacts_dir(),
+            objective_names=tuple(self._study_metric_names()),
+            objective_directions=tuple(self._study_directions()),
+            objective_summary=json.dumps(self.config.nas.score, sort_keys=True, default=str),
+            semantic_context=freeze_plain_data(semantic_context), search_space=descriptor,
+            model_family_name=self.model_family_name, feasibility_enabled=self._feasibility_enabled(),
+        )
+        optimizer.initialize(context, config)
+        self._progress_warmup_count = len(getattr(optimizer, "warmup_params", []) or [])
+        return descriptor
+
+    @staticmethod
+    def _recover_orphaned_trials(study: optuna.Study, config: Any) -> None:
+        """Fail explicitly listed RUNNING trials after workers have stopped.
+
+        Parameters
+        ----------
+        study : optuna.Study
+            Validated, initialized single-writer study being resumed.
+        config : Any
+            Normalized optimizer config. ``recover_orphaned_trials: [12]``
+            attests that the workers for those exact trial numbers have stopped.
+
+        Returns
+        -------
+        None
+            Existing attempts remain in the budget; recovery evidence is stored
+            in study attributes before the public Optuna state transition.
+            Reusing a target list cannot recover newly allocated trial numbers.
+
+        Raises
+        ------
+        ValueError
+            If a requested number is unknown or still queued for execution.
+        """
+        expected_numbers = list(config.recover_orphaned_trials)
+        if not expected_numbers:
+            return
+        trials = study.get_trials(deepcopy=False)
+        unknown = sorted(set(expected_numbers) - {trial.number for trial in trials})
+        if unknown:
+            raise ValueError(
+                f"optimizer.recover_orphaned_trials contains trial numbers absent from this study: {unknown}. "
+                "List only existing orphan trials after confirming their workers have stopped."
+            )
+        queued = [trial.number for trial in trials
+                  if trial.state == TrialState.WAITING and trial.number in expected_numbers]
+        if queued:
+            raise ValueError(
+                f"optimizer.recover_orphaned_trials contains WAITING trial numbers: {queued}. "
+                "Queued trials have not started; list only existing RUNNING or terminal trials."
+            )
+        running = [trial for trial in trials
+                   if trial.state == TrialState.RUNNING and trial.number in expected_numbers]
+        if not running:
+            logger.warning("[NAS] Orphan recovery targets %s contain no RUNNING trials; no state changed.",
+                           expected_numbers)
+            return
+        events = list(study.user_attrs.get(ORPHAN_TRIAL_RECOVERY_ATTR, []))
+        for trial in running:
+            # Persist intent first so an interrupted recovery remains auditable.
+            events.append({"version": 2, "trial_number": trial.number,
+                           "expected_trial_numbers": expected_numbers,
+                           "attestation": "listed_trial_workers_stopped",
+                           "recorded_at_unix": time.time(), "target_state": "FAIL"})
+            study.set_user_attr(ORPHAN_TRIAL_RECOVERY_ATTR, events)
+            study.tell(trial.number, state=TrialState.FAIL)
+            logger.warning("[NAS] Explicit orphan recovery marked trial %s FAIL.", trial.number)
+
+    @staticmethod
+    def _waiting_round_size(study: optuna.Study) -> int:
+        """Count the oldest contiguous group of waiting reservations.
+
+        Parameters
+        ----------
+        study : optuna.Study
+            Study containing queued trials and persisted round identifiers.
+
+        Returns
+        -------
+        int
+            Number of waiting trials sharing the oldest round identifier,
+            stopping at the first different identifier; zero if none wait.
+        """
+        waiting = sorted(
+            (trial for trial in study.trials if trial.state == TrialState.WAITING),
+            key=lambda trial: trial.number,
+        )
+        if not waiting:
+            return 0
+        group = waiting[0].user_attrs.get(PROPOSAL_ATTR, {}).get("round_id")
+        count = 0
+        for trial in waiting:
+            if trial.user_attrs.get(PROPOSAL_ATTR, {}).get("round_id") != group:
+                break
+            count += 1
+        return count
+
+    def _refresh_progress(self, study, trial):
+        """Refresh score artifacts after a committed trial without stopping NAS.
+
+        Parameters
+        ----------
+        study : optuna.study.Study
+            Active study, providing the current committed trial snapshot.
+        trial : optuna.trial.FrozenTrial
+            Finished attempt supplied by Optuna's callback protocol.
+        """
+        try:
+            if [direction.name for direction in study.directions] != ["MAXIMIZE"]:
+                return
+            from crest.progress import trial_records, write_progress
+            write_progress(trial_records(study.get_trials(deepcopy=False)),
+                           self._artifacts_dir(), study.study_name,
+                           warmup_count=getattr(self, "_progress_warmup_count", None))
+        except Exception:
+            logger.warning("Unable to refresh NAS progress plots", exc_info=True)
+
+    def _execute_search_round(self, study: optuna.Study, optimizer: Any, name: str,
+                              descriptor: Any, budget: BudgetSnapshot,
+                              measurement_failure_guard=None) -> int:
+        """Validate and execute one optimizer round through the shared objective.
+
+        Parameters
+        ----------
+        study : optuna.Study
+            Active single-writer study receiving reservations and evaluations.
+        optimizer : OptimizerABC
+            Component asked for a round using the current detached history.
+        name : str
+            Registered optimizer name recorded in explicit-proposal metadata.
+        descriptor : SearchSpaceDescriptor or None
+            Raw parameter validation contract, required for explicit rounds.
+        budget : BudgetSnapshot
+            Current budget and maximum permitted round size.
+        measurement_failure_guard : callable or None, optional
+            Optuna callback monitoring consecutive infrastructure failures.
+            When absent, a new guard is created for this round.
+
+        Returns
+        -------
+        int
+            Number of trials requested for the validated round.
+
+        Raises
+        ------
+        ValueError
+            If the round, candidates, metadata, or size violate the contract.
+
+        Notes
+        -----
+        Every explicit candidate is validated before any candidate is enqueued.
+        Execution uses the progress callback and catches measurement
+        infrastructure errors through the shared Optuna lifecycle.
+        """
+        proposal = optimizer.propose_round(build_trial_snapshot(study), budget)
+        if isinstance(proposal, NativeRound):
+            size = proposal.n_trials
+            if isinstance(size, bool) or not isinstance(size, int) or not 0 < size <= budget.permitted_round_size:
+                raise ValueError("NativeRound.n_trials must be positive and within the permitted round size.")
+        elif isinstance(proposal, ExplicitRound):
+            if not isinstance(proposal.candidates, tuple) or not proposal.candidates:
+                raise ValueError("ExplicitRound requires a nonempty ordered tuple of candidates.")
+            size = len(proposal.candidates)
+            if size > budget.permitted_round_size:
+                raise ValueError("ExplicitRound exceeds the permitted round size.")
+            if descriptor is None:
+                raise ValueError("Explicit rounds require a declared raw search-space descriptor.")
+            round_id = uuid4().hex
+            validated = []
+            for index, candidate in enumerate(proposal.candidates):
+                if not isinstance(candidate, CandidateProposal) or not isinstance(candidate.params, Mapping):
+                    raise ValueError("ExplicitRound members must be CandidateProposal parameter mappings.")
+                validate_candidate(candidate.params, descriptor)
+                params = dict(candidate.params)
+                if not isinstance(candidate.provenance, Mapping):
+                    raise ValueError("Candidate provenance must be a JSON-safe mapping.")
+                metadata = dict(candidate.provenance)
+                metadata.update(optimizer=name, round_id=round_id, batch_index=index, proposal_params=dict(params))
+                metadata.setdefault("proposal_source", name)
+                metadata = json.loads(json.dumps(metadata, sort_keys=True, allow_nan=False))
+                validated.append((dict(params), metadata))
+            for params, metadata in validated:
+                study.enqueue_trial(params, user_attrs={PROPOSAL_ATTR: metadata})
+        else:
+            raise ValueError("Optimizer must return NativeRound or ExplicitRound.")
+        study.optimize(self.objective, n_trials=size,
+                       callbacks=[self._refresh_progress, measurement_failure_guard or _ConsecutiveMeasurementFailureGuard()],
+                       catch=(MeasurementInfrastructureError,))
+        return size
 
     def _hardware_limit_device_options(self) -> dict[str, str] | None:
         """Build board options required to resolve dynamic hardware limits.
@@ -1256,6 +1693,7 @@ class NASModelClient:
         split_name: str,
         quantization_mode: str,
         evaluation_backend: str = "keras",
+        inference_diagnostics: dict | None = None,
     ):
         """Evaluate a model through the selected host backend.
 
@@ -1271,6 +1709,8 @@ class NASModelClient:
             Deployment quantization mode used by TFLite evaluation.
         evaluation_backend : {"keras", "tflite"}, optional
             Host evaluation backend.
+        inference_diagnostics : dict, optional
+            Receives TFLite interpreter policy and any delegate fallback reason.
 
         Returns
         -------
@@ -1291,7 +1731,9 @@ class NASModelClient:
             split_name=split_name,
             quantization_mode=quantization_mode,
         )
-        predictions = predict_tflite_model_subprocess(tflite_path, split.inputs)
+        diagnostics = inference_diagnostics if inference_diagnostics is not None else {}
+        predictions = predict_tflite_model_subprocess(tflite_path, split.inputs, diagnostics=diagnostics)
+        tflite_path.with_suffix(".evaluation.json").write_text(json.dumps(diagnostics, indent=2) + "\n")
         return self.task.evaluate_predictions(
             predictions,
             split,
@@ -1555,18 +1997,29 @@ class NASModelClient:
             self.model_build_context,
             self.model_config,
         )
-        self.model_family.validate_hparams(
-            family_hparams,
-            self.model_build_context,
-            self.model_config,
-        )
-        model = self.model_family.build_model(
-            family_hparams,
-            self.model_build_context,
-            self.model_config,
-        )
-        self.task.validate_model_outputs(model, self.target_spec)
-        self.task.compile_model(model, self.task_config, self.target_spec)
+        training_policy = reset_training_randomness(self.config.training)
+        if training_policy is not None:
+            trial.set_user_attr("training_randomness", training_policy)
+        try:
+            self.model_family.validate_hparams(
+                family_hparams,
+                self.model_build_context,
+                self.model_config,
+            )
+            model = self.model_family.build_model(
+                family_hparams,
+                self.model_build_context,
+                self.model_config,
+            )
+            self.task.validate_model_outputs(model, self.target_spec)
+            self.task.compile_model(model, self.task_config, self.target_spec)
+        except (ValueError, NotImplementedError) as exc:
+            # Invalid shapes/parameters and unsupported model operations repeat
+            # for this candidate. Do not classify resource/transport exceptions.
+            trial.set_user_attr("candidate_failure_class", "deterministic")
+            trial.set_user_attr("candidate_failure_stage", "model_construction")
+            trial.set_user_attr("candidate_failure_reason", f"{type(exc).__name__}: {exc}")
+            raise
         flops = self.model_family.count_flops(
             model,
             self.model_build_context,
@@ -1933,6 +2386,7 @@ class NASModelClient:
                     quantization_mode=quantization_mode,
                 )
             else:
+                reset_training_randomness(self.config.training)
                 fit_plan = self.task.build_fit_plan(
                     self.dataset_bundle,
                     self.task_config,
@@ -1951,19 +2405,23 @@ class NASModelClient:
                     self.model_build_context,
                     self.model_config,
                 )
+                inference_diagnostics = {}
                 try:
                     evaluation_result = self._evaluate_model_with_backend(
                         model=model,
                         split=self.dataset_bundle.val,
-                        split_name="validation",
+                        split_name=f"validation_trial_{trial.number}",
                         quantization_mode=quantization_mode,
                         evaluation_backend="tflite",
+                        inference_diagnostics=inference_diagnostics,
                     )
                 except TFLiteSubprocessError as exc:
+                    trial.set_user_attr("tflite_evaluation", {"status": "failed", "error": str(exc)})
                     prune_reason = "TFLite evaluation failed"
                     if not self._score_is_multiobjective():
                         prune_reason = f"{prune_reason}: {exc}"
                     return _fail_with_penalty(prune_reason)
+                trial.set_user_attr("tflite_evaluation", {"status": "passed", **inference_diagnostics})
                 task_metrics = dict(evaluation_result.metrics)
                 keras_evaluation_result = self._evaluate_model_with_backend(
                     model=model,
@@ -2060,6 +2518,10 @@ class NASModelClient:
         Smoke tests reuse the same per-study SQLite storage and trial log when
         the caller passes the same ``study_name``. Re-running the smoke test
         therefore appends more trials instead of deleting prior results.
+        The configured optimizer proposes rounds through the same lifecycle as
+        a production search. Queued proposals are consumed first, and optimizer
+        identity must match when resuming. A component-owned resource limit may
+        stop the test before the requested number of attempts is executed.
 
         Raises
         ------
@@ -2106,23 +2568,51 @@ class NASModelClient:
                     sampler=sampler,
                     load_if_exists=True,
                 )
-            self._validate_or_store_feasibility_signature(single_trial_study)
-            single_trial_study.set_metric_names(self._study_metric_names())
             measurement_failure_guard = _ConsecutiveMeasurementFailureGuard()
+            optimizer_name, optimizer, optimizer_config, signature = self._select_optimizer(single_trial_study, sampler)
+            self._validate_or_store_feasibility_signature(single_trial_study, store=False)
             try:
-                single_trial_study.optimize(self.objective, n_trials=trials, callbacks=[measurement_failure_guard], catch=(MeasurementInfrastructureError,))
-            except Exception as exc:
+                descriptor = self._initialize_optimizer(optimizer, optimizer_config)
+                self._validate_or_store_feasibility_signature(single_trial_study)
+                self._store_optimizer_signature(single_trial_study, signature)
+                self._recover_orphaned_trials(single_trial_study, optimizer_config)
+                self._refresh_progress(single_trial_study, None)
+                single_trial_study.set_metric_names(self._study_metric_names())
+                remaining = trials
+                initial_completed = self._qualifying_complete_count(single_trial_study.trials)
+                target = initial_completed + trials
+                total_cap = len(single_trial_study.trials) + trials
+                while remaining > 0:
+                    waiting_size = self._waiting_round_size(single_trial_study)
+                    if waiting_size:
+                        size = min(waiting_size, remaining)
+                        single_trial_study.optimize(self.objective, n_trials=size, callbacks=[self._refresh_progress, measurement_failure_guard], catch=(MeasurementInfrastructureError,))
+                    else:
+                        completed = self._qualifying_complete_count(single_trial_study.trials)
+                        size = self._execute_search_round(
+                            single_trial_study, optimizer, optimizer_name, descriptor,
+                            BudgetSnapshot(len(single_trial_study.trials), completed,
+                                           target, total_cap, remaining),
+                            measurement_failure_guard=measurement_failure_guard,
+                        )
+                    remaining -= size
+            except OptimizerBudgetExhausted as exc:
+                logger.info("[SMOKE] Stopped by optimizer budget: %s; proposal_sources=%s",
+                            exc, self._proposal_source_counts(single_trial_study))
+            except (Exception, KeyboardInterrupt) as exc:
+                self._refresh_progress(single_trial_study, None)
                 completed = sum(1 for t in single_trial_study.trials if t.state == TrialState.COMPLETE)
                 pruned = sum(1 for t in single_trial_study.trials if t.state == TrialState.PRUNED)
                 failed = sum(1 for t in single_trial_study.trials if t.state == TrialState.FAIL)
                 total = len(single_trial_study.trials)
                 logger.exception(
-                    "[SMOKE] Aborting after %s trials: %s completed, %s pruned, %s failed. Error: %s",
+                    "[SMOKE] Aborting after %s trials: %s completed, %s pruned, %s failed. Error: %s; proposal_sources=%s",
                     total,
                     completed,
                     pruned,
                     failed,
                     exc,
+                    self._proposal_source_counts(single_trial_study),
                 )
                 raise
         finally:
@@ -2130,6 +2620,12 @@ class NASModelClient:
             self.config.training.train = _previous_train
             self.config.training.nas_epochs = _previous_epochs
 
+        trials_dataframe = getattr(single_trial_study, "trials_dataframe", None)
+        if callable(trials_dataframe):
+            trials_dataframe().to_csv(artifacts_dir / "trials.csv", index=False)
+
+        logger.info("[SMOKE] Finished; proposal_sources=%s.",
+                    self._proposal_source_counts(single_trial_study))
         complete_trials = [t for t in single_trial_study.trials if t.state == TrialState.COMPLETE]
         if not complete_trials:
             logger.warning("[SMOKE] No completed trials to report.")
@@ -2177,7 +2673,11 @@ class NASModelClient:
         target is met or ``config.training.max_total_trials`` is reached.
 
         Failed, pruned, and infeasible trials still consume the total-attempt
-        budget.
+        budget. With feasibility disabled, every completed trial qualifies.
+        The configured optimizer proposes rounds; the shared objective performs
+        all evaluations. Resuming validates persisted optimizer identity and
+        consumes queued reservations before requesting another round. Search
+        can also stop when the component's own resource budget is exhausted.
 
         Returns
         -------
@@ -2212,9 +2712,9 @@ class NASModelClient:
                 sampler=sampler,
                 load_if_exists=True,  # resume if the study already exists
             )
-        self._validate_or_store_feasibility_signature(study)
-        study.set_metric_names(self._study_metric_names())
         measurement_failure_guard = _ConsecutiveMeasurementFailureGuard()
+        optimizer_name, optimizer, optimizer_config, signature = self._select_optimizer(study, sampler)
+        self._validate_or_store_feasibility_signature(study, store=False)
         # Make sure we never shrink the total budget when resuming an existing study.
         max_total_trials = max(max_total_trials, len(study.trials))
 
@@ -2228,27 +2728,18 @@ class NASModelClient:
                 pruned, and failed trials in that order.
             """
             completed = sum(1 for t in study.trials if t.state == TrialState.COMPLETE)
+            feasible = self._qualifying_complete_count(study.trials)
             if self._feasibility_enabled():
-                feasible = sum(
-                    1
-                    for t in study.trials
-                    if (
-                        t.state == TrialState.COMPLETE
-                        and str(getattr(t, "user_attrs", {}).get("feasibility_status", "")).strip()
-                        == "feasible"
-                    )
-                )
                 infeasible = sum(
                     1
                     for t in study.trials
                     if (
                         t.state == TrialState.COMPLETE
-                        and str(getattr(t, "user_attrs", {}).get("feasibility_status", "")).strip()
+                        and str(getattr(t, "user_attrs", {}).get("feasibility_status", "")).strip().lower()
                         == "infeasible"
                     )
                 )
             else:
-                feasible = completed
                 infeasible = 0
             pruned = sum(1 for t in study.trials if t.state == TrialState.PRUNED)
             failed = sum(1 for t in study.trials if t.state == TrialState.FAIL)
@@ -2257,6 +2748,14 @@ class NASModelClient:
         round_idx = 0
         stop_reason = "unknown"
         try:
+            descriptor = self._initialize_optimizer(optimizer, optimizer_config)
+            self._validate_or_store_feasibility_signature(study)
+            self._store_optimizer_signature(study, signature)
+            study.set_metric_names(self._study_metric_names())
+
+            self._recover_orphaned_trials(study, optimizer_config)
+            self._refresh_progress(study, None)
+            study.set_user_attr("crest_optimizer_budget_stop", None)
             while True:
                 completed, feasible, infeasible, pruned, failed = _trial_counts()
                 total = len(study.trials)
@@ -2278,6 +2777,11 @@ class NASModelClient:
                     logger.info("[NAS] Reached target of %s feasible completed trials.", target_completions)
                     break
 
+                waiting_size = self._waiting_round_size(study)
+                if waiting_size:
+                    study.optimize(self.objective, n_trials=waiting_size, callbacks=[self._refresh_progress, measurement_failure_guard], catch=(MeasurementInfrastructureError,))
+                    continue
+
                 remaining_needed = target_completions - feasible
                 remaining_budget = max_total_trials - total
                 if remaining_budget <= 0:
@@ -2297,12 +2801,21 @@ class NASModelClient:
                 else:
                     next_batch = min(remaining_needed, remaining_budget)
                 logger.info("[NAS] Launching round %s for %s additional trial(s).", round_idx, next_batch)
-                study.optimize(self.objective, n_trials=next_batch, callbacks=[measurement_failure_guard], catch=(MeasurementInfrastructureError,))
-        except Exception as exc:
+                self._execute_search_round(
+                    study, optimizer, optimizer_name, descriptor,
+                    BudgetSnapshot(total, feasible, target_completions, max_total_trials, next_batch),
+                    measurement_failure_guard=measurement_failure_guard,
+                )
+        except OptimizerBudgetExhausted as exc:
+            stop_reason = "optimizer_budget_exhausted"
+            study.set_user_attr("crest_optimizer_budget_stop", str(exc))
+            logger.info("[NAS] Stopped by optimizer budget: %s", exc)
+        except (Exception, KeyboardInterrupt) as exc:
+            self._refresh_progress(study, None)
             completed, feasible, infeasible, pruned, failed = _trial_counts()
             logger.exception(
                 "[NAS] Aborting after %s trials (%s feasible, %s infeasible, %s completed, "
-                "%s pruned, %s failed) because of an error: %s",
+                "%s pruned, %s failed) because of an error: %s; proposal_sources=%s",
                 len(study.trials),
                 feasible,
                 infeasible,
@@ -2310,6 +2823,7 @@ class NASModelClient:
                 pruned,
                 failed,
                 exc,
+                self._proposal_source_counts(study),
             )
             raise
         complete_trials = [t for t in study.trials if t.state == TrialState.COMPLETE]
@@ -2317,7 +2831,7 @@ class NASModelClient:
         feasible_fraction = (feasible / completed) if completed else 0.0
         logger.info(
             "[NAS] Finished by %s: %s feasible, %s infeasible, %s completed, %s pruned, %s failed, "
-            "feasible_fraction=%.3f.",
+            "feasible_fraction=%.3f; proposal_sources=%s.",
             stop_reason,
             feasible,
             infeasible,
@@ -2325,6 +2839,7 @@ class NASModelClient:
             pruned,
             failed,
             feasible_fraction,
+            self._proposal_source_counts(study),
         )
         if not complete_trials:
             logger.warning("[NAS] No completed trials recorded; skipping best-trial reporting.")
@@ -2378,6 +2893,12 @@ class NASModelClient:
         trials_csv = artifacts_dir / "trials.csv"
         trials_df.to_csv(trials_csv, index=False)
         logger.info("[run_scoring_nas] Saved trials dataframe to %s", trials_csv)
+
+        if (getattr(study, "user_attrs", {}).get("crest_optimizer_budget_stop")
+                and not self._qualifying_complete_count(study.trials)):
+            logger.info("[run_scoring_nas] Optimizer budget stopped search before any eligible completion; "
+                        "saved trial history and skipped final training.")
+            return
 
         if self._score_is_multiobjective():
             # Multi-objective: keep this as a “scoring + analysis” run.
@@ -2549,7 +3070,7 @@ class NASModelClient:
                 trial
                 for trial in study.get_trials(deepcopy=False, states=(TrialState.COMPLETE,))
                 if (
-                    str(trial.user_attrs.get("feasibility_status", "")).strip() == "feasible"
+                    str(trial.user_attrs.get("feasibility_status", "")).strip().lower() == "feasible"
                     and not bool(trial.user_attrs.get("pruned"))
                 )
             ]
@@ -2612,6 +3133,10 @@ class NASModelClient:
         history_path = Path(history_path)
         history_path.parent.mkdir(parents=True, exist_ok=True)
         ckpt_path = Path(checkpoint_path)
+        training_policy = reset_training_randomness(self.config.training)
+        if training_policy is not None:
+            history_path.with_suffix(".randomness.json").write_text(
+                json.dumps(training_policy, indent=2) + "\n", encoding="utf-8")
         batch_size = 256
         fit_task = self._instantiate_task(
             self.task_name,
