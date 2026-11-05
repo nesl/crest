@@ -16,6 +16,12 @@ workload and uses the CREST HIL harness.
 
 ## Folders
 
+- `trial_outcomes/`: read-only final-trial outcome classification, separate
+  population flags, and aggregate checks; see its [README](trial_outcomes/README.md).
+
+- `cs3_audit/`: reusable exact scoring, campaign effort, saved evaluation and
+  replay checks; see its [README](cs3_audit/README.md).
+
 - `timing_attribution/`: saved client/server timing reconciliation and appendix
   checks; see its [README](timing_attribution/README.md).
 
