@@ -32,8 +32,10 @@ workload and uses the CREST HIL harness.
 
 - `paper_plots/`
   - **Hardware requirement: no hardware required.** Publication figure
-    generators that write sidecar plotted-point and summary outputs from explicit
-    input CSV/replay paths.
+    generators for all eight submitted-paper data plots, with explicit external
+    inputs, plotted-point/summary sidecars, and an input hash manifest. The
+    [figure catalog](paper_plots/README.md) gives the canonical scripts and
+    commands; superseded draft generators remain in Git history.
 
 ## Case Study 3: proposal strategies and search effort
 

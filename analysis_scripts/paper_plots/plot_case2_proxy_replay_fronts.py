@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Render the Case Study 1 combined static-proxy replay front figure."""
+"""Render CS2 measured-energy and proxy-replay fronts from saved artifacts.
+
+Use repeated ``--target`` arguments for panel order. ``--no-replay-target``
+omits proxy overlays for a measured-only panel; ``--clock-target`` distinguishes
+its measured CPU frequencies. The submitted figure compares proxy replays on
+three Arduino targets and measured-energy search on STM32 N657.
+"""
 
 from __future__ import annotations
 
@@ -26,6 +32,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from plot_combined_replay_fronts import LoadedPair  # noqa: E402
 from plot_combined_replay_fronts import PairInput  # noqa: E402
+from plot_combined_replay_fronts import first_float  # noqa: E402
 from plot_combined_replay_fronts import load_pair  # noqa: E402
 
 
@@ -35,10 +42,19 @@ MEMORY_REPLAY_COLOR = "#2ca02c"
 DEFAULT_FONT_SCALE = 1.397
 DEFAULT_LEGEND_FONT_SCALE = 1.65
 DEFAULT_WSPACE_SCALE = 0.5
+# CPU clock (MHz) -> (marker, color). Marker shape carries the identity; the blue
+# ramp is monotone in lightness so the ordering also survives grayscale printing.
+CLOCK_STYLES = {
+    200: ("o", "#9ecae1"),
+    300: ("s", "#4292c6"),
+    400: ("^", "#2171b5"),
+    600: ("D", "#08519c"),
+    800: ("v", "#08306b"),
+}
 
 
 def parse_target(value: str) -> tuple[PairInput, PairInput]:
-    """Parse one Case Study 1 target specification.
+    """Parse one Case Study 2 target specification.
 
     Parameters
     ----------
@@ -78,7 +94,7 @@ def parse_target(value: str) -> tuple[PairInput, PairInput]:
             label=label,
             crest_run_dir=Path(measured_run_dir).expanduser().resolve(),
             replay_path=Path(memory_replay_path).expanduser().resolve(),
-        )
+        ),
     )
 
 
@@ -158,7 +174,9 @@ def scatter_latency_points(
         )
 
 
-def draw_front(ax: Any, points: Sequence[Any], *, color: str, marker: str, linestyle: str) -> None:
+def draw_front(
+    ax: Any, points: Sequence[Any], *, color: str, marker: str, linestyle: str
+) -> None:
     """Draw a front line and front markers.
 
     Parameters
@@ -196,12 +214,96 @@ def draw_front(ax: Any, points: Sequence[Any], *, color: str, marker: str, lines
     )
 
 
+_LATENCY_COLUMNS = (
+    "values_latency_ms",
+    "latency_ms",
+    "target__latency_ms",
+    "target__cadenced_active_inference_latency_ms",
+)
+_BUDGET_COLUMNS = (
+    "values_latency_budget_ms",
+    "latency_budget_ms",
+    "target__latency_budget_ms",
+    "target__cadenced_latency_budget_ms",
+)
+
+
+def point_clock_mhz(point: Any) -> int | None:
+    """Return the requested CPU clock (MHz) of a measured point, if recorded.
+
+    Parameters
+    ----------
+    point : Any
+        FrontPoint-like object whose ``row`` holds the source CSV row.
+
+    Returns
+    -------
+    int or None
+        Requested CPU clock in MHz, or ``None`` when absent.
+    """
+    value = first_float(point.row, ("cpu_clock_mhz_requested",))
+    return None if value is None or value <= 0 else int(round(value))
+
+
+def scatter_clock_points(
+    ax: Any,
+    points: Sequence[Any],
+    *,
+    size: float,
+    alpha: float,
+    linewidth: float,
+    zorder: int,
+) -> None:
+    """Scatter measured points with marker shape and color set by CPU clock.
+
+    Parameters
+    ----------
+    ax : Any
+        Matplotlib axes.
+    points : Sequence[Any]
+        FrontPoint-like objects carrying ``cpu_clock_mhz_requested``.
+    size : float
+        Marker area passed to ``scatter_latency_points``.
+    alpha : float
+        Marker opacity for each clock group.
+    linewidth : float
+        Marker edge width for each clock group.
+    zorder : int
+        Drawing order for each clock group.
+
+    Raises
+    ------
+    ValueError
+        If a point has an absent or unsupported requested CPU clock.
+    """
+    unsupported = {point_clock_mhz(point) for point in points} - set(CLOCK_STYLES)
+    if unsupported:
+        raise ValueError(
+            "Clock encoding requires a recorded CPU clock supported by CLOCK_STYLES; "
+            f"unsupported clocks: {sorted(map(str, unsupported))}"
+        )
+    for clock, (marker, color) in CLOCK_STYLES.items():
+        group = [point for point in points if point_clock_mhz(point) == clock]
+        if group:
+            scatter_latency_points(
+                ax,
+                group,
+                color=color,
+                marker=marker,
+                size=size,
+                alpha=alpha,
+                linewidth=linewidth,
+                zorder=zorder,
+            )
+
+
 def write_plotted_points(
     path: Path,
     pairs: Sequence[LoadedPair],
     memory_pairs: Sequence[LoadedPair] | None = None,
+    no_replay_labels: frozenset[str] = frozenset(),
 ) -> None:
-    """Write plotted point data for the v2 figure.
+    """Write plotted point data for the proxy-front figure.
 
     Parameters
     ----------
@@ -211,6 +313,8 @@ def write_plotted_points(
         Loaded target pairs.
     memory_pairs : Sequence[LoadedPair] or None, optional
         Loaded memory-traffic-proxy replay pairs.
+    no_replay_labels : frozenset[str], optional
+        Panels whose replay series are not plotted and therefore not written.
     """
     memory_by_label = {pair.label: pair for pair in memory_pairs or []}
     fieldnames = [
@@ -224,6 +328,7 @@ def write_plotted_points(
         "latency_budget_ms",
         "latency_feasible",
         "is_front",
+        "cpu_clock_mhz",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -237,25 +342,33 @@ def write_plotted_points(
             memory_pair = memory_by_label.get(pair.label)
             if memory_pair is not None:
                 series_specs.append(
-                    ("memory_replay", memory_pair.replay_points, memory_pair.replay_front)
+                    (
+                        "memory_replay",
+                        memory_pair.replay_points,
+                        memory_pair.replay_front,
+                    )
                 )
             for series, points, front in series_specs:
                 front_keys = point_key_set(front)
+                if series != "measured_energy_nas" and pair.label in no_replay_labels:
+                    continue
                 for point in points:
+                    latency_ms = first_float(point.row, _LATENCY_COLUMNS)
+                    budget_ms = first_float(point.row, _BUDGET_COLUMNS)
+                    clock = point_clock_mhz(point)
                     writer.writerow(
                         {
                             "target": pair.label,
                             "series": series,
-                            "row_index": point.row_index,
+                            "row_index": getattr(point, "row_index", point.payload_key),
                             "payload_key": point.payload_key,
                             "rmse": point.rmse,
                             "energy_mj": point.energy_mj,
-                            "latency_ms": "" if point.latency_ms is None else point.latency_ms,
-                            "latency_budget_ms": ""
-                            if point.latency_budget_ms is None
-                            else point.latency_budget_ms,
+                            "latency_ms": "" if latency_ms is None else latency_ms,
+                            "latency_budget_ms": "" if budget_ms is None else budget_ms,
                             "latency_feasible": point.latency_feasible,
                             "is_front": point.payload_key in front_keys,
+                            "cpu_clock_mhz": "" if clock is None else clock,
                         }
                     )
 
@@ -284,8 +397,12 @@ def pair_summary_rows(pairs: Sequence[LoadedPair]) -> list[dict[str, Any]]:
                 "measured_front_points": len(pair.crest_front),
                 "replay_front_points": len(pair.replay_front),
                 "replay_total_candidates": pair.replay_outcomes.total_candidates,
-                "replay_valid_latency_feasible": sum(point.latency_feasible is True for point in pair.replay_points),
-                "replay_front_latency_feasible": sum(point.latency_feasible is True for point in pair.replay_front),
+                "replay_valid_latency_feasible": sum(
+                    point.latency_feasible is True for point in pair.replay_points
+                ),
+                "replay_front_latency_feasible": sum(
+                    point.latency_feasible is True for point in pair.replay_front
+                ),
                 "replay_front_dominated_by_measured": dominated,
             }
         )
@@ -296,8 +413,9 @@ def write_summary(
     path: Path,
     pairs: Sequence[LoadedPair],
     memory_pairs: Sequence[LoadedPair] | None = None,
+    no_replay_labels: frozenset[str] = frozenset(),
 ) -> None:
-    """Write a text summary for the v2 figure.
+    """Write a text summary for the proxy-front figure.
 
     Parameters
     ----------
@@ -307,17 +425,22 @@ def write_summary(
         Loaded target pairs.
     memory_pairs : Sequence[LoadedPair] or None, optional
         Loaded memory-traffic-proxy replay pairs.
+    no_replay_labels : frozenset[str], optional
+        Panels whose proxy replays are omitted from the figure and totals.
     """
-    rows = pair_summary_rows(pairs)
+    all_rows = pair_summary_rows(pairs)
+    rows = [row for row in all_rows if row["target"] not in no_replay_labels]
     memory_by_label = {pair.label: pair for pair in memory_pairs or []}
     total_replay_valid = sum(row["replay_valid_points"] for row in rows)
     total_replay_scheduled = sum(row["replay_total_candidates"] for row in rows)
     total_replay_feasible = sum(row["replay_valid_latency_feasible"] for row in rows)
     total_replay_front = sum(row["replay_front_points"] for row in rows)
-    total_replay_front_feasible = sum(row["replay_front_latency_feasible"] for row in rows)
+    total_replay_front_feasible = sum(
+        row["replay_front_latency_feasible"] for row in rows
+    )
     total_dominated = sum(row["replay_front_dominated_by_measured"] for row in rows)
     lines = [
-        "Case Study 1 combined measured-energy vs static-proxy replay front summary",
+        "Case Study 2 combined measured-energy vs static-proxy replay front summary",
         "",
         "Inputs:",
         "  Supplied by repeated --target CLI arguments in plot order.",
@@ -331,12 +454,21 @@ def write_summary(
         f"Replay-front points dominated by measured-energy NAS: {total_dominated}/{total_replay_front}",
         "",
     ]
-    for row in rows:
+    if no_replay_labels:
+        lines.insert(1, "(panels in --no-replay-target list show measured energy only)")
+    for row in all_rows:
         lines.append(row["target"])
         lines.append(f"  measured valid points: {row['measured_valid_points']}")
-        lines.append(f"  replay valid points: {row['replay_valid_points']}")
-        lines.append(f"  replay valid / scheduled: {row['replay_valid_points']}/{row['replay_total_candidates']}")
         lines.append(f"  measured front points: {row['measured_front_points']}")
+        if row["target"] in no_replay_labels:
+            lines.append(
+                "  proxy replays omitted from this figure (not plotted, excluded from totals)"
+            )
+            continue
+        lines.append(f"  replay valid points: {row['replay_valid_points']}")
+        lines.append(
+            f"  replay valid / scheduled: {row['replay_valid_points']}/{row['replay_total_candidates']}"
+        )
         lines.append(f"  replay front points: {row['replay_front_points']}")
         lines.append(
             "  replay front latency-feasible: "
@@ -348,12 +480,20 @@ def write_summary(
         )
         memory_pair = memory_by_label.get(row["target"])
         if memory_pair is not None:
-            lines.append(f"  memory traffic proxy replay valid points: {len(memory_pair.replay_points)}")
-            lines.append(f"  memory traffic proxy replay front points: {len(memory_pair.replay_front)}")
+            lines.append(
+                f"  memory traffic proxy replay valid points: {len(memory_pair.replay_points)}"
+            )
+            lines.append(
+                f"  memory traffic proxy replay front points: {len(memory_pair.replay_front)}"
+            )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def write_summary_csv(path: Path, pairs: Sequence[LoadedPair]) -> None:
+def write_summary_csv(
+    path: Path,
+    pairs: Sequence[LoadedPair],
+    no_replay_labels: frozenset[str] = frozenset(),
+) -> None:
     """Write per-target summary counts as CSV.
 
     Parameters
@@ -362,10 +502,17 @@ def write_summary_csv(path: Path, pairs: Sequence[LoadedPair]) -> None:
         Output CSV path.
     pairs : Sequence[LoadedPair]
         Loaded target pairs.
+    no_replay_labels : frozenset[str], optional
+        Panels whose replay columns are blanked because replays are not plotted.
     """
     rows = pair_summary_rows(pairs)
     if not rows:
         return
+    for row in rows:
+        if row["target"] in no_replay_labels:
+            for key in row:
+                if key.startswith("replay_"):
+                    row[key] = ""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
@@ -373,7 +520,9 @@ def write_summary_csv(path: Path, pairs: Sequence[LoadedPair]) -> None:
         writer.writerows(rows)
 
 
-def subplot_shape(layout: str, pair_count: int) -> tuple[int, int, tuple[float, float], float, float]:
+def subplot_shape(
+    layout: str, pair_count: int
+) -> tuple[int, int, tuple[float, float], float, float]:
     """Return subplot geometry for a named layout.
 
     Parameters
@@ -395,7 +544,7 @@ def subplot_shape(layout: str, pair_count: int) -> tuple[int, int, tuple[float, 
     return 2, 2, (7.16, 4.65), 0.16, 0.28
 
 
-def plot_case1_fronts_v2(
+def plot_proxy_replay_fronts(
     pairs: Sequence[LoadedPair],
     output_dir: Path,
     basename: str,
@@ -405,8 +554,11 @@ def plot_case1_fronts_v2(
     font_scale: float = DEFAULT_FONT_SCALE,
     legend_font_scale: float | None = None,
     wspace_scale: float = DEFAULT_WSPACE_SCALE,
+    no_replay_labels: frozenset[str] = frozenset(),
+    clock_labels: frozenset[str] = frozenset(),
+    dpi: int = 400,
 ) -> tuple[Path, Path, Path, Path]:
-    """Render the restyled Case Study 1 four-panel figure.
+    """Render the restyled Case Study 2 four-panel figure.
 
     Parameters
     ----------
@@ -426,6 +578,12 @@ def plot_case1_fronts_v2(
         Multiplicative scale applied to legend text. Defaults to ``DEFAULT_LEGEND_FONT_SCALE``.
     wspace_scale : float, default=DEFAULT_WSPACE_SCALE
         Multiplier applied to the layout's horizontal subplot spacing.
+    no_replay_labels : frozenset[str], optional
+        Panel labels for which replay series are omitted.
+    clock_labels : frozenset[str], optional
+        Panel labels whose measured points are encoded by CPU clock.
+    dpi : int, default=400
+        Raster export resolution in dots per inch.
 
     Returns
     -------
@@ -434,8 +592,12 @@ def plot_case1_fronts_v2(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     memory_by_label = {pair.label: pair for pair in memory_pairs or []}
-    all_points = [point for pair in pairs for point in [*pair.crest_points, *pair.replay_points]]
-    all_points.extend(point for pair in memory_by_label.values() for point in pair.replay_front)
+    all_points = [
+        point for pair in pairs for point in [*pair.crest_points, *pair.replay_points]
+    ]
+    all_points.extend(
+        point for pair in memory_by_label.values() for point in pair.replay_front
+    )
     y_values = np.asarray([point.rmse for point in all_points], dtype=float)
     y_lower = max(0.0, float(np.nanmin(y_values)) - 0.08)
     y_upper = float(np.nanmax(y_values)) + 0.12
@@ -459,38 +621,78 @@ def plot_case1_fronts_v2(
     ):
         rows, cols, figsize, wspace, hspace = subplot_shape(layout, len(pairs))
         wspace *= wspace_scale
-        fig, axes = plt.subplots(rows, cols, figsize=figsize, sharey=True, squeeze=False)
+        fig, axes = plt.subplots(
+            rows, cols, figsize=figsize, sharey=True, squeeze=False
+        )
         axes_flat = list(axes.ravel())
         for ax, pair in zip(axes_flat, pairs):
             crest_front_keys = point_key_set(pair.crest_front)
             replay_front_keys = point_key_set(pair.replay_front)
-            crest_cloud = [point for point in pair.crest_points if point.payload_key not in crest_front_keys]
-            replay_cloud = [point for point in pair.replay_points if point.payload_key not in replay_front_keys]
+            crest_cloud = [
+                point
+                for point in pair.crest_points
+                if point.payload_key not in crest_front_keys
+            ]
+            replay_cloud = [
+                point
+                for point in pair.replay_points
+                if point.payload_key not in replay_front_keys
+            ]
 
-            scatter_latency_points(
-                ax,
-                crest_cloud,
-                color=CREST_COLOR,
-                marker="o",
-                size=9,
-                alpha=0.24,
-                linewidth=0.25,
-                zorder=2,
-            )
-            scatter_latency_points(
-                ax,
-                replay_cloud,
-                color=REPLAY_COLOR,
-                marker="s",
-                size=11,
-                alpha=0.34,
-                linewidth=0.35,
-                zorder=2,
-            )
-            draw_front(ax, pair.crest_front, color=CREST_COLOR, marker="o", linestyle="-")
-            draw_front(ax, pair.replay_front, color=REPLAY_COLOR, marker="s", linestyle="--")
+            show_replay = pair.label not in no_replay_labels
+            by_clock = pair.label in clock_labels
+            if by_clock:
+                scatter_clock_points(
+                    ax, crest_cloud, size=14, alpha=0.5, linewidth=0.3, zorder=2
+                )
+            else:
+                scatter_latency_points(
+                    ax,
+                    crest_cloud,
+                    color=CREST_COLOR,
+                    marker="o",
+                    size=9,
+                    alpha=0.24,
+                    linewidth=0.25,
+                    zorder=2,
+                )
+            if show_replay:
+                scatter_latency_points(
+                    ax,
+                    replay_cloud,
+                    color=REPLAY_COLOR,
+                    marker="s",
+                    size=11,
+                    alpha=0.34,
+                    linewidth=0.35,
+                    zorder=2,
+                )
+            if by_clock:
+                ax.plot(
+                    [point.energy_mj for point in pair.crest_front],
+                    [point.rmse for point in pair.crest_front],
+                    color=CREST_COLOR,
+                    linestyle="-",
+                    linewidth=1.15,
+                    zorder=4,
+                )
+                scatter_clock_points(
+                    ax, pair.crest_front, size=30, alpha=0.98, linewidth=0.8, zorder=5
+                )
+            else:
+                draw_front(
+                    ax, pair.crest_front, color=CREST_COLOR, marker="o", linestyle="-"
+                )
+            if show_replay:
+                draw_front(
+                    ax,
+                    pair.replay_front,
+                    color=REPLAY_COLOR,
+                    marker="s",
+                    linestyle="--",
+                )
             memory_pair = memory_by_label.get(pair.label)
-            if memory_pair is not None:
+            if memory_pair is not None and show_replay:
                 draw_front(
                     ax,
                     memory_pair.replay_front,
@@ -505,18 +707,63 @@ def plot_case1_fronts_v2(
             ax.grid(True, alpha=0.3, which="both")
             ax.xaxis.set_major_locator(LogLocator(base=10.0, numticks=5))
             ax.xaxis.set_major_formatter(LogFormatterMathtext(base=10.0))
-            ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1, numticks=12))
+            ax.xaxis.set_minor_locator(
+                LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1, numticks=12)
+            )
+            annotation = f"CREST front: {len(pair.crest_front)}"
+            if show_replay:
+                annotation += f"\nReplay front: {len(pair.replay_front)}"
             ax.text(
                 0.965,
                 0.955,
-                f"CREST front: {len(pair.crest_front)}\nReplay front: {len(pair.replay_front)}",
+                annotation,
                 transform=ax.transAxes,
                 ha="right",
                 va="top",
                 fontsize=5.8 * font_scale,
                 color="0.2",
-                bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.62, "pad": 1.6},
+                bbox={
+                    "facecolor": "white",
+                    "edgecolor": "none",
+                    "alpha": 0.62,
+                    "pad": 1.6,
+                },
             )
+            if by_clock:
+                present = sorted(
+                    {point_clock_mhz(p) for p in pair.crest_points} & set(CLOCK_STYLES)
+                )
+                clock_handles = [
+                    Line2D(
+                        [0],
+                        [0],
+                        marker=CLOCK_STYLES[c][0],
+                        color="none",
+                        markerfacecolor=CLOCK_STYLES[c][1],
+                        markeredgecolor=CLOCK_STYLES[c][1],
+                        markersize=4,
+                        linestyle="none",
+                        label=f"{c}",
+                    )
+                    for c in present
+                ]
+                ax.legend(
+                    handles=clock_handles,
+                    title="CPU clock (MHz)",
+                    loc="upper left",
+                    bbox_to_anchor=(0.02, 0.875),
+                    ncol=5,
+                    handlelength=0.8,
+                    columnspacing=0.7,
+                    fontsize=5.2 * font_scale,
+                    title_fontsize=5.2 * font_scale,
+                    frameon=True,
+                    framealpha=0.8,
+                    edgecolor="0.8",
+                    borderpad=0.35,
+                    labelspacing=0.2,
+                    handletextpad=0.3,
+                )
 
         for ax in axes[:, 0]:
             ax.set_ylabel("Aggregate RMSE")
@@ -579,8 +826,22 @@ def plot_case1_fronts_v2(
                 linestyle="none",
                 label="> 200 ms",
             ),
-            Line2D([0], [0], color="black", linewidth=1.0, linestyle="-", label="Native front"),
-            Line2D([0], [0], color="black", linewidth=1.0, linestyle="--", label="Replay front"),
+            Line2D(
+                [0],
+                [0],
+                color="black",
+                linewidth=1.0,
+                linestyle="-",
+                label="Native front",
+            ),
+            Line2D(
+                [0],
+                [0],
+                color="black",
+                linewidth=1.0,
+                linestyle="--",
+                label="Replay front",
+            ),
         ]
         legend_columns = 3 if layout == "column" else 7
         legend_y = 0.975 if layout == "column" else 0.978
@@ -595,23 +856,44 @@ def plot_case1_fronts_v2(
             borderaxespad=0.0,
         )
         if layout == "row":
-            fig.subplots_adjust(left=0.055, right=0.995, top=0.82, bottom=0.17, wspace=wspace, hspace=hspace)
+            fig.subplots_adjust(
+                left=0.055,
+                right=0.995,
+                top=0.82,
+                bottom=0.17,
+                wspace=wspace,
+                hspace=hspace,
+            )
         elif layout == "column":
-            fig.subplots_adjust(left=0.14, right=0.985, top=0.92, bottom=0.055, wspace=wspace, hspace=hspace)
+            fig.subplots_adjust(
+                left=0.14,
+                right=0.985,
+                top=0.92,
+                bottom=0.055,
+                wspace=wspace,
+                hspace=hspace,
+            )
         else:
-            fig.subplots_adjust(left=0.075, right=0.992, top=0.88, bottom=0.12, wspace=wspace, hspace=hspace)
+            fig.subplots_adjust(
+                left=0.075,
+                right=0.992,
+                top=0.88,
+                bottom=0.12,
+                wspace=wspace,
+                hspace=hspace,
+            )
 
         png_path = output_dir / f"{basename}.png"
         pdf_path = output_dir / f"{basename}.pdf"
         csv_path = output_dir / f"{basename}_plotted_points.csv"
         summary_path = output_dir / f"{basename}_summary.txt"
-        fig.savefig(png_path, dpi=300, facecolor="white")
+        fig.savefig(png_path, dpi=dpi, facecolor="white")
         fig.savefig(pdf_path, facecolor="white", bbox_inches="tight", pad_inches=0.006)
         plt.close(fig)
 
-    write_plotted_points(csv_path, pairs, memory_pairs)
-    write_summary(summary_path, pairs, memory_pairs)
-    write_summary_csv(output_dir / f"{basename}_summary.csv", pairs)
+    write_plotted_points(csv_path, pairs, memory_pairs, no_replay_labels)
+    write_summary(summary_path, pairs, memory_pairs, no_replay_labels)
+    write_summary_csv(output_dir / f"{basename}_summary.csv", pairs, no_replay_labels)
     return png_path, pdf_path, csv_path, summary_path
 
 
@@ -634,7 +916,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--output-dir", required=True, help="Output directory.")
-    parser.add_argument("--basename", required=True, help="Output file basename.")
+    parser.add_argument(
+        "--basename", default="cs2_proxy_replay_fronts", help="Output file basename."
+    )
+    parser.add_argument(
+        "--dpi", type=int, default=400, help="PNG resolution (default: 400)."
+    )
     parser.add_argument(
         "--layout",
         choices=("grid", "row", "column"),
@@ -659,11 +946,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_WSPACE_SCALE,
         help="Multiplier for horizontal subplot spacing. Values below 1.0 move panels closer.",
     )
+    parser.add_argument(
+        "--no-replay-target",
+        action="append",
+        default=[],
+        help="Panel LABEL whose proxy replay series are omitted. Repeatable.",
+    )
+    parser.add_argument(
+        "--clock-target",
+        action="append",
+        default=[],
+        help="Panel LABEL whose measured points are encoded by CPU clock. Repeatable.",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the v2 renderer.
+    """Run the submitted-paper proxy-front renderer.
 
     Parameters
     ----------
@@ -676,10 +975,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         Exit code.
     """
     args = build_arg_parser().parse_args(argv)
+    if args.dpi <= 0:
+        raise ValueError("--dpi must be positive")
     parsed_targets = [parse_target(value) for value in args.target]
-    pairs = [load_pair(flops_pair, feasible_only=False) for flops_pair, _memory_pair in parsed_targets]
-    memory_pairs = [load_pair(memory_pair, feasible_only=False) for _flops_pair, memory_pair in parsed_targets]
-    paths = plot_case1_fronts_v2(
+    pairs = [
+        load_pair(flops_pair, feasible_only=False)
+        for flops_pair, _memory_pair in parsed_targets
+    ]
+    memory_pairs = [
+        load_pair(memory_pair, feasible_only=False)
+        for _flops_pair, memory_pair in parsed_targets
+    ]
+    paths = plot_proxy_replay_fronts(
         pairs,
         Path(args.output_dir),
         args.basename,
@@ -688,6 +995,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         font_scale=args.font_scale,
         legend_font_scale=args.legend_font_scale,
         wspace_scale=args.wspace_scale,
+        no_replay_labels=frozenset(args.no_replay_target),
+        clock_labels=frozenset(args.clock_target),
+        dpi=args.dpi,
     )
     for path in paths:
         print(path)
