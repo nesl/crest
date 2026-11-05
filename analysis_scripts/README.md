@@ -16,6 +16,15 @@ workload and uses the CREST HIL harness.
 
 ## Folders
 
+- `timing_attribution/`: saved client/server timing reconciliation and appendix
+  checks; see its [README](timing_attribution/README.md).
+
+- `training_budget/`: reusable checkpoint-policy and training-time analysis;
+  see its [README](training_budget/README.md) for inputs and paper checks.
+
+- `cs1_offline/`: offline calibration, prediction, selection and paired replay
+  analysis, with a separate [submitted-paper recipe](cs1_offline/README.md).
+
 - `compare_pareto_front_calcs/`
   - **Hardware requirement: no hardware required.** Generic CSV-derived
     Pareto-front comparison helper with explicit quality/cost columns,
@@ -33,7 +42,8 @@ workload and uses the CREST HIL harness.
 - `paper_plots/`
   - **Hardware requirement: no hardware required.** Publication figure
     generators for all eight submitted-paper data plots, with explicit external
-    inputs, plotted-point/summary sidecars, and an input hash manifest. The
+    inputs and plotted-point/summary sidecars. Private data manifests are not
+    distributed. The
     [figure catalog](paper_plots/README.md) gives the canonical scripts and
     commands; superseded draft generators remain in Git history.
 

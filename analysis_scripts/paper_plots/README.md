@@ -23,10 +23,9 @@ Run from the repository root with the repository Conda environment, or a
 plot-only environment containing `matplotlib`, `numpy`, `pandas`, `scipy`, and
 `Pillow`. No CREST installation or hardware toolchain is needed.
 
-Data and generated images are external artifacts, not bundled here.
-[input_manifest.tsv](input_manifest.tsv) identifies the frozen inputs used for
-verification by SHA-256 and logical path. It is an identity manifest, not a
-download service; access to the corresponding study archive is still required.
+Research data, private input manifests, and generated images are not distributed.
+Supply your own inputs using the schemas below. Keep any generated provenance
+reports with your private results, outside the source checkout.
 Replace the example `/path/to/...` values with your archive locations and keep
 outputs outside the source checkout. All commands support `--help`.
 

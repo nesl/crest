@@ -27,7 +27,7 @@ def load_panel(directory: Path) -> dict[str, Any]:
     directory : pathlib.Path
         External directory containing ``breakdown.json``, ``proxy_times.csv``,
         and ``arena_search.json`` for four conditions with ten candidates each
-        and 550 training epochs per candidate.
+        and 550 training epochs per condition (55 per candidate).
 
     Returns
     -------
