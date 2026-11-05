@@ -86,7 +86,7 @@ def render(input_csv: Path, output_dir: Path) -> None:
     data["periodic_rank"] = data.groupby(["period_ms", "study"]).scheduled_mj.rank(
         method="average"
     )
-    fig, axes = plt.subplots(3, 1, figsize=(3.33, 3.7))
+    fig, axes = plt.subplots(3, 1, figsize=(1243 / 400, 1371 / 400))
     summary = {"population": POPULATION, "groups": []}
     for ax, period in zip(axes, (100, 200, 500)):
         panel = data.loc[data.period_ms == period]
@@ -95,7 +95,7 @@ def render(input_csv: Path, output_dir: Path) -> None:
         maximum = 1
         for study, color, marker, label in zip(
             ("continuous", "cadenced"),
-            ("#1f77b4", "#ff7f0e"),
+            ("#009e73", "#9467bd"),
             ("o", "^"),
             ("Continuous search", "Periodic search"),
         ):
@@ -106,7 +106,7 @@ def render(input_csv: Path, output_dir: Path) -> None:
             ax.scatter(
                 group.continuous_rank,
                 group.periodic_rank,
-                s=7,
+                s=6,
                 alpha=0.65,
                 color=color,
                 marker=marker,
@@ -126,24 +126,26 @@ def render(input_csv: Path, output_dir: Path) -> None:
                     ),
                 }
             )
-        ax.set_title(f"{period} ms", fontsize=9, pad=3)
+        ax.set_title(f"{period} ms", pad=3, loc="center")
         ax.grid(color="#c7cdd3", alpha=0.65, linewidth=0.55)
         ax.set_axisbelow(True)
-        ax.tick_params(labelsize=7, length=3, pad=2)
+        ax.tick_params(length=3, pad=2)
         ax.plot([1, maximum], [1, maximum], color=".4", linestyle="--", linewidth=0.7)
         ax.set_xlim(-3, maximum + 4)
         ax.set_ylim(-3, maximum + 4)
         ticks = sorted(set([1] + [x for x in (50, 100) if x < maximum] + [maximum]))
         ax.set_xticks(ticks)
         ax.set_yticks(ticks)
-    axes[1].set_ylabel("Periodic-energy rank")
-    axes[-1].set_xlabel("Continuous-energy rank")
-    fig.subplots_adjust(left=0.17, right=0.98, bottom=0.12, top=0.89, hspace=0.6)
+    axes[1].set_ylabel("Periodic-energy rank", labelpad=3)
+    axes[-1].set_xlabel("Continuous-energy rank", labelpad=3)
+    fig.subplots_adjust(left=0.155, right=0.98, bottom=0.10, top=0.90, hspace=0.55)
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(
         handles,
         labels,
         loc="upper center",
+        bbox_to_anchor=(0.56, 1.0),
+        markerscale=1.25,
         ncol=2,
         frameon=False,
         fontsize=7,
@@ -184,7 +186,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     style = {
         "font.family": "DejaVu Sans",
-        "font.size": 8,
+        "font.size": 7,
+        "axes.titlesize": 9,
+        "axes.labelsize": 8.5,
+        "xtick.labelsize": 6.5,
+        "ytick.labelsize": 6.5,
         "axes.spines.top": False,
         "axes.spines.right": False,
         "axes.edgecolor": "#818b94",

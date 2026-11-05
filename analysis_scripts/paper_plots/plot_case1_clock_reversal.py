@@ -87,7 +87,20 @@ def render(input_csv: Path, output_dir: Path) -> None:
         raise ValueError(
             "Reference needs at least two complete paired rounds at 100 and 500 ms"
         )
-    fig, ax = plt.subplots(figsize=(3.33, 2.25))
+    fig, panels = plt.subplots(2, 3, figsize=(3.33, 4.1))
+    fig.subplots_adjust(left=0.16, right=0.98, wspace=0.12)
+    for row, bottom, height in zip(panels, [0.61, 0.151], [0.354, 0.305]):
+        for panel in row:
+            pos = panel.get_position()
+            panel.set_position([pos.x0, bottom, pos.width, height])
+    left = panels[0, 0].get_position().x0
+    right = panels[0, 2].get_position().x1
+    for panel in panels[0]:
+        panel.remove()
+    for panel in panels[1]:
+        panel.set_visible(False)
+    ax = fig.add_axes([left, 0.61, right - left, 0.354])
+    ax.tick_params(length=3, pad=2)
     ax.grid(color="#c7cdd3", alpha=0.65, linewidth=0.55)
     ax.set_axisbelow(True)
     ax.axhline(0, color=".4", linestyle="--", linewidth=0.7)
@@ -101,7 +114,7 @@ def render(input_csv: Path, output_dir: Path) -> None:
     }
     n = len(ref)
     tcrit = float(t.ppf(0.975, n - 1))
-    grid = np.linspace(100, 500, 401)
+    grid = np.linspace(100, 500, 400)
     for candidate, color in zip(
         ("continuous_203", "continuous_137"), ("#1f77b4", "#ff7f0e")
     ):
@@ -136,8 +149,10 @@ def render(input_csv: Path, output_dir: Path) -> None:
                 yerr=ci,
                 fmt="o",
                 color=color,
-                markersize=4,
-                capsize=2,
+                markersize=4.2,
+                capsize=2.2,
+                elinewidth=0.9,
+                zorder=3,
                 markeredgecolor="white",
                 markeredgewidth=0.5,
             )
@@ -209,16 +224,31 @@ def render(input_csv: Path, output_dir: Path) -> None:
                 "ci95_high_mj": mean + half,
             }
         )
-    ax.set_xlabel("Release period (ms)", labelpad=2)
+    ax.set_xlabel("Release period (ms)", labelpad=1)
     ax.set_ylabel("Difference (mJ)", labelpad=2)
     ax.set_xlim(0, 600)
+    ax.set_ylim(-4, 3)
+    ax.set_yticks([-4, -2, 0, 2])
     ax.legend(
-        loc="lower left", frameon=True, facecolor="white", edgecolor="none", fontsize=7
+        loc="lower left",
+        frameon=True,
+        framealpha=1,
+        facecolor="white",
+        edgecolor="none",
+        fontsize=7.5,
+        handlelength=1.6,
+        borderaxespad=0.2,
+        borderpad=0.25,
     )
-    fig.tight_layout(pad=0.5)
     output_dir.mkdir(parents=True, exist_ok=True)
     for extension in ("png", "pdf"):
-        fig.savefig(output_dir / f"{BASENAME}.{extension}", dpi=400, facecolor="white")
+        fig.savefig(
+            output_dir / f"{BASENAME}.{extension}",
+            dpi=400,
+            facecolor="white",
+            bbox_inches="tight",
+            pad_inches=0.02,
+        )
     plt.close(fig)
     pd.DataFrame(records).to_csv(
         output_dir / f"{BASENAME}_plotted_points.csv", index=False
@@ -252,7 +282,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     style = {
         "font.family": "DejaVu Sans",
-        "font.size": 8,
+        "font.size": 8.75,
+        "axes.titlesize": 9.4,
+        "axes.labelsize": 8.75,
+        "xtick.labelsize": 8.1,
+        "ytick.labelsize": 8.1,
         "axes.spines.top": False,
         "axes.spines.right": False,
         "axes.edgecolor": "#818b94",

@@ -30,10 +30,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from plot_combined_replay_fronts import LoadedPair  # noqa: E402
-from plot_combined_replay_fronts import PairInput  # noqa: E402
-from plot_combined_replay_fronts import first_float  # noqa: E402
-from plot_combined_replay_fronts import load_pair  # noqa: E402
+from replay_front_support import LoadedPair  # noqa: E402
+from replay_front_support import PairInput  # noqa: E402
+from replay_front_support import first_float  # noqa: E402
+from replay_front_support import load_pair  # noqa: E402
 
 
 CREST_COLOR = "#1f77b4"
@@ -710,7 +710,7 @@ def plot_proxy_replay_fronts(
             ax.xaxis.set_minor_locator(
                 LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1, numticks=12)
             )
-            annotation = f"CREST front: {len(pair.crest_front)}"
+            annotation = f"Measured-energy\nsearch front: {len(pair.crest_front)}"
             if show_replay:
                 annotation += f"\nReplay front: {len(pair.replay_front)}"
             ax.text(
@@ -780,7 +780,7 @@ def plot_proxy_replay_fronts(
                 markeredgecolor=CREST_COLOR,
                 markersize=4,
                 linestyle="none",
-                label="Measured NAS",
+                label="Measured-energy search",
             ),
             Line2D(
                 [0],
@@ -832,7 +832,7 @@ def plot_proxy_replay_fronts(
                 color="black",
                 linewidth=1.0,
                 linestyle="-",
-                label="Native front",
+                label="Search front",
             ),
             Line2D(
                 [0],
@@ -849,6 +849,7 @@ def plot_proxy_replay_fronts(
             handles=handles,
             loc="upper center",
             ncol=legend_columns,
+            fontsize=5 * legend_font_scale,
             bbox_to_anchor=(0.5, legend_y),
             frameon=False,
             columnspacing=0.75,

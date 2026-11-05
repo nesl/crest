@@ -83,7 +83,15 @@ def render(input_csv: Path, output_dir: Path) -> None:
         raise ValueError("Expected the measured periods 100, 200 and 500 ms")
     data = data.loc[data.pool != "200ms_cadenced"].copy()
     data["error_mj"] = data.scheduled_mj - data.E_pred
-    fig, axes = plt.subplots(1, 3, figsize=(3.7, 2.05), sharey=True)
+    fig, panels = plt.subplots(2, 3, figsize=(3.33, 4.1))
+    fig.subplots_adjust(left=0.16, right=0.98, wspace=0.12)
+    for row, bottom, height in zip(panels, [0.61, 0.151], [0.354, 0.305]):
+        for panel in row:
+            pos = panel.get_position()
+            panel.set_position([pos.x0, bottom, pos.width, height])
+    for panel in panels[0]:
+        panel.set_visible(False)
+    axes = panels[1]
     summary = {"population": POPULATION, "groups": []}
     for ax, period in zip(axes, (100, 200, 500)):
         panel = data.loc[data.period_ms == period]
@@ -91,7 +99,7 @@ def render(input_csv: Path, output_dir: Path) -> None:
             raise ValueError(f"No observations at {period} ms")
         for study, color, marker, label in zip(
             ("continuous", "cadenced"),
-            ("#1f77b4", "#ff7f0e"),
+            ("#009e73", "#9467bd"),
             ("o", "^"),
             ("Continuous search", "Periodic search"),
         ):
@@ -103,8 +111,8 @@ def render(input_csv: Path, output_dir: Path) -> None:
             ax.scatter(
                 group.scheduled_mj,
                 group.error_mj,
-                s=7,
-                alpha=0.65,
+                s=5,
+                alpha=0.62,
                 color=color,
                 marker=marker,
                 edgecolors="none",
@@ -119,32 +127,45 @@ def render(input_csv: Path, output_dir: Path) -> None:
                     "rmse_mj": float(np.sqrt(np.mean(group.error_mj**2))),
                 }
             )
-        ax.set_title(f"{period} ms", fontsize=9, pad=3)
+        ax.set_title(f"{period} ms", pad=3, loc="center")
         ax.grid(color="#c7cdd3", alpha=0.65, linewidth=0.55)
         ax.set_axisbelow(True)
-        ax.tick_params(labelsize=7, length=3, pad=2)
-        ax.axhline(0, color=".4", linestyle="--", linewidth=0.7)
+        ax.tick_params(length=3, pad=2)
+        ax.axhline(0, color=".4", linestyle="--", linewidth=0.6)
         ax.xaxis.set_major_locator(plt.MaxNLocator(2))
-    bound = max(16.0, float(data.error_mj.abs().max()) * 1.05)
-    axes[0].set_ylim(-bound, bound)
-    axes[0].set_ylabel("Error (mJ)")
-    fig.supxlabel("Measured energy per release (mJ)", fontsize=8, y=0.16)
-    fig.subplots_adjust(left=0.15, right=0.99, bottom=0.36, top=0.88, wspace=0.16)
+    for ax, period in zip(axes, (100, 200, 500)):
+        ax.set_ylim(-16, 16)
+        ax.set_yticks([-15, 0, 15])
+        if period != 100:
+            ax.tick_params(labelleft=False)
+    axes[0].set_ylabel("Error (mJ)", labelpad=2)
+    fig.text(
+        0.57, 0.072, "Measured energy per release (mJ)", ha="center", fontsize=8.75
+    )
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(
+    legend = fig.legend(
         handles,
         labels,
-        loc="lower center",
-        bbox_to_anchor=(0.56, 0.015),
+        loc="upper center",
+        bbox_to_anchor=(0.57, 0.062),
         ncol=2,
         frameon=False,
-        fontsize=7,
+        fontsize=7.5,
+        markerscale=1.7,
         handletextpad=0.2,
         columnspacing=0.8,
     )
+    for handle in legend.legend_handles:
+        handle.set_alpha(1)
     output_dir.mkdir(parents=True, exist_ok=True)
     for extension in ("png", "pdf"):
-        fig.savefig(output_dir / f"{BASENAME}.{extension}", dpi=400, facecolor="white")
+        fig.savefig(
+            output_dir / f"{BASENAME}.{extension}",
+            dpi=400,
+            facecolor="white",
+            bbox_inches="tight",
+            pad_inches=0.02,
+        )
     plt.close(fig)
     data.to_csv(output_dir / f"{BASENAME}_plotted_points.csv", index=False)
     (output_dir / f"{BASENAME}_summary.json").write_text(
@@ -176,7 +197,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     style = {
         "font.family": "DejaVu Sans",
-        "font.size": 8,
+        "font.size": 8.75,
+        "axes.titlesize": 9.4,
+        "axes.labelsize": 8.75,
+        "xtick.labelsize": 8.1,
+        "ytick.labelsize": 8.1,
         "axes.spines.top": False,
         "axes.spines.right": False,
         "axes.edgecolor": "#818b94",

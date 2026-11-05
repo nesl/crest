@@ -4,6 +4,9 @@
 """Reconstruct the training-budget appendix analyses from external checkpoints.
 
 Standalone panel styling was recovered from the local final-paper renderer.
+The submitted PNGs were exported with Matplotlib 3.11.2; that version reproduces
+both frozen-data panels pixel-for-pixel. Other versions may change text metrics
+and constrained layout, even when the plotting instructions are identical.
 The validated JSON analysis workflow was reconstructed separately. The external
 frozen CSV records the 50-candidate, seed-17 paper panel; CSV provenance reports
 best-validation-loss checkpoints and fixed search-time energy, but its schema
@@ -401,6 +404,8 @@ def main() -> None:
     summary["input_format"] = (
         "frozen CSV" if args.input_csv else "validated checkpoint JSON"
     )
+    summary["matplotlib_version"] = matplotlib.__version__
+    summary["submitted_matplotlib_version"] = "3.11.2"
     summary["renderer"] = (
         "Standalone paper styling recovered from local renderer; JSON workflow reconstructed"
     )
