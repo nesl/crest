@@ -1004,6 +1004,71 @@ def configured_quantization_mode(config_or_training: Any) -> str:
     return normalized
 
 
+def _normalize_optimizer_config(config: Dict) -> Dict:
+    """Resolve a registered optimizer and validate explicit recovery targets.
+
+    Parameters
+    ----------
+    config : addict.Dict
+        Configuration containing an optional optimizer mapping. A null optimizer
+        selects the default Optuna component.
+
+    Returns
+    -------
+    addict.Dict
+        Component configuration with recovery disabled by default. Recovery
+        targets are distinct nonnegative Optuna trial numbers.
+
+    Raises
+    ------
+    ValueError
+        If the optimizer mapping or its component settings are invalid.
+    """
+    from .component_selection import resolve_optimizer_selection
+
+    raw_optimizer = config.get("optimizer", {})
+    if raw_optimizer is None:
+        raw_optimizer = {}
+    if not isinstance(raw_optimizer, (dict, Dict)):
+        raise ValueError("optimizer must be a mapping when provided.")
+    optimizer = Dict(raw_optimizer)
+    try:
+        optimizer_type, component_cls = resolve_optimizer_selection(optimizer.get("type", "optuna"))
+    except KeyError as exc:
+        raise ValueError(str(exc)) from exc
+    optimizer.type = optimizer_type
+    adopt_legacy = optimizer.get("adopt_legacy_study", False)
+    if not isinstance(adopt_legacy, bool):
+        raise ValueError("optimizer.adopt_legacy_study must be a boolean.")
+    from .optimizers.optuna import OptunaOptimizer
+
+    if adopt_legacy and (optimizer_type != "optuna" or component_cls is not OptunaOptimizer):
+        raise ValueError("optimizer.adopt_legacy_study supports only native optuna studies.")
+    optimizer.adopt_legacy_study = adopt_legacy
+    recover = optimizer.get("recover_orphaned_trials", [])
+    if recover is False:
+        recover = []
+    if (not isinstance(recover, list)
+            or any(isinstance(number, bool) or not isinstance(number, int) or number < 0
+                   for number in recover)
+            or len(set(recover)) != len(recover)):
+        raise ValueError(
+            "optimizer.recover_orphaned_trials must be a list of distinct nonnegative "
+            "trial numbers (for example [12]) after confirming those workers have stopped; "
+            "true is unsafe and no longer supported."
+        )
+    optimizer.recover_orphaned_trials = list(recover)
+    if optimizer_type == "llm_generator":
+        from .optimizers.llm.config import normalize_llm_config
+
+        optimizer = normalize_llm_config(optimizer)
+    elif optimizer_type == "optuna":
+        # Preserve the optional compatibility field without invoking LLM rules.
+        optimizer.llm = Dict(optimizer.get("llm", {}))
+    component_cls().validate_config(optimizer)
+    return optimizer
+
+
 def _resolve_metric_value(
     metric_name: str,
     context: dict[str, Any],
@@ -2379,6 +2444,14 @@ def load_config(
         training,
         normalized_device_name,
     )
+    config.optimizer = _normalize_optimizer_config(config)
+    if config.optimizer.type == "llm_generator":
+        warmup_file = config.optimizer.llm.get("warmup_params_file")
+        if warmup_file is not None:
+            warmup_path = Path(warmup_file).expanduser()
+            if not warmup_path.is_absolute():
+                warmup_path = cfg_path.resolve().parent / warmup_path
+            config.optimizer.llm.warmup_params_file = str(warmup_path.resolve())
     # Input mode selects which Arduino sketch variant is used during HIL runs.
     training.input_mode = str(training.get("input_mode", "uniform")).lower()
     config.training.drop_rate_choices = DROP_RATE_CHOICES

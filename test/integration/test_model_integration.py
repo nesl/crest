@@ -13,7 +13,7 @@ import tensorflow as tf
 from test.test_support import ROOT_DIR, _cli_exists
 
 from crest.hardware import convert_to_cpp_model, convert_to_tflite_model
-from crest.hil_runtime import CollectMetricsRequest, collect_metrics
+from crest.hil.runtime import CollectMetricsRequest, collect_metrics
 
 
 @unittest.skipUnless(_cli_exists(), "Arduino CLI not installed")

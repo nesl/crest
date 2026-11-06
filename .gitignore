@@ -147,3 +147,6 @@ sketches/stm32/crest_stm32_lrun/**
 !sketches/stm32/crest_stm32_lrun/STM32CubeIDE/AppS/Debug/Src/subdir.mk
 !sketches/stm32/crest_stm32_lrun/STM32CubeIDE/AppS/Debug/Startup/
 !sketches/stm32/crest_stm32_lrun/STM32CubeIDE/AppS/Debug/Startup/subdir.mk
+
+# Submitted CS1 recipe configuration (no measurements).
+!analysis_scripts/cs1_offline/paper_config/*.json

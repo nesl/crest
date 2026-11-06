@@ -44,7 +44,7 @@ from ..errors import (
     HIL_ERROR_RAM_OVERFLOW,
     HIL_ERROR_UPLOAD,
 )
-from .. import hil_protocol
+from ..hil import protocol as hil_protocol
 from . import arduino_base
 from .stm32_measurement import validate_measurement, positive, firmware_period_ms
 from . import stm32_cube_clt

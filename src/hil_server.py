@@ -39,8 +39,8 @@ from crest.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
     describe_error_code,
 )
-from crest.hil_runtime import build_collect_metrics_request, collect_metrics
-from crest.errors import HIL_ERROR_OK, HIL_MASTER_FATAL
+from crest.hil.runtime import build_collect_metrics_request, collect_metrics
+from crest.errors import HIL_ERROR_OK, HIL_MASTER_FATAL, HIL_MASTER_SUCCESS
 from crest.microcontrollers import (
     get_device as get_microcontroller_device,
     resolve_device_options,
@@ -857,7 +857,7 @@ class HILServer:
             return base_metrics
         if not request_metrics_args.hil_enabled:
             return base_metrics
-        if int(base_metrics.get("error_code", -1)) != HIL_ERROR_OK:
+        if int(base_metrics.get("error_code", -1)) != HIL_MASTER_SUCCESS:
             return base_metrics
 
         arena_bytes = int(base_metrics.get("arena_bytes", -1))
@@ -878,6 +878,12 @@ class HILServer:
 
         arena_kb = max(1, int(math.ceil(float(arena_bytes) / 1024.0)))
         harness = request_metrics_args.harness
+        # The timer arrives after the full release window, not one invocation.
+        cadence_timeout_s = max(
+            float(request_metrics_args.serial_timeout_s or 12.0),
+            float(request_metrics_args.latency_budget_ms)
+            * int(request_metrics_args.measured_inference_runs) / 1000.0 + 5.0,
+        )
         cadenced_result = runtime_device.evaluate(
             dirpath=prepared_dir,
             arena_kb=arena_kb,
@@ -885,7 +891,7 @@ class HILServer:
             num_channels=int(input_dim),
             serial_port=request_metrics_args.serial_port,
             run_hil=True,
-            serial_timeout_s=float(request_metrics_args.serial_timeout_s or 12.0),
+            serial_timeout_s=cadence_timeout_s,
             measured_inference_runs=int(request_metrics_args.measured_inference_runs),
             dut_ready_timeout_s=request_metrics_args.dut_ready_timeout_s,
             harness_serial_port=None if harness is None else harness.harness_serial_port,
