@@ -11,6 +11,30 @@ generators that sit outside the core CREST runtime.
 Run these scripts from the repository root with the `crest` Conda environment
 active unless a package README says otherwise. Most scripts consume existing
 NAS, replay, or measurement artifacts and do not run NAS or touch hardware.
+The recipes below run training or collect hardware measurements. Hardware
+measurement commands require explicit device identity and board readiness;
+training requires `--execute`.
+Offline analysis and publication scripts consume saved artifacts separately.
+
+## Experiment recipes
+
+- [Paired repeatability](repeatability/README.md): frozen randomized paired
+  schedules, compile-once artifacts, and native measurement acceptance.
+- [Waiting power](waiting_power/README.md): continuous and cadenced run-count
+  probes with a separate offline power-analysis command.
+- [Policy replay](policy_replay/README.md): native prepared-project policy comparisons
+  with explicit deployment configuration.
+- [Micro-workload energy probe](micro_workload_energy_probe/README.md): synthetic
+  phase-energy measurements through the CREST HIL harness.
+
+- [Training budget experiment](training_experiment/README.md): configurable
+  OxIOD/TCN continuous training-budget recipe with historical energy inputs;
+  training requires `--execute` and does not use HIL.
+
+The repeatability, waiting-power, and policy runners share a physical-device
+lock. Use the same device ID and lock root across runners. See each
+runner's README for build dependencies and the original experiment safeguards. These tools do not provide archived measurements or trained models.
+
 ## Offline analysis and publication tools
 
 - `trial_outcomes/`: read-only final-trial outcome classification, separate
