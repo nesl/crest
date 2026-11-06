@@ -39,9 +39,9 @@ def normalize_llm_config(optimizer_config) -> Dict:
         raise ValueError("optimizer.llm must be a mapping for optimizer.type=llm_generator.")
     llm = Dict(raw_llm)
     provider = str(llm.get("provider", "")).strip().lower()
-    if provider != "fake":
+    if provider not in {"fake", "openrouter", "openai_compatible", "openai_responses"}:
         raise ValueError(
-            "Only the fake provider is available in the offline proposer."
+            "optimizer.llm.provider must be one of: fake, openrouter, openai_compatible, openai_responses."
         )
     llm.provider = provider
 

@@ -8,10 +8,9 @@ Candidates must match the model family's declared `trial_search_space` exactly.
 A legal proposal still needs training and measurement to establish its quality
 and feasibility.
 
-The supported provider is `fake`, which consumes configured response fixtures.
-History is bounded and `memory.enabled` must be false. Live provider selection,
-persistent memory, and full-history execution are not supported by the current
-configuration and factory. See the [shared optimizer guide](../README.md),
+Providers support configured `fake` responses, OpenRouter, OpenAI-compatible
+Chat Completions, and Responses. History is bounded and `memory.enabled` must
+be false. See the [shared optimizer guide](../README.md),
 [configuration guide](../../../config/README.md), and
 [component interfaces](../../interfaces/README.md) for the surrounding contracts.
 
@@ -128,6 +127,62 @@ resume checks verify their order, parameters, and provenance. Changes to fixed
 warm-ups, fixtures, or identity-bearing policy settings can prevent resuming an
 existing study. Use a new study for a changed experiment contract.
 
+## Run with a live provider
+
+Set `optimizer.llm.provider` to `openrouter`, `openai_compatible` (Chat
+Completions), or `openai_responses` (Responses). These transports implement the
+same `LLMProvider` protocol as `fake`; candidate validation and evaluation use
+the same pipeline.
+
+For example, replace the optimizer block in a complete experiment YAML with:
+
+```yaml
+optimizer:
+  type: llm_generator
+  llm:
+    provider: openrouter
+    model: YOUR_PROVIDER_MODEL_ID
+    api_key_env: OPENROUTER_API_KEY
+    batch_size: 1
+    memory:
+      enabled: false
+```
+
+Replace `YOUR_PROVIDER_MODEL_ID` with a model available to your account. The
+OpenRouter endpoint defaults to `https://openrouter.ai/api/v1`. For
+`openai_compatible` or `openai_responses`, also supply `base_url` and explicitly
+set `api_key_env` to the environment variable containing that service's key.
+`base_url` is the API root: the transport appends `/chat/completions` or
+`/responses`.
+
+From the repository root, activate your CREST environment, export the key in
+that terminal, and launch the experiment:
+
+```bash
+export OPENROUTER_API_KEY='REPLACE_WITH_YOUR_API_KEY'
+python src/nas_model_client.py --config /path/to/experiment.yaml --study-name llm-live
+unset OPENROUTER_API_KEY
+```
+
+The value above is a placeholder. Keep actual keys out of YAML, source files,
+and committed shell scripts: `api_key_env` stores the variable **name**, and the
+transport reads its value at request time. To avoid putting a key in shell
+history, read it with a hidden prompt instead of typing it into the export
+command. In zsh:
+
+```zsh
+read -rs 'OPENROUTER_API_KEY?API key: '; printf '\n'
+export OPENROUTER_API_KEY
+python src/nas_model_client.py --config /path/to/experiment.yaml --study-name llm-live
+unset OPENROUTER_API_KEY
+```
+
+Live requests may incur charges. Trial budgets bound candidate evaluations;
+provider spending is separately controlled by `max_usd`, token limits, and
+configured token prices. See the [configuration guide](../../../config/README.md)
+for those settings. The normal experiment runner can train models and access
+hardware according to your experiment configuration.
+
 ## Follow one proposal round
 
 1. `component.py` checks fixed warm-up progress, then bounds the requested batch
@@ -173,7 +228,7 @@ new optimizer loop.
 | Module | Role and intended extension point |
 | --- | --- |
 | `component.py` | Runner adapter implementing `OptimizerABC`; coordinates configuration, warm-ups, identity, and `ExplicitRound` output. Start here for lifecycle changes. |
-| `providers/provider.py` | Provider interface: `LLMRequest`, `LLMResponse`, and `LLMProvider.complete_json`. `FakeProvider` is the current adapter; `build_provider` selects it. |
+| `providers/provider.py` | Provider interface: `LLMRequest`, `LLMResponse`, and `LLMProvider.complete_json`. `FakeProvider`, `OpenAICompatibleProvider`, and `OpenAIResponsesProvider` implement it; `build_provider` selects the configured transport. |
 | `schemas.py` | Response and local-validation contracts: `CandidateBatch`, rejection/result records, canonicalization, and duplicate checks. Change this when candidate acceptance changes. |
 | `prompting/prompt_builder.py` | `PromptContext` input record and deterministic request builder. Change prompt content here without adding provider calls. |
 | `config.py` | Configuration defaults and validation shared by loading and initialization. Keep new settings and incompatible combinations explicit here. |
@@ -182,6 +237,7 @@ new optimizer loop.
 | `prompting/objective_renderer.py` | Pure helper explaining supported scoring expressions using known context; does not compute scores or measured limits. |
 | `generation.py` | Proposal orchestration helper for request logging, response parsing, repair, and random fallback. |
 | `ledger.py` | Single-writer filesystem persistence helper; distinguishes proposals returned from proposals accepted by the runner. |
+| `spending.py` | Persistent request-cost reservation and settlement helper; enforces configured provider spending limits across restarts. |
 | `__init__.py` | Convenience exports for generation callers; the runner adapter remains in `component.py`. |
 
 The main external contracts are the shared `OptimizerABC` lifecycle and proposal

@@ -6,14 +6,16 @@ responsibilities belong to the [LLM optimizer](../README.md) and shared runner.
 
 | File | Responsibility |
 | --- | --- |
-| `provider.py` | `LLMProvider` protocol, `LLMRequest` and `LLMResponse` records, provider errors, `FakeProvider`, and factory selection. |
+| `provider.py` | `LLMProvider` protocol, `LLMRequest` and `LLMResponse` records, provider errors, fake/Chat Completions/Responses adapters, and factory selection. |
 | `__init__.py` | Package marker with no initialization side effects. |
 
 ## Use a provider
 
 Select `optimizer.type: llm_generator` and configure `optimizer.llm.provider` in
-your experiment YAML. The supported adapter is `fake`: it consumes configured
-responses in order without network access. The parent guide includes a runnable
+your experiment YAML. Select `fake` for configured responses without network access, or
+`openrouter`, `openai_compatible`, or `openai_responses` for live completions.
+The [live-provider setup guide](../README.md#run-with-a-live-provider) shows
+configuration, API-key environment variables, and terminal launch commands. The parent guide includes a runnable
 generation example and campaign configuration. Direct callers can import:
 
 ```python
