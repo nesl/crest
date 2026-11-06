@@ -1055,6 +1055,13 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
             "true is unsafe and no longer supported."
         )
     optimizer.recover_orphaned_trials = list(recover)
+    if optimizer_type == "llm_generator":
+        from .optimizers.llm.config import normalize_llm_config
+
+        optimizer = normalize_llm_config(optimizer)
+    elif optimizer_type == "optuna":
+        # Preserve the optional compatibility field without invoking LLM rules.
+        optimizer.llm = Dict(optimizer.get("llm", {}))
     component_cls().validate_config(optimizer)
     return optimizer
 
@@ -2435,6 +2442,13 @@ def load_config(
         normalized_device_name,
     )
     config.optimizer = _normalize_optimizer_config(config)
+    if config.optimizer.type == "llm_generator":
+        warmup_file = config.optimizer.llm.get("warmup_params_file")
+        if warmup_file is not None:
+            warmup_path = Path(warmup_file).expanduser()
+            if not warmup_path.is_absolute():
+                warmup_path = cfg_path.resolve().parent / warmup_path
+            config.optimizer.llm.warmup_params_file = str(warmup_path.resolve())
     # Input mode selects which Arduino sketch variant is used during HIL runs.
     training.input_mode = str(training.get("input_mode", "uniform")).lower()
     config.training.drop_rate_choices = DROP_RATE_CHOICES

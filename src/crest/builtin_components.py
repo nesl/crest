@@ -74,3 +74,7 @@ def ensure_optimizer_components_registered() -> None:
         from .optimizers.optuna import OptunaOptimizer
 
         optimizer_registry.register("optuna", OptunaOptimizer)
+    if "llm_generator" not in optimizer_registry:
+        from .optimizers.llm.component import LLMGeneratorOptimizer
+
+        optimizer_registry.register("llm_generator", LLMGeneratorOptimizer)

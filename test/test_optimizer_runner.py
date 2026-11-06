@@ -75,7 +75,31 @@ def test_third_proposer_values_provenance_context_and_partial_round(client, tmp_
         assert _family_trial_params(t.params) == t.params
 
 
-
+@pytest.mark.parametrize("name", ["MixedCasePlugin", "OPTUNA", "LLM_GENERATOR"])
+def test_exact_plugin_registration_before_load_config_runs_with_registered_identity(client, tmp_path, name):
+    optimizer_registry.register(name, ThirdProposer)
+    try:
+        config_path = Path(__file__).resolve().parents[1] / "src/config/nas_config_flops_rmse.yaml"
+        config = yaml.safe_load(config_path.read_text())
+        config["optimizer"] = {"type": " " + name + " ", "setting": 7, "custom_payload": {"seed": 3}}
+        config["outputs"]["models_dir"] = str(tmp_path / "models")
+        config["outputs"]["candidate_dir"] = str(tmp_path / "candidate")
+        path = tmp_path / "plugin_config.yaml"
+        path.write_text(yaml.safe_dump(config))
+        loaded = load_config(path)
+        assert loaded.optimizer.type == name
+        assert loaded.optimizer.custom_payload.seed == 3
+        assert "llm" not in loaded.optimizer
+        client.config.optimizer = loaded.optimizer
+        ThirdProposer.rounds = [[{"width": 3}, {"width": 7}]]
+        study = execute(client, tmp_path)
+        assert [trial.params for trial in study.trials] == [{"width": 3}, {"width": 7}]
+        assert [trial.value for trial in study.trials] == [3, 7]
+        assert study.user_attrs[OPTIMIZER_SIGNATURE_ATTR]["optimizer"] == name
+        assert study.user_attrs[OPTIMIZER_SIGNATURE_ATTR]["config"] == {"setting": 7}
+        assert all(trial.user_attrs[PROPOSAL_ATTR]["optimizer"] == name for trial in study.trials)
+    finally:
+        optimizer_registry._items.pop(name)
 
 
 def sign(c, study):
@@ -333,7 +357,20 @@ def test_build_failure_keeps_intended_vs_sampled_fields_and_aborts(tmp_path):
     c.task.build_fit_plan.assert_not_called()
 
 
-
+@pytest.mark.parametrize("field,value",[("model","changed-model"),("prompt_version","v2"),("type","optuna")])
+def test_llm_signature_mismatch_with_waiting_never_initializes_provider(client,tmp_path,field,value):
+    client.config.optimizer=Dict(type="llm_generator",llm={"provider":"fake","responses":[{"candidates":[{"width":3}]}]})
+    storage=f"sqlite:///{tmp_path / 'study.db'}"
+    study=optuna.create_study(study_name="acceptance",storage=storage,direction="maximize")
+    sign(client,study)
+    study.enqueue_trial({"width":3})
+    if field=="type": client.config.optimizer.type=value
+    else: client.config.optimizer.llm[field]=value
+    client.objective=MagicMock()
+    with patch("crest.optimizers.llm.component.build_provider",side_effect=AssertionError("provider initialization forbidden")),pytest.raises(RuntimeError,match="optimizer signature"):
+        execute(client,tmp_path)
+    client.objective.assert_not_called()
+    assert optuna.load_study(study_name="acceptance",storage=storage).trials[0].state==TrialState.WAITING
 
 
 def test_audio_family_smoke_uses_real_shared_objective_and_all_fields(client,tmp_path):
@@ -416,7 +453,22 @@ def test_smoke_reuses_feasible_complete_counts_and_consumes_exact_reserved_plus_
             client.config.training.nas_trials, client.config.training.max_total_trials) == original
 
 
-
+def test_plugin_timeout_identity_is_not_aliased_as_builtin_llm(client, tmp_path):
+    storage = f"sqlite:///{tmp_path / 'study.db'}"
+    study = optuna.create_study(study_name="acceptance", storage=storage, direction="maximize")
+    identity = {"provider": "openai_compatible", "model": "test-model", "json_response_mode": False}
+    with patch.object(ThirdProposer, "identity_config", return_value=identity):
+        *_, signature = client._select_optimizer(study, client._build_sampler())
+        signature["config"]["timeout_s"] = 60.0
+        study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, signature)
+        study.enqueue_trial({"width": 3})
+        client.objective = MagicMock()
+        with patch.object(ThirdProposer, "initialize", side_effect=AssertionError("initialized mismatch")):
+            with pytest.raises(RuntimeError, match="optimizer signature"):
+                execute(client, tmp_path)
+    client.objective.assert_not_called()
+    assert study.trials[0].state == TrialState.WAITING
+    assert study.user_attrs[OPTIMIZER_SIGNATURE_ATTR] == signature
 
 
 @pytest.mark.parametrize("smoke", [False, True])
@@ -578,7 +630,42 @@ def test_feasibility_validation_occurs_once_before_initialization(client, tmp_pa
     assert [call.kwargs for call in check.call_args_list] == [{"store": False}, {}]
 
 
+def test_final_summary_counts_persisted_proposal_sources(client, tmp_path, caplog):
+    """The summary reports fallback and LLM counts from stored proposal provenance."""
+    import logging
+    ThirdProposer.rounds = [ExplicitRound((
+        CandidateProposal({"width": 3}, {"proposal_source": "llm"}),
+        CandidateProposal({"width": 4}, {"proposal_source": "random_fallback"}),
+    ))]
+    with caplog.at_level(logging.INFO, logger="nas_model_client"):
+        study = execute(client, tmp_path)
+    assert client._proposal_source_counts(study) == {"llm": 1, "random_fallback": 1}
+    assert "proposal_sources={'llm': 1, 'random_fallback': 1}" in caplog.text
 
 
-
-
+@pytest.mark.parametrize("absolute", [False, True])
+def test_config_warmup_path_is_stable_across_working_directories(tmp_path, monkeypatch, absolute):
+    """Warm-up identity follows the YAML directory regardless of the process CWD."""
+    from crest.optimizers.llm.component import LLMGeneratorOptimizer
+    config = yaml.safe_load((Path(__file__).resolve().parents[1] /
+                             "src/config/nas_config_flops_rmse.yaml").read_text())
+    warmup = tmp_path / "warmup.json"
+    warmup.write_text('[{"width": 3}]')
+    config["optimizer"] = {"type": "llm_generator", "llm": {
+        "provider": "fake", "responses": [{}], "memory": {"enabled": False},
+        "warmup_params_file": str(warmup) if absolute else "warmup.json",
+    }}
+    config["outputs"]["models_dir"] = str(tmp_path / "models")
+    config["outputs"]["candidate_dir"] = str(tmp_path / "candidate")
+    config_file = tmp_path / "campaign.yaml"
+    config_file.write_text(yaml.safe_dump(config))
+    first = load_config(config_file)
+    assert first.optimizer.llm.warmup_params_file == str(warmup.resolve())
+    identity = LLMGeneratorOptimizer().identity_config(first.optimizer)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "warmup.json").write_text('[{"width": 7}]')
+    monkeypatch.chdir(elsewhere)
+    second = load_config(config_file)
+    assert second.optimizer.llm.warmup_params_file == str(warmup.resolve())
+    assert LLMGeneratorOptimizer().identity_config(second.optimizer) == identity

@@ -43,6 +43,7 @@ from crest.hardware import (
 from crest.model import ScoreConfigEvaluationError, TrialOutcome  # noqa: E402
 from crest.model_families.odom_tcn import OdomTCNFamily  # noqa: E402
 from crest.model_metrics import StaticMemoryEstimate  # noqa: E402
+from crest.optimizers.llm.provider import FakeProvider  # noqa: E402
 from crest.optimizers.search_space import SearchParam  # noqa: E402
 from crest.pipeline_types import (
     DataSplit,
@@ -1903,7 +1904,123 @@ class SmokeTestTests(unittest.TestCase):
         self.assertEqual(client.config.training.nas_epochs, 10)
         self.assertEqual(client.config.nas.score.type, "scoring-function")
 
-    pass
+    def test_llm_smoke_uses_real_odom_family_and_objective_without_hardware(self) -> None:
+        """A built-in Odom candidate runs through the real desktop objective path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = _build_test_client(base_dir=Path(tmpdir))
+            client.config.device.hil = False
+            client.config.device.compile_when_hil_disabled = "false"
+            client.config.training.train = False
+            client.config.nas.score = Dict(
+                type="scoring-function",
+                metrics=Dict(),
+                params=Dict(terms=[Dict(type="weighted", metric="flops", weight=-1.0)]),
+            )
+            client.config.optimizer = Dict(
+                type="llm_generator",
+                llm=Dict(
+                    provider="fake",
+                    responses=[
+                        {
+                            "candidates": [
+                                {
+                                    "dilations_index": 0,
+                                    "nb_filters": 2,
+                                    "kernel_size": 2,
+                                    "dropout_rate": 0.0,
+                                    "use_skip_connections": False,
+                                    "norm_flag": False,
+                                }
+                            ]
+                        }
+                    ],
+                    batch_size=1,
+                    max_repair_attempts=0,
+                    prompt_version="v1",
+                    random_seed=0,
+                ),
+            )
+            client.model_family = OdomTCNFamily()
+            client.model_family_name = "odom_tcn"
+            client.task = OdometryRegressionTask(
+                checkpoint_path=client.config.outputs.checkpoint_path,
+            )
+            client.task_name = "odometry_regression"
+
+            with patch.object(
+                client,
+                "_hil_request",
+                side_effect=AssertionError("HIL must not run in this smoke test"),
+            ) as hil_request:
+                client.smoke_test(
+                    train=False,
+                    hil=False,
+                    trials=1,
+                    epochs=1,
+                    study_name="llm-real-odom-smoke",
+                )
+
+            root = Path(tmpdir) / "models/llm-real-odom-smoke"
+            storage = f"sqlite:///{root / 'optuna_smoke_test.db'}"
+            persisted = optuna.load_study(
+                study_name="llm-real-odom-smoke",
+                storage=storage,
+            )
+            trials_csv = root / "trials.csv"
+            accepted_path = root / "llm_optimizer/returned_candidates.jsonl"
+            request_path = root / "llm_optimizer/requests/000001.request.json"
+            response_path = root / "llm_optimizer/requests/000001.response.json"
+
+            self.assertEqual(len(persisted.trials), 1)
+            trial = persisted.trials[0]
+            self.assertEqual(trial.state, TrialState.COMPLETE)
+            self.assertEqual(trial.params["dilations_index"], 0)
+            self.assertNotIn("dilations", trial.params)
+            self.assertEqual(
+                set(trial.params),
+                {
+                    "dilations_index",
+                    "nb_filters",
+                    "kernel_size",
+                    "dropout_rate",
+                    "use_skip_connections",
+                    "norm_flag",
+                },
+            )
+            self.assertGreater(trial.user_attrs["flops"], 0)
+            self.assertEqual(trial.value, -float(trial.user_attrs["flops"]))
+            self.assertEqual(trial.user_attrs["latency_ms"], -1.0)
+            self.assertEqual(trial.user_attrs["ram_bytes"], -1)
+            self.assertEqual(trial.user_attrs["flash_bytes"], -1)
+            self.assertEqual(trial.user_attrs["quantization_mode"], "float")
+            self.assertEqual(len(trials_csv.read_text().splitlines()) - 1, 1)
+            self.assertEqual(len(accepted_path.read_text().splitlines()), 1)
+            self.assertTrue(request_path.is_file())
+            self.assertTrue(response_path.is_file())
+            request_record = json.loads(request_path.read_text())
+            prompt_payload = json.loads(request_record["messages"][1]["content"])
+            self.assertTrue(request_record["metadata"]["semantic_context_enabled"])
+            self.assertEqual(
+                request_record["metadata"]["semantic_context_version"],
+                "v3",
+            )
+            self.assertEqual(
+                len(request_record["metadata"]["semantic_context_hash"]),
+                64,
+            )
+            self.assertEqual(
+                prompt_payload["dataset_context"]["modality"],
+                "inertial_measurement_unit",
+            )
+            self.assertEqual(prompt_payload["dataset_context"]["window_size"], 16)
+            self.assertEqual(prompt_payload["task_context"]["type"], "regression")
+            self.assertIn(
+                "description",
+                prompt_payload["search_space"]["dilations_index"],
+            )
+            hil_request.assert_not_called()
+            self.assertFalse(client.config.device.hil)
+            self.assertFalse(client.config.training.train)
 
     def test_smoke_test_uses_loaded_multiobjective_config(self) -> None:
         """Smoke test should honor multi-objective mode from the loaded config."""
@@ -2259,7 +2376,12 @@ class MeasurementFailureGuardTests(unittest.TestCase):
 
 
 class RunNASTests(unittest.TestCase):
-    pass
+    def _use_provider(self, client, provider):
+        client.config.optimizer.llm.setdefault("provider", "fake")
+        client.config.optimizer.llm.setdefault("responses", [{"candidates": []}])
+        provider_patch = patch("crest.optimizers.llm.component.build_provider", return_value=provider)
+        provider_patch.start()
+        self.addCleanup(provider_patch.stop)
 
     def test_real_nsga_infrastructure_failure_consumes_budget_and_continues(self):
         """NSGA must count an infrastructure failure toward budget and continue afterward."""
@@ -2396,13 +2518,161 @@ class RunNASTests(unittest.TestCase):
         self.assertEqual(dummy.optimize_calls, [2, 1])
         self.assertEqual(dummy.enqueue_calls, [])
 
-    pass
+    def test_run_nas_llm_generator_enqueues_fake_provider_batch(self) -> None:
+        """The opt-in path enqueues raw candidates before unchanged optimization."""
+        client = _build_test_client()
+        client.config.training.nas_trials = 2
+        client.config.training.max_total_trials = 2
+        client.config.optimizer = Dict(
+            type="llm_generator",
+            llm=Dict(batch_size=2, max_repair_attempts=0, prompt_version="v1", random_seed=0),
+        )
+        client.model_family.trial_search_space = MagicMock(
+            return_value=[SearchParam("width", "int", low=2, high=8)]
+        )
+        self._use_provider(client, FakeProvider(
+            [{"candidates": [{"width": 3}, {"width": 7}]}]
+        ))
+        client.objective = MagicMock()
+        dummy = self.DummyStudy([TrialState.COMPLETE, TrialState.COMPLETE])
 
-    pass
+        with patch("nas_model_client.optuna.create_study", return_value=dummy):
+            study = client.run_nas(study_name="llm-demo", storage="sqlite:///dummy.db")
 
-    pass
+        self.assertIs(study, dummy)
+        self.assertEqual(dummy.enqueue_calls, [{"width": 3}, {"width": 7}])
+        self.assertEqual(dummy.optimize_calls, [2])
+        ledger_root = Path(client.config.outputs.models_dir) / "llm-demo/llm_optimizer"
+        self.assertTrue((ledger_root / "requests/000001.request.json").is_file())
+        self.assertEqual(len((ledger_root / "returned_candidates.jsonl").read_text().splitlines()), 2)
 
-    pass
+    def test_run_nas_feeds_completed_measurements_to_later_bounded_prompt(self) -> None:
+        """The first request is empty and the next reads evidence from Optuna."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = _build_test_client(base_dir=Path(tmpdir))
+            client.config.device.hil = False
+            client.config.device.compile_when_hil_disabled = "false"
+            client.config.training.train = False
+            client.config.training.nas_trials = 2
+            client.config.training.max_total_trials = 2
+            client.config.nas.score = Dict(
+                type="scoring-function",
+                metrics=Dict(),
+                params=Dict(terms=[Dict(type="weighted", metric="flops", weight=-1.0)]),
+            )
+            client.config.optimizer = Dict(
+                type="llm_generator",
+                llm=Dict(
+                    batch_size=1,
+                    max_repair_attempts=0,
+                    prompt_version="v1",
+                    random_seed=0,
+                    recent_trial_window=1,
+                ),
+            )
+            client.model_family.trial_search_space = MagicMock(
+                return_value=[SearchParam("width", "int", low=2, high=8)]
+            )
+            provider = FakeProvider(
+                [
+                    {"candidates": [{"width": 3}]},
+                    {"candidates": [{"width": 5}]},
+                ]
+            )
+            self._use_provider(client, provider)
+
+            def objective(trial):
+                width = trial.suggest_int("width", 2, 8)
+                trial.set_user_attr("feasibility_status", "feasible")
+                trial.set_user_attr("latency_ms", 4.25)
+                trial.set_user_attr("energy_mj_per_inference", 0.8)
+                trial.set_user_attr("ram_bytes", 1024)
+                trial.set_user_attr("flash_bytes", 2048)
+                trial.set_user_attr("quantization_mode", "int8_ptq")
+                trial.set_user_attr("task_metrics", {"rmse_total": 0.3})
+                return -float(width)
+
+            client.objective = objective
+            client.run_nas(
+                study_name="history-demo",
+                storage=f"sqlite:///{Path(tmpdir) / 'history.db'}",
+            )
+
+            self.assertEqual(len(provider.requests), 2)
+            first_payload = json.loads(provider.requests[0].user_prompt)
+            second_payload = json.loads(provider.requests[1].user_prompt)
+            self.assertEqual(first_payload["recent_trials"], [])
+            self.assertEqual(len(second_payload["recent_trials"]), 1)
+            evidence = second_payload["recent_trials"][0]
+            self.assertEqual(evidence["params"], {"width": 3})
+            self.assertEqual(evidence["latency_ms"], 4.25)
+            self.assertEqual(evidence["energy_mj_per_inference"], 0.8)
+            self.assertEqual(evidence["task_metrics"], {"rmse_total": 0.3})
+            self.assertEqual(evidence["state"], "complete")
+
+    def test_run_nas_keeps_best_anchor_outside_recent_window_and_resumes(self) -> None:
+        """A measured winner remains in provider prompts and the saved ledger."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = _build_test_client(base_dir=Path(tmpdir))
+            client.config.device.hil = False
+            client.config.device.compile_when_hil_disabled = "false"
+            client.config.training.train = False
+            client.config.training.nas_trials = 3
+            client.config.training.max_total_trials = 3
+            client.config.nas.score = Dict(type="scoring-function", metrics=Dict(),
+                params=Dict(terms=[Dict(type="weighted", metric="flops", weight=-1.0)]))
+            client.config.optimizer = Dict(type="llm_generator", llm=Dict(
+                batch_size=1, recent_trial_window=1, anchor_count=1, max_repair_attempts=0,
+                memory=Dict(enabled=False)))
+            client.model_family.trial_search_space = MagicMock(
+                return_value=[SearchParam("width", "int", low=2, high=8)])
+            provider = FakeProvider([{"candidates": [{"width": width}]} for width in [2, 5, 6]])
+            self._use_provider(client, provider)
+
+            def objective(trial):
+                width = trial.suggest_int("width", 2, 8)
+                # These are the normal persisted attrs when feasibility rules are disabled.
+                trial.set_user_attr("feasibility_status", "not_evaluated")
+                trial.set_user_attr("feasible", True)
+                trial.set_user_attr("error_code", HIL_MASTER_SUCCESS)
+                trial.set_user_attr("latency_ms", float(width))
+                return -float(width)
+
+            client.objective = objective
+            storage = f"sqlite:///{Path(tmpdir) / 'anchors.db'}"
+            client.run_nas(study_name="anchor-integration", storage=storage)
+            self.assertEqual(json.loads(provider.requests[0].user_prompt)["anchors"], [])
+            third = json.loads(provider.requests[2].user_prompt)
+            self.assertEqual([r["number"] for r in third["recent_trials"]], [1])
+            self.assertEqual([r["number"] for r in third["anchors"]], [0])
+            self.assertEqual(third["anchors"][0]["params"], {"width": 2})
+            self.assertEqual(third["anchors"][0]["latency_ms"], 2.0)
+            ledger = Path(client.config.outputs.models_dir) / "anchor-integration/llm_optimizer"
+            saved = json.loads((ledger / "requests/000003.request.json").read_text())
+            self.assertEqual(json.loads(saved["messages"][1]["content"])["anchors"], third["anchors"])
+
+            client.config.training.nas_trials = 4
+            client.config.training.max_total_trials = 4
+            resumed = FakeProvider([{"candidates": [{"width": 7}]}])
+            self._use_provider(client, resumed)
+            client.run_nas(study_name="anchor-integration", storage=storage)
+            payload = json.loads(resumed.requests[0].user_prompt)
+            self.assertEqual([r["number"] for r in payload["recent_trials"]], [2])
+            self.assertEqual([r["number"] for r in payload["anchors"]], [0])
+
+            client.config.optimizer.llm.anchor_count = 0
+            client.config.training.nas_trials = 5
+            client.config.training.max_total_trials = 5
+            disabled = FakeProvider([{"candidates": [{"width": 8}]}])
+            self._use_provider(client, disabled)
+            with self.assertRaisesRegex(RuntimeError, "optimizer signature"):
+                client.run_nas(study_name="anchor-integration", storage=storage)
+            self.assertEqual(disabled.requests, [])
+            client.config.training.nas_trials = 1
+            client.config.training.max_total_trials = 1
+            client.run_nas(study_name="anchor-disabled", storage=storage)
+            self.assertEqual(json.loads(disabled.requests[0].user_prompt)["anchors"], [])
+
 
     def test_run_nas_sets_multiobjective_metric_names(self) -> None:
         """Multi-objective studies should expose configured objective names."""
