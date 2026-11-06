@@ -31,8 +31,62 @@ SYSTEM_PROMPT = (
     "not hard constraints; retain its conditions and uncertainty."
 )
 
+FULL_HISTORY_SYSTEM = (
+    "You are the optimizer for a hardware-in-the-loop neural architecture search. "
+    "Maximize the stated objective, not model smallness. Extra energy is worthwhile "
+    "when the task-quality gain exceeds its explicit score penalty. RAM, flash and "
+    "latency limits are feasibility constraints, not additional score penalties. "
+    "Both insufficient and excessive capacity can hurt task quality; explore width, "
+    "channel growth and kernels as well as depth and strides. An assigned coverage "
+    "cell does not require a small or cheap model. Use the actual training budget "
+    "when provided rather than assuming it is short. "
+    "Return only the requested JSON envelope. "
+    "Use exact raw Optuna parameters inside the declared search space. The columnar "
+    "history includes every finished trial (complete, failed, or pruned). Row values "
+    "follow history_columns; pending uses the same columns. Missing values are unknown, "
+    "not zero. If failure_reason_encoding is dictionary_index, failure_reason integers "
+    "index history.failure_reasons. Infrastructure and unclassified failures are not "
+    "architecture evidence. "
+    "Failure or infeasibility penalty scores are not measured task quality. "
+    "Unclassified failures permit one retry per decoded network; retry_exhausted_trials "
+    "identify networks blocked after two such failures, without counting as coverage. "
+    "Raw parameter aliases can decode to the same network; avoid both exact and decoded "
+    "duplicates. widths lists actual pointwise channels per block: base_channels is "
+    "scaled by pointwise_scale, and raising a nonbinding max_channels changes nothing. "
+    "Training observations are noisy: a single best score is not proof of "
+    "superiority. Local candidates must name a feasible parent and explain an actual "
+    "change; select from eligible_parents and use distinct decoded parents when possible. "
+    "Exploration candidates must match assigned num_blocks and per-block (time, frequency) "
+    "strides, using a listed schedule alias, while compulsory coverage "
+    "is active; assigned targets take precedence over generic phase advice. "
+    "After coverage is complete, use outcomes and uncertainty to choose "
+    "exploration rather than rotating through poorly performing cells indefinitely. "
+    "Coverage counts are evidence counts, not predictions of quality. Rationales may "
+    "express uncertainty; improvement is not guaranteed. During refill the caller "
+    "retains accepted candidates: return only replacements for missing slots."
+)
 
 
+def _columnar_coverage(coverage: dict[str, Any]) -> dict[str, Any]:
+    """Remove repeated coverage field names without dropping observations.
+
+    Parameters
+    ----------
+    coverage : dict
+        Python-computed coverage used internally by allocation and validation.
+
+    Returns
+    -------
+    dict
+        Equivalent tables with one column header and ordered row arrays.
+    """
+    result = dict(coverage)
+    for name in ("cells", "width_signatures", "depth_first_width"):
+        records = result.get(name, [])
+        columns = list(records[0]) if records else []
+        result[name] = {"columns": columns,
+                        "rows": [[record.get(key) for key in columns] for record in records]}
+    return result
 
 
 def _param_schema(
@@ -246,6 +300,47 @@ class PromptContext:
             payload["task_context"] = self.task_context
             payload["device_context"] = self.device_context
             payload["runtime_context"] = self.runtime_context
+        if self.full_history_mode:
+            if phase.name == "finalization":
+                payload["trial_budget"]["phase_instruction"] = (
+                    "Refine promising regions with new decoded networks; do not repeat "
+                    "an existing network to confirm its score."
+                )
+            fixed = {key: value for key, value in payload.items() if key not in {
+                "trial_budget", "recent_trials", "pending_trials", "anchors", "knowledge_base",
+            }}
+            fixed["output_contract"] = {
+                "format": {"candidates": [{"params": "exact raw parameter dictionary",
+                    "rationale": "nonempty hypothesis, at most 2000 characters",
+                    "intent": "local or exploration", "parent_trial": "feasible trial number for local; null for exploration"}]},
+                "exact_keys": list(self.descriptor), "json_only": True,
+            }
+            fixed["history_columns"] = self.full_history.get("columns", [])
+            # Keep the objective readable without changing legacy prompt bytes.
+            try:
+                fixed["objective_summary"] = json.loads(self.objective_summary)
+            except (ValueError, TypeError):
+                pass
+            objective_definition = fixed["objective_summary"]
+            explanation = render_objective(objective_definition, fixed)
+            if explanation is not None:
+                fixed["objective_summary"] = explanation
+            return {
+                "objective_definition": objective_definition,
+                "fixed_context": fixed,
+                "history": {key: value for key, value in self.full_history.items()
+                            if key not in {"columns", "pending"}},
+                "current_request": {
+                    "response_instruction": "Return only JSON matching output_contract.",
+                    "trial_budget": payload["trial_budget"],
+                    "candidate_count": self.batch_size,
+                    "allocation": self.allocation,
+                    "coverage": _columnar_coverage(self.coverage),
+                    "exploration_targets": list(self.exploration_targets),
+                    "eligible_parents": [parent["trial_number"] for parent in self.eligible_parents],
+                    "pending": self.full_history.get("pending", []),
+                },
+            }
         return payload
 
 
@@ -279,6 +374,20 @@ def build_candidate_request(
     if not prompt_version.strip():
         raise ValueError("prompt_version must be a non-empty string.")
     payload = context.as_prompt_payload()
+    if context.full_history_mode:
+        if repair_feedback:
+            payload["current_request"]["repair_feedback"] = repair_feedback
+        return LLMRequest(
+            system_prompt=FULL_HISTORY_SYSTEM + "\n\n" + json.dumps(
+                payload["fixed_context"], sort_keys=True, separators=(",", ":")),
+            user_prompt=json.dumps({"history": payload["history"],
+                                    "current_request": payload["current_request"]},
+                                   separators=(",", ":")),
+            prompt_version=prompt_version,
+            metadata={"purpose": "candidate_generation", "study_name": context.study_name,
+                      "phase": context.phase().name, "batch_size": context.batch_size,
+                      "repair": bool(repair_feedback), "history_mode": "full"},
+        )
     if repair_feedback:
         payload["repair_feedback"] = repair_feedback
     metadata = {
@@ -303,3 +412,49 @@ def build_candidate_request(
         metadata=metadata,
     )
 
+
+def enrich_full_history(context: PromptContext, history: Any) -> PromptContext:
+    """Attach exact evidence and the next-study allocation to a shared context.
+
+    Parameters
+    ----------
+    context : PromptContext
+        Semantic and budget context used by both campaign and bounded smoke.
+    history : sequence
+        Detached trial records; never reads or writes a live study.
+
+    Returns
+    -------
+    PromptContext
+        Full-history context with Python-assigned targets and feasible parents.
+
+    Raises
+    ------
+    ValueError
+        If the model family is unsupported or no target slots are available.
+    """
+    from crest.optimizers.llm.full_history import (build_full_history, build_coverage,
+                               assign_coverage_targets, build_eligible_parents)
+    from crest.optimizers.llm.prompting.phase_policy import resolve_allocation
+
+    if context.model_family != "audio_dscnn":
+        raise ValueError("Full-history decoded policy currently supports audio_dscnn only.")
+    parents = build_eligible_parents(history)
+    coverage = build_coverage(history, context.descriptor)
+    allocation = resolve_allocation(context.phase(), context.batch_size,
+                                    has_feasible_parent=bool(parents))
+    targets = (() if coverage["goal_complete"] else
+               tuple(assign_coverage_targets(coverage, allocation["exploration"])))
+    if not coverage["goal_complete"]:
+        coverage["unassigned_exploration_slots"] = allocation["exploration"] - len(targets)
+        coverage["unassigned_reason"] = ("coverage_goal_slots_already_reserved"
+            if coverage["unassigned_exploration_slots"] else None)
+        allocation["exploration"] = len(targets)
+    size = sum(allocation.values())
+    if not size:
+        raise ValueError("Coverage slots are already pending; resolve pending work before requesting more.")
+    return replace(context, full_history_mode=True, require_rationale=True,
+                   full_history=build_full_history(history), coverage=coverage,
+                   allocation=allocation, exploration_targets=targets,
+                   eligible_parents=parents, batch_size=size,
+                   recent_trials=(), pending_trials=(), anchors=(), knowledge_base={})

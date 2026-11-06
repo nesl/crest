@@ -245,10 +245,22 @@ def test_cache_counters_preserve_explicit_values(counter):
     assert usage["cache_write_tokens"] == counter
 
 
+@pytest.mark.parametrize("history_mode", [[], {}])
+def test_history_mode_rejects_unhashable_values(history_mode):
+    # Purpose: malformed configuration produces the documented validation error.
+    from crest.optimizers.llm.config import normalize_llm_config
+    with pytest.raises(ValueError, match="history_mode"):
+        normalize_llm_config({"llm": {"provider": "fake", "history_mode": history_mode}})
 
 
-
-
+@pytest.mark.parametrize("updates", [{"max_repair_attempts": 2}, {"max_refill_attempts": 3}])
+def test_full_mode_caps_content_budgets(updates):
+    # Purpose: every accepted full-history configuration respects four content calls.
+    from crest.optimizers.llm.config import normalize_llm_config
+    cfg = {"provider": "fake", "responses": [{}], "history_mode": "full",
+           "require_rationale": True, "memory": {"enabled": False}, **updates}
+    with pytest.raises(ValueError):
+        normalize_llm_config({"llm": cfg})
 
 
 def test_request_artifact_failure_stops_before_http(tmp_path, llm_request, monkeypatch):

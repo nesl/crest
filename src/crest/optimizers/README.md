@@ -43,8 +43,8 @@ Progress reporting is shared across optimizers; see
 An optimizer chooses **raw trial parameters** or requests native sampling. It does
 not build models, train, measure devices, calculate the objective, enqueue trials,
 or change an Optuna Study or Trial. The shared runner owns those operations.
-The native `optuna` optimizer samples parameters inside the objective; the interface
-also supports application-defined explicit proposers.
+Built-in optimizers include native `optuna` and the explicit `llm_generator`; the
+interface also supports application-defined proposers.
 
 Components must support zero-argument construction. The lifecycle is:
 
@@ -196,3 +196,6 @@ context.
 | Resume identity mismatch | Keep proposal settings consistent with the existing campaign, or start a new study for changed settings. |
 | Proposer not called immediately after resume | Existing WAITING reservations are drained first. |
 | Empty or oversized round rejected | Return positive work within `permitted_round_size`; use `OptimizerBudgetExhausted` for resource exhaustion. |
+
+For LLM proposal policies, provider configuration, budgets, and recovery details,
+see the [optimizer system guide](GUIDE.md).
