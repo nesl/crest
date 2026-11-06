@@ -26,6 +26,7 @@ _DECODE_EXPORTS = (
 )
 _FAMILY_EXPORTS = (
     "AudioDSCNNFamily",
+    "AUDIO_DSCNN_SEARCH_SEMANTICS",
     "DEFAULT_AUDIO_DSCNN_SEED",
     "INTEGER_CATEGORICAL_FIELDS",
     "BOOLEAN_FIELDS",
@@ -55,7 +56,7 @@ def __getattr__(name: str) -> Any:
         If the requested name is not a package export.
     """
     if name in _DECODE_EXPORTS:
-        module = import_module(f"{__name__}.family")
+        module = import_module(f"{__name__}.decode")
     elif name in _FAMILY_EXPORTS:
         module = import_module(f"{__name__}.family")
     else:
