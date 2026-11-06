@@ -40,12 +40,14 @@ entry without shell-history exposure, and [pricing catalogs and spending caps](p
 that makes no provider calls and performs no training or hardware evaluation,
 use the [generation examples](EXAMPLES.md).
 
-History is bounded and `memory.enabled` must be false. The
-[configuration guide](../../../config/README.md) covers warm-ups, rationale
-requirements, budgets, and resume rules. Changing identity-bearing settings,
+Bounded history is the default. Accumulated memory is enabled by default; the
+example disables it. Full-history mode is available for `audio_dscnn` with its
+required rationale and policy settings. See the
+[configuration guide](../../../config/README.md) for evidence policies, warm-ups,
+rationale requirements, budgets, and resume rules. Changing identity-bearing settings,
 including the rationale contract, requires a new study.
 
-## How generation works
+## How bounded generation works
 
 1. The component proposes configured warm-ups first, then builds a request from
    recent history, best-trial anchors, the search space, objective, and budget.
@@ -82,6 +84,7 @@ Returned proposals alone do not establish that trials were queued or evaluated.
 | [`providers/`](providers/README.md) | Completion interface, adapters, and provider setup |
 | [`prompting/`](prompting/README.md) | Request construction, evidence selection, and phase guidance |
 | [`generation.py`](generation.py), [`schemas.py`](schemas.py) | Generation, local validation, repair, and fallback |
+| [`memory.py`](memory.py), [`full_history.py`](full_history.py) | Accumulated summaries and full-history evidence policies |
 | [`config.py`](config.py) | Settings defaults and validation |
 | [`ledger.py`](ledger.py), [`spending.py`](spending.py) | Proposal provenance and provider spending accounting |
 
