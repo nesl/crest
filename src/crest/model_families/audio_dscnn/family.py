@@ -20,9 +20,9 @@ from tensorflow.keras.layers import (
     ReLU,
     Reshape,
 )
-from ..interfaces import ModelFamilyABC
-from ..model_metrics import count_flops_keras
-from ..pipeline_types import ModelBuildContext, TargetSpec
+from ...interfaces import ModelFamilyABC
+from ...model_metrics import count_flops_keras
+from ...pipeline_types import ModelBuildContext, TargetSpec
 
 BASE_CHANNELS_CHOICES = (4, 8, 12, 16, 20, 24, 32)
 NUM_BLOCKS_CHOICES = (2, 3, 4, 5, 6)
