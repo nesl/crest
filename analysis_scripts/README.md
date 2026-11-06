@@ -11,6 +11,7 @@ generators that sit outside the core CREST runtime.
 Run these scripts from the repository root with the `crest` Conda environment
 active unless a package README says otherwise. Most scripts consume existing
 NAS, replay, or measurement artifacts and do not run NAS or touch hardware.
+
 ## Case studies and appendices
 
 | Folder | Analysis |
@@ -28,6 +29,11 @@ the
 [hardware energy probe](micro_workload_energy_probe/README.md), and
 [publication plots](paper_plots/README.md). The hardware probe requires a target
 board and measurement harness; the analysis tools read saved artifacts.
+
+The [figure catalog](paper_plots/README.md) lists plot generators, required
+external inputs, and commands. Generators also save plotted-point and summary
+sidecars.
+
 
 ## Case Study 3: proposal strategies and search effort
 
