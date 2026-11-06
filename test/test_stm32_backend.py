@@ -612,7 +612,7 @@ class STM32BackendBehaviorTests(unittest.TestCase):
         )
         # Repaired DUT telemetry: RTC aggregate covers all reported releases.
         telemetry.serial_log.extend([
-            "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
+            "measurement protocol output: rtc_wall_v5_dwt_active_stop_evidence_all_slots",
             "cadence budget (ms): 200",
         ])
         telemetry.power_metrics.update(runs=10, phase="back_to_back",
@@ -1564,7 +1564,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v5_dwt_active_stop_evidence_all_slots",
                 "cadence budget (ms): 200",
             ])
             telemetry.power_metrics.update(runs=5, phase="back_to_back",
@@ -2977,7 +2977,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v5_dwt_active_stop_evidence_all_slots",
                 "cadence budget (ms): 200",
             ])
             telemetry.power_metrics.update(runs=10, phase="back_to_back",
@@ -3107,7 +3107,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v5_dwt_active_stop_evidence_all_slots",
                 "cadence budget (ms): 200",
             ])
             telemetry.power_metrics.update(runs=1, phase="back_to_back",
@@ -3213,7 +3213,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v5_dwt_active_stop_evidence_all_slots",
                 "cadence budget (ms): 200",
             ])
             telemetry.power_metrics.update(runs=7, phase="back_to_back",
@@ -3353,7 +3353,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v5_dwt_active_stop_evidence_all_slots",
                 "cadence budget (ms): 200",
             ])
             telemetry.power_metrics.update(runs=4, phase="back_to_back",
@@ -3505,7 +3505,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v5_dwt_active_stop_evidence_all_slots",
                 "cadence budget (ms): 321",
             ])
             telemetry.power_metrics.update(runs=4, phase="back_to_back",
@@ -3631,7 +3631,7 @@ class STM32HelperTests(unittest.TestCase):
             )
             # Repaired DUT telemetry: RTC aggregate covers all reported releases.
             telemetry.serial_log.extend([
-                "measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail",
+                "measurement protocol output: rtc_wall_v5_dwt_active_stop_evidence_all_slots",
                 "cadence budget (ms): 200",
             ])
             telemetry.power_metrics.update(runs=10, phase="back_to_back",

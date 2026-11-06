@@ -16,7 +16,7 @@ def sample(phase='back_to_back'):
     return dict(metrics={'phase': phase, 'clock_hz': 600000000, 'runs': 10,
                          'timer_per_window_s': window, 'harness_latency_s': window / 10,
                          'energy_mj_per_inference': 1.25, 'rtc_clock_source': 'LSE',
-                         'rtc_clock_hz_nominal': 32768, 'deadline_miss_count': 0, 'stop_entries': 9, 'slept_slots': 9},
+                         'rtc_clock_hz_nominal': 32768, 'deadline_miss_count': 0, 'stop_entries': 10, 'slept_slots': 10},
                 latency_s=.01, phase=phase, clock_mhz=600, runs=10, period_ms=500,
                 dut_log=[f'measurement protocol output: {PROTOCOL}', 'cadence budget (ms): 500'],
                 harness_log=['DONE'], require_harness=True)
@@ -300,3 +300,10 @@ def test_configured_integer_clock_is_exact_after_parsing(clock_mhz):
     assert validate_measurement(**args)['checks']['clock_matches']
     args['metrics']['clock_hz'] -= 1
     assert not validate_measurement(**args)['checks']['clock_matches']
+
+
+def test_awake_tail_protocol_is_not_accepted_as_all_slot_sleep():
+    """Historical awake-tail evidence cannot be labeled as corrected firmware."""
+    args = sample('cadenced')
+    args['dut_log'][0] = 'measurement protocol output: rtc_wall_v4_dwt_active_stop_evidence_awake_tail'
+    assert 'protocol_matches' in validate_measurement(**args)['instrumentation_reasons']
