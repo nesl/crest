@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Hardware-free repeatability planning and evidence tests."""
 import json
 from pathlib import Path

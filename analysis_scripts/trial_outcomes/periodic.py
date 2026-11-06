@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Audit configured periodic campaigns from read-only Optuna and measurement files.
 
 The JSON manifest supplies ``studies`` with name, db, period_ms, attempt_limit,

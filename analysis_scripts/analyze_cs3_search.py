@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Read-only CS3 network-mean trajectories and repeat-variability audit."""
 from __future__ import annotations
 

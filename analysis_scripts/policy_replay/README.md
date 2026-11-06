@@ -1,3 +1,7 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
 # Policy replay recipe
 
 Replay prepared STM32 continuous, cadenced awake-tail and cadenced STOP-tail images in randomized pair blocks. Preparation and planning open no hardware. This recipe imports successful native build metadata; it does not export models, patch firmware or build STOP-tail firmware. Supply separately prepared images containing the selected `rtc_wall_v4_dwt_active_stop_evidence_awake_tail` or `rtc_wall_v4_dwt_active_stop_evidence_stop_tail` protocol. The repository's awake-only firmware cannot produce STOP-tail images without a separately controlled preparation workflow.

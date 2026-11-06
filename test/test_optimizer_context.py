@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Proposal setup builds only the context requested by its component."""
 import json
 from types import SimpleNamespace

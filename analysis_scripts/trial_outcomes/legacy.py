@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Audit final legacy trial records without counting replays or internal retries.
 
 The passed convention is historical recorded eligibility: COMPLETE, success,

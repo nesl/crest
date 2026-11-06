@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Pure authoritative audio DS-CNN graph decoding; no ML runtime imports."""
 
 from __future__ import annotations

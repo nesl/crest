@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Synthetic full-history integration regressions through public runtime APIs."""
 import json
 from dataclasses import replace

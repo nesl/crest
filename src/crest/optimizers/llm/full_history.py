@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Exact columnar evidence and pure decoded-network coverage for audio DS-CNN."""
 from __future__ import annotations
 

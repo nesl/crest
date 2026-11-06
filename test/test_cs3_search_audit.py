@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Offline audit aggregates raw repeats and accidental decoded aliases equally."""
 import importlib.util
 from pathlib import Path

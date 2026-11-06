@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Reproduce paired search-pool repeats and conditional STOP estimates."""
 
 import argparse

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Opt-in, recorded training randomness policy shared by all optimizers."""
 
 from ..component_selection import cfg_get

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Scientific regression checks for the three standalone CS1 paper figures."""
 
 import importlib.util

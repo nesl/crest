@@ -1,3 +1,7 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
 <svg xmlns="http://www.w3.org/2000/svg" width="1760" height="2330" viewBox="0 0 1760 2330" role="img" aria-labelledby="title desc">
 <title id="title">CREST: two proposal strategies, one evaluation pipeline</title>
 <desc id="desc">The shared runner resolves optimizer configuration and opens a persistent Optuna study, checks stored identity, and initializes immutable proposal context and the component before persisting new study signatures. Each loop checks the completion target first, executes the oldest reserved WAITING group before the attempt cap, then gives a budget and history snapshot to the selected optimizer. Native Optuna returns a NativeRound count without enqueueing; sampling occurs inside the existing objective. The LLM builds context and history with optional memory, calls a provider with validation, repair and fallback, and returns explicit candidates. The runner validates the entire explicit batch and enqueues candidates with study provenance. Both paths and resumed reservations execute study.optimize with the same objective. Shared evaluation builds models, measures resources, rejects before fitting when necessary, trains when enabled, scores and logs. Optuna records completion and sampler hooks update history for the next round. Final artifacts include CSV, final model or Pareto results and replay evidence.</desc>

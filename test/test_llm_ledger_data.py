@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Regression checks for shared evidence conversion and ledger restart IDs."""
 from dataclasses import dataclass
 import json

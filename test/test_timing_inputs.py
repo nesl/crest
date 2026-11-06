@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Timeout attribution tests with synthetic, non-paper campaign sizes."""
 
 import importlib.util

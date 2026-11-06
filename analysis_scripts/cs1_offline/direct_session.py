@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Reproduce direct-session paired energy contrasts and effective waiting slopes."""
 import argparse
 from itertools import permutations

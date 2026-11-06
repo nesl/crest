@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Compare CS3 audit outputs with printed paper values; retain exact bounds and label approximate printed endpoints."""
 
 import argparse

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Frozen, bounded, restart-safe paired repeatability schedule. No hardware on import."""
 import argparse, datetime as dt, hashlib, json, random, time, uuid
 

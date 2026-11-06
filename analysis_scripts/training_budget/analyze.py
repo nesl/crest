@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Validate saved training trajectories and export conditional budget comparisons."""
 from __future__ import annotations
 

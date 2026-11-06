@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Offline checks for the explicit training randomness policy."""
 import random
 from unittest.mock import patch

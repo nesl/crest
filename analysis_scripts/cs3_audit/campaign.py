@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Audit archived campaign effort and saved response usage without running NAS.
 
 The CLI accepts a JSON object with ``campaigns`` (a list of objects containing

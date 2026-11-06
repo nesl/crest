@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Real-Optuna acceptance tests of CREST's single proposal execution path."""
 import csv
 import json

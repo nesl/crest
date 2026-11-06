@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Offline regression coverage for feasible-score progress artifacts."""
 import csv
 from datetime import datetime, timedelta

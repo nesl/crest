@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Check training-budget outputs against the submitted appendix (no bundled data)."""
 
 import argparse

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Check regenerated CS1 results against numbers printed in the submitted paper."""
 
 import argparse

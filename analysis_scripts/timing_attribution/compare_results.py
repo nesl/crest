@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Report operational totals, matched trained candidates, and RMSE discrepancies.
 
 All four conditions are required per board for a matched comparison. Differences

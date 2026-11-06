@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Fixed warm-up uses the real runner, Optuna history, and existing resume guards."""
 import json
 from unittest.mock import patch

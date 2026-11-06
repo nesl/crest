@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Render a read-only offline progress snapshot from an Optuna SQLite study."""
 import argparse
 from pathlib import Path

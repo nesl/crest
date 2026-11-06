@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Audit exact-parameter repeats and saved final evaluations without training.
 
 Use ``--group LABEL DATABASE TEST_METRICS_JSON`` repeatedly. Each database must

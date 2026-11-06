@@ -1,3 +1,7 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
 # Timing attribution
 
 Reconcile saved CREST client/server spans into additive host and HIL costs.

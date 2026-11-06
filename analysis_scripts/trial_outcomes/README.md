@@ -1,3 +1,7 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
 # Final trial outcomes
 
 These read-only tools classify saved search trials into disjoint final outcomes.

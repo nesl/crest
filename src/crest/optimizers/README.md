@@ -1,3 +1,7 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
 # CREST optimizer system: proposals, shared evaluation, and trustworthy evidence
 
 CREST searches for models that work under a concrete deployment contract: a workload and task, a model family, a target device, a runtime schedule, and a scoring and feasibility policy. The optimizer chooses experiments within that contract. CREST retains responsibility for building, measuring, training, evaluating, and recording them.

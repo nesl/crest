@@ -1,3 +1,7 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
 # CS1 offline analysis
 
 Reusable analysis of saved energy measurements; no training or hardware access.

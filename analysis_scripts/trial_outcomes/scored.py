@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Audit scored Optuna campaigns from explicit, read-only archive paths.
 
 Only terminal trials through the requested feasible completion are counted. A

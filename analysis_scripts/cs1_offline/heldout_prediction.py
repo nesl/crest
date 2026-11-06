@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Offline CS1 architecture-separated prediction and fixed-bank selection validation."""
 
 import hashlib

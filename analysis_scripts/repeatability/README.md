@@ -1,3 +1,7 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
 # Paired repeatability experiments
 
 This package runs **new hardware experiments**, with a frozen randomized schedule and compile-once STM32 artifacts. It does not reproduce archived measurements or train a model. Offline reanalysis remains separate.

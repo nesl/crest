@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """A test-only proposer with no Optuna dependency."""
 from crest.interfaces import OptimizerABC
 from crest.pipeline_types import CandidateProposal, ExplicitRound

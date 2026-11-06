@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Reproduce nominal-frequency scaling and paired period contrasts offline."""
 from pathlib import Path
 import argparse

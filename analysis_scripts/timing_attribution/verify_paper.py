@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Check regenerated timing tables against the submitted evaluation-cost appendix."""
 
 import argparse

@@ -1,3 +1,7 @@
+<!--
+Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+SPDX-License-Identifier: BSD-3-Clause
+-->
 # Training-budget analysis
 
 Analyze saved checkpoint evaluations and training histories. No training,

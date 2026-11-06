@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Full-history evidence preserves aliases, failures, and distinct training graphs."""
 from dataclasses import replace
 

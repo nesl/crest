@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Use production objective evidence to distinguish failed designs from outages."""
 from unittest.mock import MagicMock
 
