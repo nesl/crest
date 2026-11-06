@@ -203,7 +203,7 @@ payload diagnostics.
 
 This analysis script reuses:
 
-- `src/crest/hil_protocol.py` for harness priming and DONE waits.
+- `src/crest/hil/protocol.py` for harness priming and DONE waits.
 - `src/crest/microcontrollers/arduino_base.py` for Arduino compile/upload,
   harness compile/upload, and INA228 telemetry parsing.
 - `src/crest/microcontrollers/arduino_portenta_h7.py` for Portenta board

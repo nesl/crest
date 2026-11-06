@@ -29,7 +29,7 @@ from .errors import (
     HIL_ERROR_RAM_OVERFLOW,
     HIL_ERROR_UPLOAD,
 )
-from . import hil_protocol
+from .hil import protocol as hil_protocol
 from .microcontrollers import arduino_base
 from .pipeline_types import DataSplit
 

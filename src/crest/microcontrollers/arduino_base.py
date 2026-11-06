@@ -25,7 +25,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import serial
 
-from .. import hil_protocol
+from ..hil import protocol as hil_protocol
 
 # Resolve the Arduino CLI executable once so every subprocess call uses the same path.
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]

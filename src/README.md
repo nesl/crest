@@ -24,7 +24,7 @@ Related docs:
 | Goal | Start Here | Hardware Requirement |
 |------|------------|----------------------|
 | Run or modify NAS/training orchestration | [`nas_model_client.py`](nas_model_client.py) and [`crest/runtime_bootstrap.py`](crest/runtime_bootstrap.py) | No hardware required when `device.hil: false` |
-| Run or modify HIL server behavior | [`hil_server.py`](hil_server.py) and [`crest/hil_runtime.py`](crest/hil_runtime.py) | Development board required for execution; HIL harness required for energy measurement |
+| Run or modify HIL server behavior | [`hil_server.py`](hil_server.py) and [`crest/hil/runtime.py`](crest/hil/runtime.py) | Development board required for execution; HIL harness required for energy measurement |
 | Add a dataset | [`crest/datasets/README.md`](crest/datasets/README.md) | No hardware required for adapter development |
 | Add a task | [`crest/tasks/README.md`](crest/tasks/README.md) | No hardware required for adapter development |
 | Add a model family | [`crest/model_families/README.md`](crest/model_families/README.md) | No hardware required for model construction; hardware needed for backend validation |
@@ -85,7 +85,7 @@ points above.
   Shared task-aware bootstrap path used by both `nas_model_client.py` and
   `hil_server.py` to resolve component selection, instantiate dataset/task/
   family components, and validate NAS policy against the active task contract.
-- [`crest/hil_runtime.py`](crest/hil_runtime.py)
+- [`crest/hil/runtime.py`](crest/hil/runtime.py)
   Runtime-owned HIL request construction and metric collection helpers used by
   the HIL server and related tests.
 - [`crest/pareto_replay.py`](crest/pareto_replay.py)
@@ -139,7 +139,7 @@ At a high level, the source tree is wired like this:
 6. The selected model family samples hyperparameters, builds models, and
    materializes export variants.
 7. When hardware metrics are needed, the HIL path builds a normalized request
-   through [`crest/hil_runtime.py`](crest/hil_runtime.py), then the
+   through [`crest/hil/runtime.py`](crest/hil/runtime.py), then the
    selected microcontroller backend stages, compiles, uploads, and measures
    one candidate.
 8. Shared scoring, pruning, and result-shaping code combines task metrics and
