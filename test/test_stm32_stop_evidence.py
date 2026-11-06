@@ -15,7 +15,7 @@ def test_stop_count_acceptance():
     from test.test_stm32_measurement_acceptance import sample
     args = sample('cadenced')
     for slots, entries, valid in [(9, 9, True), (9, 8, False), (None, None, False),
-                                   (0, 0, True), (9.5, 9.5, False), (10, 10, False)]:
+                                   (0, 0, True), (9.5, 9.5, False), (10, 10, True), (11, 11, False)]:
         args['metrics'].update(slept_slots=slots, stop_entries=entries)
         result = validate_measurement(**args)
         assert result['instrumentation_valid'] is valid
