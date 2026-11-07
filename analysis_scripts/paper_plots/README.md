@@ -10,8 +10,8 @@ They read saved measurements and evaluations; they do not train models, launch
 searches, contact providers, or access hardware. Diagrams and photographs are
 separate artwork.
 
-The scripts follow the original plotting tools' conventions: standalone CLIs,
-explicit external paths, NumPy-style docstrings, and numeric audit sidecars.
+The scripts provide standalone CLIs, explicit external paths, and numeric audit
+sidecars.
 Figures use white backgrounds, DejaVu Sans, consistent series colors, and
 vector PDF exports. PNG exports default to 400 dpi. Layouts, labels, colors and export bounds follow
 the submitted assets. All eight PNGs were verified pixel-for-pixel against those
@@ -23,11 +23,10 @@ Run from the repository root with the repository Conda environment, or a
 plot-only environment containing `matplotlib`, `numpy`, `pandas`, `scipy`, and
 `Pillow`. No CREST installation or hardware toolchain is needed.
 
-Research data, private input manifests, and generated images are not distributed.
-Supply your own inputs using the schemas below. Keep any generated provenance
-reports with your private results, outside the source checkout.
-Replace the example `/path/to/...` values with your archive locations and keep
-outputs outside the source checkout. All commands support `--help`.
+Study data and input manifests must be supplied separately. Use the schemas
+below and replace example `/path/to/...` values with your archive locations.
+Keep outputs and provenance reports outside the source checkout. All commands
+support `--help`.
 
 ## Submitted figure manifest
 
@@ -47,7 +46,7 @@ write plotted-point CSVs and numeric summaries. Training writes correlations,
 front membership and input provenance; timing writes aggregated values and a
 caption. `replay_front_support.py` contains the shared replay-loading, Pareto
 and outcome-accounting functions imported by CS2. It has no plotting CLI or
-Matplotlib dependency; obsolete plotting entry points have been removed.
+Matplotlib dependency.
 
 ## CS1: clock reversal, ranks and model transfer
 
@@ -79,8 +78,7 @@ predicted release energy. Do not apply that exclusion to the rank figure.
 ## CS2: proxy candidates replayed on target hardware
 
 The submitted comparison uses **16 unique mixed-precision candidates per
-proxy**, replayed on each Arduino target. Earlier completed-row filters and
-smaller memory-proxy populations are superseded. Historical archive names
+proxy**, replayed on each Arduino target. Historical archive names
 still say `case1`; the current manuscript calls this CS2.
 
 ```bash
@@ -135,7 +133,7 @@ checks a matched panel and constant energy, computes Spearman agreement with
 panels. Seed 17 and best-validation-loss checkpoint selection are reported
 archive provenance, not independently encoded or verified by the CSV.
 
-The alternative validated JSON interface remains available:
+The validated JSON interface also accepts saved checkpoint evaluations:
 
 ```bash
 python analysis_scripts/paper_plots/plot_training_budget.py \
@@ -147,9 +145,9 @@ Each JSON contains a list with `candidate_id`, `seed`, `budget`, `policy`,
 `status`, `energy_policy`, `energy_mj_per_inference`, and `metrics.rmse_total`.
 The loader selects `policy="budget_only"` for the requested seed and validates a
 complete matched panel and fixed historical energy. Checkpoints must already
-be selected/evaluated. This JSON workflow was reconstructed; standalone styling
-was recovered from the local paper renderer. The frozen CSV path reproduces the submitted panels exactly in its recorded
-environment. JSON inputs reproduce them only if they encode the same panel;
+be selected/evaluated. The frozen CSV path reproduces the submitted panels
+exactly in its recorded environment. JSON inputs reproduce them only if they
+encode the same panel;
 neither path implies convergence at 300 epochs.
 
 ## Timing appendix
@@ -174,11 +172,6 @@ proxy samples, and timing reconciliation. Input code `cadenced` displays as
 **Periodic HIL**. The layout depicts cost attribution, not execution order.
 
 ## Maintenance
-
-Superseded motivation, cross-runtime, original CS3 selection/transfer, old
-rank/selection-context and v2 front generators were removed, along with the
-obsolete completed-population preparation script. Historical implementations
-remain in Git history. Keep draft variants out of the current-paper catalog.
 
 ```bash
 python -m pytest -q test/test_paper_plot_inputs.py test/test_paper_plot_cs1.py
