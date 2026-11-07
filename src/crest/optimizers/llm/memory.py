@@ -222,18 +222,7 @@ def build_computed_statistics(records: list[dict[str, Any]]) -> dict[str, Any]:
         Missing parameter values are omitted from that parameter's groups.
     """
     def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
-        """Summarize finite measurements for one evidence group.
-
-        Parameters
-        ----------
-        rows : list of dict
-            Records belonging to the group.
-
-        Returns
-        -------
-        dict
-            Counts and descriptive metric statistics with separate sample sizes.
-        """
+        """Summarize finite metrics with a separate sample count for each."""
         states: dict[str, int] = {}
         samples: dict[str, list[float]] = {}
         for row in rows:
@@ -359,23 +348,7 @@ class ExperimentalMemory:
         self._summary_suspension_warned = False
 
     def _warn_summary_suspended(self, pending_trial_count: int) -> None:
-        """Report a suspended summary circuit once per owner and suspension.
-
-        Parameters
-        ----------
-        pending_trial_count : int
-            Number of terminal trials still awaiting accepted summarization.
-
-        Returns
-        -------
-        None
-            A warning is emitted through the application's Python run logger.
-
-        Notes
-        -----
-        Reopened owners report persisted suspension again. Provider responses,
-        rejection details, and experimental content remain in the memory ledger.
-        """
+        """Warn once per owner about a new or restored summary suspension."""
         if (self.state["summary_failure_count"] >= SUMMARY_MAX_CONSECUTIVE_FAILURES
                 and not self._summary_suspension_warned):
             logger.warning(
@@ -390,18 +363,7 @@ class ExperimentalMemory:
             self._summary_suspension_warned = True
 
     def _save_state(self, state: dict[str, Any]) -> None:
-        """Atomically persist accepted memory and summary retry disposition.
-
-        Parameters
-        ----------
-        state : dict[str, Any]
-            Complete next memory state, including coverage and retry counters.
-
-        Returns
-        -------
-        None
-            The on-disk state and current instance are updated together.
-        """
+        """Atomically persist accepted memory and its retry disposition."""
         temporary = self.root / "state.pending.json"
         self.ledger._write_json(temporary, state)
         temporary.replace(self.state_path)
@@ -424,25 +386,7 @@ class ExperimentalMemory:
             self._summary_suspension_warned = False
 
     def _merge(self, update: MemoryUpdate, covered: set[int]) -> list[dict]:
-        """Validate a memory update and retain all supporting trial references.
-
-        Parameters
-        ----------
-        update : MemoryUpdate
-            Proposed finding changes and explicit retirements.
-        covered : set of int
-            Trial identifiers available as supporting evidence.
-
-        Returns
-        -------
-        list of dict
-            Merged findings without mutating accepted memory state.
-
-        Raises
-        ------
-        ValueError
-            If references, IDs, retirements, finding count, or character bounds are invalid.
-        """
+        """Merge valid updates without losing citations or exceeding configured bounds."""
         findings = {f["id"]: f for f in self.state["findings"]}
         changed = [f.id for f in update.updates] + [f.id for f in update.retire]
         if len(changed) != len(set(changed)):
@@ -482,6 +426,96 @@ class ExperimentalMemory:
                 "No automatic truncation is permitted."
             )
         return result
+
+    def _summarize_chunk(self, scope: dict[str, Any], chunk: list[dict[str, Any]],
+                         provider: LLMProvider, study_name: str,
+                         pending_trial_count: int) -> bool:
+        """Attempt bounded repairs, then commit coverage or persist a deferred chunk."""
+        # Repair attempts reuse this chunk; coverage advances only after validation.
+        repair_feedback = None
+        committed = False
+        for attempt in range(SUMMARY_MAX_REPAIR_ATTEMPTS + 1):
+            request_id = self.ledger.next_request_id()
+            body = {
+                "context": scope,
+                "previous_findings": self.state["findings"],
+                "previously_covered_trial_count": len(self.state["covered"]),
+                "new_trials": chunk,
+                "computed_statistics": build_computed_statistics(chunk),
+                "limits": {"max_findings": self.config.max_findings, "max_chars": self.config.max_chars,
+                           "target_chars": int(self.config.max_chars * 0.8)},
+            }
+            if repair_feedback is not None:
+                body["repair_feedback"] = repair_feedback
+            request = LLMRequest(SUMMARY_SYSTEM, json.dumps(body, sort_keys=True, separators=(",", ":")),
+                                 MEMORY_PROMPT_VERSION, {"purpose": "summarization", "study_name": study_name,
+                                               "memory_version": self.state["version"],
+                                               "repair_attempt": attempt,
+                                               "new_trial_numbers": [r["number"] for r in chunk]})
+            self.ledger.write_request(request_id, request)
+            self.ledger.record_prompt_context(body)
+            try:
+                response = provider.complete_json(request)
+            except ProviderResponseError as exc:
+                self.ledger.write_provider_error(request_id, exc)
+                reason = str(exc)
+            except Exception as exc:
+                # Transport/auth failures stop before candidates can be proposed;
+                # the unchanged covered map retains all unsummarized evidence.
+                self.ledger.write_provider_error(request_id, exc)
+                self.ledger.record_event({"event": "summary_failed", "request_id": request_id,
+                                          "reason": str(exc), "error_type": type(exc).__name__})
+                raise
+            else:
+                self.ledger.write_response(request_id, response)
+                try:
+                    if response.finish_reason not in (None, "stop"):
+                        raise ValueError(f"Summary finish_reason={response.finish_reason!r}; return a complete response")
+                    update = MemoryUpdate.model_validate_json(response.content)
+                    covered = {**self.state["covered"], **{str(r["number"]): digest(r) for r in chunk}}
+                    findings = self._merge(update, {int(n) for n in covered})
+                except ValueError as exc:
+                    reason = str(exc)
+                else:
+                    committed = True
+                    break
+            self.ledger.record_event({"event": "summary_rejected", "request_id": request_id,
+                                      "repair_attempt": attempt, "reason": reason})
+            repair_feedback = {
+                "reason": reason,
+                "instruction": (
+                    "Return a complete JSON response with updates and retire lists, using the same evidence. "
+                    "The entire resulting memory includes unchanged prior findings. Shorten or merge "
+                    "findings and explicitly retire superseded IDs as needed; preserve relevant "
+                    "evidence and caveats. Target at most "
+                    f"{int(self.config.max_chars * 0.8)} characters each for resulting JSON and prose "
+                    f"(hard cap {self.config.max_chars} each)."
+                ),
+            }
+        if not committed:
+            failures = self.state["summary_failure_count"] + 1
+            self._save_state({**self.state, "summary_failure_count": failures,
+                              "summary_failure_reason": reason})
+            self.ledger.record_event({"event": "summary_deferred", "request_id": request_id,
+                                      "reason": reason, "pending_trial_count": pending_trial_count,
+                                      "attempts": SUMMARY_MAX_REPAIR_ATTEMPTS + 1,
+                                      "consecutive_failures": failures})
+            if failures >= SUMMARY_MAX_CONSECUTIVE_FAILURES:
+                self.ledger.record_event({"event": "summary_suspended", "request_id": request_id,
+                                          "reason": reason, "consecutive_failures": failures,
+                                          "recovery": "Correct the rejection cause, then explicitly call reset_summary_failures()."})
+            return False
+        next_state = {**self.state, "version": self.state["version"] + 1,
+                      "covered": covered, "findings": findings, "request_id": request_id,
+                      "summary_failure_count": 0, "summary_failure_reason": None}
+        # Commit only after a valid complete response. Snapshots retain retired findings.
+        snapshots = self.root / "snapshots"
+        snapshots.mkdir(exist_ok=True)
+        self.ledger._write_json(snapshots / f"{request_id:06d}.json", next_state)
+        self._save_state(next_state)
+        self.ledger.record_event({"event": "summary_committed", "request_id": request_id,
+                                  "version": self.state["version"], "retired": [r.model_dump() for r in update.retire]})
+        return True
 
     def enrich(self, study: Any, context: PromptContext, provider: LLMProvider,
                *, directions: tuple[str, ...] = ()) -> PromptContext:
@@ -546,94 +580,20 @@ class ExperimentalMemory:
         while (len(eligible_pending) >= threshold
                and self.state["summary_failure_count"] < SUMMARY_MAX_CONSECUTIVE_FAILURES):
             chunk = eligible_pending[:self.config.max_pending_trials]
-            repair_feedback = None
-            committed = False
-            for attempt in range(SUMMARY_MAX_REPAIR_ATTEMPTS + 1):
-                request_id = self.ledger.next_request_id()
-                body = {
-                    "context": scope,
-                    "previous_findings": self.state["findings"],
-                    "previously_covered_trial_count": len(self.state["covered"]),
-                    "new_trials": chunk,
-                    "computed_statistics": build_computed_statistics(chunk),
-                    "limits": {"max_findings": self.config.max_findings, "max_chars": self.config.max_chars,
-                               "target_chars": int(self.config.max_chars * 0.8)},
-                }
-                if repair_feedback is not None:
-                    body["repair_feedback"] = repair_feedback
-                request = LLMRequest(SUMMARY_SYSTEM, json.dumps(body, sort_keys=True, separators=(",", ":")),
-                                     MEMORY_PROMPT_VERSION, {"purpose": "summarization", "study_name": context.study_name,
-                                                   "memory_version": self.state["version"],
-                                                   "repair_attempt": attempt,
-                                                   "new_trial_numbers": [r["number"] for r in chunk]})
-                self.ledger.write_request(request_id, request)
-                self.ledger.record_prompt_context(body)
-                try:
-                    response = provider.complete_json(request)
-                except ProviderResponseError as exc:
-                    self.ledger.write_provider_error(request_id, exc)
-                    reason = str(exc)
-                except Exception as exc:
-                    # Transport/auth failures stop before candidates can be proposed;
-                    # the unchanged covered map retains all unsummarized evidence.
-                    self.ledger.write_provider_error(request_id, exc)
-                    self.ledger.record_event({"event": "summary_failed", "request_id": request_id,
-                                              "reason": str(exc), "error_type": type(exc).__name__})
-                    raise
-                else:
-                    self.ledger.write_response(request_id, response)
-                    try:
-                        if response.finish_reason not in (None, "stop"):
-                            raise ValueError(f"Summary finish_reason={response.finish_reason!r}; return a complete response")
-                        update = MemoryUpdate.model_validate_json(response.content)
-                        covered = {**self.state["covered"], **{str(r["number"]): digest(r) for r in chunk}}
-                        findings = self._merge(update, {int(n) for n in covered})
-                    except ValueError as exc:
-                        reason = str(exc)
-                    else:
-                        committed = True
-                        break
-                self.ledger.record_event({"event": "summary_rejected", "request_id": request_id,
-                                          "repair_attempt": attempt, "reason": reason})
-                repair_feedback = {
-                    "reason": reason,
-                    "instruction": (
-                        "Return a complete JSON response with updates and retire lists, using the same evidence. "
-                        "The entire resulting memory includes unchanged prior findings. Shorten or merge "
-                        "findings and explicitly retire superseded IDs as needed; preserve relevant "
-                        "evidence and caveats. Target at most "
-                        f"{int(self.config.max_chars * 0.8)} characters each for resulting JSON and prose "
-                        f"(hard cap {self.config.max_chars} each)."
-                    ),
-                }
-            if not committed:
-                failures = self.state["summary_failure_count"] + 1
-                self._save_state({**self.state, "summary_failure_count": failures,
-                                  "summary_failure_reason": reason})
-                self.ledger.record_event({"event": "summary_deferred", "request_id": request_id,
-                                          "reason": reason, "pending_trial_count": len(pending),
-                                          "attempts": SUMMARY_MAX_REPAIR_ATTEMPTS + 1,
-                                          "consecutive_failures": failures})
-                if failures >= SUMMARY_MAX_CONSECUTIVE_FAILURES:
-                    self.ledger.record_event({"event": "summary_suspended", "request_id": request_id,
-                                              "reason": reason, "consecutive_failures": failures,
-                                              "recovery": "Correct the rejection cause, then explicitly call reset_summary_failures()."})
+            if not self._summarize_chunk(scope, chunk, provider, context.study_name, len(pending)):
                 break
-            next_state = {**self.state, "version": self.state["version"] + 1,
-                          "covered": covered, "findings": findings, "request_id": request_id,
-                          "summary_failure_count": 0, "summary_failure_reason": None}
-            # Commit only after a valid complete response. Snapshots retain retired findings.
-            snapshots = self.root / "snapshots"
-            snapshots.mkdir(exist_ok=True)
-            self.ledger._write_json(snapshots / f"{request_id:06d}.json", next_state)
-            self._save_state(next_state)
-            self.ledger.record_event({"event": "summary_committed", "request_id": request_id,
-                                      "version": self.state["version"], "retired": [r.model_dump() for r in update.retire]})
+            covered = self.state["covered"]
             pending = [r for r in pending if str(r["number"]) not in covered]
             eligible_pending = [r for r in eligible_pending if str(r["number"]) not in covered]
             threshold = self.config.interval_trials
         # Emit both new and restored suspensions without repeating every NAS round.
         self._warn_summary_suspended(len(pending))
+        return self._project_pending(context, pending)
+
+    def _project_pending(self, context: PromptContext,
+                         pending: list[dict[str, Any]]) -> PromptContext:
+        """Expose accepted memory and the newest bounded, non-recent pending evidence."""
+        # Recent trials already have their own prompt window; do not duplicate them.
         recent_ids = {r["number"] for r in context.recent_trials}
         prompt_pending = [r for r in pending if r["number"] not in recent_ids]
         # Keep the freshest unsummarized measurements alongside the recent window.

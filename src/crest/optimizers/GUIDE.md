@@ -113,11 +113,11 @@ Repeated references to a trial across these views represent one observation. Sem
 
 The prompt phase uses the greater of attempted trials / total cap and feasible completions / feasible target (policy version 2): exploration below 35%, specification below 85%, and finalization thereafter. These are proposal instructions, not changes to the objective or final-training procedure.
 
-Memory defaults to starting after 10 terminal trials and updating every 5, with at most 12 findings, 6000 characters, and 100 pending trials. Valid updates retain untouched findings, explicitly replace existing IDs, and retire findings only with a reason. State records coverage hashes and snapshots. Restored memory must match its context and covered trial evidence. Rejected summaries receive one repair attempt. Persistent content rejection retains prior state and all study evidence, while bounding the pending prompt and explicitly reporting omissions. Provider execution errors stop the study.
+Memory defaults to starting after 10 terminal trials and updating every 5. `memory.lag_trials` defaults to 0; increasing it keeps the newest terminal records pending rather than summarizing them immediately. Updates retain at most 12 findings, 6000 characters, and 100 pending trials. Valid updates retain untouched findings, explicitly replace existing IDs, and retire findings only with a reason. State records coverage hashes and snapshots. Restored memory must match its context and covered trial evidence. Rejected summaries receive one repair attempt. Persistent content rejection retains prior state and all study evidence, while bounding the pending prompt and explicitly reporting omissions. Provider execution errors stop the study.
 
 The provider must return `{"candidates": [{...}]}`. LLM validation checks the envelope, count, exact raw fields, and duplicates. Deduplication covers COMPLETE, PRUNED, known deterministic FAIL, queued fixed parameters, and earlier accepted candidates in the batch. Infrastructure and unknown FAIL attempts remain retryable. Full candidate provenance fills parameters absent from early rejections. Numeric float descriptors canonicalize values; categorical types remain strict. Anchors retain their separate success/feasibility filters. The serial runner drains queued trials before requesting more proposals.
 
-A partially accepted batch runs at its accepted size without filling rejected slots. A batch with zero accepted candidates gets up to `max_repair_attempts` additional calls after the initial call. Provider errors, invalid JSON, and validation errors contribute repair feedback. After exhaustion, the component tries up to 100 locally sampled candidates and returns one legal unique random fallback. Failure to find one raises an error. `random_seed` controls this local RNG, not remote provider randomness.
+In bounded-history mode, a partially accepted batch runs at its accepted size without filling rejected slots. In bounded-history mode, a batch with zero accepted candidates gets up to `max_repair_attempts` additional calls after the initial call. Provider errors, invalid JSON, and validation errors contribute repair feedback. After exhaustion, the component tries up to 100 locally sampled candidates and returns one legal unique random fallback. Failure to find one raises an error. `random_seed` controls this local RNG, not remote provider randomness. Full-history mode instead retains accepted candidates and makes bounded refill requests for unfilled policy slots (see below).
 
 ### Fixed measured warm-up
 
@@ -186,7 +186,7 @@ optimizer:
 
 OpenRouter defaults its base URL and JSON response mode. Generic `openai_compatible` providers require an explicit clean `base_url`, `model`, and `api_key_env`; the transport appends `/chat/completions`. URL userinfo, query parameters, and fragments are rejected. Credentials are checked during component initialization, before new study signatures are stored; the fake provider requires none. A `fake` provider with configured response fixtures supports local checks without paid calls.
 
-Each study stores a versioned optimizer signature: resolved registration name, deterministic non-secret `identity_config`, and effective sampler class/options. LLM identity includes provider/model, generation settings, prompt/schema/context/memory versions, history/anchor/memory settings, and fallback policy. Credentials, output paths, completion/attempt budgets, and the provider transport `timeout_s` are excluded. `json_response_mode` remains part of identity because it changes the provider request. Exact older built-in version-1 signatures for `openrouter` or `openai_compatible`, with otherwise matching identity and a valid `timeout_s`, compare after excluding only that transport field; existing stored signatures remain unchanged. Known older private TPE/NSGA-II class paths compare through exact public-name aliases; options and remaining identity stay strict.
+Each study stores a versioned optimizer signature: resolved registration name, deterministic non-secret `identity_config`, and effective sampler class/options. LLM identity includes provider/model, generation settings, prompt/schema/context/memory versions, history/anchor/memory settings, and fallback policy. Credentials, output paths, completion/attempt budgets, and the provider transport `timeout_s` are excluded. `json_response_mode` remains part of identity because it changes the provider request.
 
 To extend a signed study, keep the study name, database, and original scientific configuration, then raise the total target and cap. For example, raising 250 completions to 300 requests progress toward 300 total. A matching signed native or LLM study resumes before new proposals. Stored optimizer and feasibility identity is checked before component initialization or queued execution. New optimizer/feasibility signatures are persisted only after component initialization succeeds, so a failed initialization leaves an unsigned study unsigned. Already signed studies retain strict compatibility checks, including empty ones.
 
@@ -196,7 +196,7 @@ Nonempty unsigned studies cannot resume searching, regardless of optimizer type;
 
 ## Add a simple proposer
 
-Register a class before `load_config()` so custom fields survive normalization and validation. Custom names are case-sensitive after whitespace stripping; historical built-in names accept case aliases only when no exact registration exists. This example deliberately repeats a fixed experiment and imports no Optuna API:
+Register a class before `load_config()` so custom fields survive normalization and validation. Custom registration names are case-sensitive after whitespace stripping. This example deliberately repeats a fixed experiment and imports no Optuna API:
 
 ```python
 from collections.abc import Mapping
@@ -234,7 +234,7 @@ Supply `optimizer.type: fixed_candidate` and an `optimizer.candidate` mapping co
 
 The per-study artifact directory is `outputs.models_dir/<study_name>/`. Optuna storage contains the authoritative state and provenance. The configured trial CSV records measurements, objective outcomes, task metrics, and rejection/feasibility evidence through existing `log_trial`; it does not gain dedicated `crest_proposal` columns. `trials.csv` exports the Optuna dataframe, including parameter and attribute columns. Inspect both state and eligibility evidence when interpreting results.
 
-LLM artifacts under `llm_optimizer/` include numbered request/response JSON pairs, `prompt_contexts.jsonl`, `returned_candidates.jsonl`, `rejected_candidates.jsonl`, `optimizer_events.jsonl`, and memory state/snapshots. Responses retain raw output and available usage, finish reason, and latency. `returned_to_runner` means a proposal passed component validation and was returned; it does not prove queue acceptance or execution. Study trial attributes establish queue acceptance. Older `accepted_candidates.jsonl` and `batch_enqueued` artifacts retain their historical meanings.
+LLM artifacts under `llm_optimizer/` include numbered request/response JSON pairs, `prompt_contexts.jsonl`, `returned_candidates.jsonl`, `rejected_candidates.jsonl`, `optimizer_events.jsonl`, and memory state/snapshots. Responses retain raw output and available usage, finish reason, and latency. `returned_to_runner` means a proposal passed component validation and was returned; it does not prove queue acceptance or execution. Study trial attributes establish queue acceptance.
 
 Scalar `run_scoring_nas` selects a feasible completed trial when feasibility is enabled, retrains it on the longer schedule, evaluates held-out test data, exports TFLite, and writes training plots, task closeout artifacts, and a summary; optional fold rotation follows the fixed-split closeout. Without feasibility, selection uses Optuna's best scalar trial. Multi-objective closeout exports the Pareto CSV and returns without automatic final retraining. Existing family decoding and Pareto replay continue using actual raw parameters; runtime choices are handled separately, and proposal metadata stays in attributes.
 
@@ -304,9 +304,18 @@ memory. `history_mode: full` provides exact columnar trial evidence and decoded
 network coverage for the audio DS-CNN search space. It requires
 `require_rationale: true`, `memory.enabled: false`, `batch_size` from 1 through 5,
 and `max_repair_attempts` at most 1. Optional `max_refill_attempts` accepts 0 through
-2 (default 2). Full-history allocation and decoded duplicate handling are
+2 (default 2). Accepted candidates survive refill requests; malformed responses consume a separate
+shared repair allowance, while well-formed batches with missing or rejected entries
+consume the refill allowance. Exhaustion returns a nonempty retained subset; only
+a wholly empty result attempts local random fallback. Full-history allocation and decoded duplicate handling are
 implemented in [`llm/full_history.py`](llm/full_history.py); this mode is specific
-to that model family. Rationale is proposal metadata and does not affect measured
+to that model family. Each full-history candidate declares `intent: local` or
+`intent: exploration`; local candidates name an eligible historical `parent_trial`,
+while exploration uses no parent. The validator enforces quotas, assigned coverage
+cells, and distinct decoded parents while unused parents remain. It rejects both
+raw duplicates and different raw encodings of the same decoded architecture.
+See the [full-history example](llm/EXAMPLES.md#full-history-audio-ds-cnn) for a
+configuration and response envelope. Rationale is proposal metadata and does not affect measured
 scores or substitute for trial evidence.
 
 Run offline optimizer checks from the repository root with:

@@ -314,6 +314,72 @@ def _policy_feedback(retained, rejections, *, malformed=None):
                           if malformed else {})}, separators=(",", ":"), default=str)
 
 
+def _prepare_policy_evidence(history, descriptor):
+    """Reconstruct blocking candidates and duplicate-match evidence in history order."""
+    from .full_history import (
+        reconstruct_params, decoded_architecture, decoded_fingerprint,
+        outcome_class, outcome_reason, observed_measurement, exhausted_unknown_retries,
+    )
+    completed = []
+    exhausted = exhausted_unknown_retries(history)
+    for trial in history:
+        if (outcome_class(trial) in {"successful", "deterministic", "infeasible"}
+                or decoded_fingerprint(reconstruct_params(trial)) in exhausted):
+            params = reconstruct_params(trial, descriptor)
+            if all(name in params for name in descriptor) and params not in completed:
+                completed.append(params)
+    queued = []
+    for trial in history:
+        if str(trial.state).strip().upper() in {"WAITING", "RUNNING"}:
+            params = reconstruct_params(trial, descriptor)
+            if all(name in params for name in descriptor):
+                queued.append(params)
+    matches = []
+    for trial in history:
+        params = reconstruct_params(trial, descriptor)
+        if params in completed or params in queued:
+            attrs = trial.user_attrs
+            metrics = attrs.get("task_metrics", {})
+            decoded = decoded_architecture(params)
+            reason = outcome_reason(trial)
+            if reason is not None:
+                reason = str(reason)
+                if len(reason) > 512:
+                    reason = reason[:512] + " [truncated failure detail]"
+            matches.append({"trial": trial.number, "params": params,
+                            "decoded_widths": decoded["widths"] if decoded else None,
+                            "state": str(trial.state), "outcome": {
+                                "score": trial.values[0] if trial.values and len(trial.values) == 1 else None,
+                                "macro_f1": metrics.get("macro_f1") if isinstance(metrics, Mapping) else None,
+                                "latency_ms": observed_measurement(trial, "latency_ms"),
+                                "energy_mj_per_inference": observed_measurement(trial, "energy_mj_per_inference"),
+                                "feasibility": attrs.get("feasibility_status", attrs.get("feasible")),
+                                "failure_class": None if outcome_class(trial) in {"successful", "pending"} else outcome_class(trial), "failure_reason": reason}})
+    return completed, queued, matches
+
+
+def _policy_provenance(entry, index, request_id, context, history, used_parents, ledger):
+    """Attribute an accepted entry and record any parent diversity exception."""
+    from .full_history import decoded_fingerprint, parameter_differences, nearest_prior_distances
+
+    intent = entry["intent"]
+    provenance = {"proposal_source": "llm", "optimizer": "llm_generator",
+                  "request_id": request_id, "batch_id": f"llm-{request_id:06d}",
+                  "batch_index": index, **{k: v for k, v in entry.items() if k != "params"},
+                  "nearest_prior_distances": nearest_prior_distances(entry["params"], history)}
+    if intent == "exploration":
+        provenance["exploration_policy"] = ("compulsory_coverage" if "assigned_target" in entry
+            else "post_coverage" if context.coverage.get("goal_complete") else "untargeted")
+    if intent == "local":
+        parent = next(p for p in context.eligible_parents if p["trial_number"] == entry["parent_trial"])
+        used_parents.add(decoded_fingerprint(parent["params"]))
+        provenance["parent_differences"] = parameter_differences(entry["params"], parent["params"])
+        if entry.get("parent_diversity_exception"):
+            ledger.record_event({"event": "parent_diversity_exception", "request_id": request_id,
+                                 "parent_trial": entry["parent_trial"]})
+    return provenance
+
+
 def _generate_policy_batch(history, provider, context, ledger, *, prompt_version,
                            max_repair_attempts, max_refill_attempts, rng):
     """Generate a retained subset under shared repair and refill budgets.
@@ -345,52 +411,17 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
     """
     from dataclasses import replace
     from .schemas import validate_policy_batch
-    from .full_history import (reconstruct_params, decoded_architecture, decoded_fingerprint,
-                               parameter_differences, nearest_prior_distances, outcome_class, outcome_reason, observed_measurement,
-                               exhausted_unknown_retries)
     from .spending import SpendInputLimitExceeded
     if not (isinstance(max_repair_attempts, int) and not isinstance(max_repair_attempts, bool)
             and 0 <= max_repair_attempts <= 1
             and isinstance(max_refill_attempts, int) and not isinstance(max_refill_attempts, bool)
             and 0 <= max_refill_attempts <= 2):
         raise ValueError("Full history mode requires repair attempts <= 1 and refill attempts <= 2.")
-    completed = []
-    exhausted = exhausted_unknown_retries(history)
-    for trial in history:
-        if (outcome_class(trial) in {"successful", "deterministic", "infeasible"}
-                or decoded_fingerprint(reconstruct_params(trial)) in exhausted):
-            params = reconstruct_params(trial, context.descriptor)
-            if all(name in params for name in context.descriptor) and params not in completed:
-                completed.append(params)
-    queued = []
-    for trial in history:
-        if str(trial.state).strip().upper() in {"WAITING", "RUNNING"}:
-            params = reconstruct_params(trial, context.descriptor)
-            if all(name in params for name in context.descriptor):
-                queued.append(params)
-    matches = []
-    for trial in history:
-        params = reconstruct_params(trial, context.descriptor)
-        if params in completed or params in queued:
-            attrs = trial.user_attrs
-            metrics = attrs.get("task_metrics", {})
-            decoded = decoded_architecture(params)
-            reason = outcome_reason(trial)
-            if reason is not None:
-                reason = str(reason)
-                if len(reason) > 512:
-                    reason = reason[:512] + " [truncated failure detail]"
-            matches.append({"trial": trial.number, "params": params,
-                            "decoded_widths": decoded["widths"] if decoded else None,
-                            "state": str(trial.state), "outcome": {
-                                "score": trial.values[0] if trial.values and len(trial.values) == 1 else None,
-                                "macro_f1": metrics.get("macro_f1") if isinstance(metrics, Mapping) else None,
-                                "latency_ms": observed_measurement(trial, "latency_ms"),
-                                "energy_mj_per_inference": observed_measurement(trial, "energy_mj_per_inference"),
-                                "feasibility": attrs.get("feasibility_status", attrs.get("feasible")),
-                                "failure_class": None if outcome_class(trial) in {"successful", "pending"} else outcome_class(trial), "failure_reason": reason}})
+    completed, queued, matches = _prepare_policy_evidence(history, context.descriptor)
     retained, proposals, targets = [], [], list(context.exploration_targets)
     quotas = dict(context.allocation)
+    # Malformed responses consume the shared repair budget. Valid responses with
+    # missing slots consume refills; both keep every previously accepted entry.
     repairs = refills = 0
     feedback = None
     used_parents = set()
@@ -398,6 +429,7 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
     last_rejections = []
     request_ids = []
     while True:
+        # Each request asks only for outstanding slots and coverage targets.
         current = replace(context, batch_size=sum(quotas.values()), allocation=dict(quotas),
                           exploration_targets=tuple(targets))
         request_id = ledger.next_request_id()
@@ -446,20 +478,8 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
             intent = entry["intent"]
             quotas[intent] -= 1
             if "assigned_target" in entry: targets.remove(entry["assigned_target"])
-            provenance = {"proposal_source": "llm", "optimizer": "llm_generator",
-                          "request_id": request_id, "batch_id": f"llm-{request_id:06d}",
-                          "batch_index": index, **{k: v for k, v in entry.items() if k != "params"},
-                          "nearest_prior_distances": nearest_prior_distances(entry["params"], history)}
-            if intent == "exploration":
-                provenance["exploration_policy"] = ("compulsory_coverage" if "assigned_target" in entry
-                    else "post_coverage" if context.coverage.get("goal_complete") else "untargeted")
-            if intent == "local":
-                parent = next(p for p in context.eligible_parents if p["trial_number"] == entry["parent_trial"])
-                used_parents.add(decoded_fingerprint(parent["params"]))
-                provenance["parent_differences"] = parameter_differences(entry["params"], parent["params"])
-                if entry.get("parent_diversity_exception"):
-                    ledger.record_event({"event": "parent_diversity_exception", "request_id": request_id,
-                                         "parent_trial": entry["parent_trial"]})
+            provenance = _policy_provenance(
+                entry, index, request_id, context, history, used_parents, ledger)
             retained.append(entry)
             proposals.append(CandidateProposal(entry["params"], provenance))
         if sum(quotas.values()) == 0:
