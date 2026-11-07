@@ -51,8 +51,8 @@ static const uintptr_t kExternalWeightsEnd = 0x80000000UL;
 
 /* Telemetry label for system Stop entered with the WFI instruction. */
 #define CREST_DUT_STOP_MODE_VARIANT "system_stop_wfi"
-/* RTC windows, wrap-safe DWT cadenced active timing, and an awake final tail. */
-#define CREST_DUT_MEASUREMENT_PROTOCOL "rtc_wall_v4_dwt_active_stop_evidence_awake_tail"
+/* RTC windows, wrap-safe DWT cadenced active timing, and Stop-eligible final slots. */
+#define CREST_DUT_MEASUREMENT_PROTOCOL "rtc_wall_v5_dwt_active_stop_evidence_all_slots"
 
 typedef struct
 {
@@ -906,33 +906,6 @@ static bool run_cadenced_window(ai_handle network,
 
   for (int run_idx = 0; run_idx < CREST_DUT_MEASURED_RUNS; ++run_idx)
   {
-    uint64_t now_us = rtc_now_us();
-    int64_t wake_recovery_us = 0;
-
-    if (now_us < next_release_us)
-    {
-      uint64_t slack_us = next_release_us - now_us;
-      if (slack_us > (uint64_t)(CREST_DUT_WAKE_MARGIN_US + CREST_DUT_MIN_SLEEP_US))
-      {
-        uint32_t requested_sleep_us = (uint32_t)(slack_us - (uint64_t)CREST_DUT_WAKE_MARGIN_US);
-        if (stop_sleep_for_us(requested_sleep_us, &wake_recovery_us, measurement))
-        {
-          measurement->rtc_sleep_total_us += (uint64_t)requested_sleep_us;
-          measurement->wake_recovery_total_us += wake_recovery_us;
-        }
-        else
-        {
-          disarm_harness_window();
-          emit_line("STM32_AI_RUN=FAIL measurement_integrity:stop_sleep");
-          flush_stdout();
-          return false;
-        }
-      }
-      while ((now_us = rtc_now_us()) < next_release_us)
-      {
-      }
-    }
-
     uint64_t inference_start_us = rtc_now_us();
     uint32_t invoke_start_cycles = DWT->CYCCNT;
     measurement->wake_overshoot_total_us += (int64_t)(inference_start_us - next_release_us);
@@ -961,12 +934,38 @@ static bool run_cadenced_window(ai_handle network,
     {
       measurement->deadline_miss_count++;
     }
+
+    /* Complete every release slot with the same Stop policy, including the
+     * final slot. Keep the harness armed through sleep and clock recovery. */
+    uint64_t now_us = rtc_now_us();
+    int64_t wake_recovery_us = 0;
+
+    if (now_us < next_release_us)
+    {
+      uint64_t slack_us = next_release_us - now_us;
+      if (slack_us > (uint64_t)(CREST_DUT_WAKE_MARGIN_US + CREST_DUT_MIN_SLEEP_US))
+      {
+        uint32_t requested_sleep_us = (uint32_t)(slack_us - (uint64_t)CREST_DUT_WAKE_MARGIN_US);
+        if (stop_sleep_for_us(requested_sleep_us, &wake_recovery_us, measurement))
+        {
+          measurement->rtc_sleep_total_us += (uint64_t)requested_sleep_us;
+          measurement->wake_recovery_total_us += wake_recovery_us;
+        }
+        else
+        {
+          disarm_harness_window();
+          emit_line("STM32_AI_RUN=FAIL measurement_integrity:stop_sleep");
+          flush_stdout();
+          return false;
+        }
+      }
+      while ((now_us = rtc_now_us()) < next_release_us)
+      {
+      }
+    }
   }
 
-  /* Protocol v2 deliberately retains the historical awake final-slot tail. */
-  while ((phase_end_us = rtc_now_us()) < next_release_us)
-  {
-  }
+  phase_end_us = rtc_now_us();
   disarm_harness_window();
 
   measurement->clock_hz = read_cpu_clock_hz();

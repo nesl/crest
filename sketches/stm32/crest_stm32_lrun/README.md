@@ -77,10 +77,14 @@ This repo-local project includes copied ST license material:
 
 ## Measurement protocol
 
-The `rtc_wall_v4_dwt_active_stop_evidence_awake_tail` protocol uses RTC/LSE window
+The `rtc_wall_v5_dwt_active_stop_evidence_all_slots` protocol uses RTC/LSE window
 timing and DWT cadenced active timing when wrap-safe (RTC fallback otherwise).
-Stop counts establish entry, not residency. Cadenced energy includes an awake
-final-slot tail. The host validates telemetry and retries instrumentation failure
+Stop counts establish entry, not residency. Every cadenced release slot, including
+the final one, uses the same Stop policy when sufficient slack remains; short
+slack still uses the wake-margin busy wait. A ten-run window can report ten Stop
+entries while retaining its ten-period duration. The v4 protocol keeps the
+final slot awake; v4 measurements are not compatible with v5. Rebuild and deploy
+the firmware when updating the host. The host validates telemetry and retries instrumentation failure
 once with the same compiled candidate; valid measurements that miss deployment
 budgets remain ineligible. Each deployment programs and verifies the app and
 external weights, and raw evidence persists outside candidate workspaces under
