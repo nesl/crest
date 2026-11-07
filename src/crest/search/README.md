@@ -28,8 +28,7 @@ points outside it need not improve hypervolume. Comparable studies must use the 
 directions, and eligibility rules. Only feasible, finite COMPLETE vectors contribute; pruned attempts
 cannot contribute partial results.
 
-The offline Python API remains available; the CS3-specific reporting script has
-been removed:
+Generate a progress report from a saved study database:
 
 ```python
 from pathlib import Path
