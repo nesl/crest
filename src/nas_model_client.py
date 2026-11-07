@@ -947,19 +947,27 @@ class NASModelClient:
 
         descriptor = None
         semantic_context = {}
+        # Native Optuna samples inside the objective and needs no descriptor.
+        # Explicit proposers need the legal raw fields before choosing candidates.
         if optimizer.requires_search_space:
             hook = getattr(self.model_family, "trial_search_space", None)
+            # Inheriting the base stub is not an implementation. Reject it before
+            # constructing a provider or reserving any trials.
             if hook is None or getattr(hook, "__func__", None) is ModelFamilyABC.trial_search_space:
                 raise ValueError(
                     f"Optimizer '{self._cfg_get(config, 'type', optimizer.name)}' requires a declared "
                     "trial_search_space descriptor."
                 )
+            # Use the evaluation path's compile policy so deployment knobs such
+            # as CPU-clock selection appear only when that run will use them.
             dependencies = self._classify_nas_metric_dependencies()
             collect_compile_metrics = self._should_collect_compile_metrics(dependencies)
             descriptor = build_search_space_descriptor(
                 self.model_family, self.model_build_context, self.model_config, self.config,
                 collect_compile_metrics=collect_compile_metrics,
             )
+        # Semantic context explains the task, hardware, and parameter effects;
+        # it does not change legal values. Build it only when the proposer asks.
         if descriptor is not None and optimizer.requires_semantic_context(config):
             semantic_context = build_semantic_context(
                 enabled=True,
@@ -971,6 +979,8 @@ class NASModelClient:
                 descriptor=descriptor, device_config=self.config.device,
                 training_config=self.config.training, collect_compile_metrics=collect_compile_metrics,
             )
+        # Give the proposer detached metadata, not the live study or dataset.
+        # Freeze nested semantic data to prevent accidental changes to its snapshot.
         context = SearchContext(
             study_name=self.study_name, artifact_dir=self._artifacts_dir(),
             objective_names=tuple(self._study_metric_names()),
@@ -979,7 +989,11 @@ class NASModelClient:
             semantic_context=freeze_plain_data(semantic_context), search_space=descriptor,
             model_family_name=self.model_family_name, feasibility_enabled=self._feasibility_enabled(),
         )
+        # The caller has already checked resume identity. Runtime setup belongs
+        # here; the caller persists a new signature only if initialization succeeds.
         optimizer.initialize(context, config)
+        # Warmup is known after initialization. Reporting uses its length to mark
+        # the boundary; optimizers without warmup contribute a count of zero.
         self._progress_warmup_count = len(getattr(optimizer, "warmup_params", []) or [])
         return descriptor
 
