@@ -135,7 +135,7 @@ existing study. Use a new study for a changed experiment contract.
 2. `history.py` selects recent evidence and successful anchors. `prompt_builder.py`
    combines these with the descriptor, objective, semantic context, budget, and
    deterministic guidance from `phase_policy.py`.
-3. `enqueue.py` records a request and calls `LLMProvider.complete_json`.
+3. `generation.py` records a request and calls `LLMProvider.complete_json`.
    `schemas.py` checks the JSON envelope, raw names and distributions, rationales,
    batch limit, and duplicates against terminal, waiting, and same-batch candidates.
 4. Invalid content receives repair feedback for up to `max_repair_attempts`
@@ -144,7 +144,7 @@ existing study. Use a new study for a changed experiment contract.
    up to 100 random samples to return one unique legal fallback. Provider failures
    other than repairable response errors propagate.
 5. The component returns proposals with request provenance to the runner. Queue
-   mutation and evaluation happen there, not in `enqueue.py`.
+   mutation and evaluation happen there, not in `generation.py`.
 
 The ledger lives under `<artifact_dir>/llm_optimizer`. Inspect `requests/` for
 paired request and response JSON, `prompt_contexts.jsonl` for evidence snapshots,
@@ -170,9 +170,9 @@ new optimizer loop.
 | `history.py` | Evidence-selection helpers for recent records and best anchors; consumes snapshots without modifying the study. |
 | `phase_policy.py` | Pure budget-to-guidance helper; does not enforce runner stopping conditions. |
 | `objective_renderer.py` | Pure helper explaining supported scoring expressions using known context; does not compute scores or measured limits. |
-| `enqueue.py` | Proposal orchestration helper for request logging, response parsing, repair, and random fallback. Its name does not imply queue ownership. |
+| `generation.py` | Proposal orchestration helper for request logging, response parsing, repair, and random fallback. |
 | `ledger.py` | Single-writer filesystem persistence helper; distinguishes proposals returned from proposals accepted by the runner. |
-| `rationale_migration.py` | Explicit maintenance tool for a stopped SQLite study's rationale contract; outside ordinary generation. Read its preconditions before use. |
+| [`tools/rationale_migration.py`](tools/README.md) | Explicit maintenance tool for a stopped SQLite study's rationale contract; outside ordinary generation. Read its preconditions before use. |
 | `__init__.py` | Convenience exports for generation callers; the runner adapter remains in `component.py`. |
 
 The main external contracts are the shared `OptimizerABC` lifecycle and proposal
@@ -195,7 +195,7 @@ serialization are supporting helpers, not separate optimizer interfaces.
 4. Run the relevant checks from the repository root, for example:
 
    ```sh
-   python -m pytest -q test/test_llm_candidate_validation.py test/test_llm_enqueue.py test/test_llm_provider_prompt_ledger.py test/test_llm_proposal_contract.py
+   python -m pytest -q test/test_llm_candidate_validation.py test/test_llm_generation.py test/test_llm_provider_prompt_ledger.py test/test_llm_proposal_contract.py
    ```
 
 A change is done when the generation example still returns legal proposals,

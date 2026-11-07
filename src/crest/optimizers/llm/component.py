@@ -20,7 +20,7 @@ from ...pipeline_types import BudgetSnapshot, CandidateProposal, ExplicitRound, 
 from ..search_space import validate_candidate
 from ..context import SEMANTIC_CONTEXT_VERSION, disabled_semantic_context
 from .config import normalize_llm_config
-from .enqueue import generate_llm_batch
+from .generation import generate_llm_batch
 from .history import build_best_trial_anchors, build_recent_trial_history
 from .ledger import LLMLedger
 import hashlib

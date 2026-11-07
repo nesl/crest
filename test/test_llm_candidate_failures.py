@@ -7,7 +7,7 @@ import optuna
 import pytest
 
 from crest.optimizers.history import build_trial_snapshot
-from crest.optimizers.llm.enqueue import _history_candidates
+from crest.optimizers.llm.generation import _history_candidates
 from crest.optimizers.search_space import SearchParam, SearchSpaceDescriptor
 from test.test_nas_model_client import _build_test_client
 

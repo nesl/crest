@@ -52,4 +52,4 @@ __all__ = [
     "sample_random_candidate",
     "validate_candidate_batch",
 ]
-from .enqueue import generate_llm_batch, sample_random_candidate
+from .generation import generate_llm_batch, sample_random_candidate

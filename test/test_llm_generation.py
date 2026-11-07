@@ -19,7 +19,7 @@ if str(SRC_DIR) not in sys.path:
 
 from crest.optimizers.history import build_trial_snapshot
 from crest.pipeline_types import TrialRecord
-from crest.optimizers.llm.enqueue import generate_llm_batch  # noqa: E402
+from crest.optimizers.llm.generation import generate_llm_batch  # noqa: E402
 from crest.optimizers.llm.ledger import LLMLedger  # noqa: E402
 from crest.optimizers.llm.prompt_builder import PromptContext  # noqa: E402
 from crest.optimizers.llm.provider import FakeProvider, LLMResponse, ProviderResponseError  # noqa: E402
@@ -175,7 +175,7 @@ class EnqueueTests(unittest.TestCase):
         )
         choices = [{"width": width, "mode": "small"} for width in range(4, 8)]
         with tempfile.TemporaryDirectory() as tmpdir, patch(
-            "crest.optimizers.llm.enqueue.sample_random_candidate", side_effect=choices
+            "crest.optimizers.llm.generation.sample_random_candidate", side_effect=choices
         ) as sample:
             accepted = generate_llm_batch(
                 history, FakeProvider(["not-json"]), context(1), LLMLedger(Path(tmpdir)),

@@ -7,7 +7,7 @@ import sqlite3
 import tempfile
 import unittest
 
-from crest.optimizers.llm.rationale_migration import migrate, validate_transition
+from crest.optimizers.llm.tools.rationale_migration import migrate, validate_transition
 
 
 class RationaleMigrationTests(unittest.TestCase):
