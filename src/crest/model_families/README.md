@@ -13,13 +13,16 @@ harness only when validating an exported model through a hardware backend.
 
 For the broader source map, see [`../../README.md`](../../README.md). If you
 are working on board support, toolchains, flashing, or runtime measurement, use
-[`../microcontrollers/README.md`](../microcontrollers/README.md).
+[`../microcontrollers/README.md`](../microcontrollers/README.md). The
+[optimizer system guide](../optimizers/README.md) explains how family
+declarations feed shared evaluation across native and explicit proposers.
 
 ## What This Layer Owns
 
 Model families own:
 
-- architecture search knobs and sampled hyperparameters;
+- architecture search knobs, sampled hyperparameters, and optional raw search
+  descriptors for explicit proposers;
 - model-family-local config and hyperparameter validation;
 - Keras model construction from `ModelBuildContext`;
 - optional custom object registration for reloads;
@@ -34,13 +37,13 @@ candidate staging, compile/upload flows, or hardware telemetry.
 - [`odom_tcn.py`](odom_tcn.py)
   Registered as `odom_tcn`. Implements the built-in odometry TCN family and
   odometry-specific export/materialization variants.
-- [`audio_dscnn.py`](audio_dscnn.py)
+- [`audio_dscnn/family.py`](audio_dscnn/family.py)
   Registered as `audio_dscnn`. Implements the built-in audio DS-CNN family for
   cached UrbanSound8K log-mel inputs.
 
 ## Key Files
 
-- [`../interfaces.py`](../interfaces.py)
+- [`../interfaces/model_family.py`](../interfaces/model_family.py)
   Defines `ModelFamilyABC`.
 - [`../pipeline_types.py`](../pipeline_types.py)
   Defines `ModelBuildContext`, the normalized build-time input passed into a
@@ -80,15 +83,18 @@ flow, and device telemetry.
 
 ## Add A New Model Family
 
-Use [`odom_tcn.py`](odom_tcn.py) or [`audio_dscnn.py`](audio_dscnn.py) as the
+Use [`odom_tcn.py`](odom_tcn.py) or [`audio_dscnn/family.py`](audio_dscnn/family.py) as the
 concrete starting point.
 
 1. Add a new module under [`src/crest/model_families/`](.).
 2. Implement a `ModelFamilyABC` subclass from
-   [`../interfaces.py`](../interfaces.py).
+   [`../interfaces/model_family.py`](../interfaces/model_family.py).
 3. Implement the required methods:
    - `sample_hparams(trial, ctx, config)`
    - `build_model(hparams, ctx, config)`
+   - For explicit proposers, including LLM generation, also implement
+     `trial_search_space(ctx, config)`
+     with the exact raw parameters sampled by `sample_hparams(...)`.
 4. Keep family-specific logic inside the family:
    - search-space sampling;
    - input-shape interpretation from `ModelBuildContext`;
@@ -110,6 +116,23 @@ concrete starting point.
   families override it with the stable registry key.
 - `sample_hparams(trial, ctx, config)`
   Required. Produces normalized model-family hyperparameters for one trial.
+- `trial_search_space(ctx, config)`
+  Required for explicit proposers such as `optimizer.type: llm_generator`;
+  optional for native Optuna sampling. Returns ordered `SearchParam` declarations
+  from [`../optimizers/search_space.py`](../optimizers/search_space.py), using
+  raw persisted trial names, inclusive numeric bounds, or categorical choices.
+  Optional descriptions, units, and typical effects provide prompt semantics.
+  The default hook raises `NotImplementedError`. Both shipped families reuse
+  these declarations in `sample_hparams(...)` through `SearchParam.suggest(...)`
+  so legal ranges and choices stay consistent. Keep decoding inside the family
+  (for example, `dilations_index` becomes a dilation schedule); the runner adds
+  `quantization_mode` when quantization search and its deployment path are active,
+  and `cpu_clock_mhz_index` when compile-derived metrics and configured clock
+  options activate that search. Explicit candidates must supply exactly every
+  active raw field. Native Optuna skips descriptor and semantic-context setup;
+  errors in an explicit family's declared descriptor propagate before evaluation.
+  Import these declarations from `crest.optimizers.search_space`. See the
+  [configuration guide](../../config/README.md).
 - `build_model(hparams, ctx, config)`
   Required. Builds the uncompiled Keras model from normalized hyperparameters
   and `ModelBuildContext`.
@@ -165,11 +188,91 @@ The shipped pattern is:
 `resolve_component_selection(...)` returns the `model` subtree as
 `model_config` for the selected family.
 
+## Minimal Model Family Example
+
+This standalone example builds a single-output regression model. Run it from
+`src/` with the project's TensorFlow and Optuna dependencies installed. The
+example deliberately accepts one target shape; a production family should
+validate every supported task/input contract and expose its own config knobs.
+
+```python
+import optuna
+import tensorflow as tf
+
+from crest.interfaces import ModelFamilyABC
+from crest.optimizers.search_space import SearchParam
+from crest.pipeline_types import ModelBuildContext, TargetSpec
+
+
+class TinyRegressionFamily(ModelFamilyABC):
+    @property
+    def name(self):
+        return "tiny_regression"
+
+    def trial_search_space(self, ctx, config):
+        return [SearchParam("units", "int", low=4, high=16)]
+
+    def sample_hparams(self, trial, ctx, config):
+        return {p.name: p.suggest(trial)
+                for p in self.trial_search_space(ctx, config)}
+
+    def validate_hparams(self, hparams, ctx, config):
+        if ctx.target_spec.output_shapes != [(1,)]:
+            raise ValueError("tiny_regression requires one scalar output")
+        if not 4 <= hparams["units"] <= 16:
+            raise ValueError("units must be between 4 and 16")
+
+    def build_model(self, hparams, ctx, config):
+        self.validate_hparams(hparams, ctx, config)
+        inputs = tf.keras.Input(shape=ctx.input_shape, dtype=ctx.input_dtype)
+        hidden = tf.keras.layers.Flatten()(inputs)
+        hidden = tf.keras.layers.Dense(hparams["units"], activation="relu")(hidden)
+        output = tf.keras.layers.Dense(
+            1, name=ctx.target_spec.output_names[0]
+        )(hidden)
+        return tf.keras.Model(inputs, output)
+
+
+ctx = ModelBuildContext(
+    input_shape=(8, 3),
+    input_dtype="float32",
+    target_spec=TargetSpec("regression", ["value"], [(1,)]),
+)
+family = TinyRegressionFamily()
+model_config = {"params": {}, "search": {}}
+family.validate_config(model_config)
+hparams = family.sample_hparams(optuna.trial.FixedTrial({"units": 8}), ctx, model_config)
+model = family.build_model(hparams, ctx, model_config)
+assert model.output_shape == (None, 1)
+export_model = family.materialize_export_model(
+    hparams, ctx, model_config, model_variant="untrained"
+)
+assert export_model.output_shape == model.output_shape
+```
+
+The model remains uncompiled: the selected task supplies losses and metrics.
+The `untrained` export hook builds a new model with fresh weights; use a trained
+variant and a checkpoint for trained-model export. Register the class explicitly
+in `builtin_components.py`, then select it with this config fragment:
+
+```yaml
+model:
+  family: tiny_regression
+  params: {}
+  search: {}
+```
+
+This fragment selects only the family. A runnable config also needs a compatible
+dataset, task, and the runner's remaining configuration blocks.
+
 ## Contributor Checklist
 
 - Keep architecture/search logic in the model family.
 - Keep board/toolchain logic in the microcontroller backend.
 - Validate family-local config and hyperparameters before export.
+- For explicit proposer support, verify that descriptor names/types/choices match
+  persisted `sample_hparams(...)` parameters, including any narrowed `model.search`
+  options.
 - Keep export/materialization decisions explicit; do not hide backend-specific
   behavior in the family.
 - Add or update NumPy-style docstrings for changed functions, classes,

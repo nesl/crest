@@ -525,7 +525,7 @@ class PurityTests(unittest.TestCase):
             "hil_server",
         }
         module_paths = [
-            SRC_DIR / "crest" / "interfaces.py",
+            *sorted((SRC_DIR / "crest" / "interfaces").glob("*.py")),
             SRC_DIR / "crest" / "model_metrics.py",
             SRC_DIR / "crest" / "pipeline_types.py",
             SRC_DIR / "crest" / "registry.py",

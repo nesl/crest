@@ -43,7 +43,7 @@ materialization, HIL requests, or board-specific measurement.
 
 ## Key Files
 
-- [`../interfaces.py`](../interfaces.py)
+- [`../interfaces/task.py`](../interfaces/task.py)
   Defines `TaskABC`.
 - [`../pipeline_types.py`](../pipeline_types.py)
   Defines `TargetSpec`, `FitPlan`, `EvaluationResult`, and
@@ -83,7 +83,7 @@ Use [`odometry_regression.py`](odometry_regression.py) or
 point.
 
 1. Add a new task module under [`src/crest/tasks/`](.).
-2. Implement `TaskABC` from [`../interfaces.py`](../interfaces.py).
+2. Implement `TaskABC` from [`../interfaces/task.py`](../interfaces/task.py).
 3. Define a stable task key and return it from `name`.
 4. Validate `task.params` in `validate_config(...)`.
 5. Build a `TargetSpec` that accurately describes model outputs.
@@ -139,6 +139,64 @@ The shipped pattern is:
 
 The runtime expects task constructors to use the explicit keyword-only
 constructor contract documented in [`../../config/README.md`](../../config/README.md).
+
+## Concrete Task Usage
+
+The shipped sound task can validate its target and metric contracts and evaluate
+predictions without training a model or accessing hardware. Run this example
+from `src/` with NumPy installed:
+
+```python
+from pathlib import Path
+import numpy as np
+
+from crest.datasets.urbansound8k_common import CLASS_NAMES, LABEL_ENCODING
+from crest.pipeline_types import DataSplit, DatasetBundle
+from crest.tasks.sound_classification import SoundClassificationTask
+
+split = DataSplit(
+    inputs=np.zeros((2, 8, 8, 1), dtype=np.float32),
+    targets=np.array([0, 1], dtype=np.int64),
+)
+bundle = DatasetBundle(
+    train=split,
+    input_shape=(8, 8, 1),
+    input_dtype="float32",
+    metadata={
+        "num_classes": len(CLASS_NAMES),
+        "class_names": list(CLASS_NAMES),
+        "label_encoding": LABEL_ENCODING,
+    },
+)
+task = SoundClassificationTask(checkpoint_path=Path("checkpoints/example.keras"))
+task_params = {"early_stopping_patience": 5}
+task.validate_config(task_params)
+target_spec = task.build_target_spec(bundle, task_params)
+contract = task.metric_contract(target_spec, task_params)
+logits = np.zeros((2, len(CLASS_NAMES)), dtype=np.float32)
+logits[0, 0] = logits[1, 1] = 10.0
+result = task.evaluate_predictions(logits, split, task_params, target_spec)
+assert result.metrics["accuracy"] == 1.0
+assert set(result.metrics) <= contract.available_metric_names
+```
+
+The example uses synthetic inputs and labels to exercise the task boundary; it
+does not prepare an UrbanSound8K cache or train a classifier. No checkpoint is
+written by these calls. In a full run, select the registered task with:
+
+```yaml
+task:
+  name: sound_classification
+  params:
+    early_stopping_patience: 5
+```
+
+Pair this fragment with the `urbansound8k_mel` dataset and `audio_dscnn` family
+in a complete config. The runner supplies constructor callback paths/patience,
+and task hooks receive `task.params`. A new task subclass must implement all
+required hooks in [`TaskABC`](../interfaces/task.py); this shipped-task example
+is a quick check of their input/output contracts rather than a complete subclass
+skeleton.
 
 ## Contributor Checklist
 

@@ -33,7 +33,7 @@ _FAMILY_EXPORTS = (
     "STRING_CATEGORICAL_FIELDS",
 )
 
-__all__ = list(_FAMILY_EXPORTS) + list(_DECODE_EXPORTS)
+__all__ = list(_FAMILY_EXPORTS) + list(_DECODE_EXPORTS) + ["AUDIO_DSCNN_SEARCH_SEMANTICS"]
 
 
 def __getattr__(name: str) -> Any:
@@ -55,7 +55,9 @@ def __getattr__(name: str) -> Any:
         If the requested name is not a package export.
     """
     if name in _DECODE_EXPORTS:
-        module = import_module(f"{__name__}.family")
+        module = import_module(f"{__name__}.decode")
+    elif name == "AUDIO_DSCNN_SEARCH_SEMANTICS":
+        module = import_module(f"{__name__}.semantics")
     elif name in _FAMILY_EXPORTS:
         module = import_module(f"{__name__}.family")
     else:

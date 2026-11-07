@@ -11,7 +11,7 @@ datasets and generated caches.
 
 ## UrbanSound8K Audio Cache
 
-UrbanSound8K is used for the first audio backend path. The dataset license is
+UrbanSound8K supplies the cached log-mel inputs for the audio workload. The dataset license is
 non-commercial/by-nc; automatic download requires an explicit license
 acknowledgement.
 
@@ -74,18 +74,16 @@ The preparation script does four things:
 4. Writes the curated `Train.txt`, `Valid.txt`, `Test.txt`, and
    `Train_Valid.txt` files back into each activity folder.
 
-The split files in this repo are not placeholders. They are curated tracked
-splits included so the built-in OxIOD path can be reproduced after extracting a
-fresh copy of the upstream archive.
+The curated tracked splits reproduce the built-in OxIOD path after extracting
+a fresh copy of the upstream archive.
 
-Dataset-specific preparation files now live under:
+Dataset-specific preparation files:
 
 - `data/dataset_download_and_splits/oxiod/prepare_oxiod.py`
 - `data/dataset_download_and_splits/oxiod/reference_splits/`
 
-The preparation script still uses the per-activity split files under
-`data/oxiod/<activity>/` as its default template source so the loader-facing
-dataset layout remains unchanged.
+The preparation script uses the per-activity split files under
+`data/oxiod/<activity>/` as its default template source.
 
 ## Current Loader Paths
 
