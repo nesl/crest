@@ -80,22 +80,21 @@ python -m pytest -q test/test_llm_provider_prompt_ledger.py test/test_llm_optimi
 [`pricing.json`](pricing.json) contains reviewed USD input/output rates per
 million tokens. Entries match **provider, base URL, model, and service tier**
 exactly. An omitted tier selects `default`; an explicitly requested tier must
-have its own entry. The bundled catalog contains standard OpenAI GPT-4.1 mini
-rates for the Chat Completions and Responses adapters. It is a dated snapshot,
-not an automatically refreshed price feed.
+have its own entry. The bundled catalog currently has no rates. Supply a custom catalog with
+verified rates for your experiment. Catalogs are dated snapshots, not
+automatically refreshed price feeds.
 
-Add these settings to `optimizer.llm` for that model:
+Add these settings to `optimizer.llm`, using your actual model and endpoint:
 
 ```yaml
 provider: openai_compatible
-base_url: https://api.openai.com/v1
-model: gpt-4.1-mini
+base_url: https://provider.example/v1
+model: YOUR_MODEL_ID
 api_key_env: OPENAI_API_KEY
 max_usd: 5
 max_input_tokens: 100000
 max_output_tokens: 2000
-# Optional: replace the bundled catalog with a file beside the experiment YAML.
-# pricing_file: prices.json
+pricing_file: prices.json  # Relative to the experiment YAML.
 ```
 
 Export `OPENAI_API_KEY` in the terminal before launching your experiment. A cap
@@ -119,7 +118,7 @@ same schema. For example, these are **synthetic rates**, not a provider quote:
     "input_usd_per_million_tokens": 1.0,
     "output_usd_per_million_tokens": 4.0,
     "source": "Your provider's tariff URL or contract reference",
-    "verified_on": "2026-11-07"
+    "verified_on": "2026-10-28"
   }]
 }
 ```

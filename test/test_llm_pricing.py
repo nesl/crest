@@ -4,20 +4,26 @@ import json
 import pytest
 
 from crest.optimizers.llm.config import normalize_llm_config
-from crest.optimizers.llm.providers.pricing import resolve_pricing
 from crest.optimizers.llm.spending import SpendTracker, SpendAccountingError
 
 
 def config():
     return {'type': 'llm_generator', 'llm': {
         'provider': 'openai_compatible', 'base_url': 'https://api.openai.com/v1',
-        'model': 'gpt-4.1-mini', 'api_key_env': 'TEST_KEY',
+        'model': 'fixture-model', 'api_key_env': 'TEST_KEY',
         'max_usd': 2, 'max_input_tokens': 1000, 'max_output_tokens': 100,
         'memory': {'enabled': False}}}
 
 
+def tariff():
+    return dict(provider='openai_compatible', base_url='https://api.openai.com/v1',
+                model='fixture-model', service_tier='default', currency='USD',
+                input_usd_per_million_tokens=0.4, output_usd_per_million_tokens=1.6,
+                source='Synthetic test tariff', verified_on='2026-10-28')
+
+
 def custom(tmp_path, entry=None):
-    entry = entry or resolve_pricing(config()['llm'])
+    entry = entry or tariff()
     path = tmp_path / 'prices.json'
     path.write_text(json.dumps({'schema_version': 1, 'rates': [entry]}))
     supplied = config()
@@ -25,8 +31,11 @@ def custom(tmp_path, entry=None):
     return supplied, path
 
 
-def test_bundled_rates_and_repeat_normalization():
-    normalized = normalize_llm_config(config())
+def test_empty_bundled_catalog_requires_custom_rates(tmp_path):
+    with pytest.raises(ValueError, match='pricing entry'):
+        normalize_llm_config(config())
+    supplied, _ = custom(tmp_path)
+    normalized = normalize_llm_config(supplied)
     assert normalized.llm.input_usd_per_million_tokens == 0.4
     assert normalized.llm.output_usd_per_million_tokens == 1.6
     assert normalize_llm_config(normalized) == normalized
@@ -34,8 +43,8 @@ def test_bundled_rates_and_repeat_normalization():
 
 @pytest.mark.parametrize('field,value', [('provider', 'openrouter'), ('model', 'unknown'),
     ('base_url', 'https://vendor.example/v1'), ('service_tier', 'priority')])
-def test_no_price_guessing(field, value):
-    supplied = config()
+def test_no_price_guessing(tmp_path, field, value):
+    supplied, _ = custom(tmp_path)
     supplied['llm'][field] = value
     with pytest.raises(ValueError, match='pricing entry'):
         normalize_llm_config(supplied)
@@ -45,7 +54,7 @@ def test_no_price_guessing(field, value):
     ('source', ''), ('input_usd_per_million_tokens', 0),
     ('output_usd_per_million_tokens', float('nan'))])
 def test_invalid_tariff(tmp_path, field, value):
-    entry = resolve_pricing(config()['llm'])
+    entry = tariff()
     entry[field] = value
     supplied, _ = custom(tmp_path, entry)
     with pytest.raises(ValueError):
@@ -55,7 +64,7 @@ def test_invalid_tariff(tmp_path, field, value):
 def test_missing_malformed_and_ambiguous_catalog(tmp_path):
     supplied, path = custom(tmp_path)
     for content in ['not json', '{}', json.dumps({'schema_version': 1, 'rates':
-            [resolve_pricing(config()['llm'])] * 2})]:
+            [tariff()] * 2})]:
         path.write_text(content)
         with pytest.raises(ValueError):
             normalize_llm_config(supplied)
@@ -89,7 +98,7 @@ def test_snapshot_resume_relocation_and_changed_rate(tmp_path):
 
 
 def test_custom_catalog_for_private_endpoint(tmp_path):
-    entry = resolve_pricing(config()['llm'])
+    entry = tariff()
     entry.update(model='private-model', base_url='https://vendor.example/v1',
                  service_tier='priority', input_usd_per_million_tokens=2)
     supplied, _ = custom(tmp_path, entry)
