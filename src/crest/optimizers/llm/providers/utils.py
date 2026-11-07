@@ -1,9 +1,9 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Resolve a reviewed tariff for an exact provider endpoint, model, and tier.
+"""Provider configuration helpers: JSON-mode defaults and pricing-catalog lookup.
 
-Only the selected entry is retained in study accounting. File location and
-unrelated catalog entries do not affect resume compatibility.
+Pricing entries contain explicit accounting rates. Spending calculations and
+study persistence belong to the spending module.
 """
 
 import json
@@ -12,6 +12,11 @@ from datetime import date
 from pathlib import Path
 
 RATE_FIELDS = ("input_usd_per_million_tokens", "output_usd_per_million_tokens")
+
+
+def default_json_response_mode(provider_name: str) -> bool:
+    """Enable structured JSON responses for providers with a known JSON API."""
+    return provider_name in {"openrouter", "openai_responses"}
 
 
 def resolve_pricing(config):

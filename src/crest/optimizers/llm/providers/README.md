@@ -6,11 +6,12 @@ responsibilities belong to the [LLM optimizer](../README.md) and shared runner.
 
 | File | Responsibility |
 | --- | --- |
-| `provider.py` | Public imports, shared defaults, and `build_provider` factory selection. |
+| `provider.py` | Public imports and `build_provider` factory selection. |
 | `records.py` | `LLMProvider` protocol, request/response records, errors, and the offline `FakeProvider`. |
 | `chat.py`, `responses.py` | Live adapters that build and interpret each API's payloads. |
 | `transport.py` | Shared authentication, HTTP retries, and per-attempt spend accounting. |
-| `pricing.py`, `pricing.json` | Accounting-rate lookup and bundled conservative rates. |
+| `utils.py` | JSON-mode defaults and pricing-catalog lookup for provider configuration. |
+| `pricing.json` | Bundled conservative accounting rates. |
 | `__init__.py` | Package marker with no initialization side effects. |
 
 ## Choose a provider
@@ -146,7 +147,7 @@ request, covering standard global cache-write and long-context charges. Its
 can cost less than the recorded amount; regional premiums and other service
 tiers need their own verified entry.
 
-`pricing.py` only loads, matches, and validates an entry. `spending.py` owns
+`utils.py` provides JSON-mode defaults and loads, matches, and validates pricing entries. `spending.py` owns
 cost arithmetic and saving that complete entry with the study. A custom catalog
 must also supply explicit rates; cache or context multiplier rules are rejected.
 Changing from a previous tariff changes the saved binding and requires a new

@@ -14,11 +14,7 @@ from .records import (LLMRequest, LLMResponse, LLMProvider, FakeProvider, Provid
                       SpendLimitExceeded)
 from .chat import OpenAICompatibleProvider
 from .responses import OpenAIResponsesProvider
-
-
-def default_json_response_mode(provider_name: str) -> bool:
-    """Enable structured JSON responses for providers with a known JSON API."""
-    return provider_name in {"openrouter", "openai_responses"}
+from .utils import default_json_response_mode
 
 
 def build_provider(config: Any, *, spend_tracker: Any = None) -> LLMProvider:

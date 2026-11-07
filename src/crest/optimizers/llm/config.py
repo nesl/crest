@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 from addict import Dict
 
-from .providers.provider import default_json_response_mode
+from .providers.utils import default_json_response_mode, resolve_pricing
 
 
 def normalize_llm_config(optimizer_config) -> Dict:
@@ -184,7 +184,6 @@ def normalize_llm_config(optimizer_config) -> Dict:
         raise ValueError("Use pricing_file or inline prices, not both.")
     if llm.get("max_usd") is not None and provider != "fake":
         if llm.get("pricing_file") is not None or llm.get("pricing_snapshot") is not None or not any(k in llm for k in price_fields):
-            from .providers.pricing import resolve_pricing
             snapshot = resolve_pricing(llm)
             llm.pricing_snapshot = snapshot
             for key in price_fields[:2]:
