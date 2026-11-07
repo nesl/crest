@@ -115,4 +115,3 @@ Warm-ups are validated locally and proposed one at a time before provider calls;
 resume checks verify their order, parameters, and provenance. Changes to fixed
 warm-ups, fixtures, or identity-bearing policy settings can prevent resuming an
 existing study. Use a new study for a changed experiment contract.
-
