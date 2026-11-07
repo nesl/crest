@@ -266,15 +266,12 @@ parameters remain distinct and keep model-family replay intact.
 
 A versioned study signature records the registered optimizer, normalized
 non-secret proposal settings, and effective native sampler options. Matching
-studies resume; mismatches fail before initialization or queued work runs. New
-signatures and adoption attributes are written after component initialization
-succeeds, so initialization failure leaves an unsigned study unsigned.
-Nonempty unsigned studies fail by default. Native-only
-`optimizer.adopt_legacy_study: true` supports one-time adoption after attesting
-that the active configuration matches the original experiment. It rejects
-WAITING work, explicit-proposer metadata, any `fixed_params` enqueue marker,
-and per-study LLM artifacts, and checks directions and feasibility evidence.
-Remove the flag afterward. Unsigned LLM/plugin adoption is unsupported.
+signed studies resume; optimizer and feasibility mismatches fail before
+initialization or queued work runs. New signatures are written after component
+initialization succeeds, so initialization failure leaves an unsigned study
+unsigned. Existing signed studies, including empty ones, require matching identity.
+Nonempty unsigned studies cannot resume searching; use a new study name. Their
+history remains available for analysis and offline plotting.
 
 Completion targets and attempt caps are totals for the study. Budgets and artifact
 paths are excluded from identity so matching studies can be extended. LLM
