@@ -1,268 +1,101 @@
 # LLM candidate generation
 
-`llm_generator` proposes raw architecture parameters through CREST's shared
-optimizer contract. It does not own a search loop: the shared runner supplies
-immutable history and a budget, receives an `ExplicitRound`, and executes the
-returned `CandidateProposal` records through the normal evaluation pipeline.
-Candidates must match the model family's declared `trial_search_space` exactly.
-A legal proposal still needs training and measurement to establish its quality
-and feasibility.
+`llm_generator` proposes raw model parameters, validates them against the model
+family's search space, and hands them to CREST's shared runner for training and
+evaluation. The runner owns trials and budgets; the LLM supplies proposals,
+not measurement evidence.
 
-Providers support configured `fake` responses, OpenRouter, OpenAI-compatible
-Chat Completions, and Responses. History is bounded and `memory.enabled` must
-be false. See the [shared optimizer guide](../README.md),
-[configuration guide](../../../config/README.md), and
-[component interfaces](../../interfaces/README.md) for the surrounding contracts.
+## Run an experiment
 
-## Try generation without running a campaign
+1. Start with a complete experiment YAML for your dataset, model family,
+   objective, and runtime. Replace its optimizer block with:
 
-From the repository root, in an environment with CREST's dependencies installed,
-run the following example. It creates a temporary ledger and exercises the same
-prompt, provider, validation, and provenance path used by the optimizer. It does
-not start the runner, train a model, or access hardware.
+   ```yaml
+   optimizer:
+     type: llm_generator
+     llm:
+       provider: openrouter
+       model: YOUR_PROVIDER_MODEL_ID
+       api_key_env: OPENROUTER_API_KEY
+       batch_size: 1
+       memory:
+         enabled: false
+   ```
 
-```sh
-PYTHONPATH=src python - <<'PY'
-import random
-from pathlib import Path
-from tempfile import TemporaryDirectory
+2. Choose a model available to your provider account. From the repository root,
+   activate your CREST environment, export your key, and run:
 
-from crest.optimizers.llm import (
-    FakeProvider, LLMLedger, PromptContext, SearchParam,
-    SearchSpaceDescriptor, generate_llm_batch,
-)
+   ```bash
+   export OPENROUTER_API_KEY='REPLACE_WITH_YOUR_API_KEY'
+   python src/nas_model_client.py --config /path/to/experiment.yaml --study-name llm-live
+   unset OPENROUTER_API_KEY
+   ```
 
-space = SearchSpaceDescriptor((
-    SearchParam("width", "int", low=2, high=8),
-    SearchParam("mode", "categorical", choices=("small", "large")),
-))
-context = PromptContext(
-    study_name="llm-smoke",
-    model_family="example",
-    descriptor=space,
-    objective_summary="maximize measured accuracy",
-    attempted_trials=0,
-    feasible_completed_trials=0,
-    target_feasible_trials=2,
-    max_total_attempts=4,
-    batch_size=2,
-)
-provider = FakeProvider([{"candidates": [
-    {"width": 4, "mode": "small"},
-    {"width": 7, "mode": "large"},
-]}])
-with TemporaryDirectory() as directory:
-    ledger = LLMLedger(Path(directory) / "llm_optimizer")
-    proposals = generate_llm_batch(
-        (), provider, context, ledger,
-        prompt_version="v1", max_repair_attempts=0,
-        rng=random.Random(0),
-    )
-    assert [dict(p.params) for p in proposals] == [
-        {"width": 4, "mode": "small"},
-        {"width": 7, "mode": "large"},
-    ]
-    assert all(p.provenance["proposal_source"] == "llm" for p in proposals)
-    print([dict(p.params) for p in proposals])
-    print(sorted(path.name for path in ledger.root.iterdir()))
-PY
-```
+The key above is a placeholder. Keep real credentials out of configuration files
+and source control. Live calls may incur charges, and the experiment can train
+models or access hardware according to its configuration.
 
-To inspect the files afterward, replace the temporary directory with a dedicated
-persistent output path. Each ledger directory must have a single writer.
+See the [provider guide](providers/README.md) for other endpoints, credential
+entry without shell-history exposure, and spending controls. For a local example
+that makes no provider calls and performs no training or hardware evaluation,
+use the [generation examples](EXAMPLES.md).
 
-## Configure a campaign
+History is bounded and `memory.enabled` must be false. The
+[configuration guide](../../../config/README.md) covers warm-ups, rationale
+requirements, budgets, and resume rules. Changing identity-bearing settings,
+including the rationale contract, requires a new study.
 
-Keep an existing complete campaign configuration for the chosen dataset, model
-family, objective, and runtime. Replace its optimizer block with this pattern,
-substituting legal raw parameters for that family's descriptor:
+## How generation works
 
-```yaml
-optimizer:
-  type: llm_generator
-  llm:
-    provider: fake
-    batch_size: 2
-    max_repair_attempts: 1
-    random_seed: 0
-    recent_trial_window: 10
-    anchor_count: 5
-    semantic_context: true
-    require_rationale: false
-    memory:
-      enabled: false
-    responses:
-      - candidates:
-          - {width: 4, mode: small}
-          - {width: 7, mode: large}
-```
+1. The component proposes configured warm-ups first, then builds a request from
+   recent history, best-trial anchors, the search space, objective, and budget.
+2. A provider returns candidates. Local validation checks raw parameter names,
+   values, duplicates, and any required rationales.
+3. Invalid content can trigger bounded repair requests, followed by a random
+   fallback if repairs are exhausted. Other provider failures propagate.
+4. The component returns validated proposals to the shared runner for queueing
+   and evaluation. A valid proposal is not yet a feasible or successful trial.
 
-This is an optimizer fragment, not a complete campaign configuration. `width`
-and `mode` belong only to the smoke example above. Use the normal campaign entry
-point after configuring actual parameters and evaluation resources. Selecting
-`fake` prevents provider network calls; it does **not** disable training, dataset
-access, deployment, or hardware evaluation in the runner.
+See the [shared optimizer guide](../README.md) for evaluation and lifecycle
+contracts, and the [component interfaces](../../interfaces/README.md) for APIs.
 
-Launch the configured campaign from the repository root:
+## Inspect a run
 
-```sh
-python3 src/nas_model_client.py --config /path/to/config.yaml --study-name llm_fake_smoke
-```
+The ledger is stored under `<artifact_dir>/llm_optimizer`:
 
-Fixtures are consumed once per provider request, including repair requests, and
-must cover the intended run. Exhaustion raises an error; it does not automatically
-trigger random fallback. Each fixture may be a JSON object or a string containing
-completion text, so strings such as `"not JSON"` can exercise repair behavior.
-
-For `require_rationale: true`, each candidate must instead have exactly this shape:
-
-```json
-{"candidates": [{"params": {"width": 4, "mode": "small"}, "rationale": "Test a smaller architecture first."}]}
-```
-
-Optional `warmup_params_file` points to a nonempty JSON list of raw parameter
-mappings. Configuration loading resolves its path relative to the YAML file.
-Warm-ups are validated locally and proposed one at a time before provider calls;
-resume checks verify their order, parameters, and provenance. Changes to fixed
-warm-ups, fixtures, or identity-bearing policy settings can prevent resuming an
-existing study. Use a new study for a changed experiment contract.
-
-## Run with a live provider
-
-Set `optimizer.llm.provider` to `openrouter`, `openai_compatible` (Chat
-Completions), or `openai_responses` (Responses). These transports implement the
-same `LLMProvider` protocol as `fake`; candidate validation and evaluation use
-the same pipeline.
-
-For example, replace the optimizer block in a complete experiment YAML with:
-
-```yaml
-optimizer:
-  type: llm_generator
-  llm:
-    provider: openrouter
-    model: YOUR_PROVIDER_MODEL_ID
-    api_key_env: OPENROUTER_API_KEY
-    batch_size: 1
-    memory:
-      enabled: false
-```
-
-Replace `YOUR_PROVIDER_MODEL_ID` with a model available to your account. The
-OpenRouter endpoint defaults to `https://openrouter.ai/api/v1`. For
-`openai_compatible` or `openai_responses`, also supply `base_url` and explicitly
-set `api_key_env` to the environment variable containing that service's key.
-`base_url` is the API root: the transport appends `/chat/completions` or
-`/responses`.
-
-From the repository root, activate your CREST environment, export the key in
-that terminal, and launch the experiment:
-
-```bash
-export OPENROUTER_API_KEY='REPLACE_WITH_YOUR_API_KEY'
-python src/nas_model_client.py --config /path/to/experiment.yaml --study-name llm-live
-unset OPENROUTER_API_KEY
-```
-
-The value above is a placeholder. Keep actual keys out of YAML, source files,
-and committed shell scripts: `api_key_env` stores the variable **name**, and the
-transport reads its value at request time. To avoid putting a key in shell
-history, read it with a hidden prompt instead of typing it into the export
-command. In zsh:
-
-```zsh
-read -rs 'OPENROUTER_API_KEY?API key: '; printf '\n'
-export OPENROUTER_API_KEY
-python src/nas_model_client.py --config /path/to/experiment.yaml --study-name llm-live
-unset OPENROUTER_API_KEY
-```
-
-Live requests may incur charges. Trial budgets bound candidate evaluations;
-provider spending is separately controlled by `max_usd`, token limits, and
-configured token prices. See the [configuration guide](../../../config/README.md)
-for those settings. The normal experiment runner can train models and access
-hardware according to your experiment configuration.
-
-## Follow one proposal round
-
-1. `component.py` checks fixed warm-up progress, then bounds the requested batch
-   by both the runner's permitted round size and `llm.batch_size`.
-2. `prompting/history.py` selects recent evidence and successful anchors. `prompting/prompt_builder.py`
-   combines these with the descriptor, objective, semantic context, budget, and
-   deterministic guidance from `prompting/phase_policy.py`.
-3. `generation.py` records a request and calls `LLMProvider.complete_json`.
-   `schemas.py` checks the JSON envelope, raw names and distributions, rationales,
-   batch limit, and duplicates against terminal, waiting, and same-batch candidates.
-4. Invalid content receives repair feedback for up to `max_repair_attempts`
-   additional calls. A nonempty accepted subset returns immediately, even if it
-   is smaller than requested. If content repairs are exhausted, generation tries
-   up to 100 random samples to return one unique legal fallback. Provider failures
-   other than repairable response errors propagate.
-5. The component returns proposals with request provenance to the runner. Queue
-   mutation and evaluation happen there, not in `generation.py`.
-
-The ledger lives under `<artifact_dir>/llm_optimizer`. Inspect `requests/` for
-paired request and response JSON, `prompt_contexts.jsonl` for evidence snapshots,
-`rejected_candidates.jsonl` for rejection reasons, `returned_candidates.jsonl`
-for generated proposals, and `optimizer_events.jsonl` for repairs/fallback events.
-`accepted_candidates.jsonl` records runner-confirmed acceptance separately;
-returned proposals alone are not proof that trials were queued or evaluated.
-
-## Package layout
-
-The [providers package](providers/README.md) owns the completion interface and
-adapters. The [prompting package](prompting/README.md) builds requests and selects
-supporting evidence. Configuration, generation, validation, and the audit ledger
-remain alongside the runner-facing component.
-
-Changing the rationale requirement changes optimizer identity. Start a new study
-when changing that contract; existing studies retain their original resume checks.
-
-## Where to make changes
-
-There are several files because provider I/O, pure evidence transformations,
-local validation, and persistent audit writes have different responsibilities.
-Most features should change one boundary and its focused tests rather than add a
-new optimizer loop.
-
-| Module | Role and intended extension point |
+| Artifact | Contents |
 | --- | --- |
-| `component.py` | Runner adapter implementing `OptimizerABC`; coordinates configuration, warm-ups, identity, and `ExplicitRound` output. Start here for lifecycle changes. |
-| `providers/provider.py` | Provider interface: `LLMRequest`, `LLMResponse`, and `LLMProvider.complete_json`. `FakeProvider`, `OpenAICompatibleProvider`, and `OpenAIResponsesProvider` implement it; `build_provider` selects the configured transport. |
-| `schemas.py` | Response and local-validation contracts: `CandidateBatch`, rejection/result records, canonicalization, and duplicate checks. Change this when candidate acceptance changes. |
-| `prompting/prompt_builder.py` | `PromptContext` input record and deterministic request builder. Change prompt content here without adding provider calls. |
-| `config.py` | Configuration defaults and validation shared by loading and initialization. Keep new settings and incompatible combinations explicit here. |
-| `prompting/history.py` | Evidence-selection helpers for recent records and best anchors; consumes snapshots without modifying the study. |
-| `prompting/phase_policy.py` | Pure budget-to-guidance helper; does not enforce runner stopping conditions. |
-| `prompting/objective_renderer.py` | Pure helper explaining supported scoring expressions using known context; does not compute scores or measured limits. |
-| `generation.py` | Proposal orchestration helper for request logging, response parsing, repair, and random fallback. |
-| `ledger.py` | Single-writer filesystem persistence helper; distinguishes proposals returned from proposals accepted by the runner. |
-| `spending.py` | Persistent request-cost reservation and settlement helper; enforces configured provider spending limits across restarts. |
-| `__init__.py` | Convenience exports for generation callers; the runner adapter remains in `component.py`. |
+| `requests/` | Paired request and response JSON |
+| `prompt_contexts.jsonl` | Evidence supplied to generation |
+| `rejected_candidates.jsonl` | Validation rejection reasons |
+| `returned_candidates.jsonl` | Proposals returned to the runner |
+| `accepted_candidates.jsonl` | Runner-confirmed acceptance |
+| `optimizer_events.jsonl` | Repair and fallback events |
 
-The main external contracts are the shared `OptimizerABC` lifecycle and proposal
-records, the provider protocol, the raw `SearchSpaceDescriptor`, and the candidate
-JSON envelope. History selection, phase guidance, objective prose, and ledger
-serialization are supporting helpers, not separate optimizer interfaces.
+Returned proposals alone do not establish that trials were queued or evaluated.
 
-## Extend and verify
+## Extend the optimizer
 
-1. Identify the boundary above. A new provider implements `complete_json` and
-   returns normalized content/provenance; it also needs explicit factory selection
-   and configuration validation before it can be selected. A model parameter
-   change starts with the family's descriptor, not a provider-specific schema.
-2. Keep candidate legality and duplicate detection local. For prompt or acceptance
-   changes, update `prompt_version` or schema/optimizer identity where appropriate
-   so resume does not mix incompatible experiment contracts.
-3. Add a focused case in `test/test_llm_*.py`: valid output, the relevant invalid
-   output, and repair/fallback or propagation behavior. Use fake fixtures for
-   repeatability and check provenance as well as returned parameter values.
-4. Run the relevant checks from the repository root, for example:
+| Location | Responsibility |
+| --- | --- |
+| [`component.py`](component.py) | Implements `OptimizerABC`; coordinates lifecycle, warm-ups, and proposal rounds |
+| [`providers/`](providers/README.md) | Completion interface, adapters, and provider setup |
+| [`prompting/`](prompting/README.md) | Request construction, evidence selection, and phase guidance |
+| [`generation.py`](generation.py), [`schemas.py`](schemas.py) | Generation, local validation, repair, and fallback |
+| [`config.py`](config.py) | Settings defaults and validation |
+| [`ledger.py`](ledger.py), [`spending.py`](spending.py) | Proposal provenance and provider spending accounting |
+
+1. Choose the responsible module; follow the provider or prompting guide for
+   their extension procedures. Model parameters belong in the family's search
+   descriptor, not a provider-specific schema.
+2. Preserve local candidate validation and resume identity. Update the prompt
+   version or optimizer identity when the experiment contract changes.
+3. Add focused valid/invalid cases and verify provenance, then run:
 
    ```sh
    python -m pytest -q test/test_llm_candidate_validation.py test/test_llm_generation.py test/test_llm_provider_prompt_ledger.py test/test_llm_proposal_contract.py
    ```
 
-A change is done when the generation example still returns legal proposals,
-focused tests cover the changed contract, requests/rejections/returned proposals
-remain auditable, and the runner retains sole ownership of queueing and evaluation.
+A change is done when the generation example works, focused tests cover its
+behavior, proposal evidence remains auditable, and the shared runner retains
+ownership of queueing and evaluation.

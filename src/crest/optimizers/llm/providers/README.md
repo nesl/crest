@@ -9,14 +9,38 @@ responsibilities belong to the [LLM optimizer](../README.md) and shared runner.
 | `provider.py` | `LLMProvider` protocol, `LLMRequest` and `LLMResponse` records, provider errors, fake/Chat Completions/Responses adapters, and factory selection. |
 | `__init__.py` | Package marker with no initialization side effects. |
 
-## Use a provider
+## Choose a provider
 
-Select `optimizer.type: llm_generator` and configure `optimizer.llm.provider` in
-your experiment YAML. Select `fake` for configured responses without network access, or
-`openrouter`, `openai_compatible`, or `openai_responses` for live completions.
-The [live-provider setup guide](../README.md#run-with-a-live-provider) shows
-configuration, API-key environment variables, and terminal launch commands. The parent guide includes a runnable
-generation example and campaign configuration. Direct callers can import:
+Start with the [experiment quickstart](../README.md#run-an-experiment). The
+provider-specific settings are:
+
+| Provider | Endpoint and credentials |
+| --- | --- |
+| `openrouter` | Defaults to `https://openrouter.ai/api/v1`; uses `OPENROUTER_API_KEY` unless `api_key_env` specifies another variable. |
+| `openai_compatible` | Set `base_url`, `model`, and `api_key_env` explicitly; the transport appends `/chat/completions`. |
+| `openai_responses` | Set `base_url`, `model`, and `api_key_env` explicitly; the transport appends `/responses`. |
+| `fake` | Supply an ordered `responses` list; no credentials or network access. See the [fixture examples](../EXAMPLES.md). |
+
+`base_url` is the API root. `api_key_env` names an environment variable, not the
+key itself. Keep actual credentials out of YAML, source files, and committed
+shell scripts. The transport reads the variable at request time.
+
+To enter a key without putting its value in shell history, use a hidden prompt
+in zsh, then launch from the repository root in your CREST environment:
+
+```zsh
+read -rs 'OPENROUTER_API_KEY?API key: '; printf '\n'
+export OPENROUTER_API_KEY
+python src/nas_model_client.py --config /path/to/experiment.yaml --study-name llm-live
+unset OPENROUTER_API_KEY
+```
+
+Trial budgets bound candidate evaluations. Provider spending is controlled
+separately by `max_usd`, token limits, and configured token prices; see the
+[configuration guide](../../../../config/README.md). Repair requests can make
+additional provider calls.
+
+## Exercise the completion interface
 
 ```python
 from crest.optimizers.llm.providers.provider import FakeProvider, LLMRequest
@@ -29,8 +53,8 @@ response = provider.complete_json(LLMRequest(
 ))
 ```
 
-This exercises the completion boundary only; generation performs candidate
-validation against the actual search-space descriptor.
+This exercises only the completion boundary. The [generation example](../EXAMPLES.md)
+also validates candidates against a search-space descriptor and writes provenance.
 
 ## Add an adapter
 
