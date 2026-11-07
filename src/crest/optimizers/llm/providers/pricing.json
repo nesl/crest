@@ -1,4 +1,39 @@
 {
   "schema_version": 1,
-  "rates": []
+  "rates": [
+    {
+      "provider": "openai_compatible",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-6-luna",
+      "service_tier": "default",
+      "currency": "USD",
+      "input_usd_per_million_tokens": 0.1,
+      "output_usd_per_million_tokens": 0.5,
+      "cache_write_usd_per_million_tokens": 0.125,
+      "long_context": {
+        "input_token_threshold": 272000,
+        "input_multiplier": 2,
+        "output_multiplier": 1.5
+      },
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-luna",
+      "verified_on": "2026-11-07"
+    },
+    {
+      "provider": "openai_responses",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-6-luna",
+      "service_tier": "default",
+      "currency": "USD",
+      "input_usd_per_million_tokens": 0.1,
+      "output_usd_per_million_tokens": 0.5,
+      "cache_write_usd_per_million_tokens": 0.125,
+      "long_context": {
+        "input_token_threshold": 272000,
+        "input_multiplier": 2,
+        "output_multiplier": 1.5
+      },
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-luna",
+      "verified_on": "2026-11-07"
+    }
+  ]
 }

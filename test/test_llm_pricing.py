@@ -31,7 +31,7 @@ def custom(tmp_path, entry=None):
     return supplied, path
 
 
-def test_empty_bundled_catalog_requires_custom_rates(tmp_path):
+def test_unknown_model_requires_custom_rates(tmp_path):
     with pytest.raises(ValueError, match='pricing entry'):
         normalize_llm_config(config())
     supplied, _ = custom(tmp_path)
@@ -133,3 +133,29 @@ def test_yaml_relative_pricing_path(tmp_path, monkeypatch):
     loaded = load_config(config_path)
     assert loaded.optimizer.llm.pricing_file == str(path.resolve())
     assert loaded.optimizer.llm.input_usd_per_million_tokens == 0.4
+
+
+@pytest.mark.parametrize("provider", ["openai_compatible", "openai_responses"])
+@pytest.mark.parametrize("limit,input_rate,output_rate", [(272000, .125, .5), (272001, .25, .75)])
+def test_luna_conservative_rates_and_snapshot(provider, limit, input_rate, output_rate):
+    supplied = config()
+    supplied["llm"].update(provider=provider, model="gpt-6-luna", max_input_tokens=limit)
+    normalized = normalize_llm_config(supplied).llm
+    assert normalized.input_usd_per_million_tokens == input_rate
+    assert normalized.output_usd_per_million_tokens == output_rate
+    assert normalized.pricing_snapshot["tariff"]["input_usd_per_million_tokens"] == .1
+    assert normalized.pricing_snapshot["verified_on"] == "2026-11-07"
+
+
+@pytest.mark.parametrize('field,value', [
+    ('cache_write_usd_per_million_tokens', -1),
+    ('cache_write_usd_per_million_tokens', float('inf')),
+    ('long_context', {'input_token_threshold': True}),
+    ('long_context', {'input_token_threshold': 272000, 'input_multiplier': 0, 'output_multiplier': 1.5}),
+])
+def test_invalid_tier_adjustments(tmp_path, field, value):
+    entry = tariff()
+    entry[field] = value
+    supplied, _ = custom(tmp_path, entry)
+    with pytest.raises(ValueError):
+        normalize_llm_config(supplied)

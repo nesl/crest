@@ -80,21 +80,21 @@ python -m pytest -q test/test_llm_provider_prompt_ledger.py test/test_llm_optimi
 [`pricing.json`](pricing.json) contains reviewed USD input/output rates per
 million tokens. Entries match **provider, base URL, model, and service tier**
 exactly. An omitted tier selects `default`; an explicitly requested tier must
-have its own entry. The bundled catalog currently has no rates. Supply a custom catalog with
-verified rates for your experiment. Catalogs are dated snapshots, not
-automatically refreshed price feeds.
+have its own entry. The bundled catalog includes standard OpenAI `gpt-6-luna` rates for Chat
+Completions and Responses. Catalogs are dated snapshots, not automatically
+refreshed price feeds. Other models, endpoints, and service tiers need a custom entry.
 
 Add these settings to `optimizer.llm`, using your actual model and endpoint:
 
 ```yaml
-provider: openai_compatible
-base_url: https://provider.example/v1
-model: YOUR_MODEL_ID
+provider: openai_responses
+base_url: https://api.openai.com/v1
+model: gpt-6-luna
 api_key_env: OPENAI_API_KEY
 max_usd: 5
 max_input_tokens: 100000
 max_output_tokens: 2000
-pricing_file: prices.json  # Relative to the experiment YAML.
+# pricing_file: prices.json  # Optional custom catalog, relative to the YAML.
 ```
 
 Export `OPENAI_API_KEY` in the terminal before launching your experiment. A cap
@@ -129,8 +129,17 @@ requires that tariff to match. Moving an unchanged file or editing unrelated
 entries is allowed; changing the selected rates or provenance is rejected before
 requests are made. Keep a copy of the original tariff to resume that study.
 
-Accounting uses the configured input/output rates for all reported tokens;
-cached-token discounts and other billing categories are not modeled separately.
+OpenAI's standard Luna tariff is $0.10 input / $0.50 output per million tokens,
+with cache writes at $0.125. Above 272,000 input tokens, input/cache rates double
+and output rates increase by 1.5x. The catalog records these rules and their source.
+
+Flat accounting conservatively uses the highest input rate, including cache writes,
+and selects the long-context rate when `max_input_tokens` exceeds the threshold.
+Luna therefore reserves/settles at $0.125 / $0.50 for ceilings up to 272,000,
+or $0.25 / $0.75 above it. The snapshot retains both the original tariff rules
+and effective rates. Cached-input discounts are not deducted, so tracked cost
+can exceed the invoice. These entries cover standard global processing only;
+other tiers or regional premiums require a separately verified custom tariff.
 Reservations bound cost using the token limits and settle against returned usage.
 Unresolved attempts retain their reservation. The cap relies on correct rates
 and the provider honoring the token limits.
