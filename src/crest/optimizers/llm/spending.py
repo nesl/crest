@@ -154,6 +154,10 @@ class SpendTracker:
         # Tier selection can change billing; preserve legacy bindings when absent.
         if config.get("service_tier") is not None:
             binding["service_tier"] = config["service_tier"]
+        # Persist the exact selected tariff with the study; a changed tariff
+        # fails the existing binding comparison rather than repricing old usage.
+        if config.get("pricing_snapshot") is not None:
+            binding["pricing_snapshot"] = copy.deepcopy(dict(config["pricing_snapshot"]))
         self.reservation_usd = self._cost(self.max_input_tokens, self.max_output_tokens)
         self.root.mkdir(parents=True, exist_ok=True)
         if self.path.exists():

@@ -36,7 +36,7 @@ and source control. Live calls may incur charges, and the experiment can train
 models or access hardware according to its configuration.
 
 See the [provider guide](providers/README.md) for other endpoints, credential
-entry without shell-history exposure, and spending controls. For a local example
+entry without shell-history exposure, and [pricing catalogs and spending caps](providers/README.md#configure-pricing-and-a-spending-cap). For a local example
 that makes no provider calls and performs no training or hardware evaluation,
 use the [generation examples](EXAMPLES.md).
 

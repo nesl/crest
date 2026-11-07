@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "rates": [
+    {
+      "provider": "openai_compatible",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-4.1-mini",
+      "service_tier": "default",
+      "currency": "USD",
+      "input_usd_per_million_tokens": 0.4,
+      "output_usd_per_million_tokens": 1.6,
+      "source": "https://developers.openai.com/api/docs/models/gpt-4.1-mini",
+      "verified_on": "2026-11-07"
+    },
+    {
+      "provider": "openai_responses",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-4.1-mini",
+      "service_tier": "default",
+      "currency": "USD",
+      "input_usd_per_million_tokens": 0.4,
+      "output_usd_per_million_tokens": 1.6,
+      "source": "https://developers.openai.com/api/docs/models/gpt-4.1-mini",
+      "verified_on": "2026-11-07"
+    }
+  ]
+}

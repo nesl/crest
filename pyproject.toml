@@ -40,3 +40,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 # Test this checkout instead of unrelated installs, without a manual PYTHONPATH.
 pythonpath = ["src"]
+
+[tool.setuptools.package-data]
+"crest.optimizers.llm.providers" = ["pricing.json"]

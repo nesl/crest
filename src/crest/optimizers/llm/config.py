@@ -72,22 +72,6 @@ def normalize_llm_config(optimizer_config) -> Dict:
     elif llm.get("output_token_parameter") is not None:
         raise ValueError("optimizer.llm.output_token_parameter requires max_output_tokens.")
 
-    max_usd = llm.get("max_usd")
-    if max_usd is not None:
-        if provider == "fake":
-            raise ValueError("optimizer.llm.max_usd requires a paid provider with token usage accounting.")
-        if output_limit is None:
-            raise ValueError("optimizer.llm.max_usd requires max_output_tokens.")
-        for name in ("max_usd", "input_usd_per_million_tokens", "output_usd_per_million_tokens"):
-            value = llm.get(name)
-            if (isinstance(value, bool) or not isinstance(value, (int, float))
-                    or not math.isfinite(value) or value < 0 or (name != "max_usd" and value == 0)):
-                raise ValueError(f"optimizer.llm.{name} must be finite and nonnegative (token prices must be positive).")
-        if type(llm.get("max_input_tokens")) is not int or llm.max_input_tokens < 1:
-            raise ValueError("optimizer.llm.max_input_tokens must be a positive integer with max_usd.")
-        if not isinstance(llm.get("pricing_source"), str) or not llm.pricing_source.strip():
-            raise ValueError("optimizer.llm.pricing_source must document the configured token prices.")
-
     warmup_file = llm.get("warmup_params_file")
     if warmup_file is not None and (not isinstance(warmup_file, str) or not warmup_file.strip()):
         raise ValueError("optimizer.llm.warmup_params_file must be a non-empty path or null.")
@@ -191,5 +175,35 @@ def normalize_llm_config(optimizer_config) -> Dict:
         ):
             raise ValueError("optimizer.llm.extra_headers must map strings to strings.")
         llm.extra_headers = Dict(extra_headers)
+    # Resolve after endpoint/model defaults. Re-resolve normalized configs too,
+    # so catalog edits cannot silently retain stale injected rates on resume.
+    price_fields = ("input_usd_per_million_tokens", "output_usd_per_million_tokens", "pricing_source")
+    if llm.get("pricing_file") is not None and not llm.get("pricing_snapshot") and any(k in llm for k in price_fields):
+        raise ValueError("Use pricing_file or inline prices, not both.")
+    if llm.get("max_usd") is not None and provider != "fake":
+        if llm.get("pricing_file") is not None or llm.get("pricing_snapshot") is not None or not any(k in llm for k in price_fields):
+            from .providers.pricing import resolve_pricing
+            snapshot = resolve_pricing(llm)
+            llm.pricing_snapshot = snapshot
+            for key in price_fields[:2]:
+                llm[key] = snapshot[key]
+            llm.pricing_source = snapshot["source"]
+
+    max_usd = llm.get("max_usd")
+    if max_usd is not None:
+        if provider == "fake":
+            raise ValueError("optimizer.llm.max_usd requires a paid provider with token usage accounting.")
+        if output_limit is None:
+            raise ValueError("optimizer.llm.max_usd requires max_output_tokens.")
+        for name in ("max_usd", "input_usd_per_million_tokens", "output_usd_per_million_tokens"):
+            value = llm.get(name)
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) or value < 0 or (name != "max_usd" and value == 0)):
+                raise ValueError(f"optimizer.llm.{name} must be finite and nonnegative (token prices must be positive).")
+        if type(llm.get("max_input_tokens")) is not int or llm.max_input_tokens < 1:
+            raise ValueError("optimizer.llm.max_input_tokens must be a positive integer with max_usd.")
+        if not isinstance(llm.get("pricing_source"), str) or not llm.pricing_source.strip():
+            raise ValueError("optimizer.llm.pricing_source must document the configured token prices.")
+
     optimizer.llm = llm
     return optimizer

@@ -7,6 +7,7 @@ responsibilities belong to the [LLM optimizer](../README.md) and shared runner.
 | File | Responsibility |
 | --- | --- |
 | `provider.py` | `LLMProvider` protocol, `LLMRequest` and `LLMResponse` records, provider errors, fake/Chat Completions/Responses adapters, and factory selection. |
+| `pricing.py`, `pricing.json` | Exact tariff lookup and bundled reviewed rates. |
 | `__init__.py` | Package marker with no initialization side effects. |
 
 ## Choose a provider
@@ -73,3 +74,70 @@ Run the provider checks from the repository root:
 ```sh
 python -m pytest -q test/test_llm_provider_prompt_ledger.py test/test_llm_optimizer_config.py
 ```
+
+## Configure pricing and a spending cap
+
+[`pricing.json`](pricing.json) contains reviewed USD input/output rates per
+million tokens. Entries match **provider, base URL, model, and service tier**
+exactly. An omitted tier selects `default`; an explicitly requested tier must
+have its own entry. The bundled catalog contains standard OpenAI GPT-4.1 mini
+rates for the Chat Completions and Responses adapters. It is a dated snapshot,
+not an automatically refreshed price feed.
+
+Add these settings to `optimizer.llm` for that model:
+
+```yaml
+provider: openai_compatible
+base_url: https://api.openai.com/v1
+model: gpt-4.1-mini
+api_key_env: OPENAI_API_KEY
+max_usd: 5
+max_input_tokens: 100000
+max_output_tokens: 2000
+# Optional: replace the bundled catalog with a file beside the experiment YAML.
+# pricing_file: prices.json
+```
+
+Export `OPENAI_API_KEY` in the terminal before launching your experiment. A cap
+requires both token limits. A missing or ambiguous tariff stops initialization;
+CREST never guesses prices for an unknown model or another endpoint.
+
+For private endpoints or other models, set `pricing_file`. Relative paths resolve
+beside the experiment YAML; direct Python configuration resolves them from the
+working directory. The custom file replaces the bundled catalog and uses the
+same schema. For example, these are **synthetic rates**, not a provider quote:
+
+```json
+{
+  "schema_version": 1,
+  "rates": [{
+    "provider": "openai_compatible",
+    "base_url": "https://provider.example/v1",
+    "model": "my-model",
+    "service_tier": "default",
+    "currency": "USD",
+    "input_usd_per_million_tokens": 1.0,
+    "output_usd_per_million_tokens": 4.0,
+    "source": "Your provider's tariff URL or contract reference",
+    "verified_on": "2026-11-07"
+  }]
+}
+```
+
+For each capped study, `llm_optimizer/spend_state.json` saves the resolved rates
+and the selected entry's source/date under `binding.pricing_snapshot`. Resuming
+requires that tariff to match. Moving an unchanged file or editing unrelated
+entries is allowed; changing the selected rates or provenance is rejected before
+requests are made. Keep a copy of the original tariff to resume that study.
+
+Accounting uses the configured input/output rates for all reported tokens;
+cached-token discounts and other billing categories are not modeled separately.
+Reservations bound cost using the token limits and settle against returned usage.
+Unresolved attempts retain their reservation. The cap relies on correct rates
+and the provider honoring the token limits.
+
+Explicit inline rates and `pricing_source` remain supported for existing
+configurations, but cannot be combined with a custom catalog. Without `max_usd`,
+no tariff lookup or spending snapshot is created. To add a bundled tariff, verify
+its exact endpoint/model/tier, record its source and date, and run
+`python -m pytest -q test/test_llm_pricing.py test/test_llm_spending.py`.
