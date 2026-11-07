@@ -1037,14 +1037,11 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
     except KeyError as exc:
         raise ValueError(str(exc)) from exc
     optimizer.type = optimizer_type
-    adopt_legacy = optimizer.get("adopt_legacy_study", False)
-    if not isinstance(adopt_legacy, bool):
-        raise ValueError("optimizer.adopt_legacy_study must be a boolean.")
-    from .optimizers.optuna import OptunaOptimizer
-
-    if adopt_legacy and (optimizer_type != "optuna" or component_cls is not OptunaOptimizer):
-        raise ValueError("optimizer.adopt_legacy_study supports only native optuna studies.")
-    optimizer.adopt_legacy_study = adopt_legacy
+    if "adopt_legacy_study" in optimizer:
+        raise ValueError(
+            "optimizer.adopt_legacy_study is no longer supported. Remove this setting; "
+            "nonempty studies without an optimizer signature require a new study name."
+        )
     recover = optimizer.get("recover_orphaned_trials", [])
     if recover is False:
         recover = []

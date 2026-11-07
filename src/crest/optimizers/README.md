@@ -17,9 +17,12 @@ database writes; resume drains existing WAITING trials before requesting new wor
 [`history.py`](history.py) supplies immutable proposal/history records.
 
 [`study_state.py`](study_state.py) owns persisted optimizer identity, strict resume
-checks, legacy adoption, and interrupted-trial recovery. Identity is checked before
-initialization and persisted after successful initialization. Changing optimizer
-settings on resume must not silently reinterpret an existing study.
+checks and interrupted-trial recovery. New studies receive an optimizer signature
+after successful initialization. Existing signed studies resume only when their
+signature matches the active optimizer configuration. A nonempty unsigned study
+must use a new study name to continue searching; its history remains available
+for analysis and offline plotting. Changing optimizer settings on resume must not
+silently reinterpret an existing study.
 
 [`context.py`](context.py) assembles bounded, deterministic semantic context for
 explicit proposers. Its helpers in [`contexts/`](contexts/) cover

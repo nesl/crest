@@ -76,7 +76,7 @@ from crest.optimizers.search_space import build_search_space_descriptor
 from crest.optimizers.context import build_semantic_context
 from crest.optimizers.runner import execute_search_round
 from crest.optimizers.study_state import (
-    OPTIMIZER_SIGNATURE_ATTR, LEGACY_OPTIMIZER_ADOPTION_ATTR,
+    OPTIMIZER_SIGNATURE_ATTR,
     ORPHAN_TRIAL_RECOVERY_ATTR, PROPOSAL_ATTR,
     build_optimizer_signature, validate_optimizer_identity,
     store_optimizer_signature, recover_orphaned_trials,
@@ -866,11 +866,7 @@ class NASModelClient:
         signature = build_optimizer_signature(
             name, optimizer, config, sampler, sampler_options, self.config.training,
         )
-        validate_optimizer_identity(
-            study, signature, optimizer, adopt_legacy=config.adopt_legacy_study,
-            directions=self._study_directions(),
-            models_dir=self.config.outputs.models_dir,
-        )
+        validate_optimizer_identity(study, signature, optimizer)
         return name, optimizer, config, signature
 
     _store_optimizer_signature = staticmethod(store_optimizer_signature)

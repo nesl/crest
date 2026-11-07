@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 import time
 
 import optuna
@@ -21,9 +20,8 @@ from crest.search.training_randomness import training_randomness_policy
 
 logger = logging.getLogger(__name__)
 
-# Study-level identity, legacy-adoption evidence, and recovery audit trail.
+# Study-level identity and recovery audit trail.
 OPTIMIZER_SIGNATURE_ATTR = "crest_optimizer_signature"
-LEGACY_OPTIMIZER_ADOPTION_ATTR = "crest_legacy_optimizer_adoption"
 ORPHAN_TRIAL_RECOVERY_ATTR = "crest_orphan_trial_recovery"
 # Trial-level source, round membership, and reserved parameter values.
 PROPOSAL_ATTR = "crest_proposal"
@@ -54,38 +52,16 @@ def build_optimizer_signature(name, optimizer, config, sampler, sampler_options,
     return signature
 
 
-def validate_legacy_study(study, *, adopt_legacy, directions, artifact_dir):
-    """Require explicit attestation and reject evidence of queued/explicit proposals."""
-    trials = study.trials
-    if not adopt_legacy:
-        raise RuntimeError(
-            "Existing nonempty study has no CREST optimizer signature. "
-            "For matching native Optuna history, explicitly attest the original "
-            "configuration with optimizer.adopt_legacy_study: true; otherwise "
-            "select a new study name."
-        )
-    if any(trial.state == TrialState.WAITING for trial in trials):
-        raise RuntimeError("Cannot adopt a legacy study with WAITING trials.")
-    if any(PROPOSAL_ATTR in trial.user_attrs or "proposal_source" in trial.user_attrs
-           for trial in trials):
-        raise RuntimeError("Cannot adopt native legacy history with explicit-proposer provenance.")
-    # Older explicit proposals carried only Optuna's enqueue metadata.
-    if any("fixed_params" in trial.system_attrs for trial in trials):
-        raise RuntimeError("Cannot adopt native legacy history with enqueued fixed_params.")
-    if (Path(artifact_dir) / "llm_optimizer").exists():
-        raise RuntimeError("Cannot adopt native legacy history with llm_optimizer artifacts.")
-    stored_directions = [direction.name.lower() for direction in study.directions]
-    if stored_directions != directions:
-        raise RuntimeError("Cannot adopt legacy history: study directions do not match the active score configuration.")
-
-
-def validate_optimizer_identity(study, signature, optimizer, *, adopt_legacy, directions, models_dir):
+def validate_optimizer_identity(study, signature, optimizer):
     """Check stored identity without mutating the study or initializing a proposer."""
     stored = study.user_attrs.get(OPTIMIZER_SIGNATURE_ATTR)
     if stored is None:
         if study.trials:
-            validate_legacy_study(study, adopt_legacy=adopt_legacy,
-                                  directions=directions, artifact_dir=Path(models_dir) / study.study_name)
+            raise RuntimeError(
+                "Existing nonempty study has no CREST optimizer signature and cannot be resumed. "
+                "Select a new study name to continue searching; existing results remain available "
+                "for analysis and plotting."
+            )
         return
     # Only known version-1 private paths from the reviewed implementation alias
     # public names. Keep optimizer/config/options and all other fields strict.
@@ -121,16 +97,12 @@ def store_optimizer_signature(study: optuna.Study, signature: dict[str, Any]) ->
 
     Notes
     -----
-    A nonempty unsigned study also receives legacy-adoption evidence.
+    The caller must validate the study before initialization. Nonempty unsigned
+    studies are rejected rather than assigned an unverified historical identity.
     """
     if study.user_attrs.get(OPTIMIZER_SIGNATURE_ATTR) is not None:
         return
     study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, signature)
-    if study.trials:
-        study.set_user_attr(LEGACY_OPTIMIZER_ADOPTION_ATTR, {
-            "version": 1, "attestation": "matching_original_config",
-            "trial_count": len(study.trials),
-        })
 
 
 def recover_orphaned_trials(study: optuna.Study, config: Any) -> None:

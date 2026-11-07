@@ -544,13 +544,13 @@ def test_null_optimizer_selects_default_native_component(client, tmp_path):
     assert config.recover_orphaned_trials == []
 
 
-def test_resolved_plugin_cannot_adopt_native_legacy_identity():
-    """The Optuna name alone cannot attest native behavior if its class is replaced."""
+def test_obsolete_adoption_option_rejected_for_resolved_plugin():
+    """Obsolete adoption configuration fails even when the component is replaced."""
     from crest.model import _normalize_optimizer_config
     from crest.builtin_components import ensure_optimizer_components_registered
     ensure_optimizer_components_registered()
     with patch.dict(optimizer_registry._items, {"optuna": ThirdProposer}):
-        with pytest.raises(ValueError, match="only native optuna"):
+        with pytest.raises(ValueError, match="no longer supported"):
             _normalize_optimizer_config(Dict(optimizer={"type": "optuna", "adopt_legacy_study": True}))
 
 
