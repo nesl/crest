@@ -6,6 +6,7 @@ import hashlib
 import json
 import tempfile
 from decimal import Decimal, localcontext
+from fractions import Fraction
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -115,26 +116,75 @@ class SpendTrackerTests(unittest.TestCase):
         with self.assertRaises(SpendLimitExceeded):
             zero.reserve(PAYLOAD)
 
-    def test_high_precision_prices_do_not_round_accumulated_charges(self):
-        config = configuration(max_usd="1", input_usd_per_million_tokens="0.123456789012345678901234567890123456789")
-        tracker = SpendTracker(self.root, config)
-        first, second = tracker.reserve(PAYLOAD), tracker.reserve(PAYLOAD)
+    def test_high_precision_prices_round_each_combined_cost_up_once(self):
+        config = configuration(max_usd="1", input_usd_per_million_tokens="0." + "1234567890" * 12 + "1",
+                               output_usd_per_million_tokens="0.0000001234567890123456789")
+
+        def rounded_cost(inputs, outputs):
+            exact = (Fraction(config["input_usd_per_million_tokens"]) * inputs
+                     + Fraction(config["output_usd_per_million_tokens"]) * outputs) / 1_000_000
+            units = -(-exact.numerator * 10 ** 12 // exact.denominator)
+            return Fraction(units, 10 ** 12)
+
+        # Ambient Decimal precision and rounding cannot alter ledger arithmetic.
         with localcontext() as context:
-            context.prec = 100
-            reserved = (Decimal(config["input_usd_per_million_tokens"]) * 2048 + 200) / 1_000_000
-            actual = (Decimal(config["input_usd_per_million_tokens"]) * 3 + 4) / 1_000_000
-            self.assertEqual(Decimal(self.read_state()["charged_usd"]), reserved * 2)
+            context.prec = 3
+            tracker = SpendTracker(self.root, config)
+            first, second = tracker.reserve(PAYLOAD), tracker.reserve(PAYLOAD)
+            reserved = rounded_cost(2048, 100)
+            actual = rounded_cost(3, 2)
+            self.assertEqual(Fraction(self.read_state()["charged_usd"]), reserved * 2)
             tracker.settle(first, {"prompt_tokens": 3, "completion_tokens": 2})
-            self.assertEqual(Decimal(self.read_state()["charged_usd"]), reserved + actual)
+            self.assertEqual(Fraction(self.read_state()["charged_usd"]), reserved + actual)
         resumed = SpendTracker(self.root, config)
         resumed.settle(second, {"prompt_tokens": 0, "completion_tokens": 0})
-        self.assertEqual(Decimal(self.read_state()["charged_usd"]), actual)
+        self.assertEqual(Fraction(self.read_state()["charged_usd"]), actual)
 
-    def test_unsupported_decimal_precision_fails_before_creating_state(self):
-        config = configuration(input_usd_per_million_tokens="0." + "1234567890" * 12 + "1")
+    def test_tiny_prices_preserve_subpenny_costs_and_round_subunit_up(self):
+        for price, expected in (("0.00001", "0.00000000003"),
+                                ("0.00000000000000001", "0.000000000001")):
+            with self.subTest(price=price):
+                root = self.root / price
+                tracker = SpendTracker(root, configuration(input_usd_per_million_tokens=price,
+                                                          output_usd_per_million_tokens=price))
+                result = tracker.settle(tracker.reserve(PAYLOAD),
+                                        {"prompt_tokens": 1, "completion_tokens": 2})
+                self.assertEqual(Decimal(result["charged_usd"]), Decimal(expected))
+
+    def test_subunit_cap_is_not_rounded_up_and_zero_usage_is_free(self):
+        config = configuration(max_usd="0.0000000000009",
+                               input_usd_per_million_tokens="0.00000000000000001",
+                               output_usd_per_million_tokens="0.00000000000000001")
+        tracker = SpendTracker(self.root, config)
+        with self.assertRaises(SpendLimitExceeded):
+            tracker.reserve(PAYLOAD)
+        self.assertEqual(self.read_state()["charged_usd"], "0")
+        tracker = SpendTracker(self.root, {**config, "max_usd": "0.000000000001"})
+        result = tracker.settle(tracker.reserve(PAYLOAD), {"prompt_tokens": 0, "completion_tokens": 0})
+        self.assertEqual(Decimal(result["charged_usd"]), Decimal(0))
+        self.assertEqual(Decimal(self.read_state()["charged_usd"]), Decimal(0))
+
+    def test_repeated_tiny_charges_do_not_drift(self):
+        tracker = SpendTracker(self.root, configuration(input_usd_per_million_tokens="0.0000001",
+                                                       output_usd_per_million_tokens="0.0000001"))
+        for _ in range(100):
+            tracker.settle(tracker.reserve(PAYLOAD), {"prompt_tokens": 1, "completion_tokens": 1})
+        self.assertEqual(Decimal(self.read_state()["charged_usd"]), Decimal("0.0000000001"))
+        SpendTracker(self.root, configuration(input_usd_per_million_tokens="0.0000001",
+                                              output_usd_per_million_tokens="0.0000001"))
+
+    def test_finer_than_fixed_unit_saved_state_is_rejected_without_rewrite(self):
+        tracker = SpendTracker(self.root, configuration())
+        reservation = tracker.reserve(PAYLOAD)
+        state = self.read_state()
+        state["charged_usd"] = "0.0000000000001"
+        state["reservations"][reservation].update(status="settled", usage_known=True,
+                                                 charged_usd="0.0000000000001")
+        saved = json.dumps(state)
+        tracker.path.write_text(saved)
         with self.assertRaises(SpendAccountingError):
-            SpendTracker(self.root, config)
-        self.assertFalse((self.root / "spend_state.json").exists())
+            SpendTracker(self.root, configuration())
+        self.assertEqual(tracker.path.read_text(), saved)
 
     def test_failed_state_write_after_body_persistence_does_not_consume_reservation(self):
         tracker = SpendTracker(self.root, configuration())
@@ -221,24 +271,22 @@ class SpendTrackerTests(unittest.TestCase):
             with self.assertRaises(SpendAccountingError):
                 instance.settle(reservation, None)
 
-    def test_unrepresentable_provider_charge_retains_reservation_and_halts_resume(self):
+    def test_ordinary_overrun_halt_stays_sticky_after_other_pending_settlement(self):
         tracker = SpendTracker(self.root, configuration())
         reservation = tracker.reserve(PAYLOAD)
         other = tracker.reserve(PAYLOAD)
         with self.assertRaises(SpendAccountingError):
-            tracker.settle(reservation, {"prompt_tokens": 10 ** 101 + 1, "completion_tokens": 0})
+            tracker.settle(reservation, {"prompt_tokens": 3000, "completion_tokens": 0})
         state = self.read_state()
         self.assertTrue(state["halted"])
-        self.assertEqual(state["charged_usd"], "0.004496")
-        self.assertEqual(state["reservations"][reservation]["status"], "unknown")
-        self.assertFalse(state["reservations"][reservation]["usage_known"])
+        self.assertEqual(Decimal(state["charged_usd"]), Decimal("0.005248"))
         resumed = SpendTracker(self.root, configuration())
         resumed.settle(other, {"prompt_tokens": 0, "completion_tokens": 0})
         self.assertTrue(self.read_state()["halted"])
         for instance in (tracker, resumed, SpendTracker(self.root, configuration())):
             with self.assertRaises(SpendAccountingError):
                 instance.reserve(PAYLOAD)
-        self.assertEqual(self.read_state()["charged_usd"], "0.002248")
+        self.assertEqual(Decimal(self.read_state()["charged_usd"]), Decimal("0.003"))
 
     def test_input_overrun_stops_even_when_total_cost_is_below_reservation(self):
         tracker = SpendTracker(self.root, configuration())

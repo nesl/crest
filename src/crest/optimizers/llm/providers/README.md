@@ -154,8 +154,12 @@ Changing from a previous tariff changes the saved binding and requires a new
 study, rather than silently repricing existing usage.
 
 Reservations bound cost using the token limits and settle against returned usage.
-Unresolved attempts retain their reservation. The cap relies on correct rates
-and the provider honoring the token limits.
+Unresolved attempts retain their reservation. Charges and reservations are rounded
+up to 12 decimal places in USD ($0.000000000001); totals add these amounts exactly.
+For example, a $0.00000025 charge is preserved exactly. Rounding adds less than
+$0.000000000001 per calculated charge, and the configured spending cap is never
+rounded upward. The cap relies on correct rates and the provider honoring the
+token limits.
 
 Explicit inline rates and `pricing_source` remain supported for existing
 configurations, but cannot be combined with a custom catalog. Without `max_usd`,

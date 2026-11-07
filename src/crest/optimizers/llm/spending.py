@@ -7,7 +7,8 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Mapping
-from decimal import Decimal, DecimalException, Inexact, InvalidOperation, localcontext
+from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -42,15 +43,17 @@ def _text(value: Decimal) -> str:
     return result.rstrip("0").rstrip(".") if "." in result else result
 
 
+def _amount_units(amount: Decimal) -> int:
+    """Convert USD to exact trillionths, rejecting incompatible saved amounts."""
+    units = Fraction(amount) * 10**12
+    if units.denominator != 1:
+        raise SpendAccountingError("Saved spend amounts must use at most 12 USD decimal places.")
+    return units.numerator
+
+
 def _sum_amounts(*amounts: Decimal) -> Decimal:
-    """Add amounts exactly, failing closed if 100 digits cannot represent the sum."""
-    try:
-        with localcontext() as context:
-            context.prec = 100
-            context.traps[Inexact] = True
-            return sum(amounts, Decimal(0))
-    except DecimalException as exc:
-        raise SpendAccountingError("Spend arithmetic exceeds supported exact decimal precision.") from exc
+    """Add charged USD amounts exactly in integer trillionths."""
+    return Decimal(f"{sum(_amount_units(amount) for amount in amounts)}e-12")
 
 
 class SpendTracker:
@@ -71,7 +74,9 @@ class SpendTracker:
     Unresolved attempts remain charged at their full reservation after a crash
     or transport failure. The monetary bound relies on the configured prices and
     on the provider honoring its output limit. An observed token overrun is
-    charged and permanently stops further attempts from this state file.
+    charged and permanently stops further attempts from this state file. Each
+    request cost is rounded upward once to 12 USD decimal places; totals add
+    those charges exactly.
     """
 
     def __init__(self, root: Path, config: Mapping[str, Any]) -> None:
@@ -149,14 +154,12 @@ class SpendTracker:
         return value
 
     def _cost(self, prompt_tokens: int, completion_tokens: int) -> Decimal:
-        """Compute configured USD cost exactly or refuse unrepresentable arithmetic."""
-        try:
-            with localcontext() as context:
-                context.prec = 100
-                context.traps[Inexact] = True
-                return (self.input_price * prompt_tokens + self.output_price * completion_tokens) / Decimal(1_000_000)
-        except DecimalException as exc:
-            raise SpendAccountingError("Spend arithmetic exceeds supported exact decimal precision.") from exc
+        """Round the complete request cost upward once to 12 USD decimal places."""
+        cost = (Fraction(self.input_price) * prompt_tokens
+                + Fraction(self.output_price) * completion_tokens) / 1_000_000
+        units = cost * 10**12
+        rounded_units = -(-units.numerator // units.denominator)
+        return Decimal(f"{rounded_units}e-12")
 
     def _validate_state(self, state: dict[str, Any], binding: dict[str, Any]) -> None:
         """Reject incompatible bindings and inconsistent reservation totals."""
@@ -180,10 +183,14 @@ class SpendTracker:
                 raise SpendAccountingError("Invalid spend reservation status.")
             reserved = _decimal(record["reserved_usd"], "reserved_usd")
             charged = _decimal(record["charged_usd"], "charged_usd")
+            _amount_units(reserved)
+            _amount_units(charged)
             if reserved != self.reservation_usd or (record["status"] in {"reserved", "unknown"} and charged != reserved):
                 raise SpendAccountingError("Invalid spend reservation cost.")
             total = _sum_amounts(total, charged)
-        if total != _decimal(state["charged_usd"], "charged_usd"):
+        saved_total = _decimal(state["charged_usd"], "charged_usd")
+        _amount_units(saved_total)
+        if total != saved_total:
             raise SpendAccountingError("Saved spend total does not equal reservation charges.")
         _decimal(state["max_usd"], "max_usd")
 
@@ -243,8 +250,8 @@ class SpendTracker:
 
         Missing or malformed usage retains the full reservation. Repeating a
         settlement does not charge or release funds twice. Token overruns are
-        charged and halt further attempts; unrepresentable charges retain the
-        reservation and halt rather than silently rounding.
+        charged and halt further attempts. Request costs are rounded upward
+        once to 12 USD decimal places.
         """
         if reservation_id not in self._state["reservations"]:
             raise SpendAccountingError(f"Unknown spend reservation {reservation_id!r}.")
@@ -260,19 +267,11 @@ class SpendTracker:
             exceeded = False
             if valid:
                 prompt, completion = usage["prompt_tokens"], usage["completion_tokens"]
-                try:
-                    actual = self._cost(prompt, completion)
-                    state["charged_usd"] = _text(_sum_amounts(
-                        _decimal(state["charged_usd"], "charged_usd"),
-                        _decimal(record["charged_usd"], "charged_usd").copy_negate(), actual,
-                    ))
-                except SpendAccountingError:
-                    # An unrepresentable provider charge cannot safely fund another attempt.
-                    state["halted"] = True
-                    record.update(status="unknown", usage_known=False)
-                    self._persist(state)
-                    self._state = state
-                    raise
+                actual = self._cost(prompt, completion)
+                state["charged_usd"] = _text(_sum_amounts(
+                    _decimal(state["charged_usd"], "charged_usd"),
+                    _decimal(record["charged_usd"], "charged_usd").copy_negate(), actual,
+                ))
                 record.update(prompt_tokens=prompt, completion_tokens=completion, charged_usd=_text(actual))
                 if "input_tokens" in usage:
                     record.update(cached_tokens=usage.get("cached_tokens"),
