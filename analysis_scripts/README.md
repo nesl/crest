@@ -33,7 +33,7 @@ Offline analysis and publication scripts consume saved artifacts separately.
 
 The repeatability, waiting-power, and policy runners share a physical-device
 lock. Use the same device ID and lock root across runners. See each
-runner's README for build dependencies and the original experiment safeguards. These tools do not provide archived measurements or trained models.
+runner's README for build dependencies and measurement safeguards.
 
 ## Offline analysis and publication tools
 

@@ -12,8 +12,7 @@ This is an experiment recipe with explicit source, dataset and output paths;
 it does not run search, compile firmware or access hardware.
 
 Run from the repository root in the CREST environment. Preparation needs PyYAML;
-training needs the full CREST runtime, and analysis needs Matplotlib. No source
-logs, trained models, dataset or experiment results are included.
+training needs the full CREST runtime, and analysis needs Matplotlib.
 
 ```bash
 python analysis_scripts/training_experiment/epoch_sensitivity.py prepare \
