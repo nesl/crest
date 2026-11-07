@@ -571,12 +571,12 @@ class ExperimentalMemory:
                 try:
                     response = provider.complete_json(request)
                 except ProviderResponseError as exc:
-                    self.ledger.write_response(request_id, {"error_type": type(exc).__name__, "error": str(exc)})
+                    self.ledger.write_provider_error(request_id, exc)
                     reason = str(exc)
                 except Exception as exc:
                     # Transport/auth failures stop before candidates can be proposed;
                     # the unchanged covered map retains all unsummarized evidence.
-                    self.ledger.write_response(request_id, {"error_type": type(exc).__name__, "error": str(exc)})
+                    self.ledger.write_provider_error(request_id, exc)
                     self.ledger.record_event({"event": "summary_failed", "request_id": request_id,
                                               "reason": str(exc), "error_type": type(exc).__name__})
                     raise

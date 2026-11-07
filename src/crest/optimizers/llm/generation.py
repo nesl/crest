@@ -411,10 +411,7 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
         try:
             response = provider.complete_json(request)
         except Exception as exc:
-            ledger.write_response(request_id, {"error_type": type(exc).__name__, "error": str(exc),
-                                              **{name: getattr(exc, name) for name in
-                                                 ("raw_response", "wire_payload", "usage", "spending")
-                                                 if getattr(exc, name, None) is not None}})
+            ledger.write_provider_error(request_id, exc)
             ledger.record_event({"event": "provider_error", "request_id": request_id,
                                  "recoverable": isinstance(exc, ProviderResponseError)})
             if isinstance(exc, SpendInputLimitExceeded) and proposals:

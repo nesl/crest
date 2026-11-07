@@ -251,6 +251,7 @@ class MemoryTests(unittest.TestCase):
         for _ in range(2):
             add(self.study)
         for error in (ProviderAuthenticationError('check account credits'), ProviderTransportError('outage')):
+            error.wire_payload = {'model': 'offline-model', 'input': 'summary evidence'}
             provider = Mock()
             provider.complete_json.side_effect = error
             with self.subTest(error=error), self.assertRaises(type(error)):
@@ -258,6 +259,8 @@ class MemoryTests(unittest.TestCase):
             self.assertEqual(memory.state['covered'], {})
             self.assertFalse(memory.state_path.exists())
             provider.complete_json.assert_called_once()
+            saved = sorted(memory.ledger.requests_dir.glob('*.response.json'))[-1]
+            self.assertEqual(json.loads(saved.read_text())['wire_payload'], error.wire_payload)
         events = [json.loads(line) for line in (self.root/'optimizer_events.jsonl').read_text().splitlines()]
         self.assertEqual(events[-1]['reason'], 'outage')
 
