@@ -42,8 +42,7 @@ NAS, replay, or measurement artifacts and do not run NAS or touch hardware.
 ## Case Study 3: proposal strategies and search effort
 
 These tools analyze externally supplied study artifacts for the paper's audio
-proposal-strategy comparison. This directory contains code, not study databases,
-prompt captures, measurements, cost reports or generated figures.
+proposal-strategy comparison.
 
 - `analyze_cs3_search.py` summarizes recorded trial outcomes, architecture
   coverage, proposal provenance, score progress and recorded API wall time.
@@ -65,7 +64,7 @@ PYTHONPATH=src python analysis_scripts/analyze_cs3_search.py \
 reads saved artifacts without launching search, contacting a provider, or accessing
 hardware. Keep generated outputs outside the source checkout.
 
-Search now refreshes score or hypervolume plots automatically under each study's
+Search refreshes score or hypervolume plots automatically under each study's
 `progress/` directory. To regenerate them from a saved database, use the
 [shared progress Python API](../src/crest/search/README.md).
 
