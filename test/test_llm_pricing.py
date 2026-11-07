@@ -136,26 +136,23 @@ def test_yaml_relative_pricing_path(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("provider", ["openai_compatible", "openai_responses"])
-@pytest.mark.parametrize("limit,input_rate,output_rate", [(272000, .125, .5), (272001, .25, .75)])
-def test_luna_conservative_rates_and_snapshot(provider, limit, input_rate, output_rate):
+@pytest.mark.parametrize("limit", [1000, 272000, 272001])
+def test_luna_uses_explicit_rates_and_saves_entry(provider, limit, tmp_path):
     supplied = config()
     supplied["llm"].update(provider=provider, model="gpt-6-luna", max_input_tokens=limit)
     normalized = normalize_llm_config(supplied).llm
-    assert normalized.input_usd_per_million_tokens == input_rate
-    assert normalized.output_usd_per_million_tokens == output_rate
-    assert normalized.pricing_snapshot["tariff"]["input_usd_per_million_tokens"] == .1
-    assert normalized.pricing_snapshot["verified_on"] == "2026-11-07"
+    assert normalized.input_usd_per_million_tokens == .25
+    assert normalized.output_usd_per_million_tokens == .75
+    assert "Conservative" in normalized.pricing_snapshot["accounting_notes"]
+    SpendTracker(tmp_path, normalized)
+    state = json.loads((tmp_path / "spend_state.json").read_text())
+    assert state["binding"]["pricing_snapshot"] == normalized.pricing_snapshot
 
 
-@pytest.mark.parametrize('field,value', [
-    ('cache_write_usd_per_million_tokens', -1),
-    ('cache_write_usd_per_million_tokens', float('inf')),
-    ('long_context', {'input_token_threshold': True}),
-    ('long_context', {'input_token_threshold': 272000, 'input_multiplier': 0, 'output_multiplier': 1.5}),
-])
-def test_invalid_tier_adjustments(tmp_path, field, value):
+@pytest.mark.parametrize("field", ["long_context", "cache_write_usd_per_million_tokens"])
+def test_pricing_rules_require_explicit_flat_rates(tmp_path, field):
     entry = tariff()
-    entry[field] = value
+    entry[field] = 2
     supplied, _ = custom(tmp_path, entry)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="flat accounting rates"):
         normalize_llm_config(supplied)

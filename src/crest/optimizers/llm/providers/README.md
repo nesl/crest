@@ -129,17 +129,19 @@ requires that tariff to match. Moving an unchanged file or editing unrelated
 entries is allowed; changing the selected rates or provenance is rejected before
 requests are made. Keep a copy of the original tariff to resume that study.
 
-OpenAI's standard Luna tariff is $0.10 input / $0.50 output per million tokens,
-with cache writes at $0.125. Above 272,000 input tokens, input/cache rates double
-and output rates increase by 1.5x. The catalog records these rules and their source.
+The JSON contains explicit **accounting rates**, not formulas. The bundled Luna
+entry uses a conservative $0.25 input / $0.75 output per million tokens for every
+request, covering standard global cache-write and long-context charges. Its
+`accounting_notes` records these assumptions. Shorter or discounted requests
+can cost less than the recorded amount; regional premiums and other service
+tiers need their own verified entry.
 
-Flat accounting conservatively uses the highest input rate, including cache writes,
-and selects the long-context rate when `max_input_tokens` exceeds the threshold.
-Luna therefore reserves/settles at $0.125 / $0.50 for ceilings up to 272,000,
-or $0.25 / $0.75 above it. The snapshot retains both the original tariff rules
-and effective rates. Cached-input discounts are not deducted, so tracked cost
-can exceed the invoice. These entries cover standard global processing only;
-other tiers or regional premiums require a separately verified custom tariff.
+`pricing.py` only loads, matches, and validates an entry. `spending.py` owns
+cost arithmetic and saving that complete entry with the study. A custom catalog
+must also supply explicit rates; cache or context multiplier rules are rejected.
+Changing from a previous tariff changes the saved binding and requires a new
+study, rather than silently repricing existing usage.
+
 Reservations bound cost using the token limits and settle against returned usage.
 Unresolved attempts retain their reservation. The cap relies on correct rates
 and the provider honoring the token limits.
