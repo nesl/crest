@@ -1,6 +1,12 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Deterministic trial-budget phase policy for LLM prompts."""
+"""Choose deterministic prompt guidance from runner budget progress.
+
+resolve_phase maps the greater of attempt progress and feasible-completion
+progress to exploration, specification, or finalization. PhaseState retains the
+actual remaining attempt budget for the prompt. These instructions influence
+candidate suggestions only; the runner remains responsible for stopping limits
+and no phase changes the legal search-space descriptor."""
 
 from __future__ import annotations
 

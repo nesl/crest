@@ -1,6 +1,12 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Deterministic prose for the supported scoring terms; no model imports."""
+"""Render supported scoring configurations as deterministic prompt evidence.
+
+The renderer translates known scoring terms and limits using supplied task,
+runtime, and device context, without loading or executing a model. Unsupported
+configurations return None; unresolved limits retain their names rather than
+invented measurements. This prose explains the objective but does not compute
+scores or decide feasibility."""
 
 import math
 

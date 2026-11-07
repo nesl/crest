@@ -1056,6 +1056,9 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
         )
     optimizer.recover_orphaned_trials = list(recover)
     if optimizer_type == "llm_generator":
+        # Apply proposal/provider defaults before the component validates its
+        # contract. This only normalizes settings; it does not read credentials
+        # or construct a provider, so loading a config cannot make API calls.
         from .optimizers.llm.config import normalize_llm_config
 
         optimizer = normalize_llm_config(optimizer)
@@ -2443,11 +2446,16 @@ def load_config(
     )
     config.optimizer = _normalize_optimizer_config(config)
     if config.optimizer.type == "llm_generator":
+        # Fixed warm-up candidates belong to the experiment config. Resolve
+        # relative paths beside that YAML file, rather than against the shell
+        # working directory, so launching the same config elsewhere is stable.
         warmup_file = config.optimizer.llm.get("warmup_params_file")
         if warmup_file is not None:
             warmup_path = Path(warmup_file).expanduser()
             if not warmup_path.is_absolute():
                 warmup_path = cfg_path.resolve().parent / warmup_path
+            # Store a canonical path; the optimizer reads and validates the
+            # candidate contents during initialization, before proposing work.
             config.optimizer.llm.warmup_params_file = str(warmup_path.resolve())
     # Input mode selects which Arduino sketch variant is used during HIL runs.
     training.input_mode = str(training.get("input_mode", "uniform")).lower()

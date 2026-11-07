@@ -1,12 +1,12 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Explicit offline migration of one stopped SQLite LLM study's rationale contract.
+"""Explicitly migrate one stopped SQLite study to a new rationale contract.
 
-The caller must derive expected/active signatures with the normal runner identity
-code. This helper never relaxes runner resume checks. Stop the sole campaign
-writer and recover RUNNING trials first. Existing WAITING proposals are retained
-and identified as legacy, without manufacturing retrospective explanations.
-"""
+This maintenance helper is separate from ordinary proposal generation. The caller
+must derive expected and active signatures using normal runner identity code;
+the helper backs up evidence and audits the transition without relaxing resume
+checks. Stop the sole campaign writer and recover RUNNING trials first. Existing
+WAITING proposals remain legacy evidence, without retrospective explanations."""
 from __future__ import annotations
 
 import argparse

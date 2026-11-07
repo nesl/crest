@@ -1,6 +1,12 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Provider-independent request/response records and deterministic fake."""
+"""Define the synchronous provider boundary and deterministic fixture adapter.
+
+LLMRequest and LLMResponse isolate prompt policy from completion transport.
+LLMProvider.complete_json is the extension contract; FakeProvider captures
+requests and consumes a finite response queue without network calls. The factory
+currently constructs only FakeProvider. Error types distinguish repairable
+response failures from failures that must propagate to the runner."""
 
 from __future__ import annotations
 

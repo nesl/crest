@@ -1,6 +1,12 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Generate and validate proposals; queue mutation belongs to the runner."""
+"""Generate explicit proposals without mutating an Optuna study or runner queue.
+
+generate_llm_batch returns CandidateProposal records; actual enqueueing belongs
+to the shared runner. It records each request and response, validates local candidate content,
+and retries repairable failures with feedback. Exhausted content repairs trigger
+a bounded search for one unique random fallback; other provider failures escape.
+The shared runner decides when and how returned proposals are executed."""
 
 from __future__ import annotations
 

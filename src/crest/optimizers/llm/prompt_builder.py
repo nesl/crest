@@ -1,6 +1,12 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Bounded, provider-neutral prompt construction for candidate generation."""
+"""Serialize bounded search evidence into provider-neutral completion requests.
+
+PromptContext carries search-space declarations, objective text, budgets, recent
+trials, anchors, and optional semantic context. build_candidate_request combines
+that evidence with phase guidance, the candidate envelope, and repair feedback.
+It performs no provider calls and does not validate returned candidates; those
+responsibilities belong to provider and schemas respectively."""
 
 from __future__ import annotations
 

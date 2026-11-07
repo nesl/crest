@@ -1,6 +1,11 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""LLM proposal preparation behind CREST's shared optimizer contract."""
+"""Adapt LLM proposal generation to CREST's shared optimizer contract.
+
+LLMGeneratorOptimizer validates policy settings, establishes reproducibility
+identity, verifies fixed warm-up history, and converts runner snapshots into
+bounded prompt evidence. It returns ExplicitRound proposals; the shared runner
+owns queue mutation, trial evaluation, budgets, and lifecycle persistence."""
 from __future__ import annotations
 
 import os

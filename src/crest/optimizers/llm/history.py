@@ -1,6 +1,12 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Compact recent history and best candidates extracted from Optuna trials."""
+"""Build compact evidence views from trial snapshots or compatible studies.
+
+Recent records describe successes and failures within a bounded window, while
+best-trial anchors retain representative successful candidates beyond that window.
+Helpers preserve available measurements and respect objective directions and
+feasibility when selecting anchors; they do not mutate trials or summarize them
+through a provider. The component combines these views into prompt inputs."""
 
 from __future__ import annotations
 

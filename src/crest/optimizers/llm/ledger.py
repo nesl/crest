@@ -1,6 +1,12 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Append-only filesystem ledger for LLM optimizer provenance."""
+"""Persist auditable LLM requests, responses, decisions, and lifecycle events.
+
+LLMLedger creates request/response JSON files and append-only JSONL evidence in
+one artifact directory, recovering the next request number on resume. It is a
+single-writer filesystem helper, not the study database or queue owner. Returned
+proposal evidence is distinct from runner-confirmed acceptance so generation
+alone never claims that an Optuna trial was enqueued."""
 
 from __future__ import annotations
 

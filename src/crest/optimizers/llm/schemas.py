@@ -1,6 +1,12 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Structured LLM envelopes and local candidate validation."""
+"""Parse completion envelopes and validate candidates against raw search space.
+
+CandidateBatch checks the outer JSON shape; validate_candidate_batch then checks
+parameter names, distributions, rationale envelopes, requested batch limits, and
+duplicates against terminal, queued, and same-batch candidates. Numeric values
+are canonicalized before identity comparison. These checks establish legal
+proposals, not measured feasibility or objective quality."""
 
 from __future__ import annotations
 
