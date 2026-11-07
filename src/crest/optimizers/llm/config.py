@@ -4,7 +4,7 @@
 
 This boundary supplies defaults used by configuration loading and the optimizer
 component, without constructing clients or looking up credentials. The supported
-configuration selects the fake provider, bounded history, and disabled memory;
+configuration selects fake or live providers, bounded history, and disabled memory;
 unsupported policies fail here rather than silently changing proposal behavior."""
 
 import math
