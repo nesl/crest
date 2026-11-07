@@ -82,10 +82,9 @@ timing and DWT cadenced active timing when wrap-safe (RTC fallback otherwise).
 Stop counts establish entry, not residency. Every cadenced release slot, including
 the final one, uses the same Stop policy when sufficient slack remains; short
 slack still uses the wake-margin busy wait. A ten-run window can report ten Stop
-entries while retaining its ten-period duration. The prior v4 protocol kept the
-final slot awake; its measurements remain historical evidence and are not
-accepted as v5 measurements. Rebuild and deploy the firmware when updating the
-host. The host validates telemetry and retries instrumentation failure
+entries while retaining its ten-period duration. The v4 protocol keeps the
+final slot awake; v4 measurements are not compatible with v5. Rebuild and deploy
+the firmware when updating the host. The host validates telemetry and retries instrumentation failure
 once with the same compiled candidate; valid measurements that miss deployment
 budgets remain ineligible. Each deployment programs and verifies the app and
 external weights, and raw evidence persists outside candidate workspaces under
