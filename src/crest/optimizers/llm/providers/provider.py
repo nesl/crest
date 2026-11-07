@@ -23,8 +23,8 @@ from datetime import timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Protocol
 
-from ...component_selection import cfg_get
-from ...interfaces import OptimizerBudgetExhausted
+from crest.component_selection import cfg_get
+from crest.interfaces import OptimizerBudgetExhausted
 
 
 @dataclass(frozen=True)

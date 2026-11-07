@@ -18,7 +18,7 @@ from functools import partial
 
 from ..history import to_plain
 
-from .provider import LLMRequest, LLMResponse
+from crest.optimizers.llm.providers.provider import LLMRequest, LLMResponse
 
 _json_safe = partial(to_plain, nonfinite_to_none=True)
 

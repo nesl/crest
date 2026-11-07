@@ -11,7 +11,7 @@ import pytest
 
 from crest.optimizers.history import freeze_plain_data, to_plain
 from crest.optimizers.llm.ledger import LLMLedger
-from crest.optimizers.llm.provider import LLMRequest
+from crest.optimizers.llm.providers.provider import LLMRequest
 
 
 def test_evidence_conversion_preserves_identity_and_sanitizes_metrics(tmp_path):

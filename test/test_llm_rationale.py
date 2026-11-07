@@ -9,7 +9,7 @@ import pytest
 
 from crest.optimizers.llm.generation import generate_llm_batch
 from crest.optimizers.llm.ledger import LLMLedger
-from crest.optimizers.llm.provider import FakeProvider
+from crest.optimizers.llm.providers.provider import FakeProvider
 from crest.optimizers.llm.schemas import CandidateBatch, validate_candidate_batch
 from test.test_llm_generation import DESCRIPTOR, context
 

@@ -9,7 +9,7 @@ import pytest
 from addict import Dict
 from optuna.trial import TrialState
 
-from crest.optimizers.llm.provider import FakeProvider
+from crest.optimizers.llm.providers.provider import FakeProvider
 from nas_model_client import MeasurementInfrastructureError, PROPOSAL_ATTR
 from test.test_optimizer_resume import campaign
 

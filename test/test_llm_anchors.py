@@ -14,7 +14,7 @@ SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from crest.optimizers.llm.history import (  # noqa: E402
+from crest.optimizers.llm.prompting.history import (  # noqa: E402
     build_best_trial_anchors,
     build_recent_trial_history,
 )

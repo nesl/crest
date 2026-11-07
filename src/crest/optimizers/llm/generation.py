@@ -19,8 +19,8 @@ from pydantic import ValidationError
 
 from ...pipeline_types import CandidateProposal, TrialRecord
 from .ledger import LLMLedger
-from .prompt_builder import PromptContext, build_candidate_request
-from .provider import LLMProvider, ProviderResponseError
+from crest.optimizers.llm.prompting.prompt_builder import PromptContext, build_candidate_request
+from crest.optimizers.llm.providers.provider import LLMProvider, ProviderResponseError
 from .schemas import CandidateBatch, validate_candidate_batch
 from ..search_space import SearchParam, SearchSpaceDescriptor
 

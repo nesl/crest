@@ -14,10 +14,10 @@ import json
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from .phase_policy import PhaseState, resolve_phase
-from .provider import LLMRequest
-from .objective_renderer import render_objective
-from ..search_space import SearchParam, SearchSpaceDescriptor
+from crest.optimizers.llm.prompting.phase_policy import PhaseState, resolve_phase
+from crest.optimizers.llm.providers.provider import LLMRequest
+from crest.optimizers.llm.prompting.objective_renderer import render_objective
+from crest.optimizers.search_space import SearchParam, SearchSpaceDescriptor
 
 SYSTEM_PROMPT = (
     "You are the CREST candidate generator. Return exact raw Optuna trial parameters "

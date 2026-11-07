@@ -15,12 +15,12 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from crest.optimizers.llm.ledger import LLMLedger  # noqa: E402
-from crest.optimizers.llm.phase_policy import resolve_phase  # noqa: E402
-from crest.optimizers.llm.prompt_builder import (  # noqa: E402
+from crest.optimizers.llm.prompting.phase_policy import resolve_phase  # noqa: E402
+from crest.optimizers.llm.prompting.prompt_builder import (  # noqa: E402
     PromptContext,
     build_candidate_request,
 )
-from crest.optimizers.llm.provider import FakeProvider  # noqa: E402
+from crest.optimizers.llm.providers.provider import FakeProvider  # noqa: E402
 from crest.optimizers.llm.schemas import CandidateBatch, CandidateRejection  # noqa: E402
 from crest.optimizers.search_space import SearchParam, SearchSpaceDescriptor  # noqa: E402
 

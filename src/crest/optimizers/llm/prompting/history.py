@@ -16,9 +16,9 @@ from types import SimpleNamespace
 from typing import Any
 from functools import partial
 
-from ..history import to_plain
+from crest.optimizers.history import to_plain
 
-from ...errors import HIL_MASTER_SUCCESS
+from crest.errors import HIL_MASTER_SUCCESS
 
 _json_safe = partial(to_plain, nonfinite_to_none=True)
 

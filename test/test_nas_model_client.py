@@ -43,7 +43,7 @@ from crest.hardware import (
 from crest.model import ScoreConfigEvaluationError, TrialOutcome  # noqa: E402
 from crest.model_families.odom_tcn import OdomTCNFamily  # noqa: E402
 from crest.model_metrics import StaticMemoryEstimate  # noqa: E402
-from crest.optimizers.llm.provider import FakeProvider  # noqa: E402
+from crest.optimizers.llm.providers.provider import FakeProvider  # noqa: E402
 from crest.optimizers.search_space import SearchParam  # noqa: E402
 from crest.pipeline_types import (
     DataSplit,

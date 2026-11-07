@@ -11,7 +11,7 @@ from optuna.trial import TrialState, create_trial
 import pytest
 
 from crest.model import _normalize_optimizer_config
-from crest.optimizers.llm.provider import FakeProvider
+from crest.optimizers.llm.providers.provider import FakeProvider
 from crest.optimizers.search_space import SearchParam
 from nas_model_client import (
     FEASIBILITY_POLICY_SIGNATURE_ATTR,

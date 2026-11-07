@@ -15,7 +15,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from crest.optimizers.llm.history import build_recent_trial_history  # noqa: E402
+from crest.optimizers.llm.prompting.history import build_recent_trial_history  # noqa: E402
 
 
 def trial(number, *, params=None, attrs=None, state=TrialState.COMPLETE, value=None):

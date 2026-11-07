@@ -132,9 +132,9 @@ existing study. Use a new study for a changed experiment contract.
 
 1. `component.py` checks fixed warm-up progress, then bounds the requested batch
    by both the runner's permitted round size and `llm.batch_size`.
-2. `history.py` selects recent evidence and successful anchors. `prompt_builder.py`
+2. `prompting/history.py` selects recent evidence and successful anchors. `prompting/prompt_builder.py`
    combines these with the descriptor, objective, semantic context, budget, and
-   deterministic guidance from `phase_policy.py`.
+   deterministic guidance from `prompting/phase_policy.py`.
 3. `generation.py` records a request and calls `LLMProvider.complete_json`.
    `schemas.py` checks the JSON envelope, raw names and distributions, rationales,
    batch limit, and duplicates against terminal, waiting, and same-batch candidates.
@@ -153,6 +153,16 @@ for generated proposals, and `optimizer_events.jsonl` for repairs/fallback event
 `accepted_candidates.jsonl` records runner-confirmed acceptance separately;
 returned proposals alone are not proof that trials were queued or evaluated.
 
+## Package layout
+
+The [providers package](providers/README.md) owns the completion interface and
+adapters. The [prompting package](prompting/README.md) builds requests and selects
+supporting evidence. Configuration, generation, validation, and the audit ledger
+remain alongside the runner-facing component.
+
+Changing the rationale requirement changes optimizer identity. Start a new study
+when changing that contract; existing studies retain their original resume checks.
+
 ## Where to make changes
 
 There are several files because provider I/O, pure evidence transformations,
@@ -163,16 +173,15 @@ new optimizer loop.
 | Module | Role and intended extension point |
 | --- | --- |
 | `component.py` | Runner adapter implementing `OptimizerABC`; coordinates configuration, warm-ups, identity, and `ExplicitRound` output. Start here for lifecycle changes. |
-| `provider.py` | Provider interface: `LLMRequest`, `LLMResponse`, and `LLMProvider.complete_json`. `FakeProvider` is the current adapter; `build_provider` selects it. |
+| `providers/provider.py` | Provider interface: `LLMRequest`, `LLMResponse`, and `LLMProvider.complete_json`. `FakeProvider` is the current adapter; `build_provider` selects it. |
 | `schemas.py` | Response and local-validation contracts: `CandidateBatch`, rejection/result records, canonicalization, and duplicate checks. Change this when candidate acceptance changes. |
-| `prompt_builder.py` | `PromptContext` input record and deterministic request builder. Change prompt content here without adding provider calls. |
+| `prompting/prompt_builder.py` | `PromptContext` input record and deterministic request builder. Change prompt content here without adding provider calls. |
 | `config.py` | Configuration defaults and validation shared by loading and initialization. Keep new settings and incompatible combinations explicit here. |
-| `history.py` | Evidence-selection helpers for recent records and best anchors; consumes snapshots without modifying the study. |
-| `phase_policy.py` | Pure budget-to-guidance helper; does not enforce runner stopping conditions. |
-| `objective_renderer.py` | Pure helper explaining supported scoring expressions using known context; does not compute scores or measured limits. |
+| `prompting/history.py` | Evidence-selection helpers for recent records and best anchors; consumes snapshots without modifying the study. |
+| `prompting/phase_policy.py` | Pure budget-to-guidance helper; does not enforce runner stopping conditions. |
+| `prompting/objective_renderer.py` | Pure helper explaining supported scoring expressions using known context; does not compute scores or measured limits. |
 | `generation.py` | Proposal orchestration helper for request logging, response parsing, repair, and random fallback. |
 | `ledger.py` | Single-writer filesystem persistence helper; distinguishes proposals returned from proposals accepted by the runner. |
-| [`tools/rationale_migration.py`](tools/README.md) | Explicit maintenance tool for a stopped SQLite study's rationale contract; outside ordinary generation. Read its preconditions before use. |
 | `__init__.py` | Convenience exports for generation callers; the runner adapter remains in `component.py`. |
 
 The main external contracts are the shared `OptimizerABC` lifecycle and proposal

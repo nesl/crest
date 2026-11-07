@@ -87,7 +87,7 @@ class BlockDatasets(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, BlockDatasets())
 from unittest.mock import patch
 from crest.builtin_components import ensure_optimizer_components_registered
-with patch('crest.optimizers.llm.provider.build_provider', side_effect=RuntimeError('provider called')):
+with patch('crest.optimizers.llm.providers.provider.build_provider', side_effect=RuntimeError('provider called')):
     ensure_optimizer_components_registered()
     ensure_optimizer_components_registered()
 """

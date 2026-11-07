@@ -18,7 +18,7 @@ if str(SRC_DIR) not in sys.path:
 
 from crest.model_families.audio_dscnn import AudioDSCNNFamily  # noqa: E402
 from crest.model_families.odom_tcn import OdomTCNFamily  # noqa: E402
-from crest.optimizers.llm.prompt_builder import PromptContext, build_candidate_request  # noqa: E402
+from crest.optimizers.llm.prompting.prompt_builder import PromptContext, build_candidate_request  # noqa: E402
 from crest.optimizers.search_space import (  # noqa: E402
     SearchParam,
     SearchSpaceDescriptor,

@@ -8,10 +8,10 @@ The runner-facing optimizer lives in ``component``; importing this package does
 not register a separate execution loop or evaluate proposed architectures."""
 
 from .ledger import LLMLedger
-from .history import build_best_trial_anchors, build_recent_trial_history
-from .phase_policy import PhaseState, resolve_phase
-from .prompt_builder import PromptContext, build_candidate_request
-from .provider import (
+from crest.optimizers.llm.prompting.history import build_best_trial_anchors, build_recent_trial_history
+from crest.optimizers.llm.prompting.phase_policy import PhaseState, resolve_phase
+from crest.optimizers.llm.prompting.prompt_builder import PromptContext, build_candidate_request
+from crest.optimizers.llm.providers.provider import (
     FakeProvider,
     LLMProvider,
     LLMRequest,

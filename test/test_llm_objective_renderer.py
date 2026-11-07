@@ -4,7 +4,7 @@
 
 import pytest
 
-from crest.optimizers.llm.objective_renderer import render_objective
+from crest.optimizers.llm.prompting.objective_renderer import render_objective
 
 
 def fixture():

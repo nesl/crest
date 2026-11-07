@@ -21,8 +21,8 @@ from crest.optimizers.history import build_trial_snapshot
 from crest.pipeline_types import TrialRecord
 from crest.optimizers.llm.generation import generate_llm_batch  # noqa: E402
 from crest.optimizers.llm.ledger import LLMLedger  # noqa: E402
-from crest.optimizers.llm.prompt_builder import PromptContext  # noqa: E402
-from crest.optimizers.llm.provider import FakeProvider, LLMResponse, ProviderResponseError  # noqa: E402
+from crest.optimizers.llm.prompting.prompt_builder import PromptContext  # noqa: E402
+from crest.optimizers.llm.providers.provider import FakeProvider, LLMResponse, ProviderResponseError  # noqa: E402
 from crest.optimizers.search_space import SearchParam, SearchSpaceDescriptor  # noqa: E402
 
 

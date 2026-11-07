@@ -18,10 +18,10 @@ from crest.optimizers.history import build_trial_snapshot, freeze_plain_data
 from crest.pipeline_types import BudgetSnapshot, SearchContext
 from crest.optimizers.llm.component import LLMGeneratorOptimizer
 from crest.optimizers.llm.generation import generate_llm_batch
-from crest.optimizers.llm.history import (build_recent_trial_history,
+from crest.optimizers.llm.prompting.history import (build_recent_trial_history,
     build_terminal_trial_history, build_best_trial_anchors)
 from crest.optimizers.llm.ledger import LLMLedger
-from crest.optimizers.llm.provider import FakeProvider
+from crest.optimizers.llm.providers.provider import FakeProvider
 from crest.optimizers.context import disabled_semantic_context
 from test.test_llm_generation import DESCRIPTOR, context
 from crest.optimizers.llm.component import digest
