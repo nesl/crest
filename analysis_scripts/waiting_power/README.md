@@ -4,7 +4,7 @@ SPDX-License-Identifier: BSD-3-Clause
 -->
 # Waiting-power experiments
 
-This package builds and runs **new STM32 hardware experiments** and analyzes their recorded evidence. It does not supply archived results, datasets, models, binaries, serial identities, or assumed power values.
+This package builds and runs **new STM32 hardware experiments** and analyzes their recorded evidence.
 
 Run from the repository root, providing a candidate manifest with `candidates`, `timesteps`, and `input_dim` (candidate entries need `candidate_id`, `architecture`, and `clock_mhz`):
 
