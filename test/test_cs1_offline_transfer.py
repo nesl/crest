@@ -10,6 +10,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Inverse Student-t values vary slightly across SciPy builds. Keep the
+# interval regression strict without requiring identical last floating-point digits.
+CI_ABS_TOL = 1e-9
+
 
 def load_module(name):
     """Load a portable module.
@@ -45,8 +49,8 @@ class SummaryTests(unittest.TestCase):
         """
         result = load_module("paired_transfer").ci([1, 2, 3])
         self.assertAlmostEqual(result["mean"], 2)
-        self.assertAlmostEqual(result["lo"], -0.484137711719546, places=12)
-        self.assertAlmostEqual(result["hi"], 4.484137711719546, places=12)
+        self.assertAlmostEqual(result["lo"], -0.484137711719546, delta=CI_ABS_TOL)
+        self.assertAlmostEqual(result["hi"], 4.484137711719546, delta=CI_ABS_TOL)
 
     def test_generic_policy_dataset(self):
         """Analyze new candidate IDs and nonconsecutive rounds.
@@ -113,7 +117,7 @@ class SummaryTests(unittest.TestCase):
         result = load_module("repeats").summarize([1, 2, 3])
         self.assertEqual(result["n"], 3)
         self.assertAlmostEqual(result["mean_mj"], 2)
-        self.assertAlmostEqual(result["ci95_lo"], -0.484137711719546, places=12)
+        self.assertAlmostEqual(result["ci95_lo"], -0.484137711719546, delta=CI_ABS_TOL)
 
     def test_policy_interval(self):
         """Check policy interval and retained paired samples.
@@ -127,8 +131,8 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(result["n"], 3)
         self.assertEqual(result["differences_mj"], [1, 2, 3])
         self.assertAlmostEqual(result["mean_mj"], 2)
-        self.assertAlmostEqual(result["ci95_lo"], -0.484137711719546, places=12)
-        self.assertAlmostEqual(result["ci95_hi"], 4.484137711719546, places=12)
+        self.assertAlmostEqual(result["ci95_lo"], -0.484137711719546, delta=CI_ABS_TOL)
+        self.assertAlmostEqual(result["ci95_hi"], 4.484137711719546, delta=CI_ABS_TOL)
 
 
 if __name__ == "__main__":
