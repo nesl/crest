@@ -6,15 +6,42 @@ responsibilities belong to the [LLM optimizer](../README.md) and shared runner.
 
 | File | Responsibility |
 | --- | --- |
-| `provider.py` | `LLMProvider` protocol, `LLMRequest` and `LLMResponse` records, provider errors, `FakeProvider`, and factory selection. |
+| `provider.py` | `LLMProvider` protocol, `LLMRequest` and `LLMResponse` records, provider errors, fake/Chat Completions/Responses adapters, and factory selection. |
+| `pricing.py`, `pricing.json` | Exact tariff lookup and bundled reviewed rates. |
 | `__init__.py` | Package marker with no initialization side effects. |
 
-## Use a provider
+## Choose a provider
 
-Select `optimizer.type: llm_generator` and configure `optimizer.llm.provider` in
-your experiment YAML. The supported adapter is `fake`: it consumes configured
-responses in order without network access. The parent guide includes a runnable
-generation example and campaign configuration. Direct callers can import:
+Start with the [experiment quickstart](../README.md#run-an-experiment). The
+provider-specific settings are:
+
+| Provider | Endpoint and credentials |
+| --- | --- |
+| `openrouter` | Defaults to `https://openrouter.ai/api/v1`; uses `OPENROUTER_API_KEY` unless `api_key_env` specifies another variable. |
+| `openai_compatible` | Set `base_url`, `model`, and `api_key_env` explicitly; the transport appends `/chat/completions`. |
+| `openai_responses` | Set `base_url`, `model`, and `api_key_env` explicitly; the transport appends `/responses`. |
+| `fake` | Supply an ordered `responses` list; no credentials or network access. See the [fixture examples](../EXAMPLES.md). |
+
+`base_url` is the API root. `api_key_env` names an environment variable, not the
+key itself. Keep actual credentials out of YAML, source files, and committed
+shell scripts. The transport reads the variable at request time.
+
+To enter a key without putting its value in shell history, use a hidden prompt
+in zsh, then launch from the repository root in your CREST environment:
+
+```zsh
+read -rs 'OPENROUTER_API_KEY?API key: '; printf '\n'
+export OPENROUTER_API_KEY
+python src/nas_model_client.py --config /path/to/experiment.yaml --study-name llm-live
+unset OPENROUTER_API_KEY
+```
+
+Trial budgets bound candidate evaluations. Provider spending is controlled
+separately by `max_usd`, token limits, and configured token prices; see the
+[configuration guide](../../../../config/README.md). Repair requests can make
+additional provider calls.
+
+## Exercise the completion interface
 
 ```python
 from crest.optimizers.llm.providers.provider import FakeProvider, LLMRequest
@@ -27,8 +54,8 @@ response = provider.complete_json(LLMRequest(
 ))
 ```
 
-This exercises the completion boundary only; generation performs candidate
-validation against the actual search-space descriptor.
+This exercises only the completion boundary. The [generation example](../EXAMPLES.md)
+also validates candidates against a search-space descriptor and writes provenance.
 
 ## Add an adapter
 
@@ -47,3 +74,69 @@ Run the provider checks from the repository root:
 ```sh
 python -m pytest -q test/test_llm_provider_prompt_ledger.py test/test_llm_optimizer_config.py
 ```
+
+## Configure pricing and a spending cap
+
+[`pricing.json`](pricing.json) contains reviewed USD input/output rates per
+million tokens. Entries match **provider, base URL, model, and service tier**
+exactly. An omitted tier selects `default`; an explicitly requested tier must
+have its own entry. The bundled catalog currently has no rates. Supply a custom catalog with
+verified rates for your experiment. Catalogs are dated snapshots, not
+automatically refreshed price feeds.
+
+Add these settings to `optimizer.llm`, using your actual model and endpoint:
+
+```yaml
+provider: openai_compatible
+base_url: https://provider.example/v1
+model: YOUR_MODEL_ID
+api_key_env: OPENAI_API_KEY
+max_usd: 5
+max_input_tokens: 100000
+max_output_tokens: 2000
+pricing_file: prices.json  # Relative to the experiment YAML.
+```
+
+Export `OPENAI_API_KEY` in the terminal before launching your experiment. A cap
+requires both token limits. A missing or ambiguous tariff stops initialization;
+CREST never guesses prices for an unknown model or another endpoint.
+
+For private endpoints or other models, set `pricing_file`. Relative paths resolve
+beside the experiment YAML; direct Python configuration resolves them from the
+working directory. The custom file replaces the bundled catalog and uses the
+same schema. For example, these are **synthetic rates**, not a provider quote:
+
+```json
+{
+  "schema_version": 1,
+  "rates": [{
+    "provider": "openai_compatible",
+    "base_url": "https://provider.example/v1",
+    "model": "my-model",
+    "service_tier": "default",
+    "currency": "USD",
+    "input_usd_per_million_tokens": 1.0,
+    "output_usd_per_million_tokens": 4.0,
+    "source": "Your provider's tariff URL or contract reference",
+    "verified_on": "2026-10-28"
+  }]
+}
+```
+
+For each capped study, `llm_optimizer/spend_state.json` saves the resolved rates
+and the selected entry's source/date under `binding.pricing_snapshot`. Resuming
+requires that tariff to match. Moving an unchanged file or editing unrelated
+entries is allowed; changing the selected rates or provenance is rejected before
+requests are made. Keep a copy of the original tariff to resume that study.
+
+Accounting uses the configured input/output rates for all reported tokens;
+cached-token discounts and other billing categories are not modeled separately.
+Reservations bound cost using the token limits and settle against returned usage.
+Unresolved attempts retain their reservation. The cap relies on correct rates
+and the provider honoring the token limits.
+
+Explicit inline rates and `pricing_source` remain supported for existing
+configurations, but cannot be combined with a custom catalog. Without `max_usd`,
+no tariff lookup or spending snapshot is created. To add a bundled tariff, verify
+its exact endpoint/model/tier, record its source and date, and run
+`python -m pytest -q test/test_llm_pricing.py test/test_llm_spending.py`.

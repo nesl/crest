@@ -16,6 +16,7 @@ from crest.optimizers.llm.providers.provider import (
     LLMProvider,
     LLMRequest,
     LLMResponse,
+    OpenAICompatibleProvider,
     build_provider,
 )
 from ..search_space import SearchParam, SearchSpaceDescriptor, build_search_space_descriptor
@@ -36,6 +37,7 @@ __all__ = [
     "LLMProvider",
     "LLMRequest",
     "LLMResponse",
+    "OpenAICompatibleProvider",
     "PhaseState",
     "PromptContext",
     "SearchParam",

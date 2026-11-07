@@ -243,7 +243,14 @@ class LLMGeneratorOptimizer(OptimizerABC):
         self.context = context
         self.config = llm
         self.ledger = LLMLedger(Path(context.artifact_dir) / "llm_optimizer")
-        self.provider = build_provider(llm)
+        spend_tracker = None
+        if llm.get("max_usd") is not None:
+            from .spending import SpendTracker
+            spend_tracker = SpendTracker(self.ledger.root, llm)
+        elif (self.ledger.root / "spend_state.json").exists():
+            raise ValueError("This campaign has spend accounting; retain max_usd when resuming.")
+        self.provider = (build_provider(llm, spend_tracker=spend_tracker)
+                         if spend_tracker is not None else build_provider(llm))
         self.rng = random.Random(llm["random_seed"])
         self.semantic_context = _plain(context.semantic_context)
         if not llm["semantic_context"]:

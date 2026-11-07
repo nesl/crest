@@ -190,6 +190,19 @@ with patch('crest.optimizers.llm.providers.provider.build_provider', side_effect
         self.assertEqual(parameter.choices, ("first", "second"))
 
 
+    def test_provider_endpoint_rejects_embedded_credentials_or_routing_suffixes(self):
+        for endpoint in (
+            "https://user:password@example.test/v1",
+            "https://example.test/v1?api_key=secret",
+            "https://example.test/v1#fragment",
+        ):
+            with self.subTest(endpoint=endpoint), self.assertRaisesRegex(ValueError, "clean endpoint"):
+                _normalize_optimizer_config(Dict(optimizer={
+                    "type": "llm_generator", "llm": {
+                        "provider": "openai_compatible", "model": "example-model",
+                        "api_key_env": "EXAMPLE_API_KEY", "base_url": endpoint,
+                    },
+                }))
 
 
 if __name__ == "__main__":

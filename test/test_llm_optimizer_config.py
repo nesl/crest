@@ -51,7 +51,46 @@ class OptimizerConfigTests(unittest.TestCase):
         self.assertEqual(optimizer.llm.anchor_count, 5)
         self.assertTrue(optimizer.llm.semantic_context)
 
-    pass
+    def test_invalid_optimizer_configs_are_rejected(self) -> None:
+        """Malformed selection and fake-provider shapes fail during config load."""
+        invalid = [
+            Dict(optimizer="llm_generator"),
+            Dict(optimizer=Dict(type="unknown")),
+            Dict(optimizer=Dict(type="llm_generator", llm=Dict())),
+            Dict(optimizer=Dict(type="llm_generator", llm=Dict(provider="fake", responses=[]))),
+            Dict(
+                optimizer=Dict(
+                    type="llm_generator",
+                    llm=Dict(provider="fake", responses=[{}], batch_size=0),
+                )
+            ),
+            Dict(
+                optimizer=Dict(
+                    type="llm_generator",
+                    llm=Dict(provider="fake", responses=[{}], recent_trial_window=-1),
+                )
+            ),
+            Dict(
+                optimizer=Dict(
+                    type="llm_generator",
+                    llm=Dict(
+                        provider="openrouter",
+                        model="openai/test-model",
+                        json_response_mode="true",
+                    ),
+                )
+            ),
+            Dict(
+                optimizer=Dict(
+                    type="llm_generator",
+                    llm=Dict(provider="fake", responses=[{}], semantic_context="true"),
+                )
+            ),
+        ]
+        for config in invalid:
+            with self.subTest(config=config):
+                with self.assertRaises(ValueError):
+                    _normalize_optimizer_config(config)
 
     def test_anchor_count_accepts_disable_and_rejects_nonnegative_integer_violations(self) -> None:
         """Best-model evidence can be omitted or bounded explicitly."""
@@ -80,13 +119,109 @@ class OptimizerConfigTests(unittest.TestCase):
 
         self.assertFalse(optimizer.llm.semantic_context)
 
-    pass
+    def test_openrouter_defaults_and_live_fields_are_normalized(self) -> None:
+        """OpenRouter receives its standard URL and validated provider settings."""
+        optimizer = _normalize_optimizer_config(
+            Dict(
+                optimizer=Dict(
+                    type="llm_generator",
+                    llm=Dict(
+                        provider="openrouter",
+                        model="openai/test-model",
+                        temperature=0.2,
+                        timeout_s=15,
+                        extra_headers=Dict(**{"X-Title": "CREST"}),
+                    ),
+                )
+            )
+        )
 
-    pass
+        self.assertEqual(optimizer.llm.base_url, "https://openrouter.ai/api/v1")
+        self.assertEqual(optimizer.llm.api_key_env, "OPENROUTER_API_KEY")
+        self.assertEqual(optimizer.llm.temperature, 0.2)
+        self.assertEqual(optimizer.llm.timeout_s, 15.0)
+        self.assertEqual(optimizer.llm.max_transport_retries, 5)
+        self.assertEqual(optimizer.llm.retry_backoff_s, 5.0)
+        self.assertEqual(optimizer.llm.retry_backoff_cap_s, 60.0)
+        self.assertTrue(optimizer.llm.json_response_mode)
+        self.assertEqual(optimizer.llm.extra_headers["X-Title"], "CREST")
 
-    pass
+    def test_optional_reasoning_settings_preserve_defaults_and_bind_identity(self) -> None:
+        """Explicit request controls affect identity while omissions retain defaults."""
+        component = LLMGeneratorOptimizer()
+        base = Dict(llm=Dict(provider="openrouter", model="test"))
+        baseline = component.identity_config(base)
+        self.assertEqual(baseline["temperature"], 0.4)
+        self.assertNotIn("reasoning_effort", baseline)
+        self.assertNotIn("service_tier", baseline)
+        # Null optional controls are equivalent to their absence.
+        self.assertEqual(component.identity_config(Dict(llm={**base.llm,
+            "reasoning_effort": None, "service_tier": None})), baseline)
+        changed = component.identity_config(Dict(llm={**base.llm,
+            "temperature": None, "reasoning_effort": "medium", "service_tier": "default"}))
+        self.assertIsNone(changed["temperature"])
+        self.assertEqual(changed["reasoning_effort"], "medium")
+        self.assertEqual(changed["service_tier"], "default")
+        for field, values in (
+            ("temperature", [True, -1, "0.4", float("nan"), float("inf")]),
+            ("reasoning_effort", [True, 1, "", "unsupported", []]),
+            ("service_tier", [True, 1, "", "unsupported", []]),
+        ):
+            for value in values:
+                with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, field):
+                    component.identity_config(Dict(llm={**base.llm, field: value}))
 
-    pass
+    def test_transport_settings_are_validated_and_excluded_from_study_identity(self) -> None:
+        """Operators can tune retry policy when resuming the same search study."""
+        component = LLMGeneratorOptimizer()
+        base = Dict(llm=Dict(provider="openrouter", model="openai/test-model"))
+        identity = component.identity_config(base)
+        for field, value in (("max_transport_retries", 0), ("retry_backoff_s", 0),
+                             ("retry_backoff_cap_s", 120.0)):
+            with self.subTest(field=field):
+                changed = Dict(llm={**base.llm, field: value})
+                self.assertEqual(component.identity_config(changed), identity)
+                self.assertNotIn(field, identity)
+
+        # Reject coercions and non-finite values at YAML normalization time.
+        for field, values in (
+            ("max_transport_retries", [-1, True, 1.0, "5", None]),
+            ("retry_backoff_s", [-1, True, "5", None, float("nan"), float("inf")]),
+            ("retry_backoff_cap_s", [-1, True, "60", None, float("nan"), float("inf")]),
+        ):
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    invalid = Dict(optimizer=Dict(type="llm_generator",
+                        llm={**base.llm, field: value}))
+                    with self.assertRaisesRegex(ValueError, field):
+                        _normalize_optimizer_config(invalid)
+
+    def test_openai_compatible_requires_explicit_api_key_environment_variable(self) -> None:
+        """Generic endpoints must not silently inherit OpenRouter credentials."""
+        base_llm = Dict(
+            provider="openai_compatible",
+            base_url="https://llm.example/v1",
+            model="example-model",
+        )
+        with self.assertRaisesRegex(ValueError, "require it explicitly"):
+            _normalize_optimizer_config(
+                Dict(optimizer=Dict(type="llm_generator", llm=base_llm))
+            )
+
+        base_llm.api_key_env = "GENERIC_LLM_API_KEY"
+        optimizer = _normalize_optimizer_config(
+            Dict(optimizer=Dict(type="llm_generator", llm=base_llm))
+        )
+
+        self.assertEqual(optimizer.llm.api_key_env, "GENERIC_LLM_API_KEY")
+        self.assertEqual(optimizer.llm.base_url, "https://llm.example/v1")
+        self.assertFalse(optimizer.llm.json_response_mode)
+
+        base_llm.json_response_mode = True
+        overridden = _normalize_optimizer_config(
+            Dict(optimizer=Dict(type="llm_generator", llm=base_llm))
+        )
+        self.assertTrue(overridden.llm.json_response_mode)
 
 
 if __name__ == "__main__":

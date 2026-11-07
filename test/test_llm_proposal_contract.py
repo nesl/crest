@@ -112,7 +112,22 @@ class ProposalContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "descriptor"):
                 component.initialize(SearchContext("bad", tmp, (), (), "", {}), config)
 
-    pass
+    def test_identity_explicit_defaults_and_secret_exclusion(self):
+        component = LLMGeneratorOptimizer()
+        config = {"type": "llm_generator", "llm": {"provider": "openrouter", "model": "test-model"}}
+        identity = component.identity_config(config)
+        equivalent = {"type": "llm_generator", "custom": "secret", "llm": {
+            **config["llm"], "temperature": 0.4, "batch_size": 5,
+            "api_key_env": "PRIVATE_TOKEN", "api_key": "secret",
+            "extra_headers": {"Authorization": "Bearer secret"},
+            "base_url": "https://openrouter.ai/api/v1"}}
+        self.assertEqual(identity, component.identity_config(equivalent))
+        serialized = json.dumps(component.identity_config(equivalent))
+        self.assertNotIn("secret", serialized)
+        self.assertNotIn("PRIVATE_TOKEN", serialized)
+        for key, value in (("model", "changed"), ("prompt_version", "v2"), ("random_seed", 9)):
+            other = {"type": "llm_generator", "llm": {**config["llm"], key:value}}
+            self.assertNotEqual(identity, component.identity_config(other))
 
 if __name__ == "__main__":
     unittest.main()
