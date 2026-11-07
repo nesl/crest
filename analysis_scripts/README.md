@@ -40,10 +40,8 @@ NAS, replay, or measurement artifacts and do not run NAS or touch hardware.
 - `paper_plots/`
   - **Hardware requirement: no hardware required.** Publication figure
     generators for all eight submitted-paper data plots, with explicit external
-    inputs and plotted-point/summary sidecars. Private data manifests are not
-    distributed. The
-    [figure catalog](paper_plots/README.md) gives the canonical scripts and
-    commands; superseded draft generators remain in Git history.
+    inputs and plotted-point/summary sidecars. The
+    [figure catalog](paper_plots/README.md) gives the scripts and commands.
 
 ## Case Study 3: proposal strategies and search effort
 
