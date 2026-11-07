@@ -150,3 +150,5 @@ sketches/stm32/crest_stm32_lrun/**
 
 # Reviewed provider tariff shipped as package data.
 !src/crest/optimizers/llm/providers/pricing.json
+# Submitted CS1 recipe configuration (no measurements).
+!analysis_scripts/cs1_offline/paper_config/*.json

@@ -21,10 +21,11 @@ from crest.optimizers.llm.generation import generate_llm_batch
 from crest.optimizers.llm.prompting.history import (build_recent_trial_history,
     build_terminal_trial_history, build_best_trial_anchors)
 from crest.optimizers.llm.ledger import LLMLedger
+from crest.optimizers.llm.memory import ExperimentalMemory, MemoryConfig, digest
 from crest.optimizers.llm.providers.provider import FakeProvider
 from crest.optimizers.context import disabled_semantic_context
 from test.test_llm_generation import DESCRIPTOR, context
-from crest.optimizers.llm.component import digest
+from test.test_llm_memory import context as memory_context, finding, add
 
 
 class ProposalContractTests(unittest.TestCase):
@@ -89,7 +90,27 @@ class ProposalContractTests(unittest.TestCase):
                 self.assertEqual(build_best_trial_anchors(history, anchor_count=count, directions=directions),
                                  build_best_trial_anchors(study, anchor_count=count))
 
-    pass
+    def test_memory_requests_coverage_hashes_pending_and_restart_match_legacy(self):
+        study = optuna.create_study(study_name="memory-test")
+        cfg = MemoryConfig(start_after_trials=2, interval_trials=2, max_pending_trials=4)
+        with tempfile.TemporaryDirectory() as tmp:
+            roots = [Path(tmp)/"legacy", Path(tmp)/"snapshot"]
+            memories = [ExperimentalMemory(root, cfg) for root in roots]
+            providers = [FakeProvider([{"updates": [finding()], "retire": []},
+                                       {"updates": [], "retire": []}]) for _ in roots]
+            for _ in range(4):
+                add(study)
+                prompt = memory_context(study)
+                result_a = memories[0].enrich(study, prompt, providers[0])
+                result_b = memories[1].enrich(build_trial_snapshot(study), prompt, providers[1], directions=("minimize",))
+                self.assertEqual(result_a.as_prompt_payload(), result_b.as_prompt_payload())
+                self.assertEqual(memories[0].state, memories[1].state)
+                self.assertEqual([r.user_prompt for r in providers[0].requests], [r.user_prompt for r in providers[1].requests])
+            restored = ExperimentalMemory(roots[1], cfg)
+            no_calls = FakeProvider([])
+            restored.enrich(build_trial_snapshot(study), memory_context(study), no_calls, directions=("minimize",))
+            self.assertEqual(no_calls.requests, [])
+            self.assertEqual(restored.state["covered"], memories[0].state["covered"])
 
     def test_component_plain_context_batch_cap_and_disabled_semantics(self):
         with tempfile.TemporaryDirectory() as tmp:
