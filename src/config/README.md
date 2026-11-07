@@ -560,7 +560,7 @@ decoded architecture coverage. It requires `require_rationale: true`,
 at most 1. In full mode, `max_refill_attempts` accepts 0 through 2 (default 2);
 this option is invalid in bounded mode. The allocation policy and decoded
 architecture duplicate checks are described in the
-[optimizer guide](../crest/optimizers/README.md#provider-transports-and-full-history).
+[optimizer guide](../crest/optimizers/GUIDE.md#provider-transports-and-full-history).
 
 `require_rationale` defaults to `false`. Enabling it requires candidates shaped as `{"params": {...}, "rationale": "..."}`
 with a nonempty rationale of at most 2000 characters. Rationale is retained as provenance;
