@@ -191,6 +191,24 @@ class LLMLedger:
             {**response_payload, "response_hash": response_hash},
         )
 
+    def write_provider_error(self, request_id: int, error: Exception) -> None:
+        """Persist a provider failure and its available credential-free evidence.
+
+        Parameters
+        ----------
+        request_id : int
+            Request sequence number associated with the provider failure.
+        error : Exception
+            Failure optionally carrying raw response, request body, usage, and
+            spending evidence. Arbitrary attributes such as HTTP headers are
+            deliberately excluded.
+        """
+        payload = {"error_type": type(error).__name__, "error": str(error)}
+        for name in ("raw_response", "wire_payload", "usage", "spending"):
+            if hasattr(error, name):
+                payload[name] = getattr(error, name)
+        self.write_response(request_id, payload)
+
     def record_prompt_context(self, context: dict[str, Any]) -> None:
         """Append complete prompt context supplied for a request.
 

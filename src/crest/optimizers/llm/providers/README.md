@@ -6,8 +6,12 @@ responsibilities belong to the [LLM optimizer](../README.md) and shared runner.
 
 | File | Responsibility |
 | --- | --- |
-| `provider.py` | `LLMProvider` protocol, `LLMRequest` and `LLMResponse` records, provider errors, fake/Chat Completions/Responses adapters, and factory selection. |
-| `pricing.py`, `pricing.json` | Exact tariff lookup and bundled reviewed rates. |
+| `provider.py` | Public imports and `build_provider` factory selection. |
+| `records.py` | `LLMProvider` protocol, request/response records, errors, and the offline `FakeProvider`. |
+| `chat.py`, `responses.py` | Live adapters that build and interpret each API's payloads. |
+| `transport.py` | Shared authentication, HTTP retries, and per-attempt spend accounting. |
+| `defaults.py` | Defaults shared by config normalization and provider construction. |
+| `pricing.py`, `pricing.json` | Accounting-rate lookup and bundled conservative rates. |
 | `__init__.py` | Package marker with no initialization side effects. |
 
 ## Choose a provider
@@ -25,6 +29,10 @@ provider-specific settings are:
 `base_url` is the API root. `api_key_env` names an environment variable, not the
 key itself. Keep actual credentials out of YAML, source files, and committed
 shell scripts. The transport reads the variable at request time.
+
+`json_response_mode` defaults to `true` for OpenRouter and Responses, and
+`false` for generic Chat Completions endpoints. Set it explicitly to override
+the default for your model.
 
 To enter a key without putting its value in shell history, use a hidden prompt
 in zsh, then launch from the repository root in your CREST environment:
@@ -60,7 +68,9 @@ also validates candidates against a search-space descriptor and writes provenanc
 ## Add an adapter
 
 1. Implement `LLMProvider.complete_json` and return a normalized `LLMResponse`.
-2. Add explicit factory selection and validation in `../config.py`.
+2. Add factory selection in `provider.py` and validation in `../config.py`.
+   Live adapters can reuse `HTTPProvider` from `transport.py` for authentication,
+   retries, and accounting; each adapter builds and normalizes its own payloads.
 3. Keep transport/authentication failures distinct from repairable response errors.
    Read credentials through environment variables; do not put secrets in config
    files or saved request provenance.
@@ -72,15 +82,16 @@ its success and failure paths, and it preserves the shared validation boundary.
 Run the provider checks from the repository root:
 
 ```sh
-python -m pytest -q test/test_llm_provider_prompt_ledger.py test/test_llm_optimizer_config.py
+python -m pytest -q test/test_llm_openai_provider.py test/test_llm_responses_provider.py test/test_llm_provider_defaults.py test/test_llm_provider_prompt_ledger.py
 ```
 
 ## Configure pricing and a spending cap
 
-[`pricing.json`](pricing.json) contains reviewed USD input/output rates per
-million tokens. Entries match **provider, base URL, model, and service tier**
+[`pricing.json`](pricing.json) contains conservative USD input/output accounting
+rates per million tokens. These bound recorded spending and can exceed the
+provider's actual bill. Entries match **provider, base URL, model, and service tier**
 exactly. An omitted tier selects `default`; an explicitly requested tier must
-have its own entry. The bundled catalog includes standard OpenAI `gpt-6-luna` rates for Chat
+have its own entry. The bundled catalog covers OpenAI `gpt-6-luna` through Chat
 Completions and Responses. Catalogs are dated snapshots, not automatically
 refreshed price feeds. Other models, endpoints, and service tiers need a custom entry.
 
@@ -129,7 +140,7 @@ requires that tariff to match. Moving an unchanged file or editing unrelated
 entries is allowed; changing the selected rates or provenance is rejected before
 requests are made. Keep a copy of the original tariff to resume that study.
 
-The JSON contains explicit **accounting rates**, not formulas. The bundled Luna
+Each entry supplies explicit accounting rates. The bundled Luna
 entry uses a conservative $0.25 input / $0.75 output per million tokens for every
 request, covering standard global cache-write and long-context charges. Its
 `accounting_notes` records these assumptions. Shorter or discounted requests

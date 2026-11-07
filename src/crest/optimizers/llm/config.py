@@ -12,6 +12,8 @@ from urllib.parse import urlsplit
 
 from addict import Dict
 
+from .providers.defaults import default_json_response_mode
+
 
 def normalize_llm_config(optimizer_config) -> Dict:
     """Normalize the optimizer block without resolving credentials or clients.
@@ -135,7 +137,7 @@ def normalize_llm_config(optimizer_config) -> Dict:
         llm.api_key_env = api_key_env.strip()
         raw_json_response_mode = llm.get(
             "json_response_mode",
-            provider == "openrouter",
+            default_json_response_mode(provider),
         )
         if not isinstance(raw_json_response_mode, bool):
             raise ValueError("optimizer.llm.json_response_mode must be a boolean.")
