@@ -25,12 +25,10 @@ python -m analysis_scripts.cs1.experiments.waiting_power analyze --study /path/n
 
 Run only one experiment at a time on a DUT/harness. Accepted measurements are skipped on restart; schedule changes are refused. Exceptions and interrupted attempts require inspection. Retries remain bounded by `--max-attempts`.
 
-The runner reuses compiled
-variants, checks phase headers, clears native programming caches so app and
-weights are programmed, and validates native acceptance flags, protocol, clock,
-run count, STOP entries, and deadlines. CREST writes programming metadata into
-the built workspace. Keep builds at their generated paths and rebuild after
-changing their inputs.
+Each accepted measurement requires application and weight programming, matching
+phase headers, protocol, clock and run count, and valid STOP entries and
+deadlines. Keep build inputs immutable and builds at their generated paths;
+rebuild after changing their inputs.
 
 Offline `analyze` reads recorded results only. It solves `W_k = k E + (T-C)[P_busy + (k-1)P_stop]`, with energies in mJ and times in seconds; output power is mW. The default active time uses DWT cycles with RTC fallback (`--latency-source rtc` selects RTC). Only complete accepted continuous/short-window/ten-run triples at the same round and clock enter the fit. Missing or rejected members are excluded; invalid active times outside `0 < C < T` are reported and skipped. `P_stop_eff_mw` folds wake margin, recovery and polling into the inter-release STOP interval. `P_stop_sleep_only_mw` instead subtracts those awake intervals at fitted busy power and divides by recorded requested sleep time; it is unavailable when that time is zero. `release_mj_measured` is the observed awake-tail energy per release. `release_mj_stop_tail` is a derived correction using the effective fit, not a measured STOP-tail deployment.
 

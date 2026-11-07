@@ -16,7 +16,7 @@ live in their corresponding component packages.
 | [`model_family.py`](model_family.py) | `ModelFamilyABC`: architecture sampling, construction, export | [Model families](../model_families/README.md) |
 | [`optimizer.py`](optimizer.py) | `OptimizerABC`: initialization, proposal rounds, resume identity | [Optimizers](../optimizers/README.md) |
 
-Existing imports remain supported through the package exports:
+Import the contracts through the package exports:
 
 ```python
 from crest.interfaces import DatasetABC, TaskABC, ModelFamilyABC, OptimizerABC

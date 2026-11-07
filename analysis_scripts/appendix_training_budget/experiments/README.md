@@ -6,8 +6,7 @@ SPDX-License-Identifier: BSD-3-Clause
 # Training-budget experiment
 
 `epoch_sensitivity.py` trains a selected panel from a saved OxIOD/TCN
-back-to-back search run. It reuses CREST's candidate reconstruction, dataset
-loader, model family, task fit plan, checkpoint callbacks and TFLite evaluation.
+back-to-back search run.
 This is an experiment recipe with explicit source, dataset and output paths;
 it does not run search, compile firmware or access hardware.
 
@@ -42,8 +41,7 @@ checkpoint selected by the original early-stopping policy (`original_policy`).
 The original policy freezes after virtual stopping while the live trajectory
 continues. Evaluation happens after fitting, with each candidate's original
 float/INT8 mode, using validation TFLite `rmse_total`. Calibration uses training
-data; the held-out test split is never loaded. Identical checkpoint hashes share
-validation evaluation within a trajectory.
+data; the held-out test split is never loaded.
 
 Budgets must include 55 and a greater reference budget: the retained comparison
 selects the front at budget 55 under the original policy and measures that
@@ -71,6 +69,4 @@ also runs the single-panel analysis on completion. The `analyze --experiment-dir
 python -m pytest -q test/test_training_experiment.py
 ```
 
-Tests use synthetic sources, manually driven callbacks and fake fit events;
-they do not launch training or hardware work. TensorFlow-dependent checks skip
-when its runtime is unavailable.
+TensorFlow-dependent checks skip when its runtime is unavailable.

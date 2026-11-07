@@ -129,8 +129,7 @@ concrete starting point.
   `quantization_mode` when quantization search and its deployment path are active,
   and `cpu_clock_mhz_index` when compile-derived metrics and configured clock
   options activate that search. Explicit candidates must supply exactly every
-  active raw field. Native Optuna skips descriptor and semantic-context setup;
-  errors in an explicit family's declared descriptor propagate before evaluation.
+  active raw field.
   Import these declarations from `crest.optimizers.search_space`. See the
   [configuration guide](../../config/README.md).
 - `build_model(hparams, ctx, config)`
@@ -143,8 +142,8 @@ concrete starting point.
   Optional. Reconstructs persisted trial parameters when replay/export needs a
   different build-time shape.
 - `default_seed_trial(...)`
-  Legacy optional hook. Remains available for older callers and persisted
-  family implementations, but fresh NAS studies do not enqueue it.
+  Optional hook for callers that request a seed; the NAS runner does not enqueue
+  it automatically.
 - `load_model(...)` and `custom_objects()`
   Optional. Used by the default trained-model materialization path.
 - `count_flops(...)` and `supports_tflite()`
@@ -173,20 +172,11 @@ names unless they intentionally need the same materialization behavior.
 
 ## Registration And Config Selection
 
-Registration is explicit. Model families are not auto-discovered from this
-directory.
+Model families must be registered explicitly; they are not discovered from files
+in this directory. Follow the [extension steps](#add-a-new-model-family) above.
 
-The shipped pattern is:
-
-1. Define the class in this package.
-2. Import it in [`../builtin_components.py`](../builtin_components.py).
-3. Register it under a stable key with `model_family_registry.register(...)`.
-4. Select that key through `model.family`.
-5. Put family-owned options under `model.params` and search-space controls
-   under `model.search`.
-
-`resolve_component_selection(...)` returns the `model` subtree as
-`model_config` for the selected family.
+Families receive the `model` configuration subtree, with options under
+`model.params` and search controls under `model.search`.
 
 ## Minimal Model Family Example
 

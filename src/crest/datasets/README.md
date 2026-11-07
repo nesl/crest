@@ -34,9 +34,9 @@ requests, or board-specific staging.
 ## Shipped Implementations
 
 - [`oxiod.py`](oxiod.py)
-  Registered as `oxiod`. Wraps the legacy OxIOD split loader, normalizes the
-  odometry splits into `DatasetBundle`, and preserves the current calibration
-  fallback behavior used by the modular pipeline.
+  Registered as `oxiod`. Wraps the OxIOD split loader, normalizes the
+  odometry splits into `DatasetBundle`, and uses the training split for
+  calibration unless `calibration_windows` specifies a cap.
 - [`urbansound8k_mel.py`](urbansound8k_mel.py)
   Registered as `urbansound8k_mel`. Loads deterministic cached UrbanSound8K
   log-mel tensors, validates cache metadata, supports fixed-split and
@@ -119,16 +119,8 @@ contract in the preparation README.
 
 ## Registration And Config Selection
 
-Registration is explicit. Dataset adapters are not auto-discovered from this
-directory.
-
-The shipped pattern is:
-
-1. Define the adapter class in this package.
-2. Import it in [`../builtin_components.py`](../builtin_components.py).
-3. Register it under a stable key with `dataset_registry.register(...)`.
-4. Select that key through `dataset.name`.
-5. Put adapter-owned options under `dataset.params`.
+Dataset adapters must be registered explicitly; they are not discovered from files
+in this directory. Follow the [extension steps](#add-a-new-dataset) above.
 
 ## Minimal Adapter Example
 

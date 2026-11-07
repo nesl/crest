@@ -51,9 +51,7 @@ Numeric sidecars record the plotted data and summaries.
 Outputs use these basenames directly. The CS1, CS2 and CS3 generators also
 write plotted-point CSVs and numeric summaries. Training writes correlations,
 front membership and input provenance; timing writes aggregated values and a
-caption. `replay_front_support.py` contains the shared replay-loading, Pareto
-and outcome-accounting functions imported by CS2. It has no plotting CLI or
-Matplotlib dependency.
+caption.
 
 ## CS1: clock reversal, ranks and model transfer
 

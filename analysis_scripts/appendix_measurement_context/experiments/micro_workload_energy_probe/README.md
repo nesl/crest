@@ -38,12 +38,10 @@ For the STM32 LRUN workspace used by the STM32 probe path, see
 
 Board tokens are selected with `--boards`:
 
-- `stm32`: STM32 NUCLEO-N657X0-Q using the shipped STM32 LRUN template,
-  clock setup, RTC setup, signing, external-flash App programming, and debug
-  load path.
-- `portenta_m4`: Arduino Portenta H7 M4 core, internally `target_core=cm4`,
-  including the existing CM7 boot-helper/runtime preparation path.
-- `portenta_m7`: Arduino Portenta H7 M7 core, internally `target_core=cm7`.
+- `stm32`: STM32 NUCLEO-N657X0-Q using the shipped STM32 LRUN template
+  with external-flash App programming.
+- `portenta_m4`: Arduino Portenta H7 M4 core.
+- `portenta_m7`: Arduino Portenta H7 M7 core.
 - `ble`: Arduino Nano 33 BLE Sense using `arduino:mbed_nano:nano33ble`.
 
 There is no separate core argument. The board token selects target behavior.
@@ -85,9 +83,6 @@ The harness emits the normal INA228 telemetry lines, including:
 - `harness timer output:`
 - `DONE`
 
-The host parses these lines through the existing CREST helpers rather than a
-separate measurement protocol.
-
 Before running a probe, confirm:
 
 - the target board is connected and visible at the serial port used by the
@@ -96,8 +91,7 @@ Before running a probe, confirm:
 - Arduino CLI setup has been completed for Arduino targets;
 - STM32CubeCLT, the repo-local STM32 setup, signing tools, and CubeProgrammer
   path have been completed for the `stm32` target. The synthetic STM32 probe
-  patches out ST Edge AI runtime-library dependencies and does not require
-  `stedgeai` code generation;
+  does not require ST Edge AI runtime libraries or `stedgeai` code generation;
 - the harness wiring matches the DUT arm/trigger pins listed above.
 
 ## Quick Start
@@ -198,22 +192,3 @@ energy, power, measured harness window duration, DUT work units, elapsed time,
 cycles, and sleep residency. Derived aggregate fields subtract the board-local
 `sleep` mean for phase/residency cost and the board-local `wait` mean for
 payload diagnostics.
-
-## Reused CREST Code
-
-This analysis script reuses:
-
-- `src/crest/hil/protocol.py` for harness priming and DONE waits.
-- `src/crest/microcontrollers/arduino_base.py` for Arduino compile/upload,
-  harness compile/upload, and INA228 telemetry parsing.
-- `src/crest/microcontrollers/arduino_portenta_h7.py` for Portenta board
-  options and CM4 boot-helper behavior.
-- `src/crest/microcontrollers/arduino_ble33.py` for BLE FQBN/device
-  metadata.
-- `src/crest/microcontrollers/stm32_cube_clt.py` plus script-local wrappers
-  for STM32 LRUN workspace build, signing, FSBL copy-window update, and
-  external image programming.
-- `sketches/stm32/crest_stm32_lrun/` as the staged shipped STM32
-  template.
-- `sketches/common/crest_hil_config.h` and the existing harness sketch
-  protocol.

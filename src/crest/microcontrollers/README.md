@@ -100,28 +100,13 @@ they own different responsibilities and failure domains.
    handshake handling, telemetry parsing, and runtime protocol error typing. It
    does not implement `DeviceInterface`.
 
-Important current limitation:
-
-1. This is a concrete STM32 implementation, not yet a generic `stm_base.py`.
-2. It assumes a specific project template shape, ST Edge AI generation flow,
-   ST-LINK load path, and serial telemetry contract.
-3. A second STM32 board can likely reuse parts of this stack, but should not
-   assume every STM32 board is a small metadata-only addition.
+The [STM32 bring-up guide](#stm32-bring-up-guide) describes the shipped
+backend's assumptions and how to reuse it for a second board.
 
 ### Other-Vendor Backends
 
-For NXP, Nordic, RP2040 SDK, Zephyr, or any other non-Arduino/non-STM32-Cube
-target, you should treat the work as a new backend implementation.
-
-That usually means:
-
-1. Implement `DeviceInterface` directly.
-2. Add a registry entry in
-   [`__init__.py`](__init__.py).
-3. Add config-option resolution in
-   [`resolve_device_options(...)`](__init__.py)
-   when needed.
-4. Provide your own build, flash/load, and runtime telemetry path.
+For NXP, Nordic, RP2040 SDK, Zephyr, or another target outside the shipped
+flows, follow the [new-vendor bring-up guide](#new-vendor-bring-up-guide).
 
 ## Key Files
 
@@ -158,26 +143,9 @@ That path:
 2. Converts the TFLite file to `model.cc` / `model.h`.
 3. Copies the selected sketch variant into the active output directory.
 
-Runtime sketch selection is handled by
-[`_sync_arduino_sketch_variant_for_config(...)`](../devices.py)
-and uses a `runtime_phase` selector plus this layout:
-
-For sketch ownership and directory roles, see
-[`../../../sketches/README.md`](../../../sketches/README.md).
-
-1. Shared uniform variants:
-   - `sketches/crest_inference_energy.ino`
-   - `sketches/crest_inference_no_energy.ino`
-   - `sketches/crest_inference_energy_cadenced.ino`
-2. Shared analysis variants:
-   - `sketches/analysis_sketches/crest_inference_representative.ino`
-   - `sketches/analysis_sketches/crest_inference_real_data.ino`
-   - `sketches/analysis_sketches/oxiod_input_data.h`
-   - `sketches/analysis_sketches/urbansound8k_input_data.h`
-3. Shared headers copied from `sketches/common/`:
-   - `crest_hil_config.h`
-   - `crest_power.h`
-   - `crest_clock_telemetry.h`
+Sketch selection uses `runtime_phase`; see
+[`../../../sketches/README.md`](../../../sketches/README.md) for variants,
+shared headers, ownership, and directory roles.
 
 Board/core behavior should be selected in Python wrappers and compile-time
 defines, not by duplicating the shared uniform sketch sources.
@@ -209,27 +177,18 @@ Important boundary:
 
 ## Add A New Hardware Backend
 
-Choose the path that matches your board.
+Choose the path that matches your toolchain and runtime contract:
 
-### Use the Arduino path when:
+<a id="use-the-arduino-path-when"></a>
+<a id="use-the-stm32-path-when"></a>
+<a id="use-the-new-vendor-path-when"></a>
 
-1. The board has an Arduino FQBN.
-2. The board builds with `arduino-cli compile`.
-3. The board uploads with `arduino-cli upload`.
-
-### Use the STM32 path when:
-
-1. The board uses the STM32 Cube / ST Edge AI / ST-LINK workflow already used
-   in this repo.
-2. The board can be staged as a project directory, built with the generated
-   `Debug/makefile`, loaded with ST-LINK tooling, and measured through the
-   shipped runtime protocol.
-
-### Use the new-vendor path when:
-
-1. The board does not use Arduino CLI.
-2. The board does not fit the shipped STM32 Cube flow.
-3. You need a new toolchain, flash/load method, or runtime telemetry contract.
+- Arduino FQBN with `arduino-cli compile` and `arduino-cli upload`:
+  [Arduino bring-up](#arduino-bring-up-guide).
+- STM32 Cube / ST Edge AI / ST-LINK with a generated `Debug/makefile` and
+  the shipped serial protocol: [STM32 bring-up](#stm32-bring-up-guide).
+- A different build, flash/load, or runtime telemetry flow:
+  [new-vendor bring-up](#new-vendor-bring-up-guide).
 
 ## Contract In Practice
 
@@ -528,15 +487,6 @@ Supported STM options today:
    - `signing_load_offset`
    - `signing_header_version`
 
-Important current caveats:
-
-1. `device.stm32.cpu_clock_mhz` is not the current config shape. Use the
-   shared top-level `device.cpu_clock_mhz_options` instead.
-2. `device.stm32.project_layout` is no longer accepted. LRUN `dev_boot` is
-   implied automatically for this board.
-3. `device.stm32.runtime_mode` is no longer supported. Use the shared
-   top-level `device.runtime_mode` instead.
-
 ### Required Host Tools
 
 1. `ST-LINK_gdbserver`
@@ -569,12 +519,7 @@ The current backend assumes:
 6. Optional harness-assisted energy measurement when `harness_serial_port` is
    configured during HIL runs.
 
-If your new STM board does not meet those assumptions, you are doing more than
-board bring-up. You are defining a new STM backend shape.
-
 ### Recommended Path For A Second STM32 Board
-
-Today, the practical path is:
 
 1. Treat
    [`stm32_nucleo_n657x0.py`](stm32_nucleo_n657x0.py)
@@ -592,12 +537,13 @@ There is no generic `stm_base.py` yet.
 
 ## New-Vendor Bring-Up Guide
 
-Use this path for NXP, Nordic, Zephyr-based targets, or any board that does not
-fit the Arduino path or the shipped STM32 path.
+For a new toolchain or runtime contract, implement a backend with the
+following deliverables.
 
 ### Mindset
 
-You are building a new backend, not adding a board definition.
+Define the build, flash/load, and telemetry contracts before implementing the
+backend.
 
 ### Minimum Deliverables
 
@@ -644,28 +590,16 @@ controller path.
 For `PORTENTA_H7` with `target_core=cm4`, CREST uses `harness_only`
 measurement.
 
-Important notes:
+CREST uploads `sketches/boot_m4_helper/boot_m4_helper.ino` on CM7 before
+uploading the CM4 DUT sketch. `serial_port` is required for both uploads.
 
-1. Harness metrics remain the source of truth for energy and harness latency.
-2. DUT-side clock telemetry may still be merged in when available.
-3. CREST uploads a CM7 boot-helper sketch before the CM4 DUT upload:
-   `sketches/boot_m4_helper/boot_m4_helper.ino`
-4. `serial_port` is still required because it is the upload path for both the
-   helper and the CM4 DUT sketch.
-
-Current limitation:
-
-1. The Arduino `mbed_portenta` CM4 path does not expose host USB CDC `Serial`
-   on the primary ACM port used by CREST uploads.
-2. Harness telemetry is therefore authoritative for runtime latency and energy.
-3. DUT-side arena/runtime error lines are not reliably visible from the host.
-
-Practical implication:
-
-1. A CM4 runtime arena allocation failure can surface as a generic
-   `HIL_ERROR_LATENCY` rather than `HIL_ERROR_UNDER_SIZED`.
-2. This backend does not provide deterministic CM4 runtime-fault classification;
-   that requires a separate fault channel.
+The Arduino `mbed_portenta` CM4 path does not expose host USB CDC `Serial`
+on the primary ACM upload port. Harness telemetry is therefore authoritative
+for runtime latency and energy; DUT-side clock telemetry may be merged when
+available. Arena/runtime error lines are not reliably visible, so a CM4 arena
+allocation failure can surface as `HIL_ERROR_LATENCY` rather than
+`HIL_ERROR_UNDER_SIZED`. Deterministic runtime-fault classification requires a
+separate fault channel.
 
 ## Test Plan
 
@@ -763,10 +697,5 @@ If bring-up stalls, check these layers in order:
 6. Runtime:
    Does the firmware emit the tokens the backend parser expects?
 
-If you are unsure whether your target is "just another board" or "a new
-backend", the answer is usually:
-
-1. Arduino FQBN + Arduino CLI compile/upload means board bring-up.
-2. Same STM32 Cube/ST Edge AI/ST-LINK/runtime contract may be close to board
-   bring-up.
-3. New toolchain or new runtime contract means new backend.
+For help choosing the implementation path, see
+[Add A New Hardware Backend](#add-a-new-hardware-backend).

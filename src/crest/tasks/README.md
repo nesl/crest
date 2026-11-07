@@ -126,19 +126,11 @@ point.
 
 ## Registration And Config Selection
 
-Registration is explicit. Task adapters are not auto-discovered from this
-directory.
+Task adapters must be registered explicitly; they are not discovered from files
+in this directory. Follow the [extension steps](#add-a-new-task) above.
 
-The shipped pattern is:
-
-1. Define the task class in this package.
-2. Import it in [`../builtin_components.py`](../builtin_components.py).
-3. Register it under a stable key with `task_registry.register(...)`.
-4. Select that key through `task.name`.
-5. Put task-owned options under `task.params`.
-
-The runtime expects task constructors to use the explicit keyword-only
-constructor contract documented in [`../../config/README.md`](../../config/README.md).
+Task constructors accept `checkpoint_path` and `early_stopping_patience` as
+keyword-only arguments; see the [configuration reference](../../config/README.md).
 
 ## Concrete Task Usage
 
