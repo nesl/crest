@@ -5,8 +5,7 @@ SPDX-License-Identifier: BSD-3-Clause
 # Timing attribution
 
 Reconcile saved CREST client/server spans into additive host and HIL costs.
-Python's standard library is sufficient. No training or hardware access occurs;
-research data and private path manifests are not distributed.
+Python's standard library is sufficient. No training or hardware access occurs.
 
 ```sh
 python analysis_scripts/timing_attribution/prepare_inputs.py \
