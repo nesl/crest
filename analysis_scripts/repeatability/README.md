@@ -4,7 +4,7 @@ SPDX-License-Identifier: BSD-3-Clause
 -->
 # Paired repeatability experiments
 
-This package runs **new hardware experiments**, with a frozen randomized schedule and compile-once STM32 artifacts. It does not reproduce archived measurements or train a model. Offline reanalysis remains separate.
+This package runs **new hardware experiments**, with a frozen randomized schedule and compile-once STM32 artifacts. It does not train models. For offline reanalysis of saved measurements, see [CS1 offline analysis](../cs1/README.md).
 
 Run from the repository root:
 
@@ -34,7 +34,7 @@ The caller supplies all candidate identities, architectures, clocks, input dimen
 
 Each candidate belongs to exactly one pair. Each round measures both continuous and cadenced phases for every candidate. AB/BA order is balanced across even round counts, with one randomized extra order for odd counts. `--max-attempts` bounds retries across invocations; `run --max-evaluations` bounds work per invocation. Accepted evaluations are skipped on restart. Exceptions and uncertain interruptions require inspection before resuming; evidence is retained.
 
-`build-artifacts` lazily uses the repository's `hil_server.HILServer` model/calibration preparation and native STM32 export/compiler APIs. It initializes weights deterministically, performs int8 PTQ, and compiles each phase without device evaluation. It requires the configured calibration dataset, TensorFlow/NumPy and CREST dependencies, firmware template, ST Edge AI, and ARM/STM32 toolchain. No dependencies, data, firmware binaries, or trained weights are bundled. Missing dependencies fail explicitly. `bind-artifacts --artifact-root /path/bundles` can instead bind existing verified bundles before any attempt.
+`build-artifacts` lazily uses the repository's `hil_server.HILServer` model/calibration preparation and native STM32 export/compiler APIs. It initializes weights deterministically, performs int8 PTQ, and compiles each phase without device evaluation. It requires the configured calibration dataset, TensorFlow/NumPy and CREST dependencies, firmware template, ST Edge AI, and ARM/STM32 toolchain. Missing dependencies fail explicitly. `bind-artifacts --artifact-root /path/bundles` can instead bind existing verified bundles before any attempt.
 
 Prepared bundle manifests hash model inputs, compiled artifacts, backend code, and tools. Absolute generated paths make a prepared bundle host/path bound: build a new bundle after moving it. Runtime programming caches and sidecars are changed only in disposable attempt workspaces; frozen inputs are verified again after each phase. Acceptance requires matching raw native records, successful app and weight programming, protocol/clock/run identity, cadence timing, and deadline/STOP checks.
 
@@ -46,8 +46,3 @@ Safe checks:
 python -m analysis_scripts.repeatability --help
 python -m pytest -q analysis_scripts/repeatability/test_runner.py
 ```
-
-The schedule seal, compile-once bundles, programming-cache reset, raw-record checks,
-and bounded attempts come from the original experiment. They keep paired phases
-comparable while calling CREST's existing model preparation and STM32 runtime.
-There is no selectable backend adapter or shared artifact-management framework.
