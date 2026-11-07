@@ -5,8 +5,7 @@ SPDX-License-Identifier: BSD-3-Clause
 # CS3 scoring and campaign audit
 
 Offline analysis of supplied Optuna databases, saved responses and evaluations.
-Requires Python and NumPy. No training, inference or provider calls. Research
-data, responses and private path manifests are not distributed; keep outputs
+Requires Python and NumPy. No training, inference or provider calls. Keep outputs
 outside the checkout.
 
 | Script | Output |
@@ -25,7 +24,7 @@ python analysis_scripts/cs3_audit/scoring.py \
   --output-dir /path/to/results/scoring
 ```
 
-The private config has a `campaigns` list. Each entry provides `name`, `board`,
+The config has a `campaigns` list. Each entry provides `name`, `board`,
 `method`, `database`, and optionally `study_id`, `response_root`, and `ledger`.
 Point `response_root` at the active optimizer directory, excluding backups;
 Memory summaries beneath it are included. Optional `mapping` changes field names.

@@ -6,7 +6,6 @@ SPDX-License-Identifier: BSD-3-Clause
 
 Analyze saved checkpoint evaluations and training histories. No training,
 TensorFlow or hardware access is required. Install NumPy, SciPy and PyYAML.
-Research data and private path manifests are not distributed.
 
 ```sh
 python analysis_scripts/training_budget/analyze.py \

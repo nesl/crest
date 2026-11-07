@@ -31,8 +31,7 @@ Legacy configuration is a JSON list with `campaign`, `case_study`, and either
 study; databases with multiple studies require it. `trial_min` is inclusive and
 `trial_max` exclusive. `host_only` campaigns appear in summary JSON and are
 excluded from the native CSV. Saved exports may be JSON, gzip JSON, or
-base64-encoded gzip JSON. Configurations and source records are external inputs,
-not repository assets.
+base64-encoded gzip JSON.
 
 For periodic and scored configuration fields, see their module documentation.
 Keep case-study labels consistent across input configurations. Periodic
