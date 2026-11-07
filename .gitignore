@@ -148,5 +148,4 @@ sketches/stm32/crest_stm32_lrun/**
 !sketches/stm32/crest_stm32_lrun/STM32CubeIDE/AppS/Debug/Startup/
 !sketches/stm32/crest_stm32_lrun/STM32CubeIDE/AppS/Debug/Startup/subdir.mk
 
-# Reviewed provider tariff shipped as package data.
 !src/crest/optimizers/llm/providers/pricing.json
