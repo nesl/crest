@@ -319,11 +319,10 @@ reserved WAITING trials consume attempts. Matching signed native and LLM studies
 resume; the optimizer signature checks proposer and sampler identity, so compare
 the original scientific configuration yourself.
 
-Nonempty unsigned studies fail by default. Native-only
-`optimizer.adopt_legacy_study: true` enables guarded one-time adoption after you
-verify that the original configuration matches. Remove the flag after adoption;
-unsigned LLM/plugin histories and optimizer switching are unsupported. See the
-[resume and adoption reference](config/README.md#optimizer) for the guards.
+Nonempty unsigned studies cannot resume searching; use a new study name.
+Their history remains available for analysis and offline plotting. Optimizer
+switching within a study is unsupported. See the
+[resume reference](config/README.md#optimizer) for signed identity checks.
 
 ### 4. Outputs
 
