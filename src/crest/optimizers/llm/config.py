@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 from addict import Dict
 
-from .providers.defaults import default_json_response_mode
+from .providers.provider import default_json_response_mode
 
 
 def normalize_llm_config(optimizer_config) -> Dict:

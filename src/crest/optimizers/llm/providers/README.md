@@ -6,11 +6,10 @@ responsibilities belong to the [LLM optimizer](../README.md) and shared runner.
 
 | File | Responsibility |
 | --- | --- |
-| `provider.py` | Public imports and `build_provider` factory selection. |
+| `provider.py` | Public imports, shared defaults, and `build_provider` factory selection. |
 | `records.py` | `LLMProvider` protocol, request/response records, errors, and the offline `FakeProvider`. |
 | `chat.py`, `responses.py` | Live adapters that build and interpret each API's payloads. |
 | `transport.py` | Shared authentication, HTTP retries, and per-attempt spend accounting. |
-| `defaults.py` | Defaults shared by config normalization and provider construction. |
 | `pricing.py`, `pricing.json` | Accounting-rate lookup and bundled conservative rates. |
 | `__init__.py` | Package marker with no initialization side effects. |
 

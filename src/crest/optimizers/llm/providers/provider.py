@@ -12,9 +12,13 @@ from crest.component_selection import cfg_get
 from .records import (LLMRequest, LLMResponse, LLMProvider, FakeProvider, ProviderError,
                       ProviderAuthenticationError, ProviderTransportError, ProviderResponseError,
                       SpendLimitExceeded)
-from .defaults import default_json_response_mode
 from .chat import OpenAICompatibleProvider
 from .responses import OpenAIResponsesProvider
+
+
+def default_json_response_mode(provider_name: str) -> bool:
+    """Enable structured JSON responses for providers with a known JSON API."""
+    return provider_name in {"openrouter", "openai_responses"}
 
 
 def build_provider(config: Any, *, spend_tracker: Any = None) -> LLMProvider:
