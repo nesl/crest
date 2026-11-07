@@ -53,9 +53,9 @@ points above.
   Defines the string-keyed registries for datasets, tasks, and model families.
 - [`crest/builtin_components.py`](crest/builtin_components.py)
   Registers the built-in dataset, task, and model-family implementations.
-- [`crest/interfaces.py`](crest/interfaces.py)
+- [`crest/interfaces/`](crest/interfaces/README.md)
   Defines the core abstraction contracts:
-  `DatasetABC`, `TaskABC`, and `ModelFamilyABC`.
+  `DatasetABC`, `TaskABC`, `ModelFamilyABC`, and `OptimizerABC`.
 - [`crest/pipeline_types.py`](crest/pipeline_types.py)
   Defines shared typed payloads passed between the modular pipeline layers.
 - [`crest/datasets/`](crest/datasets)
@@ -71,7 +71,7 @@ points above.
 - [`crest/model_families/`](crest/model_families)
   Model-family implementations. Built-ins include
   [`odom_tcn.py`](crest/model_families/odom_tcn.py) and
-  [`audio_dscnn.py`](crest/model_families/audio_dscnn.py). See
+  [`audio_dscnn.py`](crest/model_families/audio_dscnn/family.py). See
   [`crest/model_families/README.md`](crest/model_families/README.md) for the
   contributor guide.
 - [`crest/microcontrollers/`](crest/microcontrollers)
@@ -99,18 +99,21 @@ points above.
 
 ## Shared Abstractions
 
-The modular runtime is built around three main interfaces plus a small set of
+The modular runtime is built around four main interfaces plus a small set of
 typed payloads shared across orchestration code.
 
-- `DatasetABC` in [`crest/interfaces.py`](crest/interfaces.py)
+- `DatasetABC` in [`crest/interfaces/dataset.py`](crest/interfaces/dataset.py)
   Loads raw data and returns a normalized [`DatasetBundle`](crest/pipeline_types.py)
   with train/validation/test/calibration splits plus dataset metadata.
-- `TaskABC` in [`crest/interfaces.py`](crest/interfaces.py)
+- `TaskABC` in [`crest/interfaces/`](crest/interfaces/README.md)
   Defines the target/output contract, task-owned fitting behavior, evaluation
   behavior, and the metric contract that shared NAS/scoring code consumes.
-- `ModelFamilyABC` in [`crest/interfaces.py`](crest/interfaces.py)
+- `ModelFamilyABC` in [`crest/interfaces/model_family.py`](crest/interfaces/model_family.py)
   Samples hyperparameters, builds models, validates family-local config, and
   materializes the export variant passed into HIL.
+- `OptimizerABC` in [`crest/interfaces/optimizer.py`](crest/interfaces/optimizer.py)
+  Proposes native sampling rounds or explicit candidates for the shared runner,
+  with initialization and identity hooks for safe study resume.
 - Shared typed payloads in [`crest/pipeline_types.py`](crest/pipeline_types.py)
   carry the normalized information exchanged between those layers:
   `DatasetBundle`, `TargetSpec`, `ModelBuildContext`, `FitPlan`,
@@ -319,11 +322,11 @@ extension path in the current codebase.
 
 Key files:
 
-- [`crest/interfaces.py`](crest/interfaces.py)
+- [`crest/interfaces/model_family.py`](crest/interfaces/model_family.py)
   `ModelFamilyABC` defines the contract.
 - [`crest/model_families/odom_tcn.py`](crest/model_families/odom_tcn.py)
   Concrete example of the built-in odometry TCN family.
-- [`crest/model_families/audio_dscnn.py`](crest/model_families/audio_dscnn.py)
+- [`crest/model_families/audio_dscnn/family.py`](crest/model_families/audio_dscnn/family.py)
   Concrete example of a built-in classification family over cached log-mel
   tensors.
 - [`crest/builtin_components.py`](crest/builtin_components.py)
@@ -358,7 +361,7 @@ Key files:
 
 - [`crest/datasets/README.md`](crest/datasets/README.md)
   for the full contributor guide
-- [`crest/interfaces.py`](crest/interfaces.py) for `DatasetABC`
+- [`crest/interfaces/dataset.py`](crest/interfaces/dataset.py) for `DatasetABC`
 - [`crest/datasets/oxiod.py`](crest/datasets/oxiod.py) and
   [`crest/datasets/urbansound8k_mel.py`](crest/datasets/urbansound8k_mel.py)
   as built-in examples
@@ -379,7 +382,7 @@ Key files:
 
 - [`crest/tasks/README.md`](crest/tasks/README.md)
   for the full contributor guide
-- [`crest/interfaces.py`](crest/interfaces.py) for `TaskABC`
+- [`crest/interfaces/task.py`](crest/interfaces/task.py) for `TaskABC`
 - [`crest/tasks/odometry_regression.py`](crest/tasks/odometry_regression.py)
   and [`crest/tasks/sound_classification.py`](crest/tasks/sound_classification.py)
   as built-in examples

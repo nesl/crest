@@ -28,7 +28,7 @@ explicit proposers. Its helpers in [`contexts/`](contexts/) cover
 [value normalization](contexts/values.py). Architectural hints are priors;
 measured results take precedence. Native sampling skips descriptor/context setup.
 
-See [`OptimizerABC`](../interfaces.py), the round and budget types in
+See [`OptimizerABC`](../interfaces/optimizer.py), the round and budget types in
 [`pipeline_types.py`](../pipeline_types.py), the
 [model-family contract](../model_families/README.md), and the
 [optimizer configuration reference](../../config/README.md#optimizer).

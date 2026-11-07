@@ -48,7 +48,7 @@ requests, or board-specific staging.
 
 ## Key Files
 
-- [`../interfaces.py`](../interfaces.py)
+- [`../interfaces/dataset.py`](../interfaces/dataset.py)
   Defines `DatasetABC`.
 - [`../pipeline_types.py`](../pipeline_types.py)
   Defines `DatasetBundle` and `DataSplit`.
@@ -82,7 +82,7 @@ Use [`oxiod.py`](oxiod.py) or [`urbansound8k_mel.py`](urbansound8k_mel.py) as
 the concrete starting point.
 
 1. Add a new adapter module under [`src/crest/datasets/`](.).
-2. Implement `DatasetABC` from [`../interfaces.py`](../interfaces.py).
+2. Implement `DatasetABC` from [`../interfaces/dataset.py`](../interfaces/dataset.py).
 3. Return a `DatasetBundle` with normalized `DataSplit` objects.
 4. Validate all required `dataset.params` fields in `validate_config(...)`.
 5. Keep dataset-specific preprocessing, cache validation, and split selection

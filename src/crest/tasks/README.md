@@ -43,7 +43,7 @@ materialization, HIL requests, or board-specific measurement.
 
 ## Key Files
 
-- [`../interfaces.py`](../interfaces.py)
+- [`../interfaces/task.py`](../interfaces/task.py)
   Defines `TaskABC`.
 - [`../pipeline_types.py`](../pipeline_types.py)
   Defines `TargetSpec`, `FitPlan`, `EvaluationResult`, and
@@ -83,7 +83,7 @@ Use [`odometry_regression.py`](odometry_regression.py) or
 point.
 
 1. Add a new task module under [`src/crest/tasks/`](.).
-2. Implement `TaskABC` from [`../interfaces.py`](../interfaces.py).
+2. Implement `TaskABC` from [`../interfaces/task.py`](../interfaces/task.py).
 3. Define a stable task key and return it from `name`.
 4. Validate `task.params` in `validate_config(...)`.
 5. Build a `TargetSpec` that accurately describes model outputs.

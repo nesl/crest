@@ -18,7 +18,7 @@ search declarations feed shared evaluation.
 
 ## Hook contract
 
-[`ModelFamilyABC`](../interfaces.py) defines the hooks, and
+[`ModelFamilyABC`](../interfaces/model_family.py) defines the hooks, and
 [`ModelBuildContext`](../pipeline_types.py) supplies normalized build inputs.
 
 - `sample_hparams(trial, ctx, config)` returns normalized hyperparameters;
