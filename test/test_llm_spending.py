@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """Persistent conservative provider spend-accounting regression tests."""
 
+import hashlib
 import json
 import tempfile
 from decimal import Decimal, localcontext
@@ -129,6 +130,40 @@ class SpendTrackerTests(unittest.TestCase):
         resumed.settle(second, {"prompt_tokens": 0, "completion_tokens": 0})
         self.assertEqual(Decimal(self.read_state()["charged_usd"]), actual)
 
+    def test_unsupported_decimal_precision_fails_before_creating_state(self):
+        config = configuration(input_usd_per_million_tokens="0." + "1234567890" * 12 + "1")
+        with self.assertRaises(SpendAccountingError):
+            SpendTracker(self.root, config)
+        self.assertFalse((self.root / "spend_state.json").exists())
+
+    def test_failed_state_write_after_body_persistence_does_not_consume_reservation(self):
+        tracker = SpendTracker(self.root, configuration())
+        before = self.read_state()
+        with patch.object(tracker, "_persist", side_effect=SpendAccountingError("disk failed")):
+            with self.assertRaises(SpendAccountingError):
+                tracker.reserve(PAYLOAD)
+        self.assertEqual(self.read_state(), before)
+        bodies = list((self.root / "wire_requests").glob("*.json"))
+        self.assertEqual(len(bodies), 1)
+        body = bodies[0].read_bytes()
+        self.assertEqual(json.loads(body), PAYLOAD)
+        self.assertEqual(bodies[0].stem, hashlib.sha256(body).hexdigest())
+        self.assertEqual(tracker.reserve(PAYLOAD), "1")
+        self.assertEqual(len(list((self.root / "wire_requests").glob("*.json"))), 1)
+        resumed = SpendTracker(self.root, configuration())
+        self.assertEqual(resumed.reserve(PAYLOAD), "2")
+        self.assertEqual(self.read_state()["charged_usd"], "0.004496")
+
+    def test_tampered_saved_body_refuses_new_charge(self):
+        tracker = SpendTracker(self.root, configuration())
+        tracker.reserve(PAYLOAD)
+        before = self.read_state()
+        body_path = self.root / before["reservations"]["1"]["wire_payload_path"]
+        body_path.write_text("{}")
+        with self.assertRaises(SpendAccountingError):
+            tracker.reserve(PAYLOAD)
+        self.assertEqual(self.read_state(), before)
+
     def test_input_guard_counts_unicode_and_framing_before_reserve(self):
         messages = [{"role": "user", "content": "café 😀"}]
         bound = len(json.dumps(messages, separators=(",", ":")).encode("utf-8")) + 1024
@@ -186,6 +221,25 @@ class SpendTrackerTests(unittest.TestCase):
             with self.assertRaises(SpendAccountingError):
                 instance.settle(reservation, None)
 
+    def test_unrepresentable_provider_charge_retains_reservation_and_halts_resume(self):
+        tracker = SpendTracker(self.root, configuration())
+        reservation = tracker.reserve(PAYLOAD)
+        other = tracker.reserve(PAYLOAD)
+        with self.assertRaises(SpendAccountingError):
+            tracker.settle(reservation, {"prompt_tokens": 10 ** 101 + 1, "completion_tokens": 0})
+        state = self.read_state()
+        self.assertTrue(state["halted"])
+        self.assertEqual(state["charged_usd"], "0.004496")
+        self.assertEqual(state["reservations"][reservation]["status"], "unknown")
+        self.assertFalse(state["reservations"][reservation]["usage_known"])
+        resumed = SpendTracker(self.root, configuration())
+        resumed.settle(other, {"prompt_tokens": 0, "completion_tokens": 0})
+        self.assertTrue(self.read_state()["halted"])
+        for instance in (tracker, resumed, SpendTracker(self.root, configuration())):
+            with self.assertRaises(SpendAccountingError):
+                instance.reserve(PAYLOAD)
+        self.assertEqual(self.read_state()["charged_usd"], "0.002248")
+
     def test_input_overrun_stops_even_when_total_cost_is_below_reservation(self):
         tracker = SpendTracker(self.root, configuration())
         with self.assertRaises(SpendAccountingError):
@@ -195,15 +249,29 @@ class SpendTrackerTests(unittest.TestCase):
 
     def test_failed_atomic_replace_does_not_release_or_reserve_cost(self):
         tracker = SpendTracker(self.root, configuration())
-        with patch("crest.optimizers.llm.spending.os.replace", side_effect=OSError("disk failed")):
+        with patch("crest.optimizers.llm.ledger.os.replace", side_effect=OSError("disk failed")):
             with self.assertRaises(SpendAccountingError):
                 tracker.reserve(PAYLOAD)
         self.assertEqual(self.read_state()["charged_usd"], "0")
         self.assertEqual(tracker.reserve(PAYLOAD), "1")
-        with patch("crest.optimizers.llm.spending.os.replace", side_effect=OSError("disk failed")):
+        with patch("crest.optimizers.llm.ledger.os.replace", side_effect=OSError("disk failed")):
             with self.assertRaises(SpendAccountingError):
                 tracker.settle("1", {"prompt_tokens": 0, "completion_tokens": 0})
         self.assertEqual(self.read_state()["charged_usd"], "0.002248")
+
+    def test_failed_file_fsync_preserves_reservation_and_cleans_temporary(self):
+        tracker = SpendTracker(self.root, configuration())
+        reservation = tracker.reserve(PAYLOAD)
+        before = self.read_state()
+        with patch("crest.optimizers.llm.ledger.os.fsync", side_effect=OSError("disk failed")):
+            with self.assertRaises(SpendAccountingError):
+                tracker.settle(reservation, {"prompt_tokens": 0, "completion_tokens": 0})
+        self.assertEqual(self.read_state(), before)
+        self.assertFalse(list(self.root.rglob("*.tmp")))
+        # Failed settlement must not release the in-memory reservation either.
+        settled = tracker.settle(reservation, {"prompt_tokens": 10, "completion_tokens": 5})
+        self.assertEqual(settled["charged_usd"], "0.00002")
+        self.assertEqual(self.read_state()["charged_usd"], "0.00002")
 
     def test_corrupt_or_inconsistent_state_is_never_reset(self):
         tracker = SpendTracker(self.root, configuration())

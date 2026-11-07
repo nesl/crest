@@ -5,15 +5,13 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
-import os
-import tempfile
 from collections.abc import Mapping
-from decimal import Decimal, InvalidOperation, localcontext
+from decimal import Decimal, DecimalException, Inexact, InvalidOperation, localcontext
 from pathlib import Path
 from typing import Any
 
+from crest.optimizers.llm.ledger import durable_write, save_wire_request
 from crest.optimizers.llm.providers.provider import ProviderError, SpendLimitExceeded
 
 
@@ -26,25 +24,7 @@ class SpendAccountingError(ProviderError):
 
 
 def _decimal(value: Any, name: str) -> Decimal:
-    """Parse a finite, nonnegative decimal without binary float arithmetic.
-
-    Parameters
-    ----------
-    value : object
-        Configured number or saved decimal string.
-    name : str
-        Setting name included in validation errors.
-
-    Returns
-    -------
-    decimal.Decimal
-        Exact nonnegative amount.
-
-    Raises
-    ------
-    SpendAccountingError
-        If the value cannot be parsed as a finite nonnegative decimal.
-    """
+    """Parse a finite nonnegative decimal without binary float arithmetic."""
     try:
         if isinstance(value, bool):
             raise ValueError
@@ -57,40 +37,20 @@ def _decimal(value: Any, name: str) -> Decimal:
 
 
 def _text(value: Decimal) -> str:
-    """Return an exact JSON-safe decimal with stable equivalent spellings.
-
-    Parameters
-    ----------
-    value : decimal.Decimal
-        Finite amount to serialize.
-
-    Returns
-    -------
-    str
-        Fixed-point representation without redundant fractional zeros.
-    """
+    """Serialize an exact decimal without redundant fractional zeros."""
     result = format(value, "f")
     return result.rstrip("0").rstrip(".") if "." in result else result
 
 
 def _sum_amounts(*amounts: Decimal) -> Decimal:
-    """Add monetary amounts without rounding significant decimal digits.
-
-    Parameters
-    ----------
-    *amounts : decimal.Decimal
-        Finite signed amounts, including any release of a prior reservation.
-
-    Returns
-    -------
-    decimal.Decimal
-        Exact sum with precision sized for all integer and fractional digits.
-    """
-    with localcontext() as context:
-        context.prec = max(28, max(value.adjusted() for value in amounts)
-                           - min(value.as_tuple().exponent for value in amounts)
-                           + len(str(len(amounts))) + 3)
-        return sum(amounts, Decimal(0))
+    """Add amounts exactly, failing closed if 100 digits cannot represent the sum."""
+    try:
+        with localcontext() as context:
+            context.prec = 100
+            context.traps[Inexact] = True
+            return sum(amounts, Decimal(0))
+    except DecimalException as exc:
+        raise SpendAccountingError("Spend arithmetic exceeds supported exact decimal precision.") from exc
 
 
 class SpendTracker:
@@ -116,13 +76,6 @@ class SpendTracker:
 
     def __init__(self, root: Path, config: Mapping[str, Any]) -> None:
         """Create or restore accounting bound to the configured pricing policy.
-
-        Parameters
-        ----------
-        root : pathlib.Path
-            Single-writer optimizer ledger directory.
-        config : Mapping
-            Provider identity, positive prices, provenance, token limits and cap.
 
         Raises
         ------
@@ -189,68 +142,24 @@ class SpendTracker:
 
     @staticmethod
     def _token_limit(config: Mapping[str, Any], name: str) -> int:
-        """Require integer limits, excluding booleans and implicit coercions.
-
-        Parameters
-        ----------
-        config : Mapping
-            Flat provider settings.
-        name : str
-            Input or output token-limit setting.
-
-        Returns
-        -------
-        int
-            Positive token ceiling.
-
-        Raises
-        ------
-        SpendAccountingError
-            If the configured limit is not a positive integer.
-        """
+        """Require a positive integer, excluding booleans and coercions."""
         value = config.get(name)
         if type(value) is not int or value < 1:
             raise SpendAccountingError(f"{name} must be a positive integer.")
         return value
 
     def _cost(self, prompt_tokens: int, completion_tokens: int) -> Decimal:
-        """Compute exact configured cost, allowing more than default precision.
-
-        Parameters
-        ----------
-        prompt_tokens : int
-            Number of input tokens.
-        completion_tokens : int
-            Number of generated tokens.
-
-        Returns
-        -------
-        decimal.Decimal
-            Configured USD cost for both token counts.
-        """
-        with localcontext() as context:
-            context.prec = max(28, len(str(prompt_tokens)) + len(str(completion_tokens))
-                               + len(self.input_price.as_tuple().digits)
-                               + len(self.output_price.as_tuple().digits)
-                               + abs(self.input_price.as_tuple().exponent)
-                               + abs(self.output_price.as_tuple().exponent) + 16)
-            return (self.input_price * prompt_tokens + self.output_price * completion_tokens) / Decimal(1_000_000)
+        """Compute configured USD cost exactly or refuse unrepresentable arithmetic."""
+        try:
+            with localcontext() as context:
+                context.prec = 100
+                context.traps[Inexact] = True
+                return (self.input_price * prompt_tokens + self.output_price * completion_tokens) / Decimal(1_000_000)
+        except DecimalException as exc:
+            raise SpendAccountingError("Spend arithmetic exceeds supported exact decimal precision.") from exc
 
     def _validate_state(self, state: dict[str, Any], binding: dict[str, Any]) -> None:
-        """Reject incompatible or inconsistent persisted accounting.
-
-        Parameters
-        ----------
-        state : dict
-            Decoded saved accounting state.
-        binding : dict
-            Current normalized immutable provider and pricing settings.
-
-        Raises
-        ------
-        SpendAccountingError
-            State violates the binding or its reservation totals disagree.
-        """
+        """Reject incompatible bindings and inconsistent reservation totals."""
         if not isinstance(state, dict) or state.get("schema_version") != 1:
             raise SpendAccountingError("Unsupported spend state schema.")
         if state.get("binding") != binding:
@@ -279,64 +188,22 @@ class SpendTracker:
         _decimal(state["max_usd"], "max_usd")
 
     def _persist(self, state: dict[str, Any]) -> None:
-        """Atomically replace and fsync state before allowing a network attempt.
-
-        Parameters
-        ----------
-        state : dict
-            Complete next accounting state.
-
-        Raises
-        ------
-        SpendAccountingError
-            The state could not be durably written.
-        """
-        temporary_path: Path | None = None
+        """Durably save accounting before publishing it in memory."""
         try:
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.root,
-                                             prefix=".spend-", suffix=".tmp", delete=False) as handle:
-                temporary_path = Path(handle.name)
-                json.dump(state, handle, indent=2, sort_keys=True, allow_nan=False)
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary_path, self.path)
-            directory_fd = os.open(self.root, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            body = (json.dumps(state, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
+            durable_write(self.path, body)
         except OSError as exc:
             raise SpendAccountingError("Cannot persist spend reservation; provider attempt stopped.") from exc
-        finally:
-            if temporary_path is not None:
-                temporary_path.unlink(missing_ok=True)
 
     def reserve(self, request_payload: dict[str, Any]) -> str:
-        """Persist a full-cost reservation before one HTTP attempt.
+        """Persist a full-cost reservation and return its ID before an HTTP attempt.
 
-        Parameters
-        ----------
-        request_payload : dict
-            Chat-completions payload containing the serialized messages.
-
-        Returns
-        -------
-        str
-            Persistent reservation identifier for settlement after this attempt.
-
-        Raises
-        ------
-        SpendInputLimitExceeded
-            Serialized UTF-8 message bytes plus 1024 framing tokens exceed the
-            input allowance. This conservative bound intentionally overcounts.
-        SpendLimitExceeded
-            Remaining cap cannot cover both configured token ceilings.
-        SpendAccountingError
-            State is halted or messages cannot be serialized safely.
-        """
+        Reject requests exceeding the remaining budget or input allowance. The
+        conservative input bound counts serialized UTF-8 bytes plus 1024 framing
+        tokens. Both the request body and reservation must reach disk before
+        this method returns; failures leave the provider call unattempted."""
         if self._state["halted"]:
-            raise SpendAccountingError("Provider previously exceeded reserved token limits; spend accounting is halted.")
+            raise SpendAccountingError("Spend accounting is halted after invalid or excessive provider usage.")
         try:
             if "input" in request_payload:
                 # Bound the entire Responses payload, including formatting/options.
@@ -357,37 +224,14 @@ class SpendTracker:
         reservation_id = str(state["next_reservation_id"])
         state["next_reservation_id"] += 1
         # Persist the secret-free body before charging or attempting the HTTP call.
-        body = json.dumps(request_payload, separators=(",", ":"), allow_nan=False).encode("utf-8")
-        digest = hashlib.sha256(body).hexdigest()
-        artifact_dir = self.root / "wire_requests"
-        artifact = artifact_dir / f"{digest}.json"
-        temporary_body = None
         try:
-            artifact_dir.mkdir(exist_ok=True)
-            if artifact.exists():
-                if artifact.read_bytes() != body:
-                    raise SpendAccountingError("Saved request body does not match its hash.")
-            else:
-                with tempfile.NamedTemporaryFile(dir=artifact_dir, prefix=".wire-", delete=False) as handle:
-                    temporary_body = Path(handle.name)
-                    handle.write(body)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(temporary_body, artifact)
-                directory_fd = os.open(artifact_dir, os.O_RDONLY)
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
-        except OSError as exc:
+            artifact = save_wire_request(self.root, request_payload)
+        except (OSError, ValueError, TypeError, UnicodeError) as exc:
             raise SpendAccountingError("Cannot persist exact request body; provider attempt stopped.") from exc
-        finally:
-            if temporary_body is not None:
-                temporary_body.unlink(missing_ok=True)
         state["reservations"][reservation_id] = {
             "status": "reserved", "reserved_usd": _text(self.reservation_usd),
             "charged_usd": _text(self.reservation_usd), "usage_known": False,
-            "wire_payload_sha256": digest, "wire_payload_path": str(artifact.relative_to(self.root)),
+            **artifact,
         }
         state["charged_usd"] = _text(total)
         self._persist(state)
@@ -395,28 +239,12 @@ class SpendTracker:
         return reservation_id
 
     def settle(self, reservation_id: str, usage: dict[str, Any] | None) -> dict[str, Any]:
-        """Charge valid actual token usage or retain the entire reservation.
+        """Replace a reservation with reported usage cost and return its accounting.
 
-        Parameters
-        ----------
-        reservation_id : str
-            Identifier returned before the corresponding HTTP attempt.
-        usage : dict or None
-            Provider usage. Both ``prompt_tokens`` and ``completion_tokens`` must
-            be nonnegative integers; any missing or malformed value keeps the
-            full reservation charged.
-
-        Returns
-        -------
-        dict
-            JSON-safe accounting with exact decimal USD strings. Repeated
-            settlement does not charge or release funds a second time.
-
-        Raises
-        ------
-        SpendAccountingError
-            The identifier is unknown or actual usage exceeds either token
-            ceiling. Overrun charges are persisted before raising.
+        Missing or malformed usage retains the full reservation. Repeating a
+        settlement does not charge or release funds twice. Token overruns are
+        charged and halt further attempts; unrepresentable charges retain the
+        reservation and halt rather than silently rounding.
         """
         if reservation_id not in self._state["reservations"]:
             raise SpendAccountingError(f"Unknown spend reservation {reservation_id!r}.")
@@ -432,18 +260,26 @@ class SpendTracker:
             exceeded = False
             if valid:
                 prompt, completion = usage["prompt_tokens"], usage["completion_tokens"]
-                actual = self._cost(prompt, completion)
-                state["charged_usd"] = _text(_sum_amounts(
-                    _decimal(state["charged_usd"], "charged_usd"),
-                    _decimal(record["charged_usd"], "charged_usd").copy_negate(), actual,
-                ))
+                try:
+                    actual = self._cost(prompt, completion)
+                    state["charged_usd"] = _text(_sum_amounts(
+                        _decimal(state["charged_usd"], "charged_usd"),
+                        _decimal(record["charged_usd"], "charged_usd").copy_negate(), actual,
+                    ))
+                except SpendAccountingError:
+                    # An unrepresentable provider charge cannot safely fund another attempt.
+                    state["halted"] = True
+                    record.update(status="unknown", usage_known=False)
+                    self._persist(state)
+                    self._state = state
+                    raise
                 record.update(prompt_tokens=prompt, completion_tokens=completion, charged_usd=_text(actual))
                 if "input_tokens" in usage:
                     record.update(cached_tokens=usage.get("cached_tokens"),
                                   cache_write_tokens=usage.get("cache_write_tokens"))
                 exceeded = prompt > self.max_input_tokens or completion > self.max_output_tokens
                 record["status"] = "exceeded" if exceeded else "settled"
-                state["halted"] = exceeded
+                state["halted"] = state["halted"] or exceeded
             else:
                 record["status"] = "unknown"
             self._persist(state)
