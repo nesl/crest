@@ -17,7 +17,6 @@ import shutil
 import socket
 import time
 from datetime import datetime
-from uuid import uuid4
 from pathlib import Path
 from typing import Any
 
@@ -72,17 +71,24 @@ from crest.model import (
     set_error_code,
 )
 from crest.model_metrics import StaticMemoryEstimate
-from crest.optimizers.history import build_trial_snapshot, freeze_plain_data
-from crest.optimizers.search_space import build_search_space_descriptor, validate_candidate
+from crest.optimizers.history import freeze_plain_data
+from crest.optimizers.search_space import build_search_space_descriptor
 from crest.optimizers.context import build_semantic_context
+from crest.optimizers.runner import execute_search_round
+from crest.optimizers.study_state import (
+    OPTIMIZER_SIGNATURE_ATTR, LEGACY_OPTIMIZER_ADOPTION_ATTR,
+    ORPHAN_TRIAL_RECOVERY_ATTR, PROPOSAL_ATTR,
+    build_optimizer_signature, validate_optimizer_identity,
+    store_optimizer_signature, recover_orphaned_trials,
+)
 from crest.interfaces import OptimizerBudgetExhausted
 from crest.pipeline_types import (
-    BudgetSnapshot, CandidateProposal, DataSplit, DatasetBundle, ExplicitRound,
-    ModelBuildContext, NativeRound, SearchContext,
+    BudgetSnapshot, DataSplit, DatasetBundle,
+    ModelBuildContext, SearchContext,
 )
 from crest.registry import dataset_registry, model_family_registry
 from crest.runtime_bootstrap import bootstrap_pipeline
-from crest.search.training_randomness import reset_training_randomness, training_randomness_policy
+from crest.search.training_randomness import reset_training_randomness
 
 tf.get_logger().setLevel(logging.ERROR)
 absl.logging.set_verbosity(absl.logging.ERROR)
@@ -171,10 +177,7 @@ RUNTIME_ONLY_METRICS = frozenset(
 )
 FEASIBILITY_POLICY_SIGNATURE_ATTR = "crest_feasibility_policy_signature"
 FEASIBILITY_NOT_EVALUATED_CONSTRAINT = 1e12
-OPTIMIZER_SIGNATURE_ATTR = "crest_optimizer_signature"
-LEGACY_OPTIMIZER_ADOPTION_ATTR = "crest_legacy_optimizer_adoption"
-ORPHAN_TRIAL_RECOVERY_ATTR = "crest_orphan_trial_recovery"
-PROPOSAL_ATTR = "crest_proposal"
+
 
 
 @dataclass(frozen=True)
@@ -849,124 +852,28 @@ class NASModelClient:
         return sampler_class, kwargs
 
     def _select_optimizer(self, study: optuna.Study, sampler: Any):
-        """Validate campaign identity before initializing the optimizer.
+        """Resolve the component and validate its identity before initialization.
 
-        Parameters
-        ----------
-        study : optuna.Study
-            Study whose stored identity and legacy history are inspected.
-        sampler : optuna.samplers.BaseSampler
-            Effective sampler whose class is included in the identity.
-
-        Returns
-        -------
-        tuple[str, OptimizerABC, addict.Dict, dict[str, Any]]
-            Registered name, uninitialized component, normalized configuration,
-            and pending JSON-safe campaign signature.
-
-        Raises
-        ------
-        RuntimeError
-            If stored identity differs or legacy history cannot be adopted.
-        ValueError
-            If optimizer settings or their identity are invalid.
+        Returns the name, uninitialized component, normalized config, and pending
+        signature. Initialization may fail or create artifacts, so resume checks
+        happen first; the caller stores the signature only after initialization.
         """
         config = _normalize_optimizer_config(Dict(optimizer=self._cfg_get(self.config, "optimizer", {})))
         name, component_cls = resolve_optimizer_selection(config.type)
-        adopt_legacy = config.adopt_legacy_study
         optimizer = component_cls()
         optimizer.validate_config(config)
-        _, options = self._sampler_setup()
-        options = dict(options)
-        if "constraints_func" in options:
-            options["constraints_func"] = "crest.persisted_feasibility_constraints.v1"
-        public_sampler_names = {
-            optuna.samplers.TPESampler: "optuna.samplers.TPESampler",
-            optuna.samplers.NSGAIISampler: "optuna.samplers.NSGAIISampler",
-        }
-        sampler_name = public_sampler_names.get(
-            type(sampler), type(sampler).__module__ + "." + type(sampler).__qualname__
+        _, sampler_options = self._sampler_setup()
+        signature = build_optimizer_signature(
+            name, optimizer, config, sampler, sampler_options, self.config.training,
         )
-        signature = {
-            "version": 1, "optimizer": name,
-            "config": optimizer.identity_config(config),
-            "sampler": {"class": sampler_name, "options": options},
-        }
-        # Round-trip rejects non-JSON settings and ensures detached ordinary data.
-        training_policy = training_randomness_policy(self.config.training)
-        if training_policy is not None:
-            signature["training_randomness"] = training_policy
-        signature = json.loads(json.dumps(signature, sort_keys=True, allow_nan=False))
-        stored = study.user_attrs.get(OPTIMIZER_SIGNATURE_ATTR)
-        if stored is None:
-            trials = study.trials
-            if trials:
-                if not adopt_legacy:
-                    raise RuntimeError(
-                        "Existing nonempty study has no CREST optimizer signature. "
-                        "For matching native Optuna history, explicitly attest the original "
-                        "configuration with optimizer.adopt_legacy_study: true; otherwise "
-                        "select a new study name."
-                    )
-                if any(trial.state == TrialState.WAITING for trial in trials):
-                    raise RuntimeError("Cannot adopt a legacy study with WAITING trials.")
-                if any(PROPOSAL_ATTR in trial.user_attrs or "proposal_source" in trial.user_attrs
-                       for trial in trials):
-                    raise RuntimeError("Cannot adopt native legacy history with explicit-proposer provenance.")
-                # Older explicit proposals carried only Optuna's enqueue metadata.
-                if any("fixed_params" in trial.system_attrs for trial in trials):
-                    raise RuntimeError("Cannot adopt native legacy history with enqueued fixed_params.")
-                if (Path(self.config.outputs.models_dir) / study.study_name / "llm_optimizer").exists():
-                    raise RuntimeError("Cannot adopt native legacy history with llm_optimizer artifacts.")
-                stored_directions = [direction.name.lower() for direction in study.directions]
-                if stored_directions != self._study_directions():
-                    raise RuntimeError("Cannot adopt legacy history: study directions do not match the active score configuration.")
-        else:
-            # Only known version-1 private paths from the reviewed implementation alias
-            # public names. Keep optimizer/config/options and all other fields strict.
-            legacy_sampler_names = {
-                "optuna.samplers._tpe.sampler.TPESampler": "optuna.samplers.TPESampler",
-                "optuna.samplers.nsgaii._sampler.NSGAIISampler": "optuna.samplers.NSGAIISampler",
-            }
-            comparable = stored
-            if isinstance(stored, dict) and isinstance(stored.get("sampler"), dict):
-                stored_sampler = stored["sampler"]
-                old_name = stored_sampler.get("class")
-                if isinstance(old_name, str) and old_name in legacy_sampler_names:
-                    comparable = {**stored, "sampler": {
-                        **stored_sampler, "class": legacy_sampler_names[old_name],
-                    }}
-            comparable = optimizer.normalize_stored_identity(comparable, signature)
-            if comparable != signature:
-                raise RuntimeError(
-                    "Active optimizer or sampler settings do not match the existing study optimizer signature. "
-                    "Restore the original configuration or select a new study name."
-                )
+        validate_optimizer_identity(
+            study, signature, optimizer, adopt_legacy=config.adopt_legacy_study,
+            directions=self._study_directions(),
+            models_dir=self.config.outputs.models_dir,
+        )
         return name, optimizer, config, signature
 
-    @staticmethod
-    def _store_optimizer_signature(study: optuna.Study, signature: dict[str, Any]) -> None:
-        """Persist campaign identity after successful component initialization.
-
-        Parameters
-        ----------
-        study : optuna.Study
-            Validated study. An existing signature is left unchanged.
-        signature : dict[str, Any]
-            Validated JSON-safe identity to store for future resume checks.
-
-        Notes
-        -----
-        A nonempty unsigned study also receives legacy-adoption evidence.
-        """
-        if study.user_attrs.get(OPTIMIZER_SIGNATURE_ATTR) is not None:
-            return
-        study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, signature)
-        if study.trials:
-            study.set_user_attr(LEGACY_OPTIMIZER_ADOPTION_ATTR, {
-                "version": 1, "attestation": "matching_original_config",
-                "trial_count": len(study.trials),
-            })
+    _store_optimizer_signature = staticmethod(store_optimizer_signature)
 
     @staticmethod
     def _proposal_source_counts(study: optuna.Study) -> dict[str, int]:
@@ -1080,63 +987,7 @@ class NASModelClient:
         self._progress_warmup_count = len(getattr(optimizer, "warmup_params", []) or [])
         return descriptor
 
-    @staticmethod
-    def _recover_orphaned_trials(study: optuna.Study, config: Any) -> None:
-        """Fail explicitly listed RUNNING trials after workers have stopped.
-
-        Parameters
-        ----------
-        study : optuna.Study
-            Validated, initialized single-writer study being resumed.
-        config : Any
-            Normalized optimizer config. ``recover_orphaned_trials: [12]``
-            attests that the workers for those exact trial numbers have stopped.
-
-        Returns
-        -------
-        None
-            Existing attempts remain in the budget; recovery evidence is stored
-            in study attributes before the public Optuna state transition.
-            Reusing a target list cannot recover newly allocated trial numbers.
-
-        Raises
-        ------
-        ValueError
-            If a requested number is unknown or still queued for execution.
-        """
-        expected_numbers = list(config.recover_orphaned_trials)
-        if not expected_numbers:
-            return
-        trials = study.get_trials(deepcopy=False)
-        unknown = sorted(set(expected_numbers) - {trial.number for trial in trials})
-        if unknown:
-            raise ValueError(
-                f"optimizer.recover_orphaned_trials contains trial numbers absent from this study: {unknown}. "
-                "List only existing orphan trials after confirming their workers have stopped."
-            )
-        queued = [trial.number for trial in trials
-                  if trial.state == TrialState.WAITING and trial.number in expected_numbers]
-        if queued:
-            raise ValueError(
-                f"optimizer.recover_orphaned_trials contains WAITING trial numbers: {queued}. "
-                "Queued trials have not started; list only existing RUNNING or terminal trials."
-            )
-        running = [trial for trial in trials
-                   if trial.state == TrialState.RUNNING and trial.number in expected_numbers]
-        if not running:
-            logger.warning("[NAS] Orphan recovery targets %s contain no RUNNING trials; no state changed.",
-                           expected_numbers)
-            return
-        events = list(study.user_attrs.get(ORPHAN_TRIAL_RECOVERY_ATTR, []))
-        for trial in running:
-            # Persist intent first so an interrupted recovery remains auditable.
-            events.append({"version": 2, "trial_number": trial.number,
-                           "expected_trial_numbers": expected_numbers,
-                           "attestation": "listed_trial_workers_stopped",
-                           "recorded_at_unix": time.time(), "target_state": "FAIL"})
-            study.set_user_attr(ORPHAN_TRIAL_RECOVERY_ATTR, events)
-            study.tell(trial.number, state=TrialState.FAIL)
-            logger.warning("[NAS] Explicit orphan recovery marked trial %s FAIL.", trial.number)
+    _recover_orphaned_trials = staticmethod(recover_orphaned_trials)
 
     @staticmethod
     def _waiting_round_size(study: optuna.Study) -> int:
@@ -1178,88 +1029,42 @@ class NASModelClient:
             Finished attempt supplied by Optuna's callback protocol.
         """
         try:
-            if [direction.name for direction in study.directions] != ["MAXIMIZE"]:
-                return
             from crest.search.progress import trial_records, write_progress
             write_progress(trial_records(study.get_trials(deepcopy=False)),
                            self._artifacts_dir(), study.study_name,
                            warmup_count=getattr(self, "_progress_warmup_count", None),
-                           feasibility_enabled=self._feasibility_enabled())
-        except Exception:
+                           feasibility_enabled=self._feasibility_enabled(),
+                           directions=study.directions,
+                           objective_names=getattr(study, "metric_names", None),
+                           reference_point=self._cfg_get(
+                               self._cfg_get(getattr(self, "config", {}), "outputs", {}),
+                               "hypervolume_reference_point", None))
+            (self._artifacts_dir() / "progress" / "error.txt").unlink(missing_ok=True)
+        except Exception as exc:
             logger.warning("Unable to refresh NAS progress plots", exc_info=True)
+            # Training may continue, but a visible artifact explains stale plots.
+            # Failure to write this diagnostic must not interrupt the study either.
+            try:
+                output = self._artifacts_dir() / "progress"
+                output.mkdir(parents=True, exist_ok=True)
+                (output / "error.txt").write_text(f"{type(exc).__name__}: {exc}\n")
+            except OSError:
+                logger.warning("Unable to write progress failure diagnostic", exc_info=True)
 
     def _execute_search_round(self, study: optuna.Study, optimizer: Any, name: str,
                               descriptor: Any, budget: BudgetSnapshot,
                               measurement_failure_guard=None) -> int:
-        """Validate and execute one optimizer round through the shared objective.
+        """Run one validated round with this client's objective and callbacks.
 
-        Parameters
-        ----------
-        study : optuna.Study
-            Active single-writer study receiving reservations and evaluations.
-        optimizer : OptimizerABC
-            Component asked for a round using the current detached history.
-        name : str
-            Registered optimizer name recorded in explicit-proposal metadata.
-        descriptor : SearchSpaceDescriptor or None
-            Raw parameter validation contract, required for explicit rounds.
-        budget : BudgetSnapshot
-            Current budget and maximum permitted round size.
-        measurement_failure_guard : callable or None, optional
-            Optuna callback monitoring consecutive infrastructure failures.
-            When absent, a new guard is created for this round.
-
-        Returns
-        -------
-        int
-            Number of trials requested for the validated round.
-
-        Raises
-        ------
-        ValueError
-            If the round, candidates, metadata, or size violate the contract.
-
-        Notes
-        -----
-        Every explicit candidate is validated before any candidate is enqueued.
-        Execution uses the progress callback and catches measurement
-        infrastructure errors through the shared Optuna lifecycle.
+        The guard is shared across rounds so splitting a batch cannot reset a
+        streak of infrastructure failures. Plotting runs after each committed trial.
         """
-        proposal = optimizer.propose_round(build_trial_snapshot(study), budget)
-        if isinstance(proposal, NativeRound):
-            size = proposal.n_trials
-            if isinstance(size, bool) or not isinstance(size, int) or not 0 < size <= budget.permitted_round_size:
-                raise ValueError("NativeRound.n_trials must be positive and within the permitted round size.")
-        elif isinstance(proposal, ExplicitRound):
-            if not isinstance(proposal.candidates, tuple) or not proposal.candidates:
-                raise ValueError("ExplicitRound requires a nonempty ordered tuple of candidates.")
-            size = len(proposal.candidates)
-            if size > budget.permitted_round_size:
-                raise ValueError("ExplicitRound exceeds the permitted round size.")
-            if descriptor is None:
-                raise ValueError("Explicit rounds require a declared raw search-space descriptor.")
-            round_id = uuid4().hex
-            validated = []
-            for index, candidate in enumerate(proposal.candidates):
-                if not isinstance(candidate, CandidateProposal) or not isinstance(candidate.params, Mapping):
-                    raise ValueError("ExplicitRound members must be CandidateProposal parameter mappings.")
-                validate_candidate(candidate.params, descriptor)
-                params = dict(candidate.params)
-                if not isinstance(candidate.provenance, Mapping):
-                    raise ValueError("Candidate provenance must be a JSON-safe mapping.")
-                metadata = dict(candidate.provenance)
-                metadata.update(optimizer=name, round_id=round_id, batch_index=index, proposal_params=dict(params))
-                metadata.setdefault("proposal_source", name)
-                metadata = json.loads(json.dumps(metadata, sort_keys=True, allow_nan=False))
-                validated.append((dict(params), metadata))
-            for params, metadata in validated:
-                study.enqueue_trial(params, user_attrs={PROPOSAL_ATTR: metadata})
-        else:
-            raise ValueError("Optimizer must return NativeRound or ExplicitRound.")
-        study.optimize(self.objective, n_trials=size,
-                       callbacks=[self._refresh_progress, measurement_failure_guard or _ConsecutiveMeasurementFailureGuard()],
-                       catch=(MeasurementInfrastructureError,))
-        return size
+        guard = measurement_failure_guard or _ConsecutiveMeasurementFailureGuard()
+        return execute_search_round(
+            study, optimizer, name, descriptor, budget, objective=self.objective,
+            callbacks=[self._refresh_progress, guard],
+            catch=(MeasurementInfrastructureError,),
+        )
 
     def _hardware_limit_device_options(self) -> dict[str, str] | None:
         """Build board options required to resolve dynamic hardware limits.
@@ -2577,8 +2382,8 @@ class NASModelClient:
                 self._validate_or_store_feasibility_signature(single_trial_study)
                 self._store_optimizer_signature(single_trial_study, signature)
                 self._recover_orphaned_trials(single_trial_study, optimizer_config)
-                self._refresh_progress(single_trial_study, None)
                 single_trial_study.set_metric_names(self._study_metric_names())
+                self._refresh_progress(single_trial_study, None)
                 remaining = trials
                 initial_completed = self._qualifying_complete_count(single_trial_study.trials)
                 target = initial_completed + trials

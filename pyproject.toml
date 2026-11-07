@@ -23,6 +23,7 @@ dependencies = [
     "keras-tcn",
     "scikit-learn",
     "pandas",
+    "matplotlib",
     "numpy-quaternion",
     "giotto-tda",
     "pydometer",
@@ -36,4 +37,5 @@ dependencies = [
 where = ["src"]
 
 [tool.pytest.ini_options]
+# Test the source checkout without requiring a manual PYTHONPATH setting.
 pythonpath = ["src"]

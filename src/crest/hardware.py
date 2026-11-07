@@ -461,6 +461,8 @@ def predict_tflite_model(
     except RuntimeError as exc:
         # A delegate limitation is not proof that the quantized model is invalid.
         # Retry the entire split with a fresh interpreter; never mix predictions.
+        # Other runtime errors may indicate a broken model or input contract;
+        # changing kernels must not hide those failures.
         if "xnnpack" not in str(exc).lower():
             raise
         evidence.update(backend="builtin_without_default_delegates", fallback_reason=str(exc))
@@ -490,6 +492,8 @@ def _predict_tflite_model(tflite_path, inputs, *, disable_default_delegates=Fals
         raise ValueError("TFLite evaluation inputs must include a sample dimension.")
     options = {}
     if disable_default_delegates:
+        # Disable automatic delegates only for host prediction. The flatbuffer
+        # sent to the device is unchanged, so deployment remains comparable.
         options["experimental_op_resolver_type"] = tf.lite.experimental.OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES
     interpreter = tf.lite.Interpreter(model_path=str(tflite_path), **options)
     input_details = interpreter.get_input_details()
@@ -603,6 +607,8 @@ def predict_tflite_model_subprocess(
 
         try:
             with np.load(outputs_path, allow_pickle=False) as output_archive:
+                # The isolated worker owns the interpreter. Carry its policy and
+                # fallback reason back with the predictions for caller diagnostics.
                 evidence = json.loads(str(output_archive["diagnostics"].item())) if "diagnostics" in output_archive else {}
                 if diagnostics is not None:
                     diagnostics.update(evidence)

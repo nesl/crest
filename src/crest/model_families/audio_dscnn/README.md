@@ -10,11 +10,13 @@ classification inputs. The registered family class is `AudioDSCNNFamily`, availa
 through `from crest.model_families.audio_dscnn import AudioDSCNNFamily`.
 
 [`family.py`](family.py) owns hyperparameter validation, Optuna sampling, the raw
-search descriptor and semantic hints, Keras construction, FLOP support, and export
+search descriptor, Keras construction, FLOP support, and export
 materialization. The architecture combines an initial convolution with repeated
 depthwise/pointwise blocks, selectable pooling, and a classification head.
 [`decode.py`](decode.py) is the authoritative, ML-runtime-independent source for
-categorical choices and stride/channel decoding. Package exports load these modules
+categorical choices and stride/channel decoding. [`semantics.py`](semantics.py)
+contains pure Python parameter descriptions and architectural hints, separate from
+construction and authoritative decoding. Package exports load these modules
 lazily, so decoding helpers can be used without importing TensorFlow:
 
 ```python

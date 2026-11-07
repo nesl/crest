@@ -380,6 +380,12 @@ The `outputs` block controls directory roots and naming inputs.
 Keys:
 
 - `outputs.models_dir`
+- `outputs.hypervolume_reference_point` (optional): fixed multiobjective progress
+  reference, one finite value per objective in objective order and original units.
+  The reference is persisted under the study's `progress/` directory and cannot
+  change on resume. Without one, the first eligible trial plus a 10% worse-direction
+  margin supplies a monitoring-only reference. See [progress reporting](../crest/search/README.md).
+
 - `outputs.candidate_dir`
 - `outputs.artifact_stem`
 - `outputs.log_file_name`

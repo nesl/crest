@@ -26,7 +26,6 @@ _DECODE_EXPORTS = (
 )
 _FAMILY_EXPORTS = (
     "AudioDSCNNFamily",
-    "AUDIO_DSCNN_SEARCH_SEMANTICS",
     "DEFAULT_AUDIO_DSCNN_SEED",
     "INTEGER_CATEGORICAL_FIELDS",
     "BOOLEAN_FIELDS",
@@ -34,7 +33,7 @@ _FAMILY_EXPORTS = (
     "STRING_CATEGORICAL_FIELDS",
 )
 
-__all__ = list(_FAMILY_EXPORTS) + list(_DECODE_EXPORTS)
+__all__ = list(_FAMILY_EXPORTS) + list(_DECODE_EXPORTS) + ["AUDIO_DSCNN_SEARCH_SEMANTICS"]
 
 
 def __getattr__(name: str) -> Any:
@@ -57,6 +56,8 @@ def __getattr__(name: str) -> Any:
     """
     if name in _DECODE_EXPORTS:
         module = import_module(f"{__name__}.decode")
+    elif name == "AUDIO_DSCNN_SEARCH_SEMANTICS":
+        module = import_module(f"{__name__}.semantics")
     elif name in _FAMILY_EXPORTS:
         module = import_module(f"{__name__}.family")
     else:
