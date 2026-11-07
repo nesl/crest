@@ -37,7 +37,11 @@ NAS, replay, or measurement artifacts and do not run NAS or touch hardware.
   - **Hardware requirement: no hardware required.** Case Study 3 post-hoc
     score-sensitivity analysis over audio NAS logs.
 
-- `paper_plots/`: existing publication figure tools; see its README.
+- `paper_plots/`
+  - **Hardware requirement: no hardware required.** Publication figure
+    generators for all eight submitted-paper data plots, with explicit external
+    inputs and plotted-point/summary sidecars. The
+    [figure catalog](paper_plots/README.md) gives the scripts and commands.
 
 ## Case Study 3: proposal strategies and search effort
 
