@@ -96,7 +96,7 @@ the concrete starting point.
 
 ## Contract In Practice
 
-`DatasetABC` exposes three hooks:
+`DatasetABC` exposes these hooks:
 
 - `name`
   Optional property. Returns the human-readable dataset identifier; shipped
@@ -129,6 +129,66 @@ The shipped pattern is:
 3. Register it under a stable key with `dataset_registry.register(...)`.
 4. Select that key through `dataset.name`.
 5. Put adapter-owned options under `dataset.params`.
+
+## Minimal Adapter Example
+
+Run this hardware-free example from `src/` with NumPy installed. It shows the
+bundle and calibration contracts without downloading a dataset. The synthetic
+splits are for adapter bring-up; real experiments need separately prepared,
+representative partitions.
+
+```python
+import numpy as np
+
+from crest.interfaces import DatasetABC
+from crest.pipeline_types import DataSplit, DatasetBundle
+
+
+class TinyDataset(DatasetABC):
+    @property
+    def name(self):
+        return "tiny"
+
+    def validate_config(self, dataset_config):
+        if dataset_config.get("samples", 8) < 2:
+            raise ValueError("samples must be at least 2")
+
+    def load(self, dataset_config):
+        self.validate_config(dataset_config)
+        count = dataset_config.get("samples", 8)
+        inputs = np.arange(count * 3, dtype=np.float32).reshape(count, 3)
+        targets = inputs.sum(axis=1, keepdims=True)
+        train = DataSplit(inputs[:-1], targets[:-1])
+        val = DataSplit(inputs[-1:], targets[-1:])
+        return DatasetBundle(
+            train=train,
+            val=val,
+            calibration=DataSplit(inputs[:2], targets[:2]),
+            input_shape=(3,),
+            input_dtype="float32",
+        )
+
+
+adapter = TinyDataset()
+dataset_params = {"samples": 8}
+bundle = adapter.load(dataset_params)
+assert bundle.train.inputs.shape == (7, 3)
+assert adapter.make_calibration_data(bundle, dataset_params).inputs.shape == (2, 3)
+```
+
+After registering `TinyDataset` as `tiny` in `builtin_components.py`, select it
+with this fragment:
+
+```yaml
+dataset:
+  name: tiny
+  params:
+    samples: 8
+```
+
+The runner passes the `params` mapping to adapter hooks, rather than the entire
+root config. This example supplies scalar regression targets; select or implement
+a compatible task before using it in a complete pipeline.
 
 ## Contributor Checklist
 
