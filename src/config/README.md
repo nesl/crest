@@ -396,7 +396,7 @@ Runtime notes:
   `checkpoint_name` from `outputs.artifact_stem` and `device.name`, then
   populates derived paths such as `tflite_model_path` and `checkpoint_path`
 - YAML-authored `outputs.model_name` and `outputs.checkpoint_name` are rejected
-  because artifact names now follow the shared `{artifact_stem}_{device.name}`
+  because artifact names follow the shared `{artifact_stem}_{device.name}`
   rule
 - `models_dir` and `candidate_dir` are resolved into absolute paths in memory
 

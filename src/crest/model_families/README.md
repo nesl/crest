@@ -131,9 +131,7 @@ concrete starting point.
   options activate that search. Explicit candidates must supply exactly every
   active raw field. Native Optuna skips descriptor and semantic-context setup;
   errors in an explicit family's declared descriptor propagate before evaluation.
-  Import these declarations from `crest.optimizers.search_space`; the former
-  `crest.optimizers.llm.search_space` module has been removed.
-  See the
+  Import these declarations from `crest.optimizers.search_space`. See the
   [configuration guide](../../config/README.md).
 - `build_model(hparams, ctx, config)`
   Required. Builds the uncompiled Keras model from normalized hyperparameters

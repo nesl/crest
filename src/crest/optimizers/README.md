@@ -43,8 +43,8 @@ Progress reporting is shared across optimizers; see
 An optimizer chooses **raw trial parameters** or requests native sampling. It does
 not build models, train, measure devices, calculate the objective, enqueue trials,
 or change an Optuna Study or Trial. The shared runner owns those operations.
-`optuna` is the only built-in optimizer in this layer; the interface also supports
-application-defined explicit proposers.
+The native `optuna` optimizer samples parameters inside the objective; the interface
+also supports application-defined explicit proposers.
 
 Components must support zero-argument construction. The lifecycle is:
 

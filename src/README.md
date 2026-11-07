@@ -202,8 +202,8 @@ something registers it under the name you intend to use in config.
 
 ## Shared Scoring And Trial Outputs
 
-The shared score/logging path no longer assumes one fixed model shape
-or one fixed metric schema.
+The shared score/logging path supports task-defined model shapes and metric
+schemas.
 
 ### Task Metric Declaration
 
@@ -220,7 +220,7 @@ hardcoding them into the shared NAS/logging layer.
 
 ### Task-Owned Fit And Closeout Hooks
 
-`TaskABC` now owns both fit-plan construction and task-specific closeout hooks.
+`TaskABC` owns fit-plan construction and task-specific closeout hooks.
 
 - `build_fit_plan(...)`
   Returns the `FitPlan` used by NAS-time training and final retraining,

@@ -664,8 +664,8 @@ Practical implication:
 
 1. A CM4 runtime arena allocation failure can surface as a generic
    `HIL_ERROR_LATENCY` rather than `HIL_ERROR_UNDER_SIZED`.
-2. Deterministic CM4 runtime-fault classification would require a separate
-   fault channel and is out of scope for the current backend.
+2. This backend does not provide deterministic CM4 runtime-fault classification;
+   that requires a separate fault channel.
 
 ## Test Plan
 
@@ -675,8 +675,7 @@ and parser behavior are covered locally.
 
 ### Software Tests
 
-Add or update tests in the backend-specific and orchestration test surfaces,
-not just the older `test/test_hardware.py` and `test/test_model.py` pair.
+Add or update tests in the backend-specific and orchestration test surfaces.
 
 Important current test files include:
 
