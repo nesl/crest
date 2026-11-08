@@ -26,7 +26,7 @@ For config semantics, see [`../src/config/README.md`](../src/config/README.md).
 - [`stm32/`](stm32) STM32 workspaces.
   The committed LRUN workspace is [`stm32/crest_stm32_lrun/README.md`](stm32/crest_stm32_lrun/README.md).
 
-## Runtime Sketch Selection
+## Arduino Sketches
 
 The Arduino runtime-selection path described in [`../src/crest/microcontrollers/README.md`](../src/crest/microcontrollers/README.md) uses this layout.
 
@@ -45,12 +45,12 @@ The Arduino runtime-selection path described in [`../src/crest/microcontrollers/
    - [`common/crest_power.h`](common/crest_power.h)
    - [`common/crest_clock_telemetry.h`](common/crest_clock_telemetry.h)
 
-## Harness And Helper Sketches
+### Harness And Helper Sketches
 
 - [`harness/harness.ino`](harness/harness.ino) Used when runtime measurement is harness-assisted or harness-only.
 - [`boot_m4_helper/boot_m4_helper.ino`](boot_m4_helper/boot_m4_helper.ino) Used by the current Portenta CM4 path to bring up CM4 before uploading the DUT sketch.
 
-## STM32 Workspace
+## STM32 Firmware
 
 STM32 content is not organized as one Arduino sketch per board.
 
