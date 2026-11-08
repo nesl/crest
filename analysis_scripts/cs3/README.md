@@ -15,7 +15,6 @@ outside the checkout.
 | `evaluation.py` | Exact-parameter repeat variability and saved final-test metrics |
 | `search_history.py` | Completion-prefix decoded-network trajectories, raw/decoded repeat dispersion and saved proposal accounting |
 | `replay.py` | Source-selection identity checks and destination energy ranks |
-| `verify_paper.py` | Optional reference checks on regenerated results |
 
 ```sh
 python analysis_scripts/cs3/campaign.py --config /path/to/campaigns.json \

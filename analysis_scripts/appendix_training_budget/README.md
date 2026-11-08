@@ -24,8 +24,7 @@ Outputs: `summary.json` (correlations, fronts, shortlist regret and training tim
 outside the checkout. Training times sum trajectory prefixes; they exclude later
 checkpoint evaluation and hardware measurement.
 
-For the submitted panel, run `verify_paper.py --summary /path/to/results/summary.json`.
 Pass `figure10_training_budget.csv` to the existing training-budget plotter
-using `--input-csv` to regenerate the figures. These checks reproduce results from saved
+using `--input-csv` to regenerate the figures. These analyses use saved
 evaluations; they do not rerun inference. The selected panel and fixed historical
 energy do not establish convergence or search-wide ranking reliability.

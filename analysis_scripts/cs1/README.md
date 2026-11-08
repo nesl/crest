@@ -27,21 +27,39 @@ Calibration assumes one/ten-release awake-final windows;
 its periods and excluded pools are explicit options. Input column names follow
 the saved CREST measurement tables. Graph grouping currently supports TCN logs.
 
-## Submitted-paper reproduction
+## Explicit-input analysis
 
 ```sh
-python analysis_scripts/cs1/reproduce_paper.py \
-  --archive-root /path/to/research-archive --output-dir /path/to/results \
-  --policy-pairs /path/to/policy_pairs.json \
-  --repeat-pairs /path/to/repeat_pairs.json
+python analysis_scripts/cs1/calibration.py \
+  --probe-long /path/to/probe_500.csv --probe-short /path/to/probe_100.csv \
+  --candidates /path/to/candidates.csv --latencies /path/to/latencies.csv \
+  --periods-ms 500 100 --output-dir /path/to/results/calibration
+python analysis_scripts/cs1/heldout_prediction.py \
+  --predictions /path/to/results/calibration/predictions.csv \
+  --observations /path/to/observations.csv \
+  --archive-root /path/to/candidate-logs \
+  --output-dir /path/to/results/heldout
+python analysis_scripts/cs1/raw_selection_baseline.py \
+  --predictions /path/to/results/calibration/predictions.csv \
+  --output-dir /path/to/results/raw_selection
+python analysis_scripts/cs1/policy_replay.py \
+  --energy-records /path/to/policy_energy_records.json \
+  --pairs /path/to/policy_pairs.json --output-dir /path/to/results/policy
+python analysis_scripts/cs1/repeats.py \
+  --repeated-observations /path/to/repeated_observations.csv \
+  --joint-fit /path/to/joint_fit.csv --pairs /path/to/repeat_pairs.json \
+  --output-dir /path/to/results/repeats
 ```
 
-Keep the pairing files with the research archive and use the original pairings
-when checking the paper results. The recipe selects the original data files and
-settings, including three-decimal calibration export rounding. Add `--source-root` if the original candidate logs
-have moved. `verify_paper.py --results /path/to/results` checks printed values and
-counts; only this recipe/checker requires the submitted dataset. Results include
-CSVs, input hashes, short reports and `paper_checks.csv`.
+The calibration command writes `calibration.csv`, `predictions.csv`,
+`probe_joint_fit_per_round.csv`, and input provenance. Use `--fit-decimals` to
+choose coefficient export rounding and repeat `--exclude-pool` to exclude pools.
+The held-out analysis uses candidate source logs for graph grouping; its
+`--archive-root` relocates saved source paths when needed. Repeat analysis takes
+a frozen joint-fit CSV with one row per `clock_mhz` and columns
+`P_busy_mw_mean`, `P_stop_mw_mean`, and `K_mj_mean`.
+Keep pairing files alongside their input datasets. Results include CSVs, input
+hashes and short reports.
 
 Selection regret uses the lowest saved energy in the same eligible bank. Repeated
 folds/ceilings are correlated. Paired intervals describe within-session repeats;

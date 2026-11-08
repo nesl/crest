@@ -28,8 +28,7 @@ subtracting clocks across hosts. Arena timeouts contain failed measurement and
 protocol handling; compilation and programming remain separate.
 
 For the submitted figure, prepare STM32 tables at the output root and Portenta
-tables in `portenta_m7/`. Run `verify_paper.py --data-dir /path/to/results`, then
+tables in `portenta_m7/`. Run
 `paper_plots/plot_appendix_timing_analysis.py --data-dir /path/to/results` with
-an external `--output-dir`. Paper checks require the original ten-candidate
-panels; the analysis supports other panel sizes. Results describe these saved
+an external `--output-dir`. The analysis supports other panel sizes. Results describe these saved
 campaigns, not repeated-run uncertainty or candidate-proposal overhead.

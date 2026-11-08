@@ -17,8 +17,6 @@ outside the checkout.
   through an explicit completion endpoint.
 - `combine.py --input CSV [CSV ...] --output-dir OUTPUT_DIR` combines native
   trial tables and rejects duplicate identities, host work, and replay scopes.
-- `verify_paper.py --input CSV [CSV ...]` runs optional reference-count and population
-  checks separately from the generic classifiers.
 
 Each native `trial_outcomes.csv` contains `case_study`, `campaign`, `trial`, and
 `outcome`, plus source evidence. Outcomes are `measured_passed`,

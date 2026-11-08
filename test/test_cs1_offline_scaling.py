@@ -173,31 +173,3 @@ def test_generic_two_round_session(tmp_path):
     scaling_periods.analyze_probes([(200, probe_path)], tmp_path / "probe_out")
     ext = pd.read_csv(tmp_path / "probe_out/scaling_extents.csv")
     assert ext.max_minus_min_cycles_pct.iloc[0] == pytest.approx(0)
-
-
-def test_reproduction_uses_external_pairing_files(tmp_path, monkeypatch):
-    """Pass caller-owned pairings through the CLI to the two analysis commands."""
-    import reproduce_paper
-    from subprocess import CompletedProcess
-
-    calls = []
-    def run(command, **kwargs):
-        calls.append(command)
-        return CompletedProcess(command, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(reproduce_paper.subprocess, "run", run)
-    policy = tmp_path / "external-policy.json"
-    repeat = tmp_path / "external-repeat.json"
-    policy.write_text('[{"left": "policy_a", "right": "policy_b"}]')
-    repeat.write_text('[{"left": "repeat_a", "right": "repeat_b"}]')
-    monkeypatch.setattr(sys, "argv", [
-        "reproduce_paper.py", "--archive-root", str(tmp_path / "archive"),
-        "--output-dir", str(tmp_path / "results"),
-        "--policy-pairs", str(policy), "--repeat-pairs", str(repeat),
-    ])
-    reproduce_paper.main()
-    commands = {Path(command[1]).stem: command for command in calls}
-    for name, path in (("policy_replay", policy), ("repeats", repeat)):
-        command = commands[name]
-        assert command[command.index("--pairs") + 1] == str(path.resolve())
-    assert len(calls) == 9
