@@ -33,7 +33,7 @@ def evaluate(variant, study_root, attempt_root, device):
 
     Notes
     -----
-    The caller holds the shared per-device lock. Execution is synchronous;
+    Run one experiment at a time on the device. Execution is synchronous;
     temporary module validator replacement is restored even on exceptions.
     """
     validate_variant(variant, study_root)

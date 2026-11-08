@@ -775,24 +775,6 @@ def accept(metrics, error_code, phase, runs, clock, proto, dut_log):
     return reasons
 
 
-def cmd_run(args):
-    """Run the waiting-power recipe under the shared physical-device lock.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Explicit study, deployment identity, schedule, and retry settings.
-    """
-    if args.dry_run:
-        return _cmd_run_locked(args)
-    if not args.board_ready:
-        raise SystemExit("refusing to touch hardware without --board-ready")
-    from analysis_scripts.experiment_support.device_lock import device_lock
-
-    with device_lock(args.device_id, args.lock_dir):
-        return _cmd_run_locked(args)
-
-
 def _prepare_runtime_backend(v, adir, stm, CompileResult, phase, runs, item, period):
     """Configure a variant backend without rebuilding or changing phase headers.
 
@@ -803,9 +785,9 @@ def _prepare_runtime_backend(v, adir, stm, CompileResult, phase, runs, item, per
     adir : pathlib.Path
         Current attempt directory receiving native measurement records.
     stm : module
-        STM32 backend module imported by the locked runner.
+        STM32 backend module imported by the runner.
     CompileResult : type
-        Compile result class imported by the locked runner.
+        Compile result class imported by the runner.
     phase : str
         Native phase selected for the current variant.
     runs : int
@@ -889,13 +871,13 @@ def _prepare_runtime_backend(v, adir, stm, CompileResult, phase, runs, item, per
     return backend, root, clock
 
 
-def _cmd_run_locked(args):
+def cmd_run(args):
     """Measure unfinished scheduled variants using compiled firmware variants.
 
     Parameters
     ----------
     args : argparse.Namespace
-        Explicit study, serial identities, shared lock, and schedule arguments.
+        Explicit study, serial identities, and schedule arguments.
     """
     study = Path(args.study).resolve() if args.study else None
     clocks = sorted(set(args.clocks))
@@ -1460,12 +1442,7 @@ def main(argv=None):
         "run", help="program and measure the interleaved schedule (hardware)"
     )
     r.add_argument("--study", required=True, help="study directory produced by build")
-    r.add_argument(
-        "--device-id",
-        required=True,
-        help="shared physical device identity, same across all runners",
-    )
-    r.add_argument("--lock-dir", type=Path)
+
     r.add_argument("--firmware", type=Path, default=FIRMWARE)
     r.add_argument("--rounds", type=int, required=True)
     r.add_argument("--clocks", type=int, nargs="+", required=True)

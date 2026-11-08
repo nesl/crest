@@ -295,7 +295,7 @@ def study_lock(study):
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def run(study, *, rounds, seed, device, board_ready=False, lock_dir=None):
+def run(study, *, rounds, seed, device, board_ready=False):
     """Run or resume a schedule using the native STM32 backend.
 
     Parameters
@@ -308,15 +308,12 @@ def run(study, *, rounds, seed, device, board_ready=False, lock_dir=None):
         Explicit device_id and native runtime settings (ports, etc.).
     board_ready : bool
         Explicit authorization to program and measure the device.
-    lock_dir : path-like, optional
-        Shared hardware lock directory; defaults to the common environment/default.
     """
     if not board_ready:
         raise ValueError("hardware requires board_ready=True")
-    from analysis_scripts.experiment_support.device_lock import device_lock
 
     study = Path(study).resolve()
-    with study_lock(study), device_lock(device["device_id"], lock_dir=lock_dir):
+    with study_lock(study):
         data = json.loads((study / "study.json").read_text())
         variants = {v["name"]: v for v in data["variants"]}
         items = schedule(rounds, list(variants), data["blocks"], seed)
@@ -405,7 +402,6 @@ def main():
         if name == "run":
             cmd.add_argument("--device-config", required=True)
             cmd.add_argument("--board-ready", action="store_true")
-            cmd.add_argument("--lock-dir", help="shared device lock directory")
     args = parser.parse_args()
     if args.command == "prepare":
         print(prepare(args.manifest, args.output))
@@ -431,7 +427,6 @@ def main():
             seed=args.seed,
             device=json.loads(Path(args.device_config).read_text()),
             board_ready=True,
-            lock_dir=args.lock_dir,
         )
 
 

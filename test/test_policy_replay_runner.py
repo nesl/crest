@@ -122,7 +122,6 @@ def test_run_resume_and_stop_after_failure(tmp_path, monkeypatch):
         seed=42,
         device={"device_id": "synthetic-policy-test"},
         board_ready=True,
-        lock_dir=tmp_path / "locks",
     )
     replay.run(study, **kwargs)
     replay.run(study, **kwargs)

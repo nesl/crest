@@ -205,25 +205,19 @@ def runtime_config(candidate, manifest):
 
 def execute(
     root,
-    device_id,
     dut_port,
     harness_port,
-    lock_dir=None,
     board_ready=False,
     max_evaluations=None,
 ):
-    """Measure unfinished paired evaluations under a shared physical-device lock.
+    """Measure unfinished paired evaluations, one experiment at a time.
 
     Parameters
     ----------
     root : str or pathlib.Path
         Sealed study directory with prepared or bound artifacts.
-    device_id : str
-        Same physical identity used by every runner sharing the DUT and harness.
     dut_port, harness_port : str
         Explicit serial paths for the current deployment.
-    lock_dir : str or pathlib.Path, optional
-        Shared lock root; omitted to use the common per-user default.
     board_ready : bool, optional
         Explicit acknowledgement permitting hardware programming and measurement.
     max_evaluations : int, optional
@@ -238,10 +232,9 @@ def execute(
             "measurement requires explicit --board-ready after board review"
         )
     root = Path(root).resolve()
-    from analysis_scripts.experiment_support.device_lock import device_lock
     import fcntl
 
-    with device_lock(device_id, lock_dir), (root / "run.lock").open("a") as study_lock:
+    with (root / "run.lock").open("a") as study_lock:
         fcntl.flock(study_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         verify(root)
         manifest = json.loads((root / "manifest.json").read_text())
@@ -494,10 +487,8 @@ def main():
     p.add_argument("--study", required=True)
     p.add_argument("--board-ready", action="store_true")
     p.add_argument("--max-evaluations", type=int)
-    p.add_argument("--device-id", required=True)
     p.add_argument("--dut-port", required=True)
     p.add_argument("--harness-port", required=True)
-    p.add_argument("--lock-dir")
     args = parser.parse_args()
     if args.command == "prepare":
         print(
@@ -512,10 +503,8 @@ def main():
     else:
         execute(
             args.study,
-            args.device_id,
             args.dut_port,
             args.harness_port,
-            args.lock_dir,
             args.board_ready,
             args.max_evaluations,
         )

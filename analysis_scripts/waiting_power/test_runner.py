@@ -136,7 +136,7 @@ def test_cached_compile_header_validation_and_restart_skip(fake_study):
     import json
 
     runner, args, study, variants, events = fake_study
-    runner._cmd_run_locked(args)
+    runner.cmd_run(args)
     assert len([e for e in events if e[0] == "evaluate"]) == 3
     checks = [e[2] for e in events if e[0] == "validate"]
     assert len(checks) == 3
@@ -146,7 +146,7 @@ def test_cached_compile_header_validation_and_restart_skip(fake_study):
     for v in variants.values():
         storage = json.loads((study / v["project"] / "sidecar.json").read_text())
         assert storage == {"last_programmed_app": None, "keep": 1}
-    runner._cmd_run_locked(args)
+    runner.cmd_run(args)
     assert len([e for e in events if e[0] == "evaluate"]) == 3
 
 
@@ -160,10 +160,10 @@ def test_header_change_stops_before_evaluation_and_restart_requires_inspection(
     v = variants[runner.variant_name(80, first["shape"])]
     (Path(v["project"]) / "crest_dut_phase_config.h").write_text("changed")
     with pytest.raises(SystemExit, match="phase header changed"):
-        runner._cmd_run_locked(args)
+        runner.cmd_run(args)
     assert not any(e[0] == "evaluate" for e in events)
     with pytest.raises(RuntimeError, match="requires inspection"):
-        runner._cmd_run_locked(args)
+        runner.cmd_run(args)
 
 
 def test_backend_exception_is_recorded_and_stops_restart(fake_study, monkeypatch):
@@ -181,9 +181,9 @@ def test_backend_exception_is_recorded_and_stops_restart(fake_study, monkeypatch
 
     monkeypatch.setattr(backend, "_evaluate_single_phase", interrupted)
     with pytest.raises(RuntimeError, match="fake interrupted"):
-        runner._cmd_run_locked(args)
+        runner.cmd_run(args)
     result = next(study.glob("measurements/*/result.json"))
     assert json.loads(result.read_text())["status"] == "exception"
     with pytest.raises(RuntimeError, match="requires inspection"):
-        runner._cmd_run_locked(args)
+        runner.cmd_run(args)
     assert len([e for e in events if e[0] == "interrupted"]) == 1

@@ -13,9 +13,7 @@ active unless a package README says otherwise. Most scripts consume existing
 NAS, replay, or measurement artifacts and do not run NAS or touch hardware.
 
 The recipes below run training or collect hardware measurements. The repeatability, waiting-power and policy-replay runners require explicit
-device identity and `--board-ready`; training requires `--execute`.
-The micro-workload probe has its own hardware safeguards and does not participate
-in the shared device lock.
+serial ports and `--board-ready`; training requires `--execute`.
 Offline analysis and publication scripts consume saved artifacts separately.
 
 ## Experiment recipes
@@ -33,9 +31,8 @@ Offline analysis and publication scripts consume saved artifacts separately.
   OxIOD/TCN continuous training-budget recipe with historical energy inputs;
   training requires `--execute` and does not use HIL.
 
-The repeatability, waiting-power, and policy runners share a physical-device
-lock. Use the same device ID and lock root across runners. See each
-runner's README for build dependencies and measurement safeguards.
+Run only one experiment at a time on a DUT/harness. See each runner's README
+for build dependencies and measurement safeguards.
 
 ## Case studies and appendices
 

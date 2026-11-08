@@ -136,10 +136,8 @@ def test_restart_after_backend_exception_requires_inspection(tmp_path, monkeypat
     monkeypatch.setattr(runner, "experiment", module)
     kwargs = dict(
         root=study,
-        device_id="test-device",
         dut_port="/dut",
         harness_port="/harness",
-        lock_dir=tmp_path / "locks",
         board_ready=True,
     )
     with pytest.raises(RuntimeError, match="uncertain measurement"):
@@ -178,10 +176,8 @@ def test_rejected_evaluation_exhaustion_is_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "experiment", module)
     kwargs = dict(
         root=study,
-        device_id="device",
         dut_port="/dut",
         harness_port="/harness",
-        lock_dir=tmp_path / "locks",
         board_ready=True,
     )
     for _ in range(2):
@@ -221,10 +217,8 @@ def test_accepted_restart_recovery_and_invocation_bound(tmp_path, monkeypatch):
     )
     kwargs = dict(
         root=study,
-        device_id="device",
         dut_port="/dut",
         harness_port="/harness",
-        lock_dir=tmp_path / "locks",
         board_ready=True,
         max_evaluations=1,
     )
