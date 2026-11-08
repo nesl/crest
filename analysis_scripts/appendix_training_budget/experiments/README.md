@@ -15,16 +15,16 @@ Run from the repository root in the CREST environment. Preparation needs PyYAML;
 training needs the full CREST runtime, and analysis needs Matplotlib.
 
 ```bash
-python analysis_scripts/training_experiment/epoch_sensitivity.py prepare \
+python analysis_scripts/appendix_training_budget/experiments/epoch_sensitivity.py prepare \
   --source-run-dir /path/to/saved-run \
   --output-dir /path/to/new-experiment \
   --count 4 --budgets 15,30,55,100,200,300 --seeds 17
 
-python analysis_scripts/training_experiment/epoch_sensitivity.py run \
+python analysis_scripts/appendix_training_budget/experiments/epoch_sensitivity.py run \
   --experiment-dir /path/to/new-experiment \
   --dataset-dir /path/to/oxiod --execute
 
-python analysis_scripts/training_experiment/epoch_sensitivity.py analyze \
+python analysis_scripts/appendix_training_budget/experiments/epoch_sensitivity.py analyze \
   --experiment-dir /path/to/new-experiment
 ```
 
@@ -65,7 +65,7 @@ are set, but GPU bitwise determinism is not guaranteed.
 `--skip-completed` only with the same manifest and dataset identity; partial
 trajectories are refused. There is no automatic mid-trajectory resume. Preserve
 partial outputs and prepare a new directory for a documented restart. Training
-also runs the single-panel analysis on completion. The `analyze --experiment-dir` command above consumes this directory directly. [Training-budget appendix analysis](../appendix_training_budget/README.md) has separate input contracts; use its documented tables rather than passing this directory to an arbitrary appendix command.
+also runs the single-panel analysis on completion. The `analyze --experiment-dir` command above consumes this directory directly. [Training-budget appendix analysis](../README.md) has separate input contracts; use its documented tables rather than passing this directory to an arbitrary appendix command.
 
 ```bash
 python -m pytest -q test/test_training_experiment.py

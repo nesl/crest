@@ -4,7 +4,8 @@ SPDX-License-Identifier: BSD-3-Clause
 -->
 # CS1: waiting power and model selection
 
-Reusable analysis of saved energy measurements; no training or hardware access.
+The analysis commands below use saved energy measurements without training or
+hardware access. Hardware experiment recipes are grouped under `experiments/`.
 Requires Python, NumPy, pandas and SciPy. Inputs and generated results stay outside
 this package. Each command supports `--help` and records input hashes.
 
@@ -26,6 +27,15 @@ each list entry shaped as `{"left": "candidate_a", "right": "candidate_b"}`.
 Calibration assumes one/ten-release awake-final windows;
 its periods and excluded pools are explicit options. Input column names follow
 the saved CREST measurement tables. Graph grouping currently supports TCN logs.
+
+## Collect new measurements
+
+The [repeatability](experiments/repeatability/README.md),
+[waiting-power](experiments/waiting_power/README.md), and
+[waiting-policy](experiments/waiting_policy/README.md) recipes run new STM32
+experiments. Each guide describes preparation, hardware requirements, outputs,
+and the inputs needed for subsequent analysis. Run one experiment at a time
+on a DUT/harness.
 
 ## Explicit-input analysis
 

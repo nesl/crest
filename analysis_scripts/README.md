@@ -12,22 +12,22 @@ Run these scripts from the repository root with the `crest` Conda environment
 active unless a package README says otherwise. Most scripts consume existing
 NAS, replay, or measurement artifacts and do not run NAS or touch hardware.
 
-The recipes below run training or collect hardware measurements. The repeatability, waiting-power and policy-replay runners require explicit
+The recipes below run training or collect hardware measurements. The repeatability, waiting-power and waiting-policy runners require explicit
 serial ports and `--board-ready`; training requires `--execute`.
 Offline analysis and publication scripts consume saved artifacts separately.
 
 ## Experiment recipes
 
-- [Paired repeatability](repeatability/README.md): frozen randomized paired
+- [Paired repeatability](cs1/experiments/repeatability/README.md): frozen randomized paired
   schedules, compile-once artifacts, and native measurement acceptance.
-- [Waiting power](waiting_power/README.md): continuous and cadenced run-count
+- [Waiting power](cs1/experiments/waiting_power/README.md): continuous and cadenced run-count
   probes with a separate offline power-analysis command.
-- [Policy replay](policy_replay/README.md): native prepared-project policy comparisons
+- [Waiting-policy experiments](cs1/experiments/waiting_policy/README.md): native prepared-project policy comparisons
   with explicit deployment configuration.
-- [Micro-workload energy probe](micro_workload_energy_probe/README.md): synthetic
+- [Micro-workload energy probe](appendix_measurement_context/experiments/micro_workload_energy_probe/README.md): synthetic
   phase-energy measurements through the CREST HIL harness.
 
-- [Training budget experiment](training_experiment/README.md): configurable
+- [Training budget experiment](appendix_training_budget/experiments/README.md): configurable
   OxIOD/TCN continuous training-budget recipe with historical energy inputs;
   training requires `--execute` and does not use HIL.
 
@@ -40,6 +40,7 @@ for build dependencies and measurement safeguards.
 | --- | --- |
 | [`cs1/`](cs1/README.md) | Waiting-power calibration, held-out prediction, selection, and paired replay |
 | [`cs3/`](cs3/README.md) | Search trajectories, campaign effort, score sensitivity, saved evaluation, and replay |
+| [`appendix_measurement_context/`](appendix_measurement_context/README.md) | Synthetic sleep and compute measurements |
 | [`appendix_evaluation_cost/`](appendix_evaluation_cost/README.md) | Candidate evaluation timing and host/device cost breakdowns |
 | [`appendix_training_budget/`](appendix_training_budget/README.md) | Checkpoint policies, ranking sensitivity, and training time |
 | [`appendix_trial_outcomes/`](appendix_trial_outcomes/README.md) | Recorded trial outcomes and analysis populations |
@@ -47,7 +48,7 @@ for build dependencies and measurement safeguards.
 Each guide lists inputs, commands, and outputs.
 
 Other utilities include [Pareto comparison](compare_pareto_front_calcs/README.md),
-the [hardware energy probe](micro_workload_energy_probe/README.md), and
+the [hardware energy probe](appendix_measurement_context/experiments/micro_workload_energy_probe/README.md), and
 [publication plots](paper_plots/README.md). The hardware probe requires a target
 board and measurement harness; the analysis tools read saved artifacts.
 

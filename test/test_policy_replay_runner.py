@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from analysis_scripts.policy_replay import replay
+from analysis_scripts.cs1.experiments.waiting_policy import runner as replay
 
 
 def manifest(tmp_path):
@@ -107,7 +107,7 @@ def test_real_acceptance_fails_closed(tmp_path):
 
 
 def test_run_resume_and_stop_after_failure(tmp_path, monkeypatch):
-    from analysis_scripts.policy_replay import native
+    from analysis_scripts.cs1.experiments.waiting_policy import native
 
     study = replay.prepare(manifest(tmp_path), tmp_path / "out")
     calls = []
@@ -153,7 +153,7 @@ def native_case(tmp_path, monkeypatch):
     import dataclasses
     import sys
     import types
-    from analysis_scripts.policy_replay import native
+    from analysis_scripts.cs1.experiments.waiting_policy import native
 
     study = replay.prepare(manifest(tmp_path), tmp_path / "study")
     variant = json.loads((study / "study.json").read_text())["variants"][0]

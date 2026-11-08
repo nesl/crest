@@ -233,3 +233,26 @@ def test_accepted_restart_recovery_and_invocation_bound(tmp_path, monkeypatch):
     assert len(calls) == 2
     runner.execute(**kwargs)
     assert len(calls) == 2
+
+
+def test_relocated_build_finds_repository_source(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from . import runner
+
+    class BuildReached(RuntimeError):
+        pass
+
+    def stop_at_server(**kwargs):
+        assert (Path(sys.path[0]) / "crest" / "__init__.py").is_file()
+        raise BuildReached
+
+    monkeypatch.setattr(runner, "verify", lambda root: None)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setitem(
+        sys.modules, "hil_server", types.SimpleNamespace(HILServer=stop_at_server)
+    )
+    (tmp_path / "manifest.json").write_text("{}")
+    with pytest.raises(BuildReached):
+        runner.build_artifacts(tmp_path, tmp_path / "config.yaml")

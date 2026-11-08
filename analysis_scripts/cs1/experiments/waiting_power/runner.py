@@ -23,7 +23,7 @@ import types
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[1]
+REPO = HERE.parents[3]
 FIRMWARE = REPO / "sketches/stm32/crest_stm32_lrun/Appli/Src/crest_dut_runner.c"
 EXPECTED_PROTOCOL = "rtc_wall_v4_dwt_active_stop_evidence_awake_tail"  # codex/llm-generator-mvp @ 0445a49
 BUSY_SCRIPTS = (

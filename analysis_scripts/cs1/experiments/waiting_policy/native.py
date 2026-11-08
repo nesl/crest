@@ -1,6 +1,6 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Native execution of the prepared policy replay experiment."""
+"""Native execution of the prepared waiting-policy experiment."""
 from __future__ import annotations
 
 import dataclasses
@@ -9,7 +9,7 @@ from pathlib import Path
 import types
 import sys
 
-from .replay import save, sha256, validate_variant
+from .runner import save, sha256, validate_variant
 from . import validator_awake, validator_stop
 
 
@@ -98,7 +98,7 @@ def _prepare_backend(variant, attempt_root, device):
     ):
         if fields.get(field) is not None:
             fields[field] = Path(fields[field])
-    source_root = Path(__file__).resolve().parents[2] / "src"
+    source_root = Path(__file__).resolve().parents[4] / "src"
     if str(source_root) not in sys.path:
         sys.path.insert(0, str(source_root))
     from crest.devices import CompileResult

@@ -5,6 +5,7 @@ import argparse
 import csv
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -14,7 +15,7 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "analysis_scripts/training_experiment/epoch_sensitivity.py"
+SCRIPT = ROOT / "analysis_scripts/appendix_training_budget/experiments/epoch_sensitivity.py"
 spec = importlib.util.spec_from_file_location("epoch_front_pilot", SCRIPT)
 pilot = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pilot)
@@ -148,13 +149,20 @@ def test_run_requires_explicit_execute_before_any_access():
         pilot.run(SimpleNamespace(execute=False))
 
 
-def test_prepare_import_does_not_load_training_runtime():
+def test_prepare_import_resolves_repo_root_without_training_runtime(tmp_path):
     code = (
-        "import runpy, sys; runpy.run_path(sys.argv[1], run_name='safe_import'); "
+        "import runpy, sys; from pathlib import Path; "
+        "namespace = runpy.run_path(sys.argv[1], run_name='safe_import'); "
+        "assert namespace['ROOT'] == Path(sys.argv[2]); "
+        "assert Path(namespace['replay'].__file__).is_relative_to(Path(sys.argv[2]) / 'src'); "
         "assert 'tensorflow' not in sys.modules; assert 'nas_model_client' not in sys.modules; "
         "assert 'hil_server' not in sys.modules"
     )
-    subprocess.run([sys.executable, "-c", code, str(SCRIPT)], check=True)
+    subprocess.run(
+        [sys.executable, "-c", code, str(SCRIPT), str(ROOT)],
+        check=True, cwd=tmp_path,
+        env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+    )
 
 
 def test_reference_comparison_reports_reversal():

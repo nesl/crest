@@ -187,3 +187,10 @@ def test_backend_exception_is_recorded_and_stops_restart(fake_study, monkeypatch
     with pytest.raises(RuntimeError, match="requires inspection"):
         runner.cmd_run(args)
     assert len([e for e in events if e[0] == "interrupted"]) == 1
+
+
+def test_relocated_provenance_sources_exist():
+    from .runner import PROVENANCE_FILES
+
+    assert PROVENANCE_FILES
+    assert all(path.is_file() for path in PROVENANCE_FILES)

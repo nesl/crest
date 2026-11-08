@@ -1,6 +1,6 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-"""Prepare and orchestrate policy replay using explicit prepared firmware artifacts.
+"""Prepare and orchestrate waiting-policy experiments using prepared firmware artifacts.
 
 Prepared projects must come from a controlled policy-specific native build.
 """

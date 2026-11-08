@@ -241,7 +241,7 @@ def execute(
         plan = json.loads((root / "schedule.json").read_text())
         import sys
 
-        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "src"))
         module = experiment
         measurement = module.Experiment(manifest, root)
         configs = {c["candidate_id"]: dict(c) for c in manifest["candidates"]}
@@ -380,7 +380,7 @@ def build_artifacts(root, config_path):
     """
     root = Path(root).resolve()
     verify(root)
-    repo = Path(__file__).resolve().parents[2]
+    repo = Path(__file__).resolve().parents[4]
     import sys
 
     sys.path.insert(0, str(repo / "src"))
