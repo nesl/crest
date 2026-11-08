@@ -14,7 +14,7 @@ this package. Each command supports `--help` and records input hashes.
 | `heldout_prediction.py` | Graph-separated prediction, bootstrap and selection |
 | `raw_selection_baseline.py` | Raw energy/latency selection baselines |
 | `paired_transfer.py` | Paired prediction residuals and timing substitutions |
-| `policy_replay.py` | Paired awake/STOP-policy contrasts |
+| `waiting_policy.py` | Paired awake/STOP-policy contrasts |
 | `repeats.py` | Search-pair repeats and estimated STOP correction |
 | `direct_session.py` | Direct contrasts, waiting slopes and accounting |
 | `scaling_periods.py` | Clock scaling and measured energy optima |
@@ -42,7 +42,7 @@ python analysis_scripts/cs1/heldout_prediction.py \
 python analysis_scripts/cs1/raw_selection_baseline.py \
   --predictions /path/to/results/calibration/predictions.csv \
   --output-dir /path/to/results/raw_selection
-python analysis_scripts/cs1/policy_replay.py \
+python analysis_scripts/cs1/waiting_policy.py \
   --energy-records /path/to/policy_energy_records.json \
   --pairs /path/to/policy_pairs.json --output-dir /path/to/results/policy
 python analysis_scripts/cs1/repeats.py \

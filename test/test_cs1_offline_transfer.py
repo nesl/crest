@@ -80,7 +80,7 @@ class SummaryTests(unittest.TestCase):
             (root / "pairs.json").write_text(
                 json.dumps([{"left": "new_a", "right": "new_b"}])
             )
-            load_module("policy_replay").main(
+            load_module("waiting_policy").main(
                 [
                     "--energy-records",
                     str(root / "records.json"),
@@ -127,7 +127,7 @@ class SummaryTests(unittest.TestCase):
         None
             Asserts the known three-observation result.
         """
-        result = load_module("policy_replay").summary([1, 2, 3])
+        result = load_module("waiting_policy").summary([1, 2, 3])
         self.assertEqual(result["n"], 3)
         self.assertEqual(result["differences_mj"], [1, 2, 3])
         self.assertAlmostEqual(result["mean_mj"], 2)
