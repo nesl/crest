@@ -2,13 +2,13 @@
 Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 SPDX-License-Identifier: BSD-3-Clause
 -->
-# Training-budget analysis
+# Appendix: training-budget sensitivity
 
 Analyze saved checkpoint evaluations and training histories. No training,
 TensorFlow or hardware access is required. Install NumPy, SciPy and PyYAML.
 
 ```sh
-python analysis_scripts/training_budget/analyze.py \
+python analysis_scripts/appendix_training_budget/analyze.py \
   --panels /path/to/batch-a /path/to/batch-b \
   --reference-budget 300 --seed 17 --output-dir /path/to/results
 ```

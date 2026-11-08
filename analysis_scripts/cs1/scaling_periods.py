@@ -12,18 +12,7 @@ from scipy.stats import t
 
 
 def ci(v):
-    """Compute an unadjusted Student t interval.
-
-    Parameters
-    ----------
-    v : array_like
-        Independent paired-round contrasts.
-
-    Returns
-    -------
-    dict
-        Count, mean, and nominal 95 percent interval endpoints.
-    """
+    """Compute an unadjusted Student t interval."""
     a = np.asarray(v, dtype=float)
     n = len(a)
     if n < 2 or not np.isfinite(a).all():
@@ -56,18 +45,7 @@ def run(archive_root, output_dir):
     inputs = []
 
     def read(p):
-        """Read and register a CSV input.
-
-        Parameters
-        ----------
-        p : pathlib.Path
-            Input path.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Parsed records.
-        """
+        """Read and register a CSV input."""
         inputs.append(p)
         return pd.read_csv(p)
 
@@ -409,13 +387,7 @@ def analyze_probes(probes, output_dir):
 
 
 def main():
-    """Parse explicit archive and output paths and run the audit.
-
-    Returns
-    -------
-    None
-        Writes requested analysis outputs.
-    """
+    """Parse explicit archive and output paths and run the audit."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--archive-root", type=Path, help="Optional retained-archive provenance audit"

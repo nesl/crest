@@ -2,13 +2,13 @@
 Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 SPDX-License-Identifier: BSD-3-Clause
 -->
-# Timing attribution
+# Appendix: candidate evaluation cost
 
 Reconcile saved CREST client/server spans into additive host and HIL costs.
 Python's standard library is sufficient. No training or hardware access occurs.
 
 ```sh
-python analysis_scripts/timing_attribution/prepare_inputs.py \
+python analysis_scripts/appendix_evaluation_cost/prepare_inputs.py \
   --source /path/to/campaign --run-prefix experiment- \
   --arena-mode phase-attempts --output-dir /path/to/results
 ```

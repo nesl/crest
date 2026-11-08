@@ -11,18 +11,7 @@ from scipy.stats import t
 
 
 def summary(values):
-    """Summarize paired round differences.
-
-    Parameters
-    ----------
-    values : list of float
-        Paired differences in mJ per release.
-
-    Returns
-    -------
-    dict
-        Sample count, mean, Student t 95 percent bounds, and differences.
-    """
+    """Summarize paired round differences."""
     n = len(values)
     mean = statistics.mean(values)
     half = t.ppf(0.975, n - 1) * statistics.stdev(values) / n**0.5
@@ -36,34 +25,12 @@ def summary(values):
 
 
 def energy(record):
-    """Extract per-inference energy.
-
-    Parameters
-    ----------
-    record : dict
-        Accepted measurement record.
-
-    Returns
-    -------
-    float
-        Energy in mJ per inference.
-    """
+    """Extract per-inference energy."""
     return record["power_metrics"]["energy_mj_per_inference"]
 
 
 def main(argv=None):
-    """Analyze explicit frozen policy inputs.
-
-    Parameters
-    ----------
-    argv : list of str, optional
-        Command-line arguments, defaulting to process arguments.
-
-    Returns
-    -------
-    None
-        Writes paired analysis, report, and input hash provenance.
-    """
+    """Analyze explicit frozen policy inputs."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--energy-records", required=True, type=Path)
     parser.add_argument(

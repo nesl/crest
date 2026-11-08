@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-PATH = Path(__file__).parents[1] / "analysis_scripts/cs3_audit/replay.py"
+PATH = Path(__file__).parents[1] / "analysis_scripts/cs3/replay.py"
 SPEC = importlib.util.spec_from_file_location("cs3_replay", PATH)
 replay = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(replay)

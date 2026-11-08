@@ -4,7 +4,7 @@
 
 import json
 import sqlite3
-from analysis_scripts.trial_outcomes.periodic import audit, cadence_reasons, outcome
+from analysis_scripts.appendix_trial_outcomes.periodic import audit, cadence_reasons, outcome
 
 
 def test_source_policy_is_distinct_from_cadence():
@@ -137,7 +137,7 @@ def test_complete_csv_rows_do_not_replace_attempt_identity(tmp_path):
 
 
 def test_stale_success_attributes_are_incomplete():
-    from analysis_scripts.trial_outcomes.periodic import positive
+    from analysis_scripts.appendix_trial_outcomes.periodic import positive
 
     attrs = dict(error_code=1, feasibility_status="feasible", energy_mj_per_inference=1)
     assert outcome("RUNNING", attrs) == "not_deployed_or_incomplete"

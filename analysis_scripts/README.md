@@ -11,40 +11,30 @@ generators that sit outside the core CREST runtime.
 Run these scripts from the repository root with the `crest` Conda environment
 active unless a package README says otherwise. Most scripts consume existing
 NAS, replay, or measurement artifacts and do not run NAS or touch hardware.
-## Offline analysis and publication tools
+## Case studies and appendices
 
-- `trial_outcomes/`: read-only final-trial outcome classification, separate
-  population flags, and aggregate checks; see its [README](trial_outcomes/README.md).
+| Folder | Analysis |
+| --- | --- |
+| [`cs1/`](cs1/README.md) | Waiting-power calibration, held-out prediction, selection, and paired replay |
+| [`cs3/`](cs3/README.md) | Search trajectories, campaign effort, score sensitivity, saved evaluation, and replay |
+| [`appendix_evaluation_cost/`](appendix_evaluation_cost/README.md) | Candidate evaluation timing and host/device cost breakdowns |
+| [`appendix_training_budget/`](appendix_training_budget/README.md) | Checkpoint policies, ranking sensitivity, and training time |
+| [`appendix_trial_outcomes/`](appendix_trial_outcomes/README.md) | Recorded trial outcomes and analysis populations |
 
-- `cs3_audit/`: reusable exact scoring, campaign effort, saved evaluation and
-  replay checks; see its [README](cs3_audit/README.md).
+Each guide lists inputs, commands, and outputs.
 
-- `timing_attribution/`: saved client/server timing reconciliation and appendix
-  checks; see its [README](timing_attribution/README.md).
-
-- `training_budget/`: reusable checkpoint-policy and training-time analysis;
-  see its [README](training_budget/README.md) for inputs and paper checks.
-
-- `cs1_offline/`: offline calibration, prediction, selection and paired replay
-  analysis, with a separate [submitted-paper recipe](cs1_offline/README.md).
-
-- `compare_pareto_front_calcs/`
-  - **Hardware requirement: no hardware required.** Generic CSV-derived
-    Pareto-front comparison helper with explicit quality/cost columns,
-    feasibility filters, matching rules, and reduction denominators.
-
-- `cs3_audio_sensitivity/`
-  - **Hardware requirement: no hardware required.** Case Study 3 post-hoc
-    score-sensitivity analysis over audio NAS logs.
-
-- `paper_plots/`: existing publication figure tools; see its README.
+Other utilities include [Pareto comparison](compare_pareto_front_calcs/README.md),
+[audio score sensitivity](cs3_audio_sensitivity/README.md), the
+[hardware energy probe](micro_workload_energy_probe/README.md), and
+[publication plots](paper_plots/README.md). The hardware probe requires a target
+board and measurement harness; the analysis tools read saved artifacts.
 
 ## Case Study 3: proposal strategies and search effort
 
 These tools analyze externally supplied study artifacts for the paper's audio
 proposal-strategy comparison.
 
-- `analyze_cs3_search.py` summarizes recorded trial outcomes, architecture
+- `cs3/search_history.py` summarizes recorded trial outcomes, architecture
   coverage, proposal provenance, score progress and recorded API wall time.
   These support the CS3 comparison of search behavior and effort; they do not
   establish optimizer superiority across unmatched experiments.
@@ -52,7 +42,7 @@ proposal-strategy comparison.
 Run from the repository root, using your own study artifacts:
 
 ```bash
-PYTHONPATH=src python analysis_scripts/analyze_cs3_search.py \
+PYTHONPATH=src python analysis_scripts/cs3/search_history.py \
   --history-db /path/to/study/optuna.db \
   --study-name audio_search \
   --ledger-dir /path/to/study/llm_optimizer \

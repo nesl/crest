@@ -2,7 +2,7 @@
 Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 SPDX-License-Identifier: BSD-3-Clause
 -->
-# Final trial outcomes
+# Appendix: recorded trial outcomes
 
 These read-only tools classify saved search trials into disjoint final outcomes.
 They do not run training, contact hardware, or count measurement retries and
@@ -11,7 +11,7 @@ outside the checkout.
 
 - `periodic.py MANIFEST OUTPUT_DIR` audits periodic campaigns and separately
   records paired-measurement eligibility and configured population exclusions.
-- `legacy.py --config CONFIG --output-dir OUTPUT_DIR` audits legacy SQLite
+- `recorded.py --config CONFIG --output-dir OUTPUT_DIR` audits legacy SQLite
   databases or saved JSON exports using recorded operational eligibility.
 - `scored.py --config CONFIG --output-dir OUTPUT_DIR` audits scored campaigns
   through an explicit completion endpoint.

@@ -74,14 +74,20 @@ def combine(tables):
     return rows
 
 
-def main():
-    """Write one aggregate table from explicit outcome CSV inputs.
+def validate_population_flags(rows):
+    """Check nested analysis populations independently of manuscript counts."""
+    truth = lambda value: str(value).lower() in ("true", "1")
+    for row in rows:
+        if truth(row["paired_included"]) and not truth(row["paired_eligible"]):
+            raise ValueError("Paired inclusion lacks eligibility")
+        if truth(row["paired_eligible"]) and row["outcome"] != "measured_passed":
+            raise ValueError("Paired eligibility lacks campaign pass")
+        if truth(row["model_eligible"]) != truth(row["paired_included"]):
+            raise ValueError("Model population differs from paired population")
 
-    Returns
-    -------
-    None
-        Writes ``outcome_counts.csv`` in the external output directory.
-    """
+
+def main():
+    """Write one aggregate table from explicit outcome CSV inputs."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, nargs="+", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)

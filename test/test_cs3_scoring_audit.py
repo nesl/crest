@@ -8,7 +8,7 @@ import sys
 from fractions import Fraction as F
 from pathlib import Path
 
-MODULE = Path(__file__).resolve().parents[1] / "analysis_scripts/cs3_audit/scoring.py"
+MODULE = Path(__file__).resolve().parents[1] / "analysis_scripts/cs3/scoring.py"
 spec = importlib.util.spec_from_file_location("cs3_scoring", MODULE)
 s = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = s

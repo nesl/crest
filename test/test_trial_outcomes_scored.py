@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 
-from analysis_scripts.trial_outcomes.scored import audit
+from analysis_scripts.appendix_trial_outcomes.scored import audit
 
 
 def database(tmp_path):
@@ -133,7 +133,7 @@ def test_direct_cli_help_outside_repository(tmp_path):
 
     script = (
         Path(__file__).resolve().parents[1]
-        / "analysis_scripts/trial_outcomes/scored.py"
+        / "analysis_scripts/appendix_trial_outcomes/scored.py"
     )
     process = subprocess.run(
         [sys.executable, str(script), "--help"],

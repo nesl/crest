@@ -14,20 +14,7 @@ CONDITIONS = ("continuous", "cadenced", "flops", "memory")
 
 
 def ancestors(row, index):
-    """Follow parents within one host/process.
-
-    Parameters
-    ----------
-    row : dict
-        Starting span.
-    index : dict
-        Spans keyed by run, host, process and span ID.
-
-    Yields
-    ------
-    dict
-        Successive parent spans.
-    """
+    """Follow parents within one host/process."""
     seen = set()
     while row.get("parent_id"):
         key = (row.get("run_id"), row["host"], row["pid"], row["parent_id"])
@@ -289,13 +276,7 @@ def prepare(source, output, prefix="", mode="phase-attempts"):
 
 
 def main():
-    """Parse input paths and the saved backend's accounting method.
-
-    Returns
-    -------
-    None
-        Executes the offline pipeline.
-    """
+    """Parse input paths and the saved backend's accounting method."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)

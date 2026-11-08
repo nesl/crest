@@ -8,7 +8,7 @@ import sys
 import pandas as pd
 import pytest
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "analysis_scripts/cs1_offline"
+SCRIPTS = Path(__file__).resolve().parents[1] / "analysis_scripts/cs1"
 sys.path.insert(0, str(SCRIPTS))
 import scaling_periods
 import direct_session

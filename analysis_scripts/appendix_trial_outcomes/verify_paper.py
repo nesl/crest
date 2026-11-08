@@ -6,7 +6,7 @@ import argparse
 import csv
 from pathlib import Path
 
-from combine import combine
+from combine import combine, validate_population_flags
 
 EXPECTED = {
     "measured_passed": {"CS1": 915, "CS2": 624, "CS3": 1200, "Total": 2739},
@@ -50,13 +50,7 @@ def verify(tables):
     )
     if (passed, eligible, included, excluded) != (915, 905, 756, 149):
         raise ValueError("Periodic population count mismatch")
-    for row in periodic:
-        if truth(row["paired_included"]) and not truth(row["paired_eligible"]):
-            raise ValueError("Paired inclusion lacks eligibility")
-        if truth(row["paired_eligible"]) and row["outcome"] != "measured_passed":
-            raise ValueError("Paired eligibility lacks campaign pass")
-        if truth(row["model_eligible"]) != truth(row["paired_included"]):
-            raise ValueError("Model population differs from paired population")
+    validate_population_flags(periodic)
     return dict(
         attempts=3521,
         campaign_passed=passed,

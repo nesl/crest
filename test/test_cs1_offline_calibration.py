@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-path = Path(__file__).parents[1] / "analysis_scripts/cs1_offline/calibration.py"
+path = Path(__file__).parents[1] / "analysis_scripts/cs1/calibration.py"
 spec = importlib.util.spec_from_file_location("calibration", path)
 cal = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cal)

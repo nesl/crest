@@ -2,7 +2,7 @@
 Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 SPDX-License-Identifier: BSD-3-Clause
 -->
-# CS1 offline analysis
+# CS1: waiting power and model selection
 
 Reusable analysis of saved energy measurements; no training or hardware access.
 Requires Python, NumPy, pandas and SciPy. Inputs and generated results stay outside
@@ -19,7 +19,8 @@ this package. Each command supports `--help` and records input hashes.
 | `direct_session.py` | Direct contrasts, waiting slopes and accounting |
 | `scaling_periods.py` | Clock scaling and measured energy optima |
 
-Use explicit input/output paths for new datasets. Prediction supports configurable
+Run the commands below from the repository root. Relative input/output paths
+resolve from the current working directory. Use explicit input/output paths for new datasets. Prediction supports configurable
 folds, repeats and quality ceilings. Supply pairings in external JSON files, with
 each list entry shaped as `{"left": "candidate_a", "right": "candidate_b"}`.
 Calibration assumes one/ten-release awake-final windows;
@@ -29,7 +30,7 @@ the saved CREST measurement tables. Graph grouping currently supports TCN logs.
 ## Submitted-paper reproduction
 
 ```sh
-python analysis_scripts/cs1_offline/reproduce_paper.py \
+python analysis_scripts/cs1/reproduce_paper.py \
   --archive-root /path/to/research-archive --output-dir /path/to/results \
   --policy-pairs /path/to/policy_pairs.json \
   --repeat-pairs /path/to/repeat_pairs.json

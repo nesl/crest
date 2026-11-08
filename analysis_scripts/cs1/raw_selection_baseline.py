@@ -131,13 +131,7 @@ def run(predictions, output_dir, quality_ceilings=(0.65, 0.75, 1.0)):
 
 
 def main():
-    """Parse explicit file paths and run the comparison.
-
-    Returns
-    -------
-    None
-        Writes baseline results.
-    """
+    """Parse explicit file paths and run the comparison."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--predictions", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)

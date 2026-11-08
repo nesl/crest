@@ -12,18 +12,7 @@ from scipy.stats import t
 
 
 def ci(x):
-    """Compute a paired-round Student t interval.
-
-    Parameters
-    ----------
-    x : array_like
-        Round-level contrasts.
-
-    Returns
-    -------
-    dict
-        Mean and two-sided 95 percent interval bounds.
-    """
+    """Compute a paired-round Student t interval."""
     x = np.asarray(x, float)
     m = x.mean()
     h = t.ppf(0.975, len(x) - 1) * x.std(ddof=1) / np.sqrt(len(x))
@@ -31,18 +20,7 @@ def ci(x):
 
 
 def holm_adjust(pvalues):
-    """Adjust a pre-specified family of p-values using Holm's method.
-
-    Parameters
-    ----------
-    pvalues : array_like
-        Unadjusted two-sided p-values.
-
-    Returns
-    -------
-    numpy.ndarray
-        Adjusted p-values in input order.
-    """
+    """Adjust a pre-specified family of p-values using Holm's method."""
     pvalues = np.asarray(pvalues, float)
     order = np.argsort(pvalues)
     adjusted = np.empty_like(pvalues)
@@ -56,18 +34,7 @@ def holm_adjust(pvalues):
 
 
 def main(argv=None):
-    """Run frozen transfer calculations from explicit portable inputs.
-
-    Parameters
-    ----------
-    argv : list of str, optional
-        Command-line arguments; defaults to process arguments.
-
-    Returns
-    -------
-    None
-        Writes paired rounds, intervals, sensitivity, and provenance.
-    """
+    """Run frozen transfer calculations from explicit portable inputs."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--energy-records", required=True, type=Path)
     parser.add_argument("--calibration", required=True, type=Path)
@@ -88,20 +55,7 @@ def main(argv=None):
         for pair in pairs:
 
             def candidate(name, phase):
-                """Select accepted ten-run records keyed by round.
-
-                Parameters
-                ----------
-                name : str
-                    Candidate identifier.
-                phase : str
-                    Measurement phase.
-
-                Returns
-                -------
-                dict
-                    Round identifiers mapped to measurement records.
-                """
+                """Select accepted ten-run records keyed by round."""
                 rr = [
                     r for r in records if r["candidate"] == name and r["phase"] == phase
                 ]

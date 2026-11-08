@@ -12,7 +12,7 @@ import unittest
 
 MODULE_PATH = (
     Path(__file__).resolve().parents[1]
-    / "analysis_scripts/timing_attribution/analyze.py"
+    / "analysis_scripts/appendix_evaluation_cost/analyze.py"
 )
 SPEC = importlib.util.spec_from_file_location("timing_analyze", MODULE_PATH)
 analyze = importlib.util.module_from_spec(SPEC)

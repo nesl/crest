@@ -9,6 +9,23 @@ import math
 from pathlib import Path
 
 
+def _select_source(pool, energy_scale, weight):
+    """Select with the archived floating-point score and source tie order.
+
+    The exact Fraction envelope in scoring.py answers a separate sensitivity
+    question; replay preserves this float calculation for source association.
+    """
+    return min(
+        pool,
+        key=lambda r: (
+            -(float(r["f1"]) - weight * float(r["energy_mj"]) / energy_scale),
+            -float(r["f1"]),
+            float(r["energy_mj"]),
+            int(r["trial"]),
+        ),
+    )
+
+
 def audit(observations, replays, energy_scale=400.0, weight=0.1):
     """Match replay architecture and inherited quality to source selections.
 
@@ -39,15 +56,7 @@ def audit(observations, replays, energy_scale=400.0, weight=0.1):
     selected = {}
     output = []
     for key, pool in pools.items():
-        winner = min(
-            pool,
-            key=lambda r: (
-                -(float(r["f1"]) - weight * float(r["energy_mj"]) / energy_scale),
-                -float(r["f1"]),
-                float(r["energy_mj"]),
-                int(r["trial"]),
-            ),
-        )
+        winner = _select_source(pool, energy_scale, weight)
         study = winner["study_name"]
         if study in selected:
             raise ValueError("Source study must identify one campaign")

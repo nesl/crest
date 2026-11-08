@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import unittest
 
-ROOT = Path(__file__).parents[1] / "analysis_scripts/trial_outcomes"
+ROOT = Path(__file__).parents[1] / "analysis_scripts/appendix_trial_outcomes"
 for name in ("combine", "verify_paper"):
     spec = importlib.util.spec_from_file_location(name, ROOT / (name + ".py"))
     module = importlib.util.module_from_spec(spec)

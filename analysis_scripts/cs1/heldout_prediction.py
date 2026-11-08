@@ -218,18 +218,7 @@ def predict(train, test, groupcols, tag, repeat, fold):
 
 
 def summarize(p):
-    """Aggregate row-weighted prediction errors.
-
-    Parameters
-    ----------
-    p : pandas.DataFrame
-        Held-out predictions.
-
-    Returns
-    -------
-    pandas.DataFrame
-        RMSE, MAE, and bias by protocol, model, and target.
-    """
+    """Aggregate row-weighted prediction errors."""
     rows = []
     for protocol, g in p.groupby("protocol"):
         for m in MODELS:
@@ -331,6 +320,83 @@ def selections(p, quality_ceilings=(0.65, 0.75, 1.0)):
     )
 
 
+def evaluate_holdouts(d, repeats, folds):
+    """Fit deterministic graph holdouts and architecture-disjoint pool transfers."""
+    pred = []
+    coeff = []
+    for rep in range(repeats):
+        fold_ids = d.arch_id.map(
+            lambda a: int(hashlib.sha256(f"{rep}:{a}".encode()).hexdigest()[:12], 16)
+            % folds
+        )
+        for fold in range(folds):
+            out, co = predict(
+                d[fold_ids != fold],
+                d[fold_ids == fold],
+                ["pool", "clock_mhz", "quantization"],
+                "same_pool_architecture_holdout",
+                rep,
+                fold,
+            )
+            pred += out
+            coeff += co
+    for pool, g in d.groupby("pool"):
+        train = d[(d.pool != pool) & ~d.arch_id.isin(g.arch_id)]
+        out, co = predict(
+            train,
+            g,
+            ["clock_mhz", "quantization"],
+            "leave_pool_out_architecture_disjoint",
+            0,
+            pool,
+        )
+        pred += out
+        coeff += co
+    if not pred:
+        raise ValueError(
+            "No supported evaluation groups: each fit needs three training architectures and two distinct latencies"
+        )
+    return pd.concat(pred, ignore_index=True), coeff
+
+
+def cluster_bootstrap(p, seed):
+    """Bootstrap architecture-mean squared-error contrasts in evaluation order."""
+    rng = np.random.default_rng(seed)
+    ci = []
+    for protocol, g in p.groupby("protocol"):
+        for target, suffix in [("continuous", "cont"), ("scheduled", "scheduled")]:
+            for other in ["proportional", "calibrated"] + (
+                ["measured_continuous", "affine"]
+                if target == "scheduled"
+                and protocol == "same_pool_architecture_holdout"
+                else []
+            ):
+                lead = (
+                    "scheduled_direct_affine"
+                    if other in ["measured_continuous", "affine"]
+                    else "affine"
+                )
+                diff = (g[lead + "_" + suffix] - g[target + "_mj"]) ** 2 - (
+                    g[other + "_" + suffix] - g[target + "_mj"]
+                ) ** 2
+                z = diff.groupby(g.arch_id).mean().to_numpy()
+                boot = np.array(
+                    [rng.choice(z, len(z), replace=True).mean() for _ in range(2000)]
+                )
+                ci.append(
+                    dict(
+                        protocol=protocol,
+                        target=target,
+                        contrast=lead + "_minus_" + other,
+                        n_architectures=len(z),
+                        mean_architecture_mse_difference_mj2=z.mean(),
+                        lo=np.quantile(boot, 0.025),
+                        hi=np.quantile(boot, 0.975),
+                    )
+                )
+    return pd.DataFrame(ci)
+
+
 def run(
     predictions,
     observations,
@@ -372,41 +438,7 @@ def run(
     OUT.mkdir(parents=True, exist_ok=True)
     d = load(predictions, observations, archive_root)
     d.to_csv(OUT / "architecture_manifest.csv", index=False)
-    pred = []
-    coeff = []
-    for rep in range(repeats):
-        fold_ids = d.arch_id.map(
-            lambda a: int(hashlib.sha256(f"{rep}:{a}".encode()).hexdigest()[:12], 16)
-            % folds
-        )
-        for fold in range(folds):
-            out, co = predict(
-                d[fold_ids != fold],
-                d[fold_ids == fold],
-                ["pool", "clock_mhz", "quantization"],
-                "same_pool_architecture_holdout",
-                rep,
-                fold,
-            )
-            pred += out
-            coeff += co
-    for pool, g in d.groupby("pool"):
-        train = d[(d.pool != pool) & ~d.arch_id.isin(g.arch_id)]
-        out, co = predict(
-            train,
-            g,
-            ["clock_mhz", "quantization"],
-            "leave_pool_out_architecture_disjoint",
-            0,
-            pool,
-        )
-        pred += out
-        coeff += co
-    if not pred:
-        raise ValueError(
-            "No supported evaluation groups: each fit needs three training architectures and two distinct latencies"
-        )
-    p = pd.concat(pred, ignore_index=True)
+    p, coeff = evaluate_holdouts(d, repeats, folds)
     p.to_csv(OUT / "heldout_predictions.csv", index=False)
     pd.DataFrame(coeff).to_csv(OUT / "fit_coefficients.csv", index=False)
     group_rows = []
@@ -457,40 +489,7 @@ def run(
         ["count", "mean", "median", "max"]
     )
     ss.to_csv(OUT / "selection_summary.csv")
-    rng = np.random.default_rng(seed)
-    ci = []
-    for protocol, g in p.groupby("protocol"):
-        for target, suffix in [("continuous", "cont"), ("scheduled", "scheduled")]:
-            for other in ["proportional", "calibrated"] + (
-                ["measured_continuous", "affine"]
-                if target == "scheduled"
-                and protocol == "same_pool_architecture_holdout"
-                else []
-            ):
-                lead = (
-                    "scheduled_direct_affine"
-                    if other in ["measured_continuous", "affine"]
-                    else "affine"
-                )
-                diff = (g[lead + "_" + suffix] - g[target + "_mj"]) ** 2 - (
-                    g[other + "_" + suffix] - g[target + "_mj"]
-                ) ** 2
-                z = diff.groupby(g.arch_id).mean().to_numpy()
-                boot = np.array(
-                    [rng.choice(z, len(z), replace=True).mean() for _ in range(2000)]
-                )
-                ci.append(
-                    dict(
-                        protocol=protocol,
-                        target=target,
-                        contrast=lead + "_minus_" + other,
-                        n_architectures=len(z),
-                        mean_architecture_mse_difference_mj2=z.mean(),
-                        lo=np.quantile(boot, 0.025),
-                        hi=np.quantile(boot, 0.975),
-                    )
-                )
-    pd.DataFrame(ci).to_csv(OUT / "cluster_bootstrap.csv", index=False)
+    cluster_bootstrap(p, seed).to_csv(OUT / "cluster_bootstrap.csv", index=False)
     direct_coeff = pd.DataFrame(coeff).query(
         "protocol == 'same_pool_architecture_holdout'"
     )
@@ -614,13 +613,7 @@ def write_provenance(output_dir, predictions, observations, data, archive_root):
 
 
 def main():
-    """Parse explicit input/output paths and run the analysis.
-
-    Returns
-    -------
-    None
-        Writes analysis tables and a concise report.
-    """
+    """Parse explicit input/output paths and run the analysis."""
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)

@@ -29,7 +29,7 @@ def load_module(name):
         Loaded analysis implementation.
     """
     spec = importlib.util.spec_from_file_location(
-        name, ROOT / "analysis_scripts" / "cs1_offline" / f"{name}.py"
+        name, ROOT / "analysis_scripts" / "cs1" / f"{name}.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

@@ -249,13 +249,7 @@ probe comparisons cross campaigns/firmware and are descriptive, never paired.
 
 
 def main():
-    """Parse explicit input archive and output directory paths.
-
-    Returns
-    -------
-    None
-        Runs the offline direct-session audit.
-    """
+    """Parse explicit input archive and output directory paths."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive-root", type=Path)
     parser.add_argument("--measurements", type=Path)

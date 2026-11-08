@@ -207,13 +207,7 @@ def candidate_predictions(candidates, latencies, calibration, exclude_pools=()):
 
 
 def main():
-    """Parse explicit input paths and write calibration/prediction CSVs.
-
-    Returns
-    -------
-    None
-        Results and input hashes are written to ``--output-dir``.
-    """
+    """Parse explicit input paths and write calibration/prediction CSVs."""
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ["probe-long", "probe-short", "candidates", "latencies", "output-dir"]:
         parser.add_argument("--" + name, type=Path, required=True)

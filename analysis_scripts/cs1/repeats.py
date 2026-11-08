@@ -12,18 +12,7 @@ from scipy.stats import t
 
 
 def summarize(values):
-    """Compute paired-round uncertainty.
-
-    Parameters
-    ----------
-    values : array_like
-        Per-round energy differences, in mJ.
-
-    Returns
-    -------
-    dict
-        Count, mean, and Student t 95 percent interval bounds.
-    """
+    """Compute paired-round uncertainty."""
     values = np.asarray(values, float)
     half = t.ppf(0.975, len(values) - 1) * values.std(ddof=1) / np.sqrt(len(values))
     return dict(
@@ -35,18 +24,7 @@ def summarize(values):
 
 
 def main(argv=None):
-    """Analyze explicit repeat observations and frozen joint coefficients.
-
-    Parameters
-    ----------
-    argv : list of str, optional
-        CLI arguments, defaulting to process arguments.
-
-    Returns
-    -------
-    None
-        Writes paired contrasts, summaries, report, and input provenance.
-    """
+    """Analyze explicit repeat observations and frozen joint coefficients."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repeated-observations", required=True, type=Path)
     parser.add_argument(

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 PATH = (
-    Path(__file__).resolve().parents[1] / "analysis_scripts/training_budget/analyze.py"
+    Path(__file__).resolve().parents[1] / "analysis_scripts/appendix_training_budget/analyze.py"
 )
 spec = importlib.util.spec_from_file_location("training_budget_analysis", PATH)
 analysis = importlib.util.module_from_spec(spec)

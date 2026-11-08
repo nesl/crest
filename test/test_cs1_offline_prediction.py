@@ -24,7 +24,7 @@ def _module(name):
         Imported analysis module.
     """
     path = (
-        Path(__file__).parents[1] / "analysis_scripts" / "cs1_offline" / (name + ".py")
+        Path(__file__).parents[1] / "analysis_scripts" / "cs1" / (name + ".py")
     )
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)

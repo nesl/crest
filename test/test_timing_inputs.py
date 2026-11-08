@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 MODULE = (
-    Path(__file__).parents[1] / "analysis_scripts/timing_attribution/prepare_inputs.py"
+    Path(__file__).parents[1] / "analysis_scripts/appendix_evaluation_cost/prepare_inputs.py"
 )
 SPEC = importlib.util.spec_from_file_location("timing_inputs", MODULE)
 inputs = importlib.util.module_from_spec(SPEC)

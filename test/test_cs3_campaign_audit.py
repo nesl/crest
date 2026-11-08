@@ -10,7 +10,7 @@ import pytest
 
 spec = importlib.util.spec_from_file_location(
     "campaign",
-    Path(__file__).resolve().parents[1] / "analysis_scripts/cs3_audit/campaign.py",
+    Path(__file__).resolve().parents[1] / "analysis_scripts/cs3/campaign.py",
 )
 campaign = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(campaign)

@@ -297,15 +297,7 @@ def stage_summary(rows):
 
 
 def write_csv(path, rows):
-    """Write records to CSV, including an empty file for empty inputs.
-
-    Parameters
-    ----------
-    path : pathlib.Path
-        Destination file.
-    rows : list of dict
-        Records sharing an output table.
-    """
+    """Write records to CSV, including an empty file for empty inputs."""
     path.write_text("")
     if rows:
         fields = sorted(set().union(*(r.keys() for r in rows)))
@@ -316,12 +308,7 @@ def write_csv(path, rows):
 
 
 def main():
-    """Read explicit JSONL inputs and write derived tables.
-
-    Notes
-    -----
-    The output directory must differ from each source log directory.
-    """
+    """Read explicit JSONL inputs and write derived tables."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("logs", nargs="+", type=Path)
     parser.add_argument("--output", type=Path, required=True)

@@ -8,7 +8,7 @@ import math
 
 from crest.pipeline_types import TrialRecord
 
-spec = importlib.util.spec_from_file_location("cs3_search_audit", Path(__file__).resolve().parents[1] / "analysis_scripts/analyze_cs3_search.py")
+spec = importlib.util.spec_from_file_location("cs3_search_audit", Path(__file__).resolve().parents[1] / "analysis_scripts/cs3/search_history.py")
 audit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(audit)
 

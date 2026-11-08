@@ -129,6 +129,8 @@ def read_trials(database, mapping=None, study_id=None):
                 raise ValueError("Trial end precedes start")
             proposal = attrs.get(keys["proposal"]) or {}
             source = proposal.get(keys["proposal_source"], "unknown")
+            # Preserve stored numeric values here: campaign CSV parameter
+            # identity retains floats, unlike the integer-aware repeat readers.
             params = {}
             for key, value, distribution in conn.execute(
                 "select param_name,param_value,distribution_json from trial_params where trial_id=?",

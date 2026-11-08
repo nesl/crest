@@ -85,6 +85,8 @@ def read_trials(database, study_name=None, endpoint=None):
             ).fetchall()
             if len(values) != 1 or values[0][0] != 0 or not np.isfinite(values[0][1]):
                 raise ValueError("Expected one finite objective per included trial")
+            # Exact parameter identity uses only these known integer schemas;
+            # do not broaden it to the search-history reader's Int* rule.
             params = {}
             for name, value, distribution in connection.execute(
                 "SELECT param_name,param_value,distribution_json FROM trial_params WHERE trial_id=?",

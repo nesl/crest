@@ -23,22 +23,11 @@ import sys
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from analysis_scripts.cs3_audit.campaign import read_trials
+from analysis_scripts.cs3.campaign import read_trials
 
 
 def positive(value):
-    """Return whether a measurement is finite and strictly positive.
-
-    Parameters
-    ----------
-    value : object
-        Measurement to validate.
-
-    Returns
-    -------
-    bool
-        Whether the measurement is positive and finite.
-    """
+    """Return whether a measurement is finite and strictly positive."""
     return (
         isinstance(value, (int, float))
         and not isinstance(value, bool)
@@ -203,13 +192,7 @@ def audit(config, endpoint=200):
 
 
 def main(argv=None):
-    """Write audit JSON from explicit configuration paths.
-
-    Parameters
-    ----------
-    argv : list of str, optional
-        Command-line arguments.
-    """
+    """Write audit JSON from explicit configuration paths."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--endpoint", default=200, type=int)

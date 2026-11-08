@@ -15,7 +15,7 @@ import statistics
 import subprocess
 import sys
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 from crest.pipeline_types import TrialRecord
@@ -112,6 +112,31 @@ def _finite(value):
     return isinstance(value, (float, int)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+def _network_summary(metric, networks):
+    """Summarize one prefix using decoded-network means and stable ID ties.
+
+    Each network contributes one mean to the top ten, while individual and
+    repeat counts retain every successful observation for this metric.
+    """
+    ranked = sorted(networks, key=lambda identity: (-statistics.mean(v for _, v in networks[identity]), identity))
+    means = [statistics.mean(v for _, v in networks[identity]) for identity in ranked]
+    top = means[:10]
+    observations = [value for group in networks.values() for _, value in group]
+    return {
+        "metric": metric, "unique_scored_networks": len(means),
+        "top_count": len(top),
+        "best_network_id": ranked[0] if ranked else None,
+        "best_network_observation_count": len(networks[ranked[0]]) if ranked else None,
+        "top10_single_observation_networks": sum(len(networks[i]) == 1 for i in ranked[:10]), "best_network_mean": max(means) if means else None,
+        "top10_mean": statistics.mean(top) if top else None,
+        "top10_median": statistics.median(top) if top else None,
+        "best_individual_observed": max(observations) if observations else None,
+        "valid_observations": len(observations),
+        "repeat_groups": sum(len(v) > 1 for v in networks.values()),
+        "repeated_observations": sum(len(v) for v in networks.values() if len(v) > 1)
+    }
+
+
 def aggregate_prefixes(history, durations=None, *, completion_order=None, elapsed_seconds=None):
     """Apply the same decoded repeat rule to all prefixes and both score metrics.
 
@@ -170,10 +195,6 @@ def aggregate_prefixes(history, durations=None, *, completion_order=None, elapse
                 raw_key = json.dumps({k: params[k] for k in RAW_FIELDS}, sort_keys=True, separators=(",", ":"))
                 raw_f1.setdefault(raw_key, []).append(float(macro))
         for metric, networks in groups.items():
-            ranked = sorted(networks, key=lambda identity: (-statistics.mean(v for _, v in networks[identity]), identity))
-            means = [statistics.mean(v for _, v in networks[identity]) for identity in ranked]
-            top = means[:10]
-            observations = [value for group in networks.values() for _, value in group]
             rows.append({"trial_number": trial.number, "attempts": attempts, "feasible_completions": feasible,
                 "completion_prefix": attempts, "completed_trials": complete_count,
                 "evaluation_wall_seconds_proxy": elapsed,
@@ -194,17 +215,7 @@ def aggregate_prefixes(history, durations=None, *, completion_order=None, elapse
                 "coverage_goal_slots": len(cells) * target,
                 "coverage_informative_goal_slots_filled": sum(min(c["informative"], target) for c in cells),
                 "coverage_first_complete_prefix": coverage_finished_at,
-                "metric": metric, "unique_scored_networks": len(means),
-                "top_count": len(top),
-                "best_network_id": ranked[0] if ranked else None,
-                "best_network_observation_count": len(networks[ranked[0]]) if ranked else None,
-                "top10_single_observation_networks": sum(len(networks[i]) == 1 for i in ranked[:10]), "best_network_mean": max(means) if means else None,
-                "top10_mean": statistics.mean(top) if top else None,
-                "top10_median": statistics.median(top) if top else None,
-                "best_individual_observed": max(observations) if observations else None,
-                "valid_observations": len(observations),
-                "repeat_groups": sum(len(v) > 1 for v in networks.values()),
-                "repeated_observations": sum(len(v) for v in networks.values() if len(v) > 1)})
+                **_network_summary(metric, networks)})
     networks = [{"metric": metric, "decoded_id": identity, "observations": [{"trial_number": n, "value": v} for n, v in values],
                  "count": len(values), "mean": statistics.mean(v for _, v in values),
                  "sample_sd": statistics.stdev(v for _, v in values) if len(values) > 1 else None}

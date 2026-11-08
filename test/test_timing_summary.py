@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 MODULE_DIR = (
-    Path(__file__).resolve().parents[1] / "analysis_scripts" / "timing_attribution"
+    Path(__file__).resolve().parents[1] / "analysis_scripts" / "appendix_evaluation_cost"
 )
 sys.path.insert(0, str(MODULE_DIR))
 try:
