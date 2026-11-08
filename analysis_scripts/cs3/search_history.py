@@ -115,6 +115,20 @@ def _finite(value):
 def _network_summary(metric, networks):
     """Summarize one prefix using decoded-network means and stable ID ties.
 
+    Parameters
+    ----------
+    metric : str
+        Metric label included in the summary.
+    networks : dict
+        Decoded network IDs mapped to nonempty lists of trial-number/value pairs.
+
+    Returns
+    -------
+    dict
+        Best and top-ten network means, observation counts, and repeat counts.
+
+    Notes
+    -----
     Each network contributes one mean to the top ten, while individual and
     repeat counts retain every successful observation for this metric.
     """

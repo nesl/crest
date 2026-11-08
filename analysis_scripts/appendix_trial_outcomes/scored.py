@@ -27,7 +27,18 @@ from analysis_scripts.cs3.campaign import read_trials
 
 
 def positive(value):
-    """Return whether a measurement is finite and strictly positive."""
+    """Return whether a measurement is finite and strictly positive.
+
+    Parameters
+    ----------
+    value : object
+        Measurement to check; booleans are rejected.
+
+    Returns
+    -------
+    bool
+        Whether the value is an int or float that is finite and positive.
+    """
     return (
         isinstance(value, (int, float))
         and not isinstance(value, bool)
@@ -192,7 +203,13 @@ def audit(config, endpoint=200):
 
 
 def main(argv=None):
-    """Write audit JSON from explicit configuration paths."""
+    """Write audit JSON from explicit configuration paths.
+
+    Parameters
+    ----------
+    argv : sequence of str, optional
+        Command-line arguments; None uses the process arguments.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--endpoint", default=200, type=int)

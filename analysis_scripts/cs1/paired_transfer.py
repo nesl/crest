@@ -12,7 +12,18 @@ from scipy.stats import t
 
 
 def ci(x):
-    """Compute a paired-round Student t interval."""
+    """Compute an unadjusted 95% Student t interval.
+
+    Parameters
+    ----------
+    x : array_like
+        Paired round differences.
+
+    Returns
+    -------
+    dict
+        Mean and nominal 95% Student t bounds under ``mean``, ``lo``, and ``hi``.
+    """
     x = np.asarray(x, float)
     m = x.mean()
     h = t.ppf(0.975, len(x) - 1) * x.std(ddof=1) / np.sqrt(len(x))
@@ -20,7 +31,18 @@ def ci(x):
 
 
 def holm_adjust(pvalues):
-    """Adjust a pre-specified family of p-values using Holm's method."""
+    """Adjust a prespecified family of p-values using Holm's method.
+
+    Parameters
+    ----------
+    pvalues : array_like
+        One-dimensional family of raw p-values.
+
+    Returns
+    -------
+    numpy.ndarray
+        Adjusted p-values in the original order, capped at one.
+    """
     pvalues = np.asarray(pvalues, float)
     order = np.argsort(pvalues)
     adjusted = np.empty_like(pvalues)
@@ -34,7 +56,13 @@ def holm_adjust(pvalues):
 
 
 def main(argv=None):
-    """Run frozen transfer calculations from explicit portable inputs."""
+    """Run frozen transfer calculations and write paired comparisons.
+
+    Parameters
+    ----------
+    argv : sequence of str or None, optional
+        Command-line arguments; None reads the process arguments.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--energy-records", required=True, type=Path)
     parser.add_argument("--calibration", required=True, type=Path)
@@ -55,7 +83,26 @@ def main(argv=None):
         for pair in pairs:
 
             def candidate(name, phase):
-                """Select accepted ten-run records keyed by round."""
+                """Select accepted ten-run records keyed by round.
+
+                Parameters
+                ----------
+                name : str
+                    Candidate identifier in the current cohort.
+                phase : str
+                    Measurement phase to select.
+
+                Returns
+                -------
+                dict
+                    Matching measurement records indexed by round.
+
+                Raises
+                ------
+                ValueError
+                    If a matching record is unaccepted, has a
+                    different run count, or repeats a round.
+                """
                 rr = [
                     r for r in records if r["candidate"] == name and r["phase"] == phase
                 ]

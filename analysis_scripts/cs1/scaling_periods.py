@@ -12,7 +12,23 @@ from scipy.stats import t
 
 
 def ci(v):
-    """Compute an unadjusted Student t interval."""
+    """Compute an unadjusted 95% Student t interval.
+
+    Parameters
+    ----------
+    v : array_like
+        At least two finite round observations.
+
+    Returns
+    -------
+    dict
+        Count, mean, and nominal 95% Student t bounds.
+
+    Raises
+    ------
+    ValueError
+        If fewer than two observations or nonfinite values are supplied.
+    """
     a = np.asarray(v, dtype=float)
     n = len(a)
     if n < 2 or not np.isfinite(a).all():
@@ -45,7 +61,18 @@ def run(archive_root, output_dir):
     inputs = []
 
     def read(p):
-        """Read and register a CSV input."""
+        """Read a CSV and register its path for provenance.
+
+        Parameters
+        ----------
+        p : pathlib.Path
+            CSV input path.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Parsed CSV records.
+        """
         inputs.append(p)
         return pd.read_csv(p)
 

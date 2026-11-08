@@ -61,8 +61,10 @@ def select(candidates, weight, scale=F(400)):
     ----------
     candidates : sequence of Candidate
         Nonempty observation pool.
-    weight, scale : Fraction
-        Tradeoff weight and positive energy reference scale.
+    weight : Fraction
+        Tradeoff weight.
+    scale : Fraction, optional
+        Positive energy reference scale.
 
     Returns
     -------
@@ -82,9 +84,11 @@ def envelope(candidates, lower=F(0), upper=F(1), scale=F(400)):
     ----------
     candidates : sequence of Candidate
         Nonempty pool of observations.
-    lower, upper : Fraction
-        Closed weight domain, with lower strictly below upper.
-    scale : Fraction
+    lower : Fraction, optional
+        Inclusive lower weight bound, strictly below upper.
+    upper : Fraction, optional
+        Inclusive upper weight bound.
+    scale : Fraction, optional
         Positive reference energy scale.
 
     Returns
@@ -213,8 +217,14 @@ def audit(pools, output_dir, weight=F("0.1"), lower=F(0), upper=F(1), scale=F(40
         Board/method keys mapped to candidate lists.
     output_dir : Path
         Destination for CSV tables and JSON summary.
-    weight, lower, upper, scale : Fraction
-        Baseline weight, closed domain bounds, and energy reference scale.
+    weight : Fraction, optional
+        Baseline weight within the closed domain.
+    lower : Fraction, optional
+        Inclusive lower weight bound.
+    upper : Fraction, optional
+        Inclusive upper weight bound.
+    scale : Fraction, optional
+        Positive energy reference scale.
 
     Returns
     -------

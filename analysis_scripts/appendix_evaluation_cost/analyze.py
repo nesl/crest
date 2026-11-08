@@ -151,6 +151,11 @@ def request_residuals(records):
             def descends(item):
                 """Determine ancestry within the server's clock domain.
 
+                Parameters
+                ----------
+                item : dict
+                    Span whose parent chain is checked.
+
                 Returns
                 -------
                 bool
@@ -268,6 +273,11 @@ def worker_residuals(records):
 def stage_summary(rows):
     """Aggregate stages separately by run, board, condition, and host.
 
+    Parameters
+    ----------
+    rows : iterable of dict
+        Summarized spans with inclusive and exclusive seconds.
+
     Returns
     -------
     list of dict
@@ -297,7 +307,15 @@ def stage_summary(rows):
 
 
 def write_csv(path, rows):
-    """Write records to CSV, including an empty file for empty inputs."""
+    """Write records to CSV, including an empty file for empty inputs.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        Destination file, overwritten if present.
+    rows : list of dict
+        Records whose combined keys define the CSV columns.
+    """
     path.write_text("")
     if rows:
         fields = sorted(set().union(*(r.keys() for r in rows)))

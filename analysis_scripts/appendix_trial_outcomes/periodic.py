@@ -21,7 +21,18 @@ import sqlite3
 
 
 def positive(value):
-    """Return whether a numeric scalar is positive and finite."""
+    """Return whether a numeric scalar is positive and finite.
+
+    Parameters
+    ----------
+    value : object
+        Measurement to check; booleans are rejected.
+
+    Returns
+    -------
+    bool
+        Whether the value is an int or float that is finite and positive.
+    """
     return (
         not isinstance(value, bool)
         and isinstance(value, (int, float))
@@ -43,6 +54,11 @@ def cadence_reasons(active_ms, window_ms, misses, period_ms, runs, tolerance_ms)
         Number of releases in the measurement window.
     tolerance_ms : float
         Allowed aggregate window excess due to representation precision.
+
+    Returns
+    -------
+    list of str
+        Failed active-latency, window-duration and deadline-miss checks.
     """
     reasons = []
     if not positive(active_ms) or active_ms > period_ms:
@@ -56,6 +72,13 @@ def cadence_reasons(active_ms, window_ms, misses, period_ms, runs, tolerance_ms)
 
 def outcome(state, attrs):
     """Classify completed source outcomes under the recorded policy.
+
+    Parameters
+    ----------
+    state : str
+        Recorded trial state.
+    attrs : dict
+        Recorded success code, energy measurement and feasibility status.
 
     Returns
     -------
@@ -92,10 +115,16 @@ def audit(manifest):
     def consume(path):
         """Record a consumed file digest.
 
+        Parameters
+        ----------
+        path : path-like
+            Evidence file to hash and record.
+
         Returns
         -------
         pathlib.Path
-            Resolved evidence path."""
+            Resolved evidence path.
+        """
         path = Path(path).resolve()
         hashes[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
         return path
@@ -103,10 +132,16 @@ def audit(manifest):
     def records_index(roots):
         """Index record basenames.
 
+        Parameters
+        ----------
+        roots : iterable of path-like
+            Directories searched recursively for JSON measurement records.
+
         Returns
         -------
         dict
-            All matching paths, retaining ambiguity for rejection."""
+            All matching paths, retaining ambiguity for rejection.
+        """
         index = {}
         for root in roots:
             for path in Path(root).rglob("*.json"):
@@ -116,10 +151,20 @@ def audit(manifest):
     def raw_pair(paths, index, cfg):
         """Derive pair eligibility from phase records and timing.
 
+        Parameters
+        ----------
+        paths : iterable of path-like
+            Recorded paths whose basenames identify the paired phase records.
+        index : dict
+            Record basenames mapped to candidate local paths.
+        cfg : dict
+            Period, release count and optional window tolerance configuration.
+
         Returns
         -------
         tuple
-            Independent rejection reasons and consumed evidence paths."""
+            Independent rejection reasons and consumed evidence paths.
+        """
         reasons, evidence, phases = [], [], {}
         for remote in paths:
             matches = index.get(Path(remote).name, [])

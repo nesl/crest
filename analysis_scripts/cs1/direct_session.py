@@ -29,17 +29,18 @@ def run(
 
     Parameters
     ----------
-    archive_root : pathlib.Path
+    archive_root : path-like or None, optional
         Research archive containing the final_slot_v1 session and probes.
-    output_dir : pathlib.Path
+    output_dir : path-like
         Destination for derived CSV and report files.
-
     measurements : pathlib.Path, optional
         Explicit raw records; overrides archive mapping.
-    periods : tuple of float
+    periods : tuple of float, optional
         Two periods in milliseconds for effective slope fitting.
-    probe_100, probe_500 : pathlib.Path, optional
-        Earlier waiting_power_per_round tables for descriptive comparison.
+    probe_100 : path-like or None, optional
+        Earlier 100 ms waiting_power_per_round table for descriptive comparison.
+    probe_500 : path-like or None, optional
+        Earlier 500 ms waiting_power_per_round table for descriptive comparison.
 
     Returns
     -------

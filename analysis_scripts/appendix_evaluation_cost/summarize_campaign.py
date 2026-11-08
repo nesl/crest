@@ -36,7 +36,9 @@ def summarize(
         Analyzer output directory with spans, requests, and workers JSON.
     output_dir : pathlib.Path
         Destination for breakdown JSON and the two CSV tables.
-    conditions : sequence of str
+    run_prefix : str, optional
+        Prefix before condition names in client run directories.
+    conditions : sequence of str, optional
         Conditions to include in the requested order.
     client_host, server_host : str, optional
         Host overrides; otherwise derive clients from process roles and servers

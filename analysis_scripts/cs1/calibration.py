@@ -74,8 +74,10 @@ def joint_fit(long_period, short_period, periods=(0.5, 0.1)):
 
     Parameters
     ----------
-    long_period, short_period : pandas.DataFrame
-        Window summaries for the longer and shorter periods.
+    long_period : pandas.DataFrame
+        Window summaries for the longer period.
+    short_period : pandas.DataFrame
+        Matching window summaries for the shorter period.
     periods : tuple of float, optional
         Corresponding periods in seconds.
 
@@ -124,8 +126,10 @@ def calibrate(raw_long, raw_short, periods=(0.5, 0.1), fit_decimals=None):
 
     Parameters
     ----------
-    raw_long, raw_short : pandas.DataFrame
-        Raw longer- and shorter-period probe tables.
+    raw_long : pandas.DataFrame
+        Raw longer-period probe table.
+    raw_short : pandas.DataFrame
+        Raw shorter-period probe table.
     periods : tuple of float, optional
         Probe periods in seconds.
     fit_decimals : int, optional
@@ -133,8 +137,10 @@ def calibrate(raw_long, raw_short, periods=(0.5, 0.1), fit_decimals=None):
 
     Returns
     -------
-    rounds, calibration : tuple of pandas.DataFrame
-        Per-round joint fits and clock-indexed coefficients.
+    rounds : pandas.DataFrame
+        Per-round joint fits.
+    calibration : pandas.DataFrame
+        Clock-indexed coefficients and active-power statistics.
 
     Notes
     -----

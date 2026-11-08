@@ -513,7 +513,13 @@ def analyze(
 
 
 def main(argv=None):
-    """Run analysis from explicit input and output paths."""
+    """Run analysis from explicit input and output paths.
+
+    Parameters
+    ----------
+    argv : sequence of str, optional
+        Command-line arguments; None uses the process arguments.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--panels", type=Path, nargs="+", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)

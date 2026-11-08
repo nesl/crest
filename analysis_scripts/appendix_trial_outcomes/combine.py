@@ -75,7 +75,19 @@ def combine(tables):
 
 
 def validate_population_flags(rows):
-    """Check nested analysis populations independently of manuscript counts."""
+    """Check nested analysis populations independently of manuscript counts.
+
+    Parameters
+    ----------
+    rows : iterable of dict
+        Outcome rows with paired and model population flags.
+
+    Raises
+    ------
+    ValueError
+        If inclusion lacks eligibility, eligibility lacks a pass, or model and
+        paired inclusion flags differ.
+    """
     truth = lambda value: str(value).lower() in ("true", "1")
     for row in rows:
         if truth(row["paired_included"]) and not truth(row["paired_eligible"]):

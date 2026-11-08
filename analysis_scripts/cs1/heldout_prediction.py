@@ -22,8 +22,10 @@ def load(predictions, observations, archive_root=None):
 
     Parameters
     ----------
-    predictions, observations : path-like
-        Explicit frozen input CSV paths.
+    predictions : path-like
+        Frozen prediction CSV path.
+    observations : path-like
+        Frozen observation CSV path.
     archive_root : path-like, optional
         Relocated source archive.
 
@@ -143,14 +145,18 @@ def predict(train, test, groupcols, tag, repeat, fold):
 
     Parameters
     ----------
-    train, test : pandas.DataFrame
-        Architecture-disjoint fitting and evaluation rows.
+    train : pandas.DataFrame
+        Fitting rows.
+    test : pandas.DataFrame
+        Evaluation rows with architectures disjoint from training.
     groupcols : list of str
         Operating-point grouping columns.
     tag : str
         Evaluation protocol.
-    repeat, fold : int or str
-        Split identifiers.
+    repeat : int or str
+        Split repetition identifier.
+    fold : int or str
+        Evaluation fold identifier.
 
     Returns
     -------
@@ -218,7 +224,19 @@ def predict(train, test, groupcols, tag, repeat, fold):
 
 
 def summarize(p):
-    """Aggregate row-weighted prediction errors."""
+    """Aggregate row-weighted prediction errors by protocol and model.
+
+    Parameters
+    ----------
+    p : pandas.DataFrame
+        Prediction rows with protocol, pool, trial, measured energies, and model
+        estimates.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Prediction counts, unique candidate counts, RMSE, MAE, and bias in mJ.
+    """
     rows = []
     for protocol, g in p.groupby("protocol"):
         for m in MODELS:
@@ -321,7 +339,29 @@ def selections(p, quality_ceilings=(0.65, 0.75, 1.0)):
 
 
 def evaluate_holdouts(d, repeats, folds):
-    """Fit deterministic graph holdouts and architecture-disjoint pool transfers."""
+    """Fit deterministic graph holdouts and architecture-disjoint pool transfers.
+
+    Parameters
+    ----------
+    d : pandas.DataFrame
+        Candidate manifest with architecture IDs, pools, operating points, and energies.
+    repeats : int
+        Number of deterministic same-pool split repetitions.
+    folds : int
+        Number of architecture folds per repetition.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Concatenated supported held-out prediction rows.
+    list of dict
+        Fitted coefficient records for supported evaluation groups.
+
+    Raises
+    ------
+    ValueError
+        If no evaluation group has enough training architectures and distinct latencies.
+    """
     pred = []
     coeff = []
     for rep in range(repeats):
@@ -360,7 +400,22 @@ def evaluate_holdouts(d, repeats, folds):
 
 
 def cluster_bootstrap(p, seed):
-    """Bootstrap architecture-mean squared-error contrasts in evaluation order."""
+    """Bootstrap architecture-mean squared-error contrasts in evaluation order.
+
+    Parameters
+    ----------
+    p : pandas.DataFrame
+        Held-out model predictions with protocol, architecture IDs, and measured
+        energies.
+    seed : int
+        Seed for architecture resampling.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Mean architecture MSE differences and 95% percentile bounds from 2,000
+        resamples.
+    """
     rng = np.random.default_rng(seed)
     ci = []
     for protocol, g in p.groupby("protocol"):
@@ -412,14 +467,18 @@ def run(
 
     Parameters
     ----------
-    predictions, observations : path-like
-        Frozen input tables.
+    predictions : path-like
+        Frozen prediction input table.
+    observations : path-like
+        Frozen observation input table.
     output_dir : path-like
         Destination for generated tables.
     archive_root : path-like, optional
         Relocated source log root.
-    repeats, folds : int, optional
-        Deterministic architecture split counts.
+    repeats : int, optional
+        Number of deterministic architecture split repetitions.
+    folds : int, optional
+        Number of architecture folds per repetition.
     quality_ceilings : sequence of float, optional
         Inclusive selection quality ceilings.
     seed : int, optional
@@ -588,8 +647,10 @@ def write_provenance(output_dir, predictions, observations, data, archive_root):
     ----------
     output_dir : pathlib.Path
         Destination directory.
-    predictions, observations : path-like
-        Explicit input CSV files.
+    predictions : path-like
+        Explicit prediction CSV file.
+    observations : path-like
+        Explicit observation CSV file.
     data : pandas.DataFrame
         Manifest containing saved source paths.
     archive_root : path-like or None

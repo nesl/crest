@@ -12,6 +12,23 @@ from pathlib import Path
 def _select_source(pool, energy_scale, weight):
     """Select with the archived floating-point score and source tie order.
 
+    Parameters
+    ----------
+    pool : sequence of dict
+        Nonempty source observations with F1, energy, and trial fields.
+    energy_scale : float
+        Nonzero energy divisor in the score.
+    weight : float
+        Energy penalty weight.
+
+    Returns
+    -------
+    dict
+        Maximum-score source row, breaking ties by higher F1, lower energy,
+        then lower numeric trial number.
+
+    Notes
+    -----
     The exact Fraction envelope in scoring.py answers a separate sensitivity
     question; replay preserves this float calculation for source association.
     """
@@ -35,8 +52,10 @@ def audit(observations, replays, energy_scale=400.0, weight=0.1):
         Feasible endpoint observations from ``campaign.py``.
     replays : sequence of tuple
         Destination-board labels and lists of replay CSV rows.
-    energy_scale, weight : float, optional
-        Score parameters in ``F1 - weight * energy / energy_scale``.
+    energy_scale : float, optional
+        Positive energy divisor in the score.
+    weight : float, optional
+        Nonnegative energy penalty in ``F1 - weight * energy / energy_scale``.
 
     Returns
     -------

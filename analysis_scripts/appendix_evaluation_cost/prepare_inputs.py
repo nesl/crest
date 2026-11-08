@@ -14,7 +14,25 @@ CONDITIONS = ("continuous", "cadenced", "flops", "memory")
 
 
 def ancestors(row, index):
-    """Follow parents within one host/process."""
+    """Follow parents within one host/process.
+
+    Parameters
+    ----------
+    row : dict
+        Span whose parents are traversed.
+    index : dict
+        Spans keyed by run identifier, host, process and span identifier.
+
+    Yields
+    ------
+    dict
+        Successive parent spans, starting with the immediate parent.
+
+    Raises
+    ------
+    ValueError
+        If a parent is missing or the parent chain cycles.
+    """
     seen = set()
     while row.get("parent_id"):
         key = (row.get("run_id"), row["host"], row["pid"], row["parent_id"])

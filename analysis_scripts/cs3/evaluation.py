@@ -254,8 +254,10 @@ def audit_group(
     ----------
     label : str
         User-selected group label.
-    database, metrics_path : path-like
-        Explicit database and saved final metrics inputs.
+    database : path-like
+        Explicit Optuna database input.
+    metrics_path : path-like
+        Saved final test metrics JSON input.
     study_name : str, optional
         Explicit study selector.
     evidence : iterable of path-like, optional

@@ -42,6 +42,11 @@ def dotted(value, path):
         Source record.
     path : str
         Dot-separated field path.
+
+    Returns
+    -------
+    object
+        Nested value, or None if a key is absent or traversal meets a non-dictionary.
     """
     for key in path.split("."):
         if not isinstance(value, dict) or key not in value:
@@ -57,6 +62,11 @@ def numeric(value):
     ----------
     value : object
         Observed accounting value; booleans are rejected.
+
+    Returns
+    -------
+    bool
+        Whether the value is a finite nonnegative number other than a boolean.
     """
     return (
         isinstance(value, (int, float))
@@ -77,6 +87,17 @@ def read_trials(database, mapping=None, study_id=None):
         Attribute key overrides.
     study_id : int, optional
         Required when the database contains multiple studies.
+
+    Returns
+    -------
+    list of dict
+        Terminal trial records sorted by completion timestamp and trial number.
+
+    Raises
+    ------
+    ValueError
+        If study selection is ambiguous or unknown, a duration is negative, or a
+        terminal trial has no completion timestamp.
     """
     keys = {**DEFAULT_MAPPING, **(mapping or {})}
     database = Path(database).resolve()
@@ -183,6 +204,16 @@ def effort(rows, endpoint):
         Terminal trials in completion order, as returned by ``read_trials``.
     endpoint : int
         Positive target count of feasible completions.
+
+    Returns
+    -------
+    dict
+        Endpoint attainment, attempt counts, duration sums, and proposal sources.
+
+    Raises
+    ------
+    ValueError
+        If the endpoint is less than one.
     """
     if endpoint < 1:
         raise ValueError("endpoint must be positive")
@@ -218,6 +249,12 @@ def saved_usage(response_root, mapping=None):
         Active optimizer directory, excluding sibling migration backups.
     mapping : dict, optional
         Dotted response field paths overriding defaults.
+
+    Returns
+    -------
+    tuple of (dict, list of Path)
+        Observed usage totals and missingness counts, followed by the saved
+        response files included in those totals.
     """
     keys = {**DEFAULT_MAPPING, **(mapping or {})}
     files = sorted(Path(response_root).rglob("*.response.json"))
@@ -243,6 +280,18 @@ def audit(config, endpoints):
         Explicit campaign paths, metadata, and optional field mappings.
     endpoints : sequence of int
         Positive feasible-completion targets.
+
+    Returns
+    -------
+    dict
+        Effort summaries, feasible observations, saved-response accounting,
+        source hashes, and interpretation qualifications.
+
+    Raises
+    ------
+    ValueError
+        If endpoints are empty or nonpositive, campaign entries are empty or
+        have duplicate names, or a campaign archive fails validation.
     """
     if not endpoints or any(e < 1 for e in endpoints):
         raise ValueError("Specify at least one positive endpoint")

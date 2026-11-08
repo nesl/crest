@@ -209,7 +209,13 @@ def audit_campaign(records, *, campaign, host_only=False, case_study="CS2"):
 
 
 def main(argv=None):
-    """Audit explicit configuration and write summary JSON and native CSV."""
+    """Audit explicit configuration and write summary JSON and native CSV.
+
+    Parameters
+    ----------
+    argv : sequence of str, optional
+        Command-line arguments; None uses the process arguments.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config",
