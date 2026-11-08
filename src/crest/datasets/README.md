@@ -67,6 +67,9 @@ Use [`oxiod.py`](oxiod.py) or [`urbansound8k_mel.py`](urbansound8k_mel.py) as th
 7. Select it in config with `dataset.name` and put adapter-local knobs under `dataset.params`.
 8. Add hardware-free tests for validation, loading, metadata, and calibration behavior.
 
+Components are registered explicitly and are not discovered from files in this directory.
+Dataset hooks receive `dataset.params`, rather than the root config.
+
 ## Contract In Practice
 
 `DatasetABC` exposes these hooks.
@@ -85,12 +88,6 @@ Use [`oxiod.py`](oxiod.py) or [`urbansound8k_mel.py`](urbansound8k_mel.py) as th
 The bundle should be deterministic for the same local data and config.
 If a dataset preparation step owns random crops or folds, document the seed and cache contract in the preparation README.
 
-## Registration And Config Selection
-
-Dataset adapters must be registered explicitly.
-They are not discovered from files in this directory.
-Follow the [extension steps](#add-a-new-dataset) above.
-
 ## Minimal Adapter Example
 
 Run this hardware-free example from `src/` with NumPy installed.
@@ -103,7 +100,6 @@ import numpy as np
 
 from crest.interfaces import DatasetABC
 from crest.pipeline_types import DataSplit, DatasetBundle
-
 
 class TinyDataset(DatasetABC):
     @property
@@ -129,7 +125,6 @@ class TinyDataset(DatasetABC):
             input_dtype="float32",
         )
 
-
 adapter = TinyDataset()
 dataset_params = {"samples": 8}
 bundle = adapter.load(dataset_params)
@@ -146,30 +141,18 @@ dataset:
     samples: 8
 ```
 
-The runner passes the `params` mapping to adapter hooks, rather than the entire root config.
 This example supplies scalar regression targets.
 Select or implement a compatible task before using it in a complete pipeline.
 
-## Contributor Checklist
-
-- Keep target/output semantics in the task layer, not in the dataset adapter.
-- Keep model architecture assumptions out of dataset loading.
-- Validate paths, numeric parameters, cache schemas, and split names locally.
-- Preserve deterministic split and calibration behavior.
-- Add or update NumPy-style docstrings for changed functions, classes, dataclasses, and tests.
-- Add hardware-free tests before validating any downstream HIL flow.
-
 ## Definition Of Done
 
-A dataset adapter is ready when the following checks pass.
+Verify the adapter with hardware-free success and representative failure cases.
 
-1. `validate_config(...)` catches missing or invalid dataset parameters.
-2. `load(...)` returns deterministic `DatasetBundle` and `DataSplit` objects.
-3. Metadata includes the fields needed by the paired task/model-family path.
-4. Calibration behavior is explicit and tested.
-5. The adapter is registered and selectable with `dataset.name`.
-6. The README/config docs describe any required preparation or cache layout.
-7. Hardware-free tests cover success and representative failure paths.
+- Missing paths, invalid numeric parameters, incompatible cache schemas, and unknown split names fail with clear errors.
+- Repeated loads return the same splits, input shape/dtype, and task-required metadata.
+- Calibration tests confirm the intended split, cap, and deterministic selection.
+- A config using the registered `dataset.name` resolves the adapter and loads its bundle.
+- Preparation/cache documentation and NumPy-style docstrings match the implementation.
 
 ## Troubleshooting
 

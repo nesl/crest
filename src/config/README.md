@@ -327,30 +327,9 @@ Choose a field supported by the endpoint and model that covers billable completi
 These limits are part of resume identity.
 Omitting them preserves uncapped completion behavior.
 
-A monetary cap requires `max_usd`, `max_input_tokens`, `max_output_tokens`, and matching prices for provider, endpoint, model, and service tier.
-Omit `pricing_file` to use the bundled catalog or supply a custom JSON file relative to the experiment YAML.
-Explicit inline prices remain supported.
+<a id="configure-pricing-and-a-spending-cap"></a>
 
-```yaml
-optimizer:
-  type: llm_generator
-  llm:
-    # Keep the verified provider/model/authentication settings.
-    max_output_tokens: 4096
-    output_token_parameter: max_completion_tokens
-    max_usd: 10.0
-    max_input_tokens: 100000
-    pricing_file: prices.json  # Omit when the bundled catalog has a matching tariff.
-```
-
-`max_usd: 0` permits fixed warm-ups without paid requests.
-To continue a capped study, retain `llm_optimizer/spend_state.json` and increase `max_usd`.
-Model, rates, pricing provenance, and token limits must match.
-Removing an existing cap or enabling one over existing request logs without spend state is rejected.
-The cap uses local accounting under configured prices and token assumptions.
-See [pricing catalogs and spending caps](#configure-pricing-and-a-spending-cap) for catalog matching, accounting limitations, and interrupted-request handling.
-
-### Configure pricing and a spending cap
+#### Pricing catalogs and spending caps
 
 Add this optimizer block to a complete experiment configuration.
 
@@ -368,15 +347,19 @@ optimizer:
     # pricing_file: prices.json  # Optional custom catalog, relative to this YAML.
 ```
 
-A spending cap requires both token limits and matching prices.
+A spending cap requires `max_usd`, `max_input_tokens`, `max_output_tokens`, and matching prices.
+Explicit inline prices remain supported.
 The bundled [`pricing.json`](../crest/optimizers/llm/providers/pricing.json) covers OpenAI `gpt-6-luna`.
 Its conservative rates can exceed the actual bill.
 For another model, endpoint, or service tier, copy that file and set `pricing_file`.
 A custom catalog replaces the bundled one.
 Entries must match provider, base URL, model, and tier (`default` when omitted).
 
+`max_usd: 0` permits fixed warm-ups without paid requests.
 Capped studies save their selected rates in `llm_optimizer/spend_state.json`.
-Resume requires the same rates and provenance.
+Retain that file when resuming and increase `max_usd` to continue.
+Model, rates, pricing provenance, and token limits must match.
+Removing an existing cap or enabling one over existing request logs without spend state is rejected.
 Failed or interrupted requests retain their reservation because they may have been billed.
 Recorded charges are conservative estimates, not provider invoices.
 Without `max_usd`, spending is not tracked.

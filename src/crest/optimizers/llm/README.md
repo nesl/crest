@@ -4,6 +4,10 @@
 The runner owns trials and budgets.
 The LLM supplies proposals, not measurement evidence.
 
+- Run a [live experiment](#run-an-experiment), try [offline generation](#try-generation-without-running-a-campaign), or configure a [fixture campaign](#configure-a-campaign).
+- Understand [evidence](#evidence-and-memory), [validation](#validation-and-failures), and [full-history behavior](#full-history-generation), then [inspect a run](#inspect-a-run).
+- Extend the [optimizer](#extend-the-optimizer), add a [provider adapter](#add-an-adapter), or change the [prompts](#extend-the-prompts).
+
 ## Run an experiment
 
 1. Start with a complete experiment YAML for your dataset, model family, objective, and runtime.
@@ -47,12 +51,8 @@ unset OPENAI_API_KEY
 
 For a local example that makes no provider calls and performs no training or hardware evaluation, use the [offline generation example](#try-generation-without-running-a-campaign).
 
-Bounded history is the default.
-Accumulated memory is enabled by default.
-The example disables it.
-Full-history mode is available for `audio_dscnn` with its required rationale and policy settings.
-See the [configuration guide](../../../config/README.md) for evidence policies, warm-ups, rationale requirements, budgets, and resume rules.
-Changing identity-bearing settings, including the rationale contract, requires a new study.
+The example disables accumulated memory.
+See [history configuration](../../../config/README.md#responses-transport-and-history-modes) for defaults, supported families, and full-history constraints, and [memory settings](../../../config/README.md#accumulated-experimental-memory) for summary configuration.
 
 ## Evidence and memory
 
@@ -83,17 +83,17 @@ Transient transport failures receive bounded retries, then stop.
 They do not trigger random fallback.
 Inspect `rejected_candidates.jsonl` and request/response pairs for content errors before changing the experiment contract.
 Fixed warm-up attempts run before provider calls, consume trial budget, and resume from saved provenance.
-Keep their file unchanged.
-See [budgets and resume](../README.md#budgets-and-resume) for interrupted trials and the [pricing guide](../../../config/README.md#configure-pricing-and-a-spending-cap) for provider caps.
-Retain `spend_state.json` on resume because uncertain usage keeps its reservation, and insufficient funds stop generation without fallback.
-The dollar cap may increase, but saved tariffs and token bounds must match.
+Keep their candidate contents unchanged.
+See [budgets and resume](../README.md#budgets-and-resume) for interrupted trials.
+Insufficient funds stop generation without fallback.
+The [pricing guide](../../../config/README.md#configure-pricing-and-a-spending-cap) owns spend-state recovery and compatible cap changes.
 
 ## Full-history generation
 
 For `audio_dscnn`, `history_mode: full` supplies exact columnar evidence and network coverage instead of bounded summaries.
-It requires rationales, requires memory to be disabled, and supports batch sizes 1–5.
-Accepted entries are retained across up to `max_refill_attempts` refill calls (default 2).
-Malformed responses use the separate shared repair allowance (at most 1).
+Accepted entries are retained across refill calls controlled by `max_refill_attempts`.
+Malformed responses use the separate shared repair allowance.
+See [history configuration](../../../config/README.md#responses-transport-and-history-modes) for required settings and allowed limits.
 Exhaustion returns any retained subset, or attempts local random fallback when nothing was accepted.
 
 Python assigns local/exploration quotas and coverage targets.
@@ -123,31 +123,6 @@ Keep the study database and artifact directory together.
 `trials.csv` exports Optuna parameters and attributes.
 The configured measurement CSV records outcome and feasibility evidence.
 Each ledger directory requires a single writer.
-
-## Extend the optimizer
-
-| Location | Responsibility |
-| --- | --- |
-| [`component.py`](component.py) | Implements `OptimizerABC`. Coordinates lifecycle, warm-ups, and proposal rounds |
-| [`providers/`](providers/) | Completion interface, adapters, and provider setup |
-| [`prompting/`](prompting/) | Request construction, evidence selection, and phase guidance |
-| [`generation.py`](generation.py), [`schemas.py`](schemas.py) | Bounded/full request loops. Candidate, rationale, quota, and duplicate validation |
-| [`memory.py`](memory.py), [`full_history.py`](full_history.py) | Summary updates. Exact evidence, decoded identities, coverage, and parent selection |
-| [`config.py`](config.py), [`component.py`](component.py) | Settings validation and deterministic resume identity |
-| [`ledger.py`](ledger.py), [`spending.py`](spending.py) | Proposal provenance and provider spending accounting |
-
-1. Choose the responsible module.
-   Follow the [adapter](#add-an-adapter) or [prompt](#extend-the-prompts) extension procedure below.
-   Model parameters belong in the family's search descriptor, not a provider-specific schema.
-2. Preserve local candidate validation and resume identity.
-   Update the prompt version or optimizer identity when the experiment contract changes.
-3. Add focused valid/invalid cases and verify provenance, then run the following checks.
-
-   ```sh
-   python -m pytest -q test/test_llm_candidate_validation.py test/test_llm_generation.py test/test_llm_provider_prompt_ledger.py test/test_llm_proposal_contract.py
-   ```
-
-A change is done when the generation example works, focused tests cover its behavior, proposal evidence remains auditable, and the shared runner retains ownership of queueing and evaluation.
 
 ## Try generation without running a campaign
 
@@ -206,7 +181,6 @@ The expected result is two raw mappings matching the assertions, followed by the
 No trials are created.
 
 To inspect the files afterward, replace the temporary directory with a dedicated persistent output path.
-Each ledger directory must have a single writer.
 
 ## Configure a campaign
 
@@ -254,9 +228,7 @@ For `require_rationale: true`, each candidate must instead have exactly this sha
 {"candidates": [{"params": {"width": 4, "mode": "small"}, "rationale": "Test a smaller architecture first."}]}
 ```
 
-Optional `warmup_params_file` points to a nonempty JSON list of raw parameter mappings, relative to the YAML file.
-Warm-ups run before provider calls.
-See the [configuration guide](../../../config/README.md) for warm-up and resume settings.
+For fixed candidates before generation, see [warm-up configuration and recovery](../../../config/README.md#fixed-warm-up-and-recovery).
 
 ## Full-history audio DS-CNN
 
@@ -315,6 +287,31 @@ For a local slot, set `intent` to `local` and `parent_trial` to an integer from 
 Accepted proposals enter the normal trial queue and evaluation path.
 The example response is valid only when it matches the prompt's assigned coverage cell and active descriptor.
 See [full-history generation](#full-history-generation) for duplicate, repair, and refill behavior.
+
+## Extend the optimizer
+
+| Location | Responsibility |
+| --- | --- |
+| [`component.py`](component.py) | Implements `OptimizerABC`. Coordinates lifecycle, warm-ups, and proposal rounds |
+| [Completion providers](#completion-providers) | Completion interface, adapters, and provider setup |
+| [Prompt construction](#prompt-construction-and-evidence) | Request construction, evidence selection, and phase guidance |
+| [`generation.py`](generation.py), [`schemas.py`](schemas.py) | Bounded/full request loops. Candidate, rationale, quota, and duplicate validation |
+| [`memory.py`](memory.py), [`full_history.py`](full_history.py) | Summary updates. Exact evidence, decoded identities, coverage, and parent selection |
+| [`config.py`](config.py), [`component.py`](component.py) | Settings validation and deterministic resume identity |
+| [`ledger.py`](ledger.py), [`spending.py`](spending.py) | Proposal provenance and provider spending accounting |
+
+1. Choose the responsible module.
+   Follow the [adapter](#add-an-adapter) or [prompt](#extend-the-prompts) extension procedure below.
+   Model parameters belong in the family's search descriptor, not a provider-specific schema.
+2. Preserve local candidate validation and resume identity.
+   Update the prompt version or optimizer identity when the experiment contract changes.
+3. Add focused valid/invalid cases and verify provenance, then run the following checks.
+
+   ```sh
+   python -m pytest -q test/test_llm_candidate_validation.py test/test_llm_generation.py test/test_llm_provider_prompt_ledger.py test/test_llm_proposal_contract.py
+   ```
+
+A change is done when the generation example works, focused tests cover its behavior, proposal evidence remains auditable, and the shared runner retains ownership of queueing and evaluation.
 
 ## Completion providers
 

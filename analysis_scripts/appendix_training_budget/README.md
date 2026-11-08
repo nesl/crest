@@ -4,7 +4,8 @@ SPDX-License-Identifier: BSD-3-Clause
 -->
 # Appendix training-budget sensitivity
 
-To collect new training trajectories, use the [training-budget experiment](#training-budget-experiment).
+Use [saved checkpoint analysis](#analyze-saved-checkpoint-evaluations) for existing experiment directories or the [training-budget experiment](#training-budget-experiment) to collect trajectories.
+Follow the [common command setup](../README.md).
 
 ## Analyze saved checkpoint evaluations
 
@@ -19,7 +20,9 @@ python analysis_scripts/appendix_training_budget/analyze.py \
 ```
 
 Each batch contains `manifest.json`, `execution.json`, source/effective YAML configs, and `<candidate>/seed_<seed>/` with `history.json`, `results.json`, `checkpoints.json`, and `complete.json`.
-Batches must describe compatible runs.
+These are experiment directories produced by `epoch_sensitivity.py`, including its candidate/seed files.
+Combine batches only when their experiment settings, budgets, seeds, dataset, and runtime versions match.
+Use distinct candidates across batches.
 Candidate counts, budgets and seeds come from the manifests.
 Use `--help` for options.
 
@@ -40,7 +43,6 @@ The selected panel and fixed historical energy do not establish convergence or s
 It requires explicit source, dataset, and output paths.
 It does not run search or access hardware.
 
-Run from the repository root in the CREST environment.
 Preparation needs PyYAML.
 Training needs the full CREST runtime, and analysis needs Matplotlib.
 
@@ -91,7 +93,8 @@ Partial trajectories cannot resume.
 Preserve partial outputs and start a new directory.
 Training runs analysis automatically on completion.
 The `analyze` command above can regenerate it.
-The [training-budget appendix analysis](#analyze-saved-checkpoint-evaluations) uses separate input tables.
+For the additional validated comparisons and plot-ready tables, pass this same complete experiment directory to the [saved checkpoint analysis](#analyze-saved-checkpoint-evaluations) with `--panels /path/to/new-experiment`.
+That analysis can also combine compatible experiment directories as shown above.
 
 ```bash
 python -m pytest -q test/test_training_experiment.py

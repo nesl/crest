@@ -5,30 +5,17 @@ SPDX-License-Identifier: BSD-3-Clause
 
 # Optimizer contracts
 
-`optuna` is the default native optimizer.
-It requests a `NativeRound`, and Optuna samples parameters inside the objective.
-Explicit optimizers return an `ExplicitRound` of complete raw parameter mappings and provenance.
-Both run through the same objective, feasibility checks, trial budget, and callbacks.
+`optuna` requests native sampling inside the objective.
+Explicit optimizers return complete raw parameters and provenance.
+Both use the shared runner for evaluation and budgets.
 
-[`runner.py`](runner.py) validates an entire explicit batch before reserving any trials, then evaluates it through Optuna.
-Candidates must match the active [`search-space descriptor`](search_space.py) exactly.
-Resume completes existing WAITING trials before requesting new work.
-[`history.py`](history.py) supplies immutable proposal/history records.
+See [`OptimizerABC`](../interfaces/optimizer.py), [round and budget types](../pipeline_types.py), the [model-family contract](../model_families/README.md), and the [configuration guide](../../config/README.md).
 
-[`study_state.py`](study_state.py) checks resume compatibility and handles interrupted-trial recovery.
-Resume requires matching optimizer settings and a saved optimizer identity.
-Otherwise start a new study.
-Existing results remain available for analysis and plotting.
+Choose a task below.
 
-[`context.py`](context.py) assembles bounded, deterministic semantic context for explicit proposers.
-Its helpers in [`contexts/`](contexts/) cover [data/task](contexts/data_task.py), [device](contexts/device.py), [runtime](contexts/runtime.py), [STM32](contexts/stm32.py), and [value normalization](contexts/values.py).
-Architectural hints are priors.
-Measured results take precedence.
-Native sampling skips descriptor/context setup.
-
-See [`OptimizerABC`](../interfaces/optimizer.py), the round and budget types in [`pipeline_types.py`](../pipeline_types.py), the [model-family contract](../model_families/README.md), and the [configuration guide](../../config/README.md).
-Progress reporting is shared across optimizers.
-See [progress and reproducibility](#progress-and-reproducibility).
+- Operate a study using [budgets and resume](#budgets-and-resume), [progress reports](#progress-and-reproducibility), or [troubleshooting](#troubleshooting).
+- Build a proposer using the [lifecycle contract](#responsibilities-and-lifecycle), [complete example](#minimal-explicit-proposer), and [extension checklist](#adding-an-optimizer).
+- Configure LLM proposals using the [LLM guide](llm/README.md#run-an-experiment).
 
 ## Budgets and resume
 
@@ -55,54 +42,6 @@ Unknown or WAITING numbers are rejected.
 Remove the list after recovery.
 See the [configuration guide](../../config/README.md) for budget settings.
 
-## Progress and reproducibility
-
-Search execution refreshes progress after every completed attempt and when a study resumes, under `<models_dir>/<study>/progress/`.
-Failed, pruned, infeasible, and nonfinite attempts retain their attempt positions and time accounting, but cannot improve incumbents or hypervolume.
-
-[`progress.py`](../search/progress.py) writes scalar score-progress CSV and PNG/PDF charts against attempts and elapsed time.
-Multiobjective reports use only hypervolume, with `hypervolume_progress.csv`, `hypervolume_history.png`/`.pdf`, `hypervolume_vs_time.png`/`.pdf`, and `hypervolume_reference.json`.
-An `error.txt` in the progress directory indicates a reporting failure.
-Existing plots may be stale even though search results remain available.
-
-Hypervolume uses a fixed reference point in objective order and original units.
-Configure `outputs.hypervolume_reference_point` for a meaningful comparison target.
-The selected reference is persisted for resume.
-Without a configured reference, the first eligible finite objective vector freezes a monitoring reference with a 10% margin in each objective's worse direction.
-This fallback is for monitoring, not a substitute for a domain-chosen benchmark.
-It does not move as results change.
-Points outside it need not improve hypervolume.
-Comparable studies must use the same reference, objective definitions, units, directions, and eligibility rules.
-Only feasible, finite COMPLETE vectors contribute.
-Pruned attempts cannot contribute partial results.
-
-Generate a progress report from a saved study database.
-
-```python
-from pathlib import Path
-from crest.search.progress import read_trials, write_progress
-
-trials = read_trials(Path("results/optuna.db"), "my-study")
-write_progress(trials, Path("report"), "my-study")
-# For multiobjective reports, optionally pass reference_point=[...] in objective order.
-```
-
-Use an existing database and exact study name.
-This writes to `report/progress/`.
-The SQLite reader uses a read-only snapshot.
-Feasibility defaults to requiring affirmative evidence.
-Set `feasibility_enabled=False` only for a study configured without feasibility rules.
-For in-memory multiobjective records, pass objective `directions` to `write_progress`.
-SQLite records carry their directions.
-
-[`training_randomness.py`](../search/training_randomness.py) validates `training.random_seed` and `training.deterministic_ops`, then resets Python/NumPy/TensorFlow randomness before evaluation.
-The same configured seed is reused across architectures and final fits.
-Deterministic operations require a compatible runtime.
-A seed alone does not guarantee cross-platform reproducibility.
-
-See the [configuration reference](../../config/README.md) for training settings.
-Targeted coverage lives in [`test_progress.py`](../../../test/test_progress.py) and [`test_training_randomness.py`](../../../test/test_training_randomness.py).
-
 ## Responsibilities and lifecycle
 
 An optimizer chooses **raw trial parameters** or requests native sampling.
@@ -110,6 +49,12 @@ It does not build models, train, measure devices, calculate the objective, enque
 The shared runner owns those operations.
 Built-in optimizers include native `optuna` and the explicit `llm_generator`.
 The interface also supports application-defined proposers.
+
+[`runner.py`](runner.py) validates explicit batches before reservation.
+[`history.py`](history.py) supplies immutable records, and [`study_state.py`](study_state.py) handles identity checks and recovery.
+[`context.py`](context.py) assembles semantic context using [workload](contexts/data_task.py), [device](contexts/device.py), [runtime](contexts/runtime.py), [STM32](contexts/stm32.py), and [normalization](contexts/values.py) helpers.
+Architectural hints are priors and measured results take precedence.
+Native sampling skips descriptor/context setup.
 
 Components must support zero-argument construction.
 The lifecycle is as follows.
@@ -238,6 +183,54 @@ An explicit proposer needs the descriptor even when it does not need semantic co
   An invalid batch reserves no trials, and resume drains existing WAITING work before asking for more proposals.
 - Registration, configuration selection, and the native path remain usable.
   Focused tests cover the new component's behavior and resume identity.
+
+## Progress and reproducibility
+
+Search execution refreshes progress after every completed attempt and when a study resumes, under `<models_dir>/<study>/progress/`.
+Failed, pruned, infeasible, and nonfinite attempts retain their attempt positions and time accounting, but cannot improve incumbents or hypervolume.
+
+[`progress.py`](../search/progress.py) writes scalar score-progress CSV and PNG/PDF charts against attempts and elapsed time.
+Multiobjective reports use only hypervolume, with `hypervolume_progress.csv`, `hypervolume_history.png`/`.pdf`, `hypervolume_vs_time.png`/`.pdf`, and `hypervolume_reference.json`.
+An `error.txt` in the progress directory indicates a reporting failure.
+Existing plots may be stale even though search results remain available.
+
+Hypervolume uses a fixed reference point in objective order and original units.
+Configure `outputs.hypervolume_reference_point` for a meaningful comparison target.
+The selected reference is persisted for resume.
+Without a configured reference, the first eligible finite objective vector freezes a monitoring reference with a 10% margin in each objective's worse direction.
+This fallback is for monitoring, not a substitute for a domain-chosen benchmark.
+It does not move as results change.
+Points outside it need not improve hypervolume.
+Comparable studies must use the same reference, objective definitions, units, directions, and eligibility rules.
+Only feasible, finite COMPLETE vectors contribute.
+Pruned attempts cannot contribute partial results.
+
+Generate a progress report from a saved study database.
+
+```python
+from pathlib import Path
+from crest.search.progress import read_trials, write_progress
+
+trials = read_trials(Path("results/optuna.db"), "my-study")
+write_progress(trials, Path("report"), "my-study")
+# For multiobjective reports, optionally pass reference_point=[...] in objective order.
+```
+
+Use an existing database and exact study name.
+This writes to `report/progress/`.
+The SQLite reader uses a read-only snapshot.
+Feasibility defaults to requiring affirmative evidence.
+Set `feasibility_enabled=False` only for a study configured without feasibility rules.
+For in-memory multiobjective records, pass objective `directions` to `write_progress`.
+SQLite records carry their directions.
+
+[`training_randomness.py`](../search/training_randomness.py) validates `training.random_seed` and `training.deterministic_ops`, then resets Python/NumPy/TensorFlow randomness before evaluation.
+The same configured seed is reused across architectures and final fits.
+Deterministic operations require a compatible runtime.
+A seed alone does not guarantee cross-platform reproducibility.
+
+See the [configuration reference](../../config/README.md) for training settings.
+Targeted coverage lives in [`test_progress.py`](../../../test/test_progress.py) and [`test_training_randomness.py`](../../../test/test_training_randomness.py).
 
 ## Troubleshooting
 

@@ -13,9 +13,9 @@ Run commands from the repository root with the `crest` Conda environment active 
 
 | Tool | Purpose |
 | --- | --- |
-| [Paired repeatability](cs1/README.md#paired-repeatability-experiments) | Randomized paired measurements using compiled STM32 artifacts |
-| [Waiting power](cs1/README.md#waiting-power-experiments) | Continuous and cadenced probes for waiting-power calibration |
-| [Waiting-policy experiments](cs1/README.md#waiting-policy-experiments) | Compare prepared continuous, awake-final, and STOP-final deployments |
+| [Paired repeatability](cs1/README.md#collect-new-measurements) | Randomized paired measurements using compiled STM32 artifacts |
+| [Waiting power](cs1/README.md#collect-new-measurements) | Continuous and cadenced probes for waiting-power calibration |
+| [Waiting-policy experiments](cs1/README.md#collect-new-measurements) | Compare prepared continuous, awake-final, and STOP-final deployments |
 | [Micro-workload probe](appendix_measurement_context/README.md#micro-workload-energy-probe) | Fixed-duration board measurements for sleep and compute phases |
 | [Training budget](appendix_training_budget/README.md#training-budget-experiment) | Train and evaluate candidates at different checkpoint budgets |
 
@@ -73,12 +73,9 @@ python analysis_scripts/paper_plots/plot_case1_clock_reversal.py \
 
 ## Pareto front comparison
 
-This folder contains calculation-only scripts for comparing CSV-derived Pareto fronts.
+The scripts in `compare_pareto_front_calcs/` compare CSV-derived Pareto fronts.
 They consume existing NAS or replay artifacts.
 They do not run NAS, retrain models, or replay hardware.
-
-No hardware required.
-Run commands from the repository root with the `crest` Conda environment active.
 
 ### Generic Front Comparison
 
@@ -101,7 +98,7 @@ python -B analysis_scripts/compare_pareto_front_calcs/compare_pareto_fronts.py \
   --match-rule nearest-quality \
   --reduction-direction target-vs-source \
   --reduction-denominator source \
-  --output-dir outputs/front_compare/example
+  --output-dir /path/to/results/front_compare/example
 ```
 
 The command writes the following.

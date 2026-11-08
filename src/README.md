@@ -40,7 +40,7 @@ For installation and runnable workflows, see [Getting started](GETTING_STARTED.m
 | Area | Responsibility |
 | --- | --- |
 | [`crest/component_selection.py`](crest/component_selection.py), [`registry.py`](crest/registry.py), [`builtin_components.py`](crest/builtin_components.py) | Resolve configured names and register components |
-| [`crest/interfaces/`](crest/interfaces), [`pipeline_types.py`](crest/pipeline_types.py) | Component contracts and shared records |
+| [Shared contracts](#shared-contracts), [`pipeline_types.py`](crest/pipeline_types.py) | Component contracts and shared records |
 | [`crest/datasets/`](crest/datasets/README.md) | Data loading, splits, and calibration data |
 | [`crest/tasks/`](crest/tasks/README.md) | Training, evaluation, and task metrics |
 | [`crest/model_families/`](crest/model_families/README.md) | Search spaces, model construction, and export variants |
@@ -121,21 +121,7 @@ NAS and the HIL server share component initialization through [`runtime_bootstra
 
 The current modular selection surface is resolved in [`crest/component_selection.py`](crest/component_selection.py).
 
-The main config knobs are as follows.
-
-- `dataset.name` Selects the dataset adapter.
-- `dataset.params` Required dataset-local config block.
-- `task.name` Selects the task adapter.
-- `task.params` Optional task-local config block.
-- `model.family` Selects the model family.
-- `model.params` Model-family-local configuration.
-- `model.search` Model-family-local search-space configuration.
-- `optimizer.type` Selects the registered proposer for the NAS client.
-  Defaults to `optuna`.
-
-`dataset`, `task`, and `model` are required blocks.
-
-See [`config/README.md`](config/README.md) for the current shipped config shape.
+Use the [configuration reference](config/README.md) for component selectors, required blocks, defaults, and component-local parameters.
 
 ## Registration Model
 

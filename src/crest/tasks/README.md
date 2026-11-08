@@ -12,6 +12,7 @@ Hardware is only needed when the resulting dataset/task/model combination is exp
 
 For the broader source map, see [`../../README.md`](../../README.md).
 For the config surface that selects tasks, see [`../../config/README.md`](../../config/README.md).
+For implementation work, start with [extension steps](#add-a-new-task), [hook contracts](#contract-in-practice), and the [worked example](#concrete-task-usage).
 
 ## What This Layer Owns
 
@@ -72,6 +73,10 @@ Use [`odometry_regression.py`](odometry_regression.py) or [`sound_classification
 9. Select it in config with `task.name` and put task-local knobs under `task.params`.
 10. Add hardware-free tests for target spec, fit-plan wiring, metrics, and evaluation behavior.
 
+Components are registered explicitly and are not discovered from files in this directory.
+Task constructors accept `checkpoint_path` and `early_stopping_patience` as keyword-only arguments.
+Task hooks receive `task.params`.
+
 ## Contract In Practice
 
 `TaskABC` exposes these main hooks.
@@ -91,15 +96,6 @@ Use [`odometry_regression.py`](odometry_regression.py) or [`sound_classification
   Produce `EvaluationResult` payloads from a model or normalized predictions.
 - `history_component_keys(...)`, `generate_closeout_artifacts(...)`, and `validate_model_outputs(...)` Optional.
   Use these when the task needs per-output history plots, task-specific final artifacts, or structural output checks.
-
-## Registration And Config Selection
-
-Task adapters must be registered explicitly.
-They are not discovered from files in this directory.
-Follow the [extension steps](#add-a-new-task) above.
-
-Task constructors accept `checkpoint_path` and `early_stopping_patience` as keyword-only arguments.
-See the [configuration reference](../../config/README.md).
 
 ## Concrete Task Usage
 
@@ -153,30 +149,20 @@ task:
 ```
 
 Pair this fragment with the `urbansound8k_mel` dataset and `audio_dscnn` family in a complete config.
-The runner supplies constructor callback paths/patience, and task hooks receive `task.params`.
+The runner supplies constructor callback paths and patience.
 A new task subclass must implement all required hooks in [`TaskABC`](../interfaces/task.py).
 This shipped-task example is a quick check of their input/output contracts rather than a complete subclass skeleton.
 
-## Contributor Checklist
-
-- Keep dataset loading in the dataset layer and architecture/search logic in the model-family layer.
-- Keep every metric name stable and declare it in `metric_contract(...)`.
-- Validate task config locally before model construction.
-- Keep fit-plan wiring deterministic and explicit for search and final modes.
-- Add or update NumPy-style docstrings for changed functions, classes, dataclasses, and tests.
-- Add hardware-free tests before running any HIL validation.
-
 ## Definition Of Done
 
-A task adapter is ready when the following checks pass.
+Verify the task with hardware-free success and representative failure cases.
 
-1. `validate_config(...)` catches invalid task parameters.
-2. `build_target_spec(...)` describes the model outputs accurately.
-3. `metric_contract(...)` declares all metrics used by config policies.
-4. `compile_model(...)`, `build_fit_plan(...)`, and evaluation hooks work for both NAS-time and final-training paths.
-5. Optional closeout artifacts are deterministic and written under the runner-provided output directory.
-6. The task is registered and selectable with `task.name`.
-7. Hardware-free tests cover target spec, fit-plan, evaluation, and failure behavior.
+- Invalid `task.params` fail before model construction.
+- Output names and shapes match the paired model family, and configured score, prune, and feasibility metrics are declared.
+- Compile, fit-plan, and evaluation checks cover both NAS-time and final-training modes, including deterministic callbacks and monitor keys.
+- Optional closeout artifacts are deterministic and stay under the runner-provided output directory.
+- A config using the registered `task.name` resolves the adapter.
+- NumPy-style docstrings match changed functions, classes, dataclasses, and tests.
 
 ## Troubleshooting
 

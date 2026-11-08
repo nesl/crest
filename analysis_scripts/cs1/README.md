@@ -6,9 +6,10 @@ SPDX-License-Identifier: BSD-3-Clause
 
 The analysis commands below use saved energy measurements without training or hardware access.
 Hardware experiment recipes appear under [Collect new measurements](#collect-new-measurements).
-Requires Python, NumPy, pandas and SciPy.
+The saved-measurement analyses require Python, NumPy, pandas and SciPy.
 Inputs and generated results stay outside this package.
-Each command supports `--help` and records input hashes.
+The saved-measurement analysis commands support `--help` and record input hashes.
+Use [saved-measurement analysis](#analyze-saved-measurements) for existing data or [collection setup](#collect-new-measurements) before choosing a hardware recipe.
 
 | Script | Purpose |
 | --- | --- |
@@ -21,7 +22,7 @@ Each command supports `--help` and records input hashes.
 | `direct_session.py` | Direct contrasts, waiting slopes and accounting |
 | `scaling_periods.py` | Clock scaling and measured energy optima |
 
-Run the commands below from the repository root.
+Follow the [common command setup](../README.md).
 Relative input/output paths resolve from the current working directory.
 Use explicit input/output paths for new datasets.
 Prediction supports configurable folds, repeats and quality ceilings.
@@ -71,17 +72,22 @@ These scripts regenerate analysis results from saved observations, not new hardw
 
 ## Collect new measurements
 
+**The three CS1 hardware recipes below have not been updated for the current STM32 runtime and are incompatible with it.**
+For new board runs, start with the current [HIL workflow](../../src/GETTING_STARTED.md#running-nas-and-hil).
+Use these recipes only with a compatible historical runtime and matching firmware protocol.
+
 The [repeatability](#paired-repeatability-experiments), [waiting-power](#waiting-power-experiments), and [waiting-policy](#waiting-policy-experiments) recipes run new STM32 experiments.
 Each recipe describes preparation, hardware requirements, outputs, and the inputs needed for subsequent analysis.
-Run one experiment at a time on a DUT/harness.
+Run commands from the repository root in the `crest` environment and reserve the DUT/harness for one experiment at a time.
+Supply the configured device ports and acknowledge board readiness with `--board-ready`.
+Builds require the calibration dataset, CREST runtime, firmware template, ST Edge AI, and STM32/ARM toolchain when a recipe builds model artifacts.
+Keep prepared builds at their original paths with inputs unchanged, and rebuild after moving them or changing model, configuration, or toolchain.
 
 ### Paired repeatability experiments
 
 Run paired STM32 measurements with a fixed randomized schedule and reusable compiled models.
 This recipe initializes model weights.
 It does not train models.
-
-Run from the repository root.
 
 ```sh
 python -m analysis_scripts.cs1.experiments.repeatability prepare --manifest /path/candidates.json --output /path/new-study --rounds 4 --seed 17
@@ -124,13 +130,8 @@ Exceptions and uncertain interruptions require inspection before resuming.
 Evidence is retained.
 
 `build-artifacts` initializes weights, quantizes models to int8, and compiles each measurement phase.
-It requires the configured calibration dataset, CREST runtime, firmware template, ST Edge AI, and ARM/STM32 toolchain.
 To use existing prepared bundles, run `bind-artifacts --artifact-root /path/bundles` before starting measurements.
 
-Keep prepared bundles at their original paths and leave their inputs unchanged.
-Rebuild after moving them or changing the model, configuration, or toolchain.
-
-Run only one experiment at a time on a DUT/harness.
 Harness firmware must already match the manifest's run count.
 This runner disables automatic harness flashing.
 Diagnostic profiling is outside this protocol.
@@ -151,7 +152,7 @@ python -m pytest -q analysis_scripts/cs1/experiments/repeatability/test_runner.p
 
 This package builds and runs **new STM32 hardware experiments** and analyzes their recorded evidence.
 
-Run from the repository root, providing a candidate manifest with `candidates`, `timesteps`, and `input_dim` (candidate entries need `candidate_id`, `architecture`, and `clock_mhz`).
+Provide a candidate manifest with `candidates`, `timesteps`, and `input_dim` (candidate entries need `candidate_id`, `architecture`, and `clock_mhz`).
 
 ```sh
 python -m analysis_scripts.cs1.experiments.waiting_power build --manifest /path/candidates.json --candidate a --config /path/device-and-data.yaml --output /path/new-study --clocks 200 400 --period-ms 250 --initialization-seed 7 --dry-run
@@ -166,7 +167,6 @@ Accepted architecture keys are defined by [OdomTCNFamily](../../src/crest/model_
 Remove `--dry-run` to quantize the model to int8 and compile continuous, ten-run cadenced, and short cadenced variants for each clock.
 `--low-runs` selects the short window (1–9).
 Keep the selected release period and firmware protocol consistent throughout the experiment.
-Build requires the configured calibration dataset, CREST runtime, firmware, ST Edge AI, and STM32/ARM build tools.
 
 ```sh
 python -m analysis_scripts.cs1.experiments.waiting_power run --study /path/new-study --rounds 4 --seed 17 --clocks 200 400 --dut-port /path/dut --harness-port /path/harness --board-ready
@@ -180,13 +180,10 @@ Shuffled scheduling is also available.
 The grouped schedule ends with a ten-run block.
 After an interrupted run, check the harness configuration before another experiment.
 
-Run only one experiment at a time on a DUT/harness.
 Accepted measurements are skipped on restart.
 Schedule changes are refused.
 Exceptions and interrupted attempts require inspection.
 Retries remain bounded by `--max-attempts`.
-
-Keep builds at their generated paths and rebuild after changing their inputs.
 
 Offline `analyze` reads recorded results only.
 It solves `W_k = k E + (T-C)[P_busy + (k-1)P_stop]`, with energies in mJ and times in seconds.
@@ -257,7 +254,6 @@ The [STM32 backend](../../src/crest/microcontrollers/stm32_nucleo_n657x0.py) doc
 
 Install matching harness firmware before running.
 Automatic harness flashing is disabled.
-Run only one experiment at a time on a DUT/harness.
 
 Restart with the original schedule and device settings to skip accepted measurements.
 Failures preserve evidence and stop without automatic retries.

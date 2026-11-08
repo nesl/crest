@@ -4,20 +4,17 @@ SPDX-License-Identifier: BSD-3-Clause
 -->
 # Appendix measurement context
 
-The [micro-workload probe](#micro-workload-energy-probe) measures fixed-duration sleep, wait, polling, floating-point, and integer-compute windows on supported boards.
-Use it to collect the measurement-context appendix’s synthetic workload data.
-
-The guide covers board setup, commands, and per-attempt and aggregate outputs.
-These measurements are separate from the model-specific [CS1 waiting-power experiments](../cs1/README.md#waiting-power-experiments).
+Use the [micro-workload probe](#micro-workload-energy-probe) to collect synthetic measurement-context data.
+These fixed-duration phase measurements are separate from the model-specific [CS1 waiting-power experiments](../cs1/README.md#collect-new-measurements).
+Jump to [hardware setup](#hardware-setup), [commands](#quick-start), or [outputs](#outputs).
 Run one experiment at a time on a DUT/harness.
 
 ## Micro-workload energy probe
 
-Synthetic phase-energy probes for CREST-compatible MCU targets.
-The probe uses the existing CREST hardware-in-the-loop harness and INA228 telemetry path to measure fixed-duration deployment windows occupied by simple phases including sleep/idle, light wait, tight polling, floating-point compute, and integer compute.
+The probe uses CREST's HIL harness and INA228 telemetry to measure sleep, wait, polling, floating-point, and integer-compute windows on supported boards.
 
 A target development board and CREST HIL harness are required.
-Run commands from the repository root with the `crest` Conda environment active.
+Follow the [common command setup](../README.md).
 
 For general HIL setup and backend details, see [hardware guide](../../src/crest/microcontrollers/README.md).
 For the STM32 LRUN workspace used by the STM32 probe path, see [STM32 workspace guide](../../sketches/stm32/crest_stm32_lrun/README.md).
@@ -30,8 +27,8 @@ Probe sources live under `experiments/micro_workload_energy_probe/` relative to 
   It compiles and uploads DUT firmware, prepares the HIL harness, runs the requested board/workload/repeat matrix, validates telemetry, and writes per-attempt plus aggregate outputs.
 - `micro_workload_probe.ino` Arduino DUT sketch used for Nano 33 BLE and Portenta H7 targets.
 - `stm32_synthetic_dut_runner.c` STM32 LRUN DUT runner staged into the shipped STM32 template for the synthetic workloads.
-- `results/` Generated local outputs.
-  This directory is intentionally ignored by git.
+- `results/` Default local output directory, ignored by git.
+  Supply external output paths as in the examples to keep generated results outside the checkout.
 
 ### Supported Targets
 
@@ -98,7 +95,9 @@ python analysis_scripts/appendix_measurement_context/experiments/micro_workload_
   --boards stm32 \
   --workloads sleep \
   --window-ms 200 \
-  --repeats 1
+  --repeats 1 \
+  --output-json /path/to/results/stm32_smoke.json \
+  --output-csv /path/to/results/stm32_smoke.csv
 ```
 
 Run the full supported workload matrix for one-second windows.
@@ -108,7 +107,9 @@ python analysis_scripts/appendix_measurement_context/experiments/micro_workload_
   --boards stm32 portenta_m4 portenta_m7 ble \
   --workloads sleep wait poll float int \
   --window-ms 1000 \
-  --repeats 3
+  --repeats 3 \
+  --output-json /path/to/results/workload_matrix.json \
+  --output-csv /path/to/results/workload_matrix.csv
 ```
 
 Reuse an already-flashed harness and write explicit outputs.
@@ -118,8 +119,8 @@ python analysis_scripts/appendix_measurement_context/experiments/micro_workload_
   --boards ble \
   --workloads wait poll float int \
   --skip-harness-flash \
-  --output-json analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/results/ble_probe.json \
-  --output-csv analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/results/ble_probe.csv
+  --output-json /path/to/results/ble_probe.json \
+  --output-csv /path/to/results/ble_probe.csv
 ```
 
 Run 50 one-second STM32 repeats.
@@ -130,8 +131,8 @@ python analysis_scripts/appendix_measurement_context/experiments/micro_workload_
   --workloads sleep wait poll float int \
   --window-ms 1000 \
   --repeats 50 \
-  --output-json analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/results/stm32_1s_x50.json \
-  --output-csv analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/results/stm32_1s_x50.csv
+  --output-json /path/to/results/stm32_1s_x50.json \
+  --output-csv /path/to/results/stm32_1s_x50.csv
 ```
 
 Use `--help` for the full option list.

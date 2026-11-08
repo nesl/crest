@@ -16,6 +16,9 @@ Figures use white backgrounds, DejaVu Sans, consistent series colors, and vector
 PNG exports default to 400 dpi.
 Layouts, labels, colors and export bounds follow the submitted assets.
 
+Start with [environment and inputs](#environment-and-inputs), then find the generator in the [figure manifest](#submitted-figure-manifest).
+Use the task sections for [CS1](#cs1-clock-reversal-ranks-and-model-transfer), [CS2 replay](#cs2-proxy-candidates-replayed-on-target-hardware), [CS3](#cs3-proposal-strategies), [training budgets](#training-budget-appendix), or [timing](#timing-appendix).
+
 ## Environment and inputs
 
 Run from the repository root with the repository Conda environment, or a plot-only environment containing `matplotlib`, `numpy`, `pandas`, `scipy`, and `Pillow`.

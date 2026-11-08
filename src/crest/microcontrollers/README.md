@@ -56,7 +56,6 @@ Energy measurement requires the CREST HIL harness and INA228 telemetry path.
 - [New-Vendor Bring-Up Guide](#new-vendor-bring-up-guide)
 - [Runtime Measurement Notes](#runtime-measurement-notes)
 - [Test Plan](#test-plan)
-- [Contributor Checklist](#contributor-checklist)
 - [Definition Of Done](#definition-of-done)
 - [Troubleshooting](#troubleshooting)
 
@@ -556,34 +555,19 @@ For a new STM or non-Arduino backend, cover the following cases.
 6. End-to-end `evaluate(...)` normalization into CREST metrics and error codes.
 7. Compile-only smoke (`run_hil=False`) on the new board/backend config when the required toolchain is available.
 
-## Contributor Checklist
-
-Before opening a PR
-
-1. Keep board/toolchain code in the microcontroller backend.
-2. Keep architecture/search logic in model families.
-3. Keep task metrics and evaluation logic in task adapters.
-4. Add or update NumPy-style docstrings for changed functions, classes, dataclasses, and tests.
-5. Toolchain preflight.
-   Compile-only smoke (`run_hil=False`) on the new board/backend config.
-6. Upload smoke on connected hardware.
-7. Runtime smoke on connected hardware when HIL is supported.
-8. Confirm serial port defaults in config are correct.
-9. Confirm harness pins/settings when energy-aware mode or harness-only mode is enabled.
-10. Confirm generated output filenames and staging layout are what the backend expects.
-
 ## Definition Of Done
 
-A backend bring-up is done when the following checks pass.
+Complete the [software test plan](#software-tests) before connected-hardware validation.
+Keep board/toolchain code in the backend, architecture/search logic in model families, and task metrics in task adapters.
 
-1. The device can be constructed through `get_device(...)`.
-2. `prepare_candidate(...)` produces the correct build input directory.
-3. `compile(...)` returns real flash/RAM diagnostics or correctly typed compile-overflow failures.
-4. `upload(...)` works on connected hardware or returns a clear actionable failure.
-5. `measure(...)` returns real telemetry or correctly typed runtime failures.
-6. `evaluate(...)` returns normalized `DeviceMetrics` that the shared HIL controller can consume.
-7. Tests cover the backend-specific control path.
-8. This README and the root README document any required setup or platform caveats.
+- A config constructs the backend through `get_device(...)` with the expected serial port defaults and resolved options.
+- Candidate staging produces the expected filenames and build directory layout.
+- Compile-only smoke with `run_hil=False` returns real flash/RAM diagnostics or correctly typed compile-overflow failures.
+- Upload smoke succeeds on connected hardware or returns a clear actionable failure.
+- Runtime smoke, when HIL is supported, returns real telemetry or correctly typed runtime failures.
+- Energy-aware and harness-only checks confirm the configured harness pins and settings.
+- `evaluate(...)` returns normalized `DeviceMetrics` accepted by the shared HIL controller.
+- This README and the root README describe required setup and platform caveats, and NumPy-style docstrings match changed functions, classes, dataclasses, and tests.
 
 ## Troubleshooting
 

@@ -79,6 +79,9 @@ Use [`odom_tcn.py`](odom_tcn.py) or [`audio_dscnn/family.py`](audio_dscnn/family
 7. Put family-owned knobs under `model.params` and `model.search`.
 8. Verify both the training/NAS path and the HIL/export path.
 
+Components are registered explicitly and are not discovered from files in this directory.
+Families receive the `model` configuration subtree, with options under `model.params` and search controls under `model.search`.
+
 ## Contract In Practice
 
 `ModelFamilyABC` exposes these main hooks.
@@ -125,14 +128,6 @@ The default materialization path supports the following.
 Those extra variants are odometry-specific export/materialization modes used for controlled backend preparation.
 New families do not need to support those names unless they intentionally need the same materialization behavior.
 
-## Registration And Config Selection
-
-Model families must be registered explicitly.
-They are not discovered from files in this directory.
-Follow the [extension steps](#add-a-new-model-family) above.
-
-Families receive the `model` configuration subtree, with options under `model.params` and search controls under `model.search`.
-
 ## Minimal Model Family Example
 
 This standalone example builds a single-output regression model.
@@ -147,7 +142,6 @@ import tensorflow as tf
 from crest.interfaces import ModelFamilyABC
 from crest.optimizers.search_space import SearchParam
 from crest.pipeline_types import ModelBuildContext, TargetSpec
-
 
 class TinyRegressionFamily(ModelFamilyABC):
     @property
@@ -176,7 +170,6 @@ class TinyRegressionFamily(ModelFamilyABC):
             1, name=ctx.target_spec.output_names[0]
         )(hidden)
         return tf.keras.Model(inputs, output)
-
 
 ctx = ModelBuildContext(
     input_shape=(8, 3),
@@ -211,28 +204,16 @@ model:
 This fragment selects only the family.
 A runnable config also needs a compatible dataset, task, and the runner's remaining configuration blocks.
 
-## Contributor Checklist
-
-- Keep architecture/search logic in the model family.
-- Keep board/toolchain logic in the microcontroller backend.
-- Validate family-local config and hyperparameters before export.
-- For explicit proposer support, verify that descriptor names/types/choices match persisted `sample_hparams(...)` parameters, including any narrowed `model.search` options.
-- Keep export/materialization decisions explicit.
-  Do not hide backend-specific behavior in the family.
-- Add or update NumPy-style docstrings for changed functions, classes, dataclasses, and tests.
-- Add hardware-free tests for model construction and export request generation wherever possible before running HIL validation.
-
 ## Definition Of Done
 
-A model family is ready when the following checks pass.
+Verify construction, validation, and export preflight without hardware before running HIL validation.
 
-1. `sample_hparams(...)` and `build_model(...)` work for the configured search space.
-2. Config and sampled hyperparameters are validated locally.
-3. Built models match the active task target spec.
-4. Export/materialization behavior is explicit and tested.
-5. The family is registered and selectable with `model.family`.
-6. Hardware-free tests cover construction, validation, and export preflight behavior.
-7. HIL validation is run only after the software path is covered.
+- Config and hyperparameter tests cover supported search spaces and representative invalid values.
+- Sampled models match the active task output names and shapes.
+- Explicit-proposer descriptors match persisted sampling names, types, and choices, including narrowed `model.search` options.
+- Export tests confirm the intended model variants and backend handoff without embedding board/toolchain behavior in the family.
+- A config using the registered `model.family` resolves the family.
+- NumPy-style docstrings explain changed functions, classes, dataclasses, and tests.
 
 ## Troubleshooting
 
