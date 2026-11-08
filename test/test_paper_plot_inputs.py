@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 
 import pytest
-from PIL import Image, PngImagePlugin
 
 
 PLOTS = Path(__file__).resolve().parents[1] / "analysis_scripts" / "paper_plots"
@@ -29,39 +28,6 @@ def training():
 @pytest.fixture(scope="module")
 def proposal():
     return module("plot_case3_proposal_comparison")
-
-
-def test_image_check_compares_pixels_not_png_metadata(tmp_path):
-    checker = module("verify_paper_figures")
-    reference, generated = tmp_path / "reference.png", tmp_path / "generated.png"
-    image = Image.new("RGBA", (3, 2), (10, 20, 30, 255))
-    image.save(reference)
-    metadata = PngImagePlugin.PngInfo()
-    metadata.add_text("Software", "different metadata, same pixels")
-    image.save(generated, pnginfo=metadata)
-    result = checker.compare_images(reference, generated)
-    assert result["match"]
-    assert result["differing_pixels"] == 0
-    assert result["reference_sha256"] != result["generated_sha256"]
-
-
-@pytest.mark.parametrize("change", ["color", "alpha", "dimensions", "missing"])
-def test_image_check_rejects_changed_or_missing_assets(tmp_path, change):
-    checker = module("verify_paper_figures")
-    reference, generated = tmp_path / "reference.png", tmp_path / "generated.png"
-    image = Image.new("RGBA", (3, 2), (10, 20, 30, 255))
-    image.save(reference)
-    if change == "dimensions":
-        image = image.resize((4, 2))
-    elif change in {"color", "alpha"}:
-        image.putpixel((1, 1), (11, 20, 30, 255) if change == "color" else (10, 20, 30, 254))
-    if change != "missing":
-        image.save(generated)
-    result = checker.compare_images(reference, generated)
-    assert not result["match"]
-    if change in {"color", "alpha"}:
-        assert result["differing_pixels"] == 1
-        assert result["max_channel_difference"] == 1
 
 
 def write_csv(path, rows):

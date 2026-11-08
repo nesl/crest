@@ -14,8 +14,7 @@ The scripts provide standalone CLIs, explicit external paths, and numeric audit
 sidecars.
 Figures use white backgrounds, DejaVu Sans, consistent series colors, and
 vector PDF exports. PNG exports default to 400 dpi. Layouts, labels, colors and export bounds follow
-the submitted assets. All eight PNGs were verified pixel-for-pixel against those
-assets with the rendering environments below.
+the submitted assets.
 
 ## Environment and inputs
 
@@ -180,31 +179,3 @@ python -m pytest -q test/test_paper_plot_inputs.py test/test_paper_plot_cs1.py
 Changes to filtering, ranking, pairing or layout should also be rendered using
 the frozen external inputs. Compare numeric sidecars as well as images; font
 and rendering versions can change raster bytes without changing plotted values.
-
-
-## Submitted-image verification
-
-The submitted PNG metadata records two Matplotlib versions. Use the matching
-rendering environment when exact pixels matter; a version change can alter text
-metrics and layout even when the plotted data are identical. The following
-macOS environments reproduced all eight assets with zero differing RGBA pixels:
-
-| Figures | Python | Matplotlib | NumPy | pandas | SciPy | Pillow |
-| --- | --- | --- | --- | --- | --- | --- |
-| CS1, CS2 proxy, CS3, timing | 3.13.5 | 3.10.0 | 2.1.3 | 2.2.3 | 1.15.3 | 11.1.0 |
-| Two training-budget panels | 3.12.14 | 3.11.2 | 2.5.3 | Not required | 1.16.2 | 12.3.0 |
-
-Keep the submitted images external and immutable. Collect the eight regenerated
-PNGs in one output directory, then run:
-
-```bash
-python analysis_scripts/paper_plots/verify_paper_figures.py \
-  --reference-dir /path/to/submitted/assets \
-  --generated-dir /path/to/regenerated/figures \
-  --report /path/to/verification.json
-```
-
-The checker compares dimensions and every decoded RGBA pixel, reports file
-hashes and difference metrics, and exits nonzero for missing or changed images.
-It ignores PNG metadata/compression differences. It does not establish data
-provenance; the input manifest and numeric sidecars serve that separate purpose.
