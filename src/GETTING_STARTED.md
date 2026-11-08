@@ -5,352 +5,164 @@ SPDX-License-Identifier: BSD-3-Clause
 
 # Getting started
 
-## Choose Your Workflow
+Run commands from the repository root with the `crest` environment active.
 
-1. **Training only**
-   **Hardware requirement: no hardware required.** Use this when you want to
-   run NAS or training without talking to hardware. For OxIOD, start from
-   [src/config/nas_config_flops_rmse.yaml](config/nas_config_flops_rmse.yaml)
-   or [src/config/nas_config_memory_proxy.yaml](config/nas_config_memory_proxy.yaml).
-   For UrbanSound8K audio DS-CNN training, use
-   [src/config/nas_config_audio_stm32.yaml](config/nas_config_audio_stm32.yaml)
-   as a template with `device.hil: false` and score/prune terms that do not
-   require measured hardware metrics. Read
-   [src/config/README.md](config/README.md) plus
-   [src/README.md](README.md) before adapting HIL configs for
-   hardware-free runs.
+## Environment setup
 
-2. **Arduino HIL**
-   **Hardware requirement: development board required; HIL harness required for
-   harness-assisted or harness-only measurement.** Use this for Arduino
-   CLI-backed DUTs and harness-backed measurement flows.
-   Start from [src/config/nas_config_ble.yaml](config/nas_config_ble.yaml)
-   for Nano 33 BLE or
-   [src/config/nas_config_portenta.yaml](config/nas_config_portenta.yaml)
-   for Portenta H7. For the audio DS-CNN path, use
-   [src/config/nas_config_audio_portenta.yaml](config/nas_config_audio_portenta.yaml).
-   Then read
-   [src/crest/microcontrollers/README.md](crest/microcontrollers/README.md)
-   and [sketches/README.md](../sketches/README.md).
+Install Git, Conda, and Make, then clone and install CREST:
 
-3. **STM32 HIL**
-   **Hardware requirement: NUCLEO-N657X0-Q board required; HIL harness required
-   for energy-measured runs.** Use this for the STM32 NUCLEO-N657X0-Q backend.
-   Start from
-   [src/config/nas_config_stm32.yaml](config/nas_config_stm32.yaml), then
-   use [src/config/nas_config_audio_stm32.yaml](config/nas_config_audio_stm32.yaml)
-   for the audio DS-CNN HIL path. Then read
-   [src/crest/microcontrollers/README.md](crest/microcontrollers/README.md)
-   and the committed STM32 workspace notes under
-   [sketches/stm32/crest_stm32_lrun/README.md](../sketches/stm32/crest_stm32_lrun/README.md).
+```bash
+git clone --recurse-submodules https://github.com/nesl/crest.git
+cd crest
+conda env create -f environment.yml -n crest
+conda activate crest
+make install
+```
 
-4. **Analysis scripts / one-off experiments**
-   **Hardware requirement: script-dependent.** Use this for focused
-   measurement or validation runs outside the main NAS loop. Most analysis
-   scripts consume existing artifacts and do not touch hardware; the
-   micro-workload probe uses the CREST HIL harness. Start with
-   [analysis_scripts/README.md](../analysis_scripts/README.md), then open the
-   package-specific README for the script family you need.
+For an existing clone without submodules, run `git submodule update --init --recursive`.
+The base environment supports CPU execution. On a compatible NVIDIA GPU host,
+install the TensorFlow CUDA dependencies and verify GPU detection:
 
-## Environment Setup
+```bash
+pip install --upgrade pip
+pip install 'tensorflow[and-cuda]==2.20.0'
+python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
+```
 
-1. **Clone with submodules.**
+Repeat the CUDA installation after recreating the environment. If `nvidia-smi`
+sees the GPU but TensorFlow returns `[]`, check that the CUDA extra is installed.
 
-   ```bash
-   git clone --recurse-submodules https://github.com/nesl/crest.git
-   ```
+## Dataset preparation
 
-   If you already cloned without submodules:
+For OxIOD, obtain the Complete Dataset archive using the
+[dataset guide](../data/dataset_download_and_splits/README.md), then run:
 
-   ```bash
-   git submodule update --init --recursive
-   ```
+```bash
+make prepare-dataset OXIOD_ZIP=/path/to/OxIOD.zip
+```
 
-2. **Create and activate the Conda environment.**
-
-   ```bash
-   conda env create -f environment.yml -n crest
-   conda activate crest
-   ```
-
-3. **Install the repo in editable mode.**
-
-   ```bash
-   make install
-   ```
-
-4. **If you are using GPUs, install the repo-tested TensorFlow CUDA wheel set.**
-
-   ```bash
-   pip install --upgrade pip
-   pip install tensorflow[and-cuda]==2.20.0
-   python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
-   ```
-
-   Re-run this step after recreating or replacing the Conda environment. The
-   base `environment.yml` installs CPU-usable TensorFlow so CPU-only machines
-   do not download CUDA runtime wheels by default; GPU servers need the
-   `tensorflow[and-cuda]` extra installed after environment creation. If
-   `nvidia-smi` sees GPUs but TensorFlow prints `[]`, this CUDA wheel step is
-   usually missing.
-
-If you are CPU-only, the Conda environment already provides the dependencies
-needed by the repo.
-
-## Dataset Preparation
-
-For UrbanSound8K audio experiments, prepare the cached log-mel tensors before
-running audio training or HIL commands:
+For UrbanSound8K, follow the same guide to obtain the audio and prepare cached
+log-mel features:
 
 ```bash
 make prepare-audio-dataset
 ```
 
-Use `URBANSOUND8K_ARGS="--download --accept-license"` when you want the
-preparation script to download the dataset through `soundata`, or
-`URBANSOUND8K_ARGS="--fold-rotation"` when you also need the fold-rotation
-reporting caches.
+Download options, dataset terms, paths, and fold-rotation caches are documented
+in the dataset guide.
 
-For OxIOD:
+## Choose a configuration
 
-1. Download the OxIOD "Complete Dataset" zip from `http://deepio.cs.ox.ac.uk/`.
-2. Rename it to `OxIOD.zip` or pass an explicit path.
-3. Prepare the dataset from the repo root:
+| Workflow | Starting configuration | Hardware |
+| --- | --- | --- |
+| OxIOD proxy search | [FLOPs](config/nas_config_flops_rmse.yaml) or [memory proxy](config/nas_config_memory_proxy.yaml) | None |
+| OxIOD Arduino HIL | [Nano 33 BLE](config/nas_config_ble.yaml) or [Portenta H7](config/nas_config_portenta.yaml) | Target board; harness for harness measurements |
+| OxIOD STM32 HIL | [STM32](config/nas_config_stm32.yaml) | NUCLEO-N657X0-Q; harness for energy measurements |
+| Audio HIL | [STM32](config/nas_config_audio_stm32.yaml) or [Portenta H7](config/nas_config_audio_portenta.yaml) | Selected target and measurement harness |
 
-   ```bash
-   make prepare-dataset
-   # or:
-   make prepare-dataset OXIOD_ZIP=/path/to/OxIOD.zip
-   ```
+Set dataset paths, training budgets, and—for HIL—serial ports and connection
+settings before running. The [configuration reference](config/README.md) explains
+these fields. For hardware-free audio, adapt the audio config with `device.hil:
+false` and objectives/pruning that do not require hardware measurements.
 
-This extracts the dataset into `data/oxiod`, normalizes folder names such as
-`slow walking -> slow_walking`, and restores the curated tracked split files
-for each activity. Dataset-specific details live in
-[data/dataset_download_and_splits/README.md](../data/dataset_download_and_splits/README.md).
+## Run without hardware
 
-## Arduino Tooling Setup
+Start with three OxIOD search attempts:
 
-All Arduino CLI state is kept inside `tools/` so the repo does not need to
-write into `$HOME` or system directories.
+```bash
+python src/nas_model_client.py \
+  --config src/config/nas_config_flops_rmse.yaml \
+  --smoke-test 3 --study-name oxiod_proxy_smoke
+```
 
-1. Ensure `crest` is active.
-2. Bootstrap Arduino CLI and repo-local hooks:
+This requires the prepared dataset and evaluates models on the host. For a full
+search, omit `--smoke-test` and choose a fresh study name after reviewing the
+training and attempt budgets in the config.
 
-   ```bash
-   make arduino-setup
-   ```
+## Hardware setup
 
-3. Reactivate the environment so the new hooks are loaded:
+Install tools on the machine connected to the board. The
+[hardware guide](crest/microcontrollers/README.md) covers wiring, board packages,
+vendor tools, permissions, and troubleshooting; the
+[firmware guide](../sketches/README.md) covers target and harness firmware.
 
-   ```bash
-   conda deactivate
-   conda activate crest
-   ```
+For Arduino targets, bootstrap the CLI and reactivate the environment:
 
-4. Verify the CLI:
+```bash
+make arduino-setup
+conda deactivate
+conda activate crest
+arduino-cli --config-file tools/arduino-cli.yaml version
+```
 
-   ```bash
-   arduino-cli --config-file tools/arduino-cli.yaml version
-   ```
+Install the board core specified by the hardware guide. For Nano 33 BLE:
 
-5. Install the board package you need. Example for Nano 33 BLE:
+```bash
+arduino-cli core install arduino:mbed_nano --config-file tools/arduino-cli.yaml
+```
 
-   ```bash
-   arduino-cli core install arduino:mbed_nano --config-file tools/arduino-cli.yaml
-   ```
-
-If Portenta uploads on Linux fail with `LIBUSB_ERROR_ACCESS`, add the udev
-rules documented in
-[src/crest/microcontrollers/README.md](crest/microcontrollers/README.md).
-
-## STM32 Setup
-
-The STM32 flow keeps `STM32CubeCLT` installed outside the repo while cloning
-the STM32CubeN6 firmware package into `tools/stm32/STM32CubeN6`.
-
-Run STM32 bootstrap only on the machine that is physically connected to the
-STM32 board and will run `python src/hil_server.py`.
-
-Before running the bootstrap, ensure these tools are on your shell `PATH`:
-
-- `ST-LINK_gdbserver`
-- `arm-none-eabi-gdb`
-- `STM32_Programmer_CLI`
-- `arm-none-eabi-gcc`
-- `arm-none-eabi-size`
-- `arm-none-eabi-objdump`
-- `STM32_SigningTool_CLI` or `STM32TrustedPackageCreator_CLI`
-
-For normal STM32 NAS/HIL candidate generation, also ensure `stedgeai` is on
-`PATH`. The synthetic micro-workload probe documents its narrower STM32
-requirements separately.
-
-Then run:
+For STM32, first install the
+[required host tools](crest/microcontrollers/README.md#required-host-tools),
+including ST Edge AI for model deployment, then bootstrap the workspace:
 
 ```bash
 make stm32-setup
 ```
 
-That script validates the toolchain, clones or repairs
-`tools/stm32/STM32CubeN6`, checks out the pinned `v1.3.0` baseline, and
-refreshes the repo-local STM32 vendor subsets.
+## Running NAS and HIL
 
-## Config Files
-
-The shipped starting points are:
-
-- [src/config/nas_config_stm32.yaml](config/nas_config_stm32.yaml)
-  STM32-oriented config for the `STM32_NUCLEO_N657X0_Q` backend. This
-  is the main starting point for STM32 runs and the most complete commented
-  example config in the repo.
-- [src/config/nas_config_ble.yaml](config/nas_config_ble.yaml)
-  BLE-focused starting point for `ARDUINO_NANO_33_BLE_SENSE`.
-- [src/config/nas_config_portenta.yaml](config/nas_config_portenta.yaml)
-  Portenta H7-focused starting point.
-- [src/config/nas_config_audio_stm32.yaml](config/nas_config_audio_stm32.yaml)
-  UrbanSound8K audio DS-CNN starting point for desktop training and
-  NUCLEO-N657X0-Q HIL work.
-- [src/config/nas_config_audio_portenta.yaml](config/nas_config_audio_portenta.yaml)
-  UrbanSound8K audio DS-CNN starting point for Arduino-backed Portenta H7 work.
-
-The highest-signal fields for a first pass are:
-
-- `device.*`
-  Target selection, HIL enable/disable, serial ports, runtime mode, and
-  backend-specific nested options.
-- `dataset.*`
-  Dataset adapter selection and dataset-local paths/parameters, including
-  OxIOD windowing or UrbanSound8K cache locations.
-- `training.*`
-  NAS epochs/trials, full-training epochs, quantization, and the runtime-side
-  `energy_aware` / `input_mode` switches.
-- `nas.*`
-  Score, prune, and feasibility configuration.
-- `optimizer.*`
-  Candidate generation: `optuna` by default, or `llm_generator` with provider,
-  batch, context, and memory settings.
-- `dataset`, `task`, `model`
-  Required modular component selection blocks for the workload and model family.
-
-For the full config reference, score/prune schema, and current runtime caveats,
-see [src/config/README.md](config/README.md).
-
-## Running NAS And HIL
-
-CREST runs a NAS/training client on a training host and talks to the HIL server
-running on the board-connected device host.
+Use matching configuration settings on the training host and board-connected
+host. This example uses the STM32 config; substitute your board's config.
 
 ### 1. Start the HIL server on the device host
 
 ```bash
-cd /path/to/CREST
 conda activate crest
-python src/hil_server.py
+python src/hil_server.py --config src/config/nas_config_stm32.yaml
 ```
 
-For STM32, complete the STM32 setup section above on the board-connected host
-before starting the HIL server.
+### 2. Connect the hosts
 
-### 2. Open a reverse SSH tunnel from the device host to the training host
+If training runs on another machine, open a reverse SSH tunnel **from the device
+host to the training host** and leave it open:
 
 ```bash
-ssh -R "6001:127.0.0.1:6001" <gpu_server>
+ssh -R "6001:127.0.0.1:6001" user@gpu-server
 ```
 
-The default configs expect the HIL server at `127.0.0.1:6001`. If the NAS
-client and HIL server run on the same machine, the reverse SSH tunnel is not
-needed.
+Replace `user@gpu-server` with your training-host login. The default connection
+uses `127.0.0.1:6001`. Skip the tunnel when the client and
+server run on the same machine.
 
-### 3. Run the NAS client on the training host
+### 3. Run the client on the training host
 
 ```bash
-cd /path/to/CREST
 conda activate crest
-
-# Quick smoke pass
-python3 src/nas_model_client.py --smoke-test 3 --study-name smoke_run
-
-# Full NAS run
-python3 src/nas_model_client.py --study-name crest_run
+python src/nas_model_client.py \
+  --config src/config/nas_config_stm32.yaml \
+  --smoke-test 3 --study-name smoke_run
 ```
 
-Useful flags:
-
-- `--config /path/to/config.yaml`
-- `--smoke-test N`
-- `--study-name NAME`
-
-### Optional LLM candidate generation
-
-Add this block to a complete study config to select the LLM generator:
-
-```yaml
-optimizer:
-  type: llm_generator
-  llm:
-    provider: openrouter
-    model: your-provider-model-id
-    api_key_env: OPENROUTER_API_KEY
-```
-
-Set the named API-key environment variable on the training host, then run the
-same client with the edited config:
-
-```bash
-python3 src/nas_model_client.py --config /path/to/config.yaml --study-name crest_llm_run
-```
-
-The generator returns raw trial proposals; CREST validates the complete batch,
-reserves accepted candidates in the same Optuna study, and evaluates them through
-the shared training/HIL path.
-Defaults include five candidates per call, ten recent trials, up to five eligible
-best-candidate anchors, and persistent memory updated through separate provider
-calls. Anchors retain top scalar trials or a bounded Pareto compromise region.
-Providers also include `openai_compatible`, `openai_responses`, and `fake` for offline fixtures.
-See [the optimizer config reference](config/README.md#optimizer) for provider
-setup, repair/fallback behavior, context controls, memory timing, and resume rules.
-
-### Extending a study
-
-Keep the study name, database, and original experiment configuration, then raise
-`training.nas_trials` and `training.max_total_trials` to the desired **total**
-completion target and attempt cap. Failed, pruned, infeasible, RUNNING, and
-reserved WAITING trials consume attempts. Matching signed native and LLM studies
-resume; the optimizer signature checks proposer and sampler identity, so compare
-the original scientific configuration yourself.
-
-Nonempty unsigned studies cannot resume searching; use a new study name.
-Their history remains available for analysis and offline plotting. Optimizer
-switching within a study is unsupported. See the
-[resume reference](config/README.md#optimizer) for signed identity checks.
+For a full run, omit `--smoke-test` and use a fresh study name. Native Optuna is
+the default proposer. For LLM generation, follow the
+[LLM guide](crest/optimizers/llm/README.md) for configuration and credentials.
 
 ### 4. Outputs
 
-Artifacts are written under the configured `outputs.models_dir` and
-`outputs.candidate_dir`. Typical outputs include:
+Results use the configured `outputs.models_dir` and `outputs.candidate_dir`.
+Typical study files include `optuna.db`, `trials.csv`, `train_history.json`,
+`summary.json`, and exported model artifacts. Smoke runs use `optuna_smoke_test.db`
+and append the device name to the supplied study name. LLM runs also write
+request and proposal records under `llm_optimizer/`.
 
-- `models/<study_name>/optuna.db`
-- `models/<study_name>/trials.csv`
-- `models/<study_name>/train_history.json`
-- `models/<study_name>/summary.json`
-- generated TFLite and `.keras` artifacts
-- `models/<study_name>/llm_optimizer/` for LLM generation prompts, responses,
-  returned/rejected proposals, and fallback events; its `memory/` subdirectory
-  holds summary exchanges, persistent findings, and versioned snapshots
+## Continue an experiment
 
-The LLM ledger's `returned_to_runner` status records component validation and
-return. Study trial attributes establish queue acceptance; Optuna state and
-actual sampled parameters establish execution evidence.
+To extend a study, keep its name, database, and original experiment configuration,
+then raise `training.nas_trials` and `training.max_total_trials` to the desired
+**total** completion target and attempt cap. Use a new study when changing the
+optimizer or other identity-bearing settings. See the
+[resume reference](config/README.md#optimizer) for compatibility requirements.
 
-## Reproducing Case-Study Analyses
-
-Case-study run configs live in
-[src/config/case_study_configs/](config/case_study_configs/). They cover:
-
-- Case Study 1: OxIOD/TCN proxy-vs-measured-energy selection across targets.
-- Case Study 2: STM32/OxIOD continuous-vs-cadenced schedule comparison.
-- Case Study 3: UrbanSound8K/DS-CNN application-level scoring on two targets.
-
-Plotting and calculation utilities live under [analysis_scripts/](../analysis_scripts/).
-Those scripts consume existing NAS and replay artifacts; they do not rerun NAS
-or touch hardware unless their package README says so.
+For further experiments, see the [case-study configurations](config/case_study_configs/README.md)
+and [analysis utilities](../analysis_scripts/README.md). Analysis commands usually
+consume saved results; check each package's guide for its inputs and hardware requirements.
