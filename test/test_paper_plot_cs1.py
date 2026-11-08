@@ -139,3 +139,48 @@ def test_energy_ranks_average_ties_within_search_pool(tmp_path: Path) -> None:
         (tmp_path / "out" / "cs1_energy_ranks_summary.json").read_text()
     )
     assert [group["n"] for group in summary["groups"]] == [3] * 6
+
+
+def test_model_transfer_population_and_signed_residuals(tmp_path: Path) -> None:
+    """Only the training pool is excluded; residuals are measured minus predicted."""
+    rows = []
+    for period in (100, 200, 500):
+        for study in ("continuous", "cadenced"):
+            for trial, residual in enumerate((-3.0, 5.0)):
+                rows.append(
+                    dict(
+                        pool=f"{period}ms_{study}",
+                        trial=trial,
+                        study=study,
+                        period_ms=period,
+                        continuous_mj=30,
+                        scheduled_mj=20 + trial,
+                        E_pred=20 + trial - residual,
+                    )
+                )
+    frame = pd.DataFrame(rows)
+    source = tmp_path / "transfer.csv"
+    frame.to_csv(source, index=False)
+    output = tmp_path / "out"
+    load_plot("model_transfer").main(
+        ["--input-csv", str(source), "--output-dir", str(output)]
+    )
+    points = pd.read_csv(output / "cs1_model_transfer_plotted_points.csv")
+    expected = frame.loc[frame.pool != "200ms_cadenced"].copy()
+    expected["error_mj"] = [-3.0, 5.0] * 5
+    pd.testing.assert_frame_equal(
+        points, expected.reset_index(drop=True), check_dtype=False
+    )
+    summary = json.loads((output / "cs1_model_transfer_summary.json").read_text())
+    assert "excludes 200ms_cadenced" in summary["population"]
+    assert [(g["period_ms"], g["study"]) for g in summary["groups"]] == [
+        (100, "continuous"),
+        (100, "cadenced"),
+        (200, "continuous"),
+        (500, "continuous"),
+        (500, "cadenced"),
+    ]
+    for group in summary["groups"]:
+        assert group["n"] == 2
+        assert group["mean_error_mj"] == 1.0
+        assert group["rmse_mj"] == pytest.approx(np.sqrt(17))

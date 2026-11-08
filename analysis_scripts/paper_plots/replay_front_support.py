@@ -47,27 +47,17 @@ class FrontPoint:
 class PairInput:
     """One labeled replay comparison input.
 
-    Parameters
+    Attributes
     ----------
     label : str
         Human-readable label used in plot legends.
-    crest_run_dir : pathlib.Path
+    crest_run_dir : pathlib.Path or None
         Measured-energy NAS run directory containing ``log_NAS_*.csv``.
-    replay_path : pathlib.Path
+    replay_path : pathlib.Path or None
         Replay output directory or explicit ``replay_results.csv`` path.
     placeholder : bool
         Whether this input is an empty placeholder panel.
 
-    Attributes
-    ----------
-    label : str
-        Display label used in reports and plots.
-    crest_run_dir : Path | None
-        Directory containing CREST run artifacts.
-    replay_path : Path | None
-        Path to the replay results file.
-    placeholder : bool
-        Whether the record is a placeholder for missing data.
     """
 
     label: str
@@ -82,12 +72,13 @@ def parse_float(value: Any) -> float | None:
     Parameters
     ----------
     value : Any
-        Value recorded by the test double.
+        CSV cell value to convert with ``float``.
 
     Returns
     -------
     float | None
-        Parsed float.
+        Finite parsed value, or ``None`` for missing, empty, nonnumeric,
+        or nonfinite values.
     """
     if value in (None, ""):
         return None
@@ -114,7 +105,7 @@ def read_csv_rows(path: Path) -> list[dict[str, str]]:
     Raises
     ------
     ValueError
-        If existing validation or execution checks fail.
+        If the CSV has no header or no data rows.
     """
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
@@ -159,12 +150,13 @@ def find_log_csv(run_dir: Path) -> Path:
     Returns
     -------
     Path
-        Matched log CSV.
+        Lexicographically first ``log_NAS_*.csv`` match, or ``trials.csv``
+        when no matching log exists.
 
     Raises
     ------
     FileNotFoundError
-        If existing validation or execution checks fail.
+        If neither a matching NAS log nor ``trials.csv`` exists.
     """
     candidates = sorted(run_dir.glob("log_NAS_*.csv"))
     if candidates:
@@ -186,12 +178,13 @@ def resolve_replay_results(replay_path: Path) -> Path:
     Returns
     -------
     Path
-        Resolved replay results.
+        The supplied file path, or ``replay_results.csv`` inside the supplied
+        directory.
 
     Raises
     ------
     FileNotFoundError
-        If existing validation or execution checks fail.
+        If the supplied path is not a file and contains no ``replay_results.csv``.
     """
     if replay_path.is_file():
         return replay_path
@@ -232,17 +225,33 @@ def latency_feasible_from_row(
 
 
 def load_crest_points(csv_path: Path) -> list[FrontPoint]:
-    """Load valid measured-energy NAS points.
+    """Load valid measured-energy NAS points in CSV order.
+
+    A nonempty ``state`` (or ``status`` when ``state`` is absent) must be
+    complete, completed, success, or succeeded, ignoring case and whitespace.
+    A finite ``error_code`` must truncate to ``SUCCESS_ERROR_CODE``; missing
+    or unparseable codes are allowed. Energy must be positive and finite;
+    RMSE must be finite.
+
+    Numeric aliases are tried in order until a finite value is found: energy
+    uses ``values_energy_mj_per_inference``, then ``energy_mj_per_inference``;
+    RMSE uses ``values_rmse_total``, ``metric__rmse_total``, then ``rmse_total``.
+    A finite nonpositive energy excludes the row without trying later aliases.
+    Latency and budget use their ``values_`` columns before the plain columns;
+    missing or nonpositive values produce unknown feasibility. Payload keys use
+    the first nonempty ``number`` or ``trial_id``, then the zero-based row index.
 
     Parameters
     ----------
     csv_path : Path
-        Path to the CSV used by the helper.
+        Saved NAS CSV containing the status, objective, and optional timing
+        columns described above.
 
     Returns
     -------
     list[FrontPoint]
-        Loaded crest points.
+        Valid NAS points with parsed objectives, timing classification, and
+        their original source rows.
     """
     points: list[FrontPoint] = []
     for index, row in enumerate(read_csv_rows(csv_path)):
@@ -279,15 +288,34 @@ def load_crest_points(csv_path: Path) -> list[FrontPoint]:
 def load_replay_points(csv_path: Path) -> list[FrontPoint]:
     """Load valid replayed proxy points in measured target-board space.
 
+    Rows retain CSV order. ``replay_status`` must be completed, ignoring case
+    and whitespace, and finite ``target__error_code`` must truncate to
+    ``SUCCESS_ERROR_CODE``. Energy must be positive and finite; RMSE must be
+    finite. All other rows are excluded.
+
+    Numeric aliases are tried in order until a finite value is found: energy
+    uses ``target__energy_mj_per_inference`` then
+    ``target__cadenced_energy_mj_per_window``; RMSE uses
+    ``source__metric__rmse_total``, ``source__rmse_total``, then
+    ``target__metric__rmse_total``. A finite nonpositive energy excludes the row
+    without trying the later alias. Latency uses ``target__latency_ms`` then
+    ``target__cadenced_active_inference_latency_ms``; budget uses
+    ``target__latency_budget_ms`` then ``target__cadenced_latency_budget_ms``.
+    Missing or nonpositive latency/budget values produce unknown feasibility.
+    Payload keys use the first nonempty ``replay_payload_key``, ``payload_key``,
+    or ``source_row_index``, then the zero-based row index.
+
     Parameters
     ----------
     csv_path : Path
-        Path to the CSV used by the helper.
+        Saved replay CSV containing the status, target objectives, source
+        RMSE, and optional timing columns described above.
 
     Returns
     -------
     list[FrontPoint]
-        Loaded replay points.
+        Valid replay points with parsed objectives, timing classification,
+        and their original source rows.
     """
     points: list[FrontPoint] = []
     for index, row in enumerate(read_csv_rows(csv_path)):
@@ -446,7 +474,7 @@ def energy_regret_rows(
 class LoadedPair:
     """Loaded points and fronts for one comparison pair.
 
-    Parameters
+    Attributes
     ----------
     label : str
         Human-readable label used in plot legends.
@@ -467,26 +495,6 @@ class LoadedPair:
     placeholder : bool
         Whether this pair is an empty placeholder panel.
 
-    Attributes
-    ----------
-    label : str
-        Display label used in reports and plots.
-    crest_points : list[FrontPoint]
-        Candidate points produced by the CREST run.
-    replay_points : list[FrontPoint]
-        Candidate points produced by replay results.
-    crest_front : list[FrontPoint]
-        Pareto front produced by the CREST run.
-    replay_front : list[FrontPoint]
-        Pareto front produced by replay results.
-    regret_rows : list[dict[str, Any]]
-        Per-match energy-regret rows for the comparison.
-    crest_front_outcomes : "CandidateOutcomeSummary"
-        Outcome rows for candidates on the CREST front.
-    replay_outcomes : "CandidateOutcomeSummary"
-        Outcome rows produced by the replay run.
-    placeholder : bool
-        Whether the record is a placeholder for missing data.
     """
 
     label: str
@@ -504,7 +512,7 @@ class LoadedPair:
 class CandidateOutcomeSummary:
     """Timing and HIL outcome counts for Pareto-front candidates.
 
-    Parameters
+    Attributes
     ----------
     total_candidates : int
         Number of candidates included in the outcome summary.
@@ -519,20 +527,6 @@ class CandidateOutcomeSummary:
     timing_unknown : int
         Successful measurements without a usable latency or budget.
 
-    Attributes
-    ----------
-    total_candidates : int
-        Total number of candidates considered during replay.
-    timing_feasible : int
-        Number of candidates that met timing constraints.
-    timing_infeasible : int
-        Number of candidates that violated timing constraints.
-    hil_failed : int
-        Number of candidates that failed during HIL execution.
-    replay_failed : int
-        Number of candidates that failed during replay.
-    timing_unknown : int
-        Number of candidates without known timing status.
     """
 
     total_candidates: int
@@ -561,7 +555,8 @@ def load_pair(pair: PairInput, *, feasible_only: bool) -> LoadedPair:
     Raises
     ------
     ValueError
-        If existing validation or execution checks fail.
+        If a non-placeholder pair lacks a CREST run or replay path.
+        CSV files with no header or no data rows also raise ``ValueError``.
     """
     if pair.placeholder:
         empty_outcomes = CandidateOutcomeSummary(

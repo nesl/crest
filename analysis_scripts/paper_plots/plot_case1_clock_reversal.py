@@ -42,6 +42,14 @@ def load_csv(path: Path, numeric: Sequence[str], keys: Sequence[str]) -> pd.Data
     -------
     pandas.DataFrame
         Validated observations; numeric fields converted to numbers.
+
+    Raises
+    ------
+    ValueError
+        If required columns are missing, the table is empty, identifiers are
+        missing or duplicated, or numeric fields are invalid or nonfinite.
+    OSError
+        If the CSV cannot be read.
     """
     data = pd.read_csv(path)
     required = set(numeric) | set(keys)
@@ -59,24 +67,82 @@ def load_csv(path: Path, numeric: Sequence[str], keys: Sequence[str]) -> pd.Data
     return data
 
 
-def render(input_csv: Path, output_dir: Path) -> None:
-    """Render a figure and write the exact plotted values and summary.
+def _clock_difference_records(data: pd.DataFrame) -> list[dict]:
+    """Summarize paired 300-minus-800 MHz energy differences.
 
     Parameters
     ----------
-    input_csv : pathlib.Path
-        Source table described by the module documentation.
-    output_dir : pathlib.Path
-        Directory for PNG, PDF, plotted-points CSV and JSON summary.
+    data : pandas.DataFrame
+        Validated policy measurements with paired round identifiers.
+
+    Returns
+    -------
+    list of dict
+        Ordered inference and release differences with 95% Student-t intervals.
+
+    Raises
+    ------
+    ValueError
+        If fewer than two complete clock pairs are available.
     """
-    import matplotlib.pyplot as plt
     from scipy.stats import t
 
-    data = load_csv(
-        input_csv,
-        ["clock_mhz", "period_ms", "E_stop_mj", "E_inf_mj", "C_s"],
-        ["candidate", "clock_mhz", "period_ms", "round"],
-    )
+    records = []
+    # Continuous inference and periodic release differences quoted in the text.
+    fixed = data.loc[data.candidate == "continuous_203"]
+    for period, column, label in (
+        (500, "E_inf_mj", "continuous_inference"),
+        (100, "E_stop_mj", "100ms_release"),
+        (500, "E_stop_mj", "500ms_release"),
+    ):
+        paired = fixed.loc[fixed.period_ms == period].pivot(
+            index="round", columns="clock_mhz", values=column
+        )
+        if (
+            not {300, 800}.issubset(paired.columns)
+            or paired[[300, 800]].isna().any().any()
+        ):
+            raise ValueError(f"Incomplete clock pairing for {label}")
+        delta = paired[300] - paired[800]
+        if len(delta) < 2:
+            raise ValueError(f"At least two clock pairs needed for {label}")
+        mean = float(delta.mean())
+        half = float(
+            t.ppf(0.975, len(delta) - 1) * delta.std(ddof=1) / np.sqrt(len(delta))
+        )
+        records.append(
+            {
+                "quantity": label,
+                "n": len(delta),
+                "mean_300_minus_800_mj": mean,
+                "ci95_low_mj": mean - half,
+                "ci95_high_mj": mean + half,
+            }
+        )
+    return records
+
+
+def _paired_round_analysis(data: pd.DataFrame) -> tuple[list, list, dict]:
+    """Calculate paired curves, audit records and clock summaries.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        Validated policy rounds with candidate, clock_mhz, period_ms, round,
+        E_stop_mj, E_inf_mj and C_s columns.
+
+    Returns
+    -------
+    tuple of list, list, dict
+        Drawing curves/endpoints, ordered plotted-point records and summary.
+
+    Raises
+    ------
+    ValueError
+        If reference endpoints or comparison/clock round pairs are incomplete.
+    """
+    from scipy.stats import t
+
     reference = data.loc[(data.candidate == "continuous_203") & (data.clock_mhz == 800)]
     ref = (
         reference.loc[reference.period_ms.isin([100, 500])]
@@ -87,23 +153,7 @@ def render(input_csv: Path, output_dir: Path) -> None:
         raise ValueError(
             "Reference needs at least two complete paired rounds at 100 and 500 ms"
         )
-    fig, panels = plt.subplots(2, 3, figsize=(3.33, 4.1))
-    fig.subplots_adjust(left=0.16, right=0.98, wspace=0.12)
-    for row, bottom, height in zip(panels, [0.61, 0.151], [0.354, 0.305]):
-        for panel in row:
-            pos = panel.get_position()
-            panel.set_position([pos.x0, bottom, pos.width, height])
-    left = panels[0, 0].get_position().x0
-    right = panels[0, 2].get_position().x1
-    for panel in panels[0]:
-        panel.remove()
-    for panel in panels[1]:
-        panel.set_visible(False)
-    ax = fig.add_axes([left, 0.61, right - left, 0.354])
-    ax.tick_params(length=3, pad=2)
-    ax.grid(color="#c7cdd3", alpha=0.65, linewidth=0.55)
-    ax.set_axisbelow(True)
-    ax.axhline(0, color=".4", linestyle="--", linewidth=0.7)
+    curves = []
     records: list[dict[str, object]] = []
     summary: dict[str, object] = {
         "reference": "continuous_203 at 800 MHz",
@@ -138,24 +188,11 @@ def render(input_csv: Path, output_dir: Path) -> None:
         lines = intercepts[:, None] + slopes[:, None] * grid[None, :]
         means = lines.mean(axis=0)
         half = tcrit * lines.std(axis=0, ddof=1) / np.sqrt(n)
-        label = f"Trial {candidate.rsplit('_', 1)[1]}, 300 MHz"
-        ax.plot(grid, means, color=color, linewidth=1.4, label=label)
+        endpoints = []
         for period in (100, 500):
             values = differences[period]
             ci = tcrit * float(values.std(ddof=1)) / np.sqrt(n)
-            ax.errorbar(
-                period,
-                values.mean(),
-                yerr=ci,
-                fmt="o",
-                color=color,
-                markersize=4.2,
-                capsize=2.2,
-                elinewidth=0.9,
-                zorder=3,
-                markeredgecolor="white",
-                markeredgewidth=0.5,
-            )
+            endpoints.append((period, values.mean(), ci))
             for round_id, value in values.items():
                 records.append(
                     {
@@ -177,6 +214,7 @@ def render(input_csv: Path, output_dir: Path) -> None:
                     "ci95_high_mj": mean + interval,
                 }
             )
+        curves.append((candidate, color, grid, means, endpoints))
         slope = float(slopes.mean())
         crossing = None if slope == 0 else float(-intercepts.mean() / slope)
         summary["comparisons"].append(
@@ -193,37 +231,65 @@ def render(input_csv: Path, output_dir: Path) -> None:
                 "mean_inference_ms": float(alternative.C_s.mean() * 1000),
             }
         )
-    # Continuous inference and periodic release differences quoted in the text.
-    fixed = data.loc[data.candidate == "continuous_203"]
-    for period, column, label in (
-        (500, "E_inf_mj", "continuous_inference"),
-        (100, "E_stop_mj", "100ms_release"),
-        (500, "E_stop_mj", "500ms_release"),
-    ):
-        paired = fixed.loc[fixed.period_ms == period].pivot(
-            index="round", columns="clock_mhz", values=column
-        )
-        if (
-            not {300, 800}.issubset(paired.columns)
-            or paired[[300, 800]].isna().any().any()
-        ):
-            raise ValueError(f"Incomplete clock pairing for {label}")
-        delta = paired[300] - paired[800]
-        if len(delta) < 2:
-            raise ValueError(f"At least two clock pairs needed for {label}")
-        mean = float(delta.mean())
-        half = float(
-            t.ppf(0.975, len(delta) - 1) * delta.std(ddof=1) / np.sqrt(len(delta))
-        )
-        summary["clock_differences"].append(
-            {
-                "quantity": label,
-                "n": len(delta),
-                "mean_300_minus_800_mj": mean,
-                "ci95_low_mj": mean - half,
-                "ci95_high_mj": mean + half,
-            }
-        )
+    summary["clock_differences"] = _clock_difference_records(data)
+    return curves, records, summary
+
+
+def render(input_csv: Path, output_dir: Path) -> None:
+    """Render a figure and write the exact plotted values and summary.
+
+    Parameters
+    ----------
+    input_csv : pathlib.Path
+        CSV with candidate, clock_mhz, period_ms, round, E_stop_mj,
+        E_inf_mj and C_s columns.
+    output_dir : pathlib.Path
+        Directory for PNG, PDF, plotted-points CSV and JSON summary.
+    """
+    import matplotlib.pyplot as plt
+
+    data = load_csv(
+        input_csv,
+        ["clock_mhz", "period_ms", "E_stop_mj", "E_inf_mj", "C_s"],
+        ["candidate", "clock_mhz", "period_ms", "round"],
+    )
+    curves, records, summary = _paired_round_analysis(data)
+    # Preserve the combined-paper grid geometry and hidden lower-row extent:
+    # these axes determine the original export size even in this standalone panel.
+    fig, panels = plt.subplots(2, 3, figsize=(3.33, 4.1))
+    fig.subplots_adjust(left=0.16, right=0.98, wspace=0.12)
+    for row, bottom, height in zip(panels, [0.61, 0.151], [0.354, 0.305]):
+        for panel in row:
+            pos = panel.get_position()
+            panel.set_position([pos.x0, bottom, pos.width, height])
+    left = panels[0, 0].get_position().x0
+    right = panels[0, 2].get_position().x1
+    for panel in panels[0]:
+        panel.remove()
+    for panel in panels[1]:
+        panel.set_visible(False)
+    ax = fig.add_axes([left, 0.61, right - left, 0.354])
+    ax.tick_params(length=3, pad=2)
+    ax.grid(color="#c7cdd3", alpha=0.65, linewidth=0.55)
+    ax.set_axisbelow(True)
+    ax.axhline(0, color=".4", linestyle="--", linewidth=0.7)
+    for candidate, color, grid, means, endpoints in curves:
+        label = f"Trial {candidate.rsplit('_', 1)[1]}, 300 MHz"
+        ax.plot(grid, means, color=color, linewidth=1.4, label=label)
+        for period, mean, ci in endpoints:
+            ax.errorbar(
+                period,
+                mean,
+                yerr=ci,
+                fmt="o",
+                color=color,
+                markersize=4.2,
+                capsize=2.2,
+                elinewidth=0.9,
+                zorder=3,
+                markeredgecolor="white",
+                markeredgewidth=0.5,
+            )
     ax.set_xlabel("Release period (ms)", labelpad=1)
     ax.set_ylabel("Difference (mJ)", labelpad=2)
     ax.set_xlim(0, 600)

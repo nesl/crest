@@ -66,6 +66,12 @@ def load(
     ValueError
         If requested rows are missing, duplicated, failed, nonfinite, or use
         changing energy measurements across budgets.
+    KeyError
+        If a required checkpoint field is absent.
+    TypeError
+        If checkpoint rows or nested metrics do not support the expected schema.
+    OSError
+        If an input file cannot be read.
     """
     points = {b: {} for b in budgets}
     candidates = set()
@@ -160,7 +166,10 @@ def load_csv(
     Raises
     ------
     ValueError
-        If rows are duplicated, nonfinite, incomplete, or have changing energy.
+        If columns are missing or rows are invalid, duplicated, nonfinite,
+        incomplete, or have changing energy, including numeric conversion errors.
+    OSError
+        If the CSV cannot be read.
     """
     points = {budget: {} for budget in budgets}
     with path.open(newline="") as handle:
@@ -194,6 +203,119 @@ def load_csv(
     return points
 
 
+def _draw_ranking(ax, budgets, rho, chosen_budget, reference) -> None:
+    """Draw ranking agreement on an existing axis.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Target axis.
+    budgets : list of int
+        Sorted training budgets.
+    rho : list of float
+        Spearman coefficients in budget order.
+    chosen_budget : int
+        Highlighted budget.
+    reference : int
+        Reference budget.
+    """
+    ax.plot(
+        budgets,
+        rho,
+        marker="o",
+        color="#1f77b4",
+        linewidth=1.3,
+        markersize=4,
+    )
+    selected = rho[budgets.index(chosen_budget)]
+    ax.scatter([chosen_budget], [selected], color="#ff7f0e", s=40, zorder=3)
+    for budget, value in zip(budgets, rho):
+        if budget != chosen_budget:
+            ax.annotate(
+                f"{value:.3f}",
+                (budget, value),
+                xytext=(0, -14) if budget == reference else (4, 7),
+                textcoords="offset points",
+                ha="center" if budget == reference else "left",
+                fontsize=7,
+            )
+    ax.annotate(
+        f"Chosen search budget\n{chosen_budget} epochs ({selected:.3f})",
+        xy=(chosen_budget, selected),
+        xytext=(chosen_budget + 40, 0.59),
+        fontsize=7,
+        color="#cc6600",
+        arrowprops=dict(arrowstyle="->", color="#ff7f0e", lw=1),
+    )
+    ax.set(
+        title="Ranking agreement",
+        xlabel="Training budget (epochs)",
+        ylabel="Spearman correlation",
+        ylim=(min(0.475, min(rho) - 0.05), 1.08),
+    )
+    ax.set_xticks(
+        sorted(
+            set(
+                [min(budgets), chosen_budget, reference]
+                + [b for b in budgets if b >= 100]
+            )
+        )
+    )
+
+
+def _draw_fronts(ax, points, front_budgets, memberships) -> None:
+    """Draw historical-energy Pareto fronts on an existing axis.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Target axis.
+    points : dict
+        Budget/candidate mapping to (RMSE, historical energy).
+    front_budgets : list of int
+        Budgets in drawing order.
+    memberships : dict
+        String budget keys mapped to ordered nondominated candidate IDs.
+    """
+    styles = [
+        ("#999999", "s", "--"),
+        ("#ff7f0e", "o", "-"),
+        ("#1f77b4", "^", "-."),
+        ("#2ca02c", "D", "-"),
+    ]
+    for i, budget in enumerate(front_budgets):
+        keys = memberships[str(budget)]
+        color, marker, line = styles[i % len(styles)]
+        ax.plot(
+            [points[budget][cid][1] for cid in keys],
+            [points[budget][cid][0] for cid in keys],
+            color=color,
+            marker=marker,
+            linestyle=line,
+            linewidth=1.3,
+            markersize=4,
+            label=f"{budget} epochs",
+        )
+    ax.set_xscale("log")
+    ax.xaxis.set_major_locator(FixedLocator([4, 10, 25, 50, 125]))
+    ax.xaxis.set_major_formatter(ScalarFormatter())
+    ax.set(
+        title="Pareto fronts",
+        xlabel="Historical energy (mJ)",
+        ylabel="Validation RMSE total",
+    )
+    front_values = [
+        points[b][cid][0]
+        for b in front_budgets
+        for cid in memberships[str(b)]
+    ]
+    ax.set_ylim(
+        min(0.2, min(front_values) - 0.02),
+        max(1.82, max(front_values) + 0.05),
+    )
+    ax.legend(loc="upper right", frameon=False, fontsize=7)
+
+
 def render(
     points: dict[int, dict[str, tuple[float, float]]],
     front_budgets: list[int],
@@ -211,7 +333,8 @@ def render(
     chosen_budget : int
         Highlighted search budget.
     output_dir : pathlib.Path
-        Explicit directory for PNG, PDF, SVG panels and analysis JSON.
+        Explicit directory for PNG, PDF and SVG panels. ``main`` writes the
+        returned analysis and provenance metadata as JSON.
 
     Returns
     -------
@@ -256,86 +379,9 @@ def render(
             ax.set_axisbelow(True)
             ax.spines[["top", "right"]].set_visible(False)
             if name == "ranking":
-                ax.plot(
-                    budgets,
-                    rho,
-                    marker="o",
-                    color="#1f77b4",
-                    linewidth=1.3,
-                    markersize=4,
-                )
-                selected = rho[budgets.index(chosen_budget)]
-                ax.scatter([chosen_budget], [selected], color="#ff7f0e", s=40, zorder=3)
-                for budget, value in zip(budgets, rho):
-                    if budget != chosen_budget:
-                        ax.annotate(
-                            f"{value:.3f}",
-                            (budget, value),
-                            xytext=(0, -14) if budget == reference else (4, 7),
-                            textcoords="offset points",
-                            ha="center" if budget == reference else "left",
-                            fontsize=7,
-                        )
-                ax.annotate(
-                    f"Chosen search budget\n{chosen_budget} epochs ({selected:.3f})",
-                    xy=(chosen_budget, selected),
-                    xytext=(chosen_budget + 40, 0.59),
-                    fontsize=7,
-                    color="#cc6600",
-                    arrowprops=dict(arrowstyle="->", color="#ff7f0e", lw=1),
-                )
-                ax.set(
-                    title="Ranking agreement",
-                    xlabel="Training budget (epochs)",
-                    ylabel="Spearman correlation",
-                    ylim=(min(0.475, min(rho) - 0.05), 1.08),
-                )
-                ax.set_xticks(
-                    sorted(
-                        set(
-                            [min(budgets), chosen_budget, reference]
-                            + [b for b in budgets if b >= 100]
-                        )
-                    )
-                )
+                _draw_ranking(ax, budgets, rho, chosen_budget, reference)
             else:
-                styles = [
-                    ("#999999", "s", "--"),
-                    ("#ff7f0e", "o", "-"),
-                    ("#1f77b4", "^", "-."),
-                    ("#2ca02c", "D", "-"),
-                ]
-                for i, budget in enumerate(front_budgets):
-                    keys = memberships[str(budget)]
-                    color, marker, line = styles[i % len(styles)]
-                    ax.plot(
-                        [points[budget][cid][1] for cid in keys],
-                        [points[budget][cid][0] for cid in keys],
-                        color=color,
-                        marker=marker,
-                        linestyle=line,
-                        linewidth=1.3,
-                        markersize=4,
-                        label=f"{budget} epochs",
-                    )
-                ax.set_xscale("log")
-                ax.xaxis.set_major_locator(FixedLocator([4, 10, 25, 50, 125]))
-                ax.xaxis.set_major_formatter(ScalarFormatter())
-                ax.set(
-                    title="Pareto fronts",
-                    xlabel="Historical energy (mJ)",
-                    ylabel="Validation RMSE total",
-                )
-                front_values = [
-                    points[b][cid][0]
-                    for b in front_budgets
-                    for cid in memberships[str(b)]
-                ]
-                ax.set_ylim(
-                    min(0.2, min(front_values) - 0.02),
-                    max(1.82, max(front_values) + 0.05),
-                )
-                ax.legend(loc="upper right", frameon=False, fontsize=7)
+                _draw_fronts(ax, points, front_budgets, memberships)
             for extension in ("png", "pdf", "svg"):
                 fig.savefig(
                     output_dir / f"cs2_training_budget_{name}.{extension}",

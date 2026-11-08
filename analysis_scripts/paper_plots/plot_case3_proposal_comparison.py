@@ -4,7 +4,8 @@
 """Render the CS3 proposal comparison from explicitly supplied external CSVs.
 
 Retain every feasible observation and repeat; stars select maximum recorded
-score per board and method. The 400 mJ line is a scoring allocation.
+score per board and method, taking the first input row on ties. The 400 mJ
+line is a scoring allocation.
 """
 from __future__ import annotations
 
@@ -50,7 +51,8 @@ def load(
     Returns
     -------
     tuple
-        Observation dictionaries and maximum-score rows indexed by board/method.
+        Observation dictionaries and maximum-score rows indexed by board/method;
+        ties retain the first row in input order.
 
     Raises
     ------
@@ -254,7 +256,7 @@ def render(
 
 
 def save(fig: Figure, output_dir: Path) -> dict[str, Any]:
-    """Check text bounds and write the figure in publication formats.
+    """Check text bounds, write PNG/PDF/SVG, then close the figure.
 
     Parameters
     ----------
@@ -267,6 +269,12 @@ def save(fig: Figure, output_dir: Path) -> dict[str, Any]:
     -------
     dict
         Dimensions in inches and pixels, and PNG resolution in dots per inch.
+
+    Raises
+    ------
+    ValueError
+        If text extends outside the canvas or PNG resolution differs from 400 dpi.
+        Bounds are checked before writing; the figure closes after exports.
     """
     name = "cs3_proposal_comparison"
     output_dir.mkdir(parents=True, exist_ok=True)

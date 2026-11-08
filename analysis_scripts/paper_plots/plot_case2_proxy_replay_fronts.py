@@ -544,6 +544,89 @@ def subplot_shape(
     return 2, 2, (7.16, 4.65), 0.16, 0.28
 
 
+def _proxy_replay_legend_handles() -> list[Line2D]:
+    """Build the ordered search, replay, timing, and front legend handles.
+
+    Returns
+    -------
+    list[Line2D]
+        Handles in the figure legend's display order.
+    """
+    return [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="none",
+            markerfacecolor=CREST_COLOR,
+            markeredgecolor=CREST_COLOR,
+            markersize=4,
+            linestyle="none",
+            label="Measured-energy search",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="s",
+            color="none",
+            markerfacecolor=REPLAY_COLOR,
+            markeredgecolor=REPLAY_COLOR,
+            markersize=4,
+            linestyle="none",
+            label="FLOPs proxy replay",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="D",
+            color="none",
+            markerfacecolor=MEMORY_REPLAY_COLOR,
+            markeredgecolor=MEMORY_REPLAY_COLOR,
+            markersize=4,
+            linestyle="none",
+            label="Memory traffic proxy replay",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="none",
+            markerfacecolor="0.5",
+            markeredgecolor="black",
+            markersize=4,
+            linestyle="none",
+            label="<= 200 ms",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="none",
+            markerfacecolor="white",
+            markeredgecolor="black",
+            markersize=4,
+            linestyle="none",
+            label="> 200 ms",
+        ),
+        Line2D(
+            [0],
+            [0],
+            color="black",
+            linewidth=1.0,
+            linestyle="-",
+            label="Search front",
+        ),
+        Line2D(
+            [0],
+            [0],
+            color="black",
+            linewidth=1.0,
+            linestyle="--",
+            label="Replay front",
+        ),
+    ]
+
+
 def plot_proxy_replay_fronts(
     pairs: Sequence[LoadedPair],
     output_dir: Path,
@@ -770,79 +853,7 @@ def plot_proxy_replay_fronts(
         for ax in axes[-1, :]:
             ax.set_xlabel("Measured energy per inference (mJ)")
 
-        handles = [
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="none",
-                markerfacecolor=CREST_COLOR,
-                markeredgecolor=CREST_COLOR,
-                markersize=4,
-                linestyle="none",
-                label="Measured-energy search",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="s",
-                color="none",
-                markerfacecolor=REPLAY_COLOR,
-                markeredgecolor=REPLAY_COLOR,
-                markersize=4,
-                linestyle="none",
-                label="FLOPs proxy replay",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="D",
-                color="none",
-                markerfacecolor=MEMORY_REPLAY_COLOR,
-                markeredgecolor=MEMORY_REPLAY_COLOR,
-                markersize=4,
-                linestyle="none",
-                label="Memory traffic proxy replay",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="none",
-                markerfacecolor="0.5",
-                markeredgecolor="black",
-                markersize=4,
-                linestyle="none",
-                label="<= 200 ms",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="none",
-                markerfacecolor="white",
-                markeredgecolor="black",
-                markersize=4,
-                linestyle="none",
-                label="> 200 ms",
-            ),
-            Line2D(
-                [0],
-                [0],
-                color="black",
-                linewidth=1.0,
-                linestyle="-",
-                label="Search front",
-            ),
-            Line2D(
-                [0],
-                [0],
-                color="black",
-                linewidth=1.0,
-                linestyle="--",
-                label="Replay front",
-            ),
-        ]
+        handles = _proxy_replay_legend_handles()
         legend_columns = 3 if layout == "column" else 7
         legend_y = 0.975 if layout == "column" else 0.978
         fig.legend(

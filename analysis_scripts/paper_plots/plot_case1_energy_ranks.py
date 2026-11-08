@@ -24,7 +24,7 @@ import pandas as pd
 BASENAME = "cs1_energy_ranks"
 POPULATION = "All joined candidates, ranks within period and study"
 
-INPUT_HELP = "Joined candidates CSV with pool, trial, study, period_ms, continuous_mj, scheduled_mj, E_pred."
+INPUT_HELP = "Joined candidates CSV with pool, trial, study, period_ms, continuous_mj, scheduled_mj."
 
 
 def load_csv(path: Path, numeric: Sequence[str], keys: Sequence[str]) -> pd.DataFrame:
@@ -43,6 +43,14 @@ def load_csv(path: Path, numeric: Sequence[str], keys: Sequence[str]) -> pd.Data
     -------
     pandas.DataFrame
         Validated observations; numeric fields converted to numbers.
+
+    Raises
+    ------
+    ValueError
+        If required columns are missing, the table is empty, identifiers are
+        missing or duplicated, or numeric fields are invalid or nonfinite.
+    OSError
+        If the CSV cannot be read.
     """
     data = pd.read_csv(path)
     required = set(numeric) | set(keys)
@@ -66,7 +74,8 @@ def render(input_csv: Path, output_dir: Path) -> None:
     Parameters
     ----------
     input_csv : pathlib.Path
-        Source table described by the module documentation.
+        CSV with pool, trial, study, period_ms, continuous_mj and
+        scheduled_mj columns.
     output_dir : pathlib.Path
         Directory for PNG, PDF, plotted-points CSV and JSON summary.
     """

@@ -43,8 +43,7 @@ support `--help`.
 
 Figures 1–4 are the runtime-schedule diagram, framework diagram, NAS-flow
 illustration, and hardware-harness artwork. They are not data plots and have no
-Python generators here. `replay_front_support.py` contains shared data-loading
-and front-comparison helpers; it does not generate a separate figure.
+Python generators here.
 
 PNG, PDF, and SVG exports are formats of the same figures, not additional plots.
 Numeric sidecars record the plotted data and summaries.
@@ -86,23 +85,27 @@ predicted release energy. Do not apply that exclusion to the rank figure.
 ## CS2: proxy candidates replayed on target hardware
 
 The submitted comparison uses **16 unique mixed-precision candidates per
-proxy**, replayed on each Arduino target. Historical archive names
-still say `case1`; the current manuscript calls this CS2.
+proxy**, replayed on each Arduino target.
 
 ```bash
-CS2_ARCHIVE=/path/to/CREST_case1
+CS2_MEASUREMENTS=/path/to/measured_nas_runs
 CS2_REPLAYS=/path/to/mixed_proxy_replays
 FIGURE_OUTPUT=/path/to/figures
 python analysis_scripts/paper_plots/plot_case2_proxy_replay_fronts.py \
-  --target "BLE33=$CS2_ARCHIVE/models/OxIOD_BLE33_B2B_case1_2_t1,$CS2_REPLAYS/new_flops_ble.csv,$CS2_REPLAYS/new_memory_ble.csv" \
-  --target "Portenta M4=$CS2_ARCHIVE/models/OxIOD_PORTENTA_M4_B2B_case1_4_t5,$CS2_REPLAYS/new_flops_m4.csv,$CS2_REPLAYS/new_memory_m4.csv" \
-  --target "Portenta M7=$CS2_ARCHIVE/models/OxIOD_PORTENTA_M7_B2B_case1_3_t1,$CS2_REPLAYS/new_flops.csv,$CS2_REPLAYS/new_memory.csv" \
-  --target "STM32 N657=$CS2_ARCHIVE/models/OxIOD_STM32_B2B_case1_5_t1,$CS2_ARCHIVE/replays/data/flops_case1_1_t3_on_stm32_cadenced,$CS2_ARCHIVE/replays/data/memory_case1_1_on_stm32_b2b_v2" \
+  --target "BLE33=$CS2_MEASUREMENTS/ble33,$CS2_REPLAYS/new_flops_ble.csv,$CS2_REPLAYS/new_memory_ble.csv" \
+  --target "Portenta M4=$CS2_MEASUREMENTS/portenta_m4,$CS2_REPLAYS/new_flops_m4.csv,$CS2_REPLAYS/new_memory_m4.csv" \
+  --target "Portenta M7=$CS2_MEASUREMENTS/portenta_m7,$CS2_REPLAYS/new_flops.csv,$CS2_REPLAYS/new_memory.csv" \
+  --target "STM32 N657=$CS2_MEASUREMENTS/stm32_n657,$CS2_REPLAYS/stm32_flops,$CS2_REPLAYS/stm32_memory" \
   --no-replay-target 'STM32 N657' --layout row --dpi 400 --output-dir "$FIGURE_OUTPUT"
 ```
 
-Each measured directory contains one `log_NAS_*.csv`; replay arguments are CSVs
-or directories containing `replay_results.csv`. STM32 replay inputs remain
+Each measured directory uses the first sorted `log_NAS_*.csv`, falling back to
+`trials.csv`; replay arguments are CSVs or directories containing
+`replay_results.csv`. Measured points need finite positive inference energy and
+finite RMSE; replay points also need `replay_status=completed` and a successful
+`target__error_code`. See `load_crest_points` and `load_replay_points` in
+[`replay_front_support.py`](replay_front_support.py) for column schemas, status
+filters, and latency handling. STM32 replay inputs remain
 required by the common loader but are omitted from its measured-only panel.
 The 200 ms threshold changes marker fill, not Pareto membership. Arduino-panel
 counts refer to the FLOPs replay front. `--clock-target LABEL` is an optional
@@ -123,8 +126,9 @@ Observation columns: `board`, `method`, `trial`, `f1`, `energy_mj`, `score`,
 `Optuna` displays as **TPE**. Endpoint columns: `study`, `best_individual`, with
 lowercase `board_method` keys. Validation checks all 1,200 observations, unique
 trial IDs per group, `score = f1 - energy_mj / 4000`, and selected scores against
-the endpoint table. Repeated architectures remain in the scatter. The 400 mJ
-line is a scoring allocation, not a measured limit.
+the endpoint table. Tied maximum scores select the first input row. Repeated
+architectures remain in the scatter. The 400 mJ line is a scoring allocation,
+not a measured limit.
 
 ## Training-budget appendix
 
@@ -172,9 +176,12 @@ The input root holds STM32 tables and a `portenta_m7/` child with matching files
   `client_process_s`, and HIL `hil_detail_s`.
 - `proxy_times.csv`: `stage`, `inclusive_s`, with stages `proxy.flops` and
   `proxy.memory_estimate`.
-- `arena_search.json`: continuous/cadenced conditions containing
+- `arena_search.json`: `conditions` keyed by continuous/cadenced, containing
   `failed_probe_measurement_s` and `candidates`.
 
+Duration fields are in seconds. For the category and HIL-detail keys consumed
+by the renderer, see `load_panel` in
+[`plot_appendix_timing_analysis.py`](plot_appendix_timing_analysis.py).
 The renderer checks ten candidates per condition, 550 training epochs, finite
 proxy samples, and timing reconciliation. Input code `cadenced` displays as
 **Periodic HIL**. The layout depicts cost attribution, not execution order.

@@ -38,6 +38,27 @@ def load_panel(directory: Path) -> dict[str, Any]:
     ------
     ValueError
         If panel sizes, proxy samples, or timing reconciliations are invalid.
+
+    Notes
+    -----
+    ``breakdown.json`` stores the four ``conditions``: continuous, cadenced,
+    flops, and memory. Each needs ``trained_candidates``, ``epochs``,
+    ``client_process_s``, and ``categories_s`` (all durations in seconds).
+    Categories must reconcile with client time. Host means combine loading,
+    model_and_proxy_setup, other_startup_bookkeeping, training_fit, and
+    post_fit_evaluation; absent host categories contribute zero.
+
+    The two HIL conditions also require ``categories_s.hil_request`` and
+    ``hil_detail_s`` with runtime_protocol_measurement_wait and
+    programming_and_boot_loading. Optional preparation components are
+    export_stedgeai_analysis_codegen, model_export_and_backend_preparation,
+    and firmware_build_signing. ``arena_search.json`` supplies each HIL
+    condition's failed_probe_measurement_s and candidates. Timeouts are
+    subtracted from measurement time; the remaining HIL time is overhead.
+
+    ``proxy_times.csv`` needs stage and inclusive_s columns, with one finite,
+    nonnegative sample per trained candidate for both proxy.flops and
+    proxy.memory_estimate. Returned HIL segments retain their plotting order.
     """
     d = json.loads((directory / "breakdown.json").read_text())["conditions"]
     if set(d) != {"continuous", "cadenced", "flops", "memory"}:
@@ -155,6 +176,27 @@ def main() -> None:
         "STM32 N657": load_panel(args.data_dir),
         "Portenta H7 CM7": load_panel(args.data_dir / "portenta_m7"),
     }
+    render(panels, args.output_dir, args.basename)
+
+
+def render(panels: dict[str, dict[str, Any]], output_dir: Path, basename: str) -> None:
+    """Draw the two timing panels and export their values and caption.
+
+    Parameters
+    ----------
+    panels : dict of str to dict
+        Board labels and aggregates from ``load_panel``, in display order.
+    output_dir : pathlib.Path
+        Destination for PNG, PDF, SVG, JSON values, and the caption text.
+    basename : str
+        Shared filename stem for all exports.
+
+    Notes
+    -----
+    Segment order follows ``load_panel`` and matches the color and legend order.
+    Figure bounds are measured after drawing to center the legend over the
+    visible axes, including their labels.
+    """
     plt.rcParams.update(
         {
             "font.family": "sans-serif",
@@ -167,6 +209,7 @@ def main() -> None:
         }
     )
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    # Match load_panel insertion order: compile, flash, timeout, measurement, other.
     segment_colors = [colors[0], colors[1], colors[3], colors[9], colors[4]]
     fig, axes = plt.subplots(2, 1, figsize=(11.5, 6.6), sharex=True)
     for ax, (board, v) in zip(axes, panels.items()):
@@ -281,18 +324,18 @@ def main() -> None:
     visible_center = (min(b.x0 for b in bounds) + max(b.x1 for b in bounds)) / 2
     center_fraction = fig.transFigure.inverted().transform((visible_center, 0))[0]
     legend.set_bbox_to_anchor((center_fraction, 1), transform=fig.transFigure)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     for ext in ["png", "pdf", "svg"]:
         fig.savefig(
-            args.output_dir / f"{args.basename}.{ext}",
+            output_dir / f"{basename}.{ext}",
             dpi=400,
             bbox_inches="tight",
             pad_inches=0.04,
         )
-    (args.output_dir / f"{args.basename}_values.json").write_text(
+    (output_dir / f"{basename}_values.json").write_text(
         json.dumps(panels, indent=2) + "\n"
     )
-    (args.output_dir / f"{args.basename}_caption.txt").write_text(CAPTION + "\n")
+    (output_dir / f"{basename}_caption.txt").write_text(CAPTION + "\n")
     plt.close(fig)
 
 

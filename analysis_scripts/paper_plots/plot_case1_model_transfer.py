@@ -43,6 +43,14 @@ def load_csv(path: Path, numeric: Sequence[str], keys: Sequence[str]) -> pd.Data
     -------
     pandas.DataFrame
         Validated observations; numeric fields converted to numbers.
+
+    Raises
+    ------
+    ValueError
+        If required columns are missing, the table is empty, identifiers are
+        missing or duplicated, or numeric fields are invalid or nonfinite.
+    OSError
+        If the CSV cannot be read.
     """
     data = pd.read_csv(path)
     required = set(numeric) | set(keys)
@@ -66,7 +74,8 @@ def render(input_csv: Path, output_dir: Path) -> None:
     Parameters
     ----------
     input_csv : pathlib.Path
-        Source table described by the module documentation.
+        CSV with pool, trial, study, period_ms, continuous_mj,
+        scheduled_mj and E_pred columns.
     output_dir : pathlib.Path
         Directory for PNG, PDF, plotted-points CSV and JSON summary.
     """
@@ -83,6 +92,8 @@ def render(input_csv: Path, output_dir: Path) -> None:
         raise ValueError("Expected the measured periods 100, 200 and 500 ms")
     data = data.loc[data.pool != "200ms_cadenced"].copy()
     data["error_mj"] = data.scheduled_mj - data.E_pred
+    # Keep the hidden upper row to preserve the original combined-paper layout
+    # and its exported bounding box; only the lower transfer panels are visible.
     fig, panels = plt.subplots(2, 3, figsize=(3.33, 4.1))
     fig.subplots_adjust(left=0.16, right=0.98, wspace=0.12)
     for row, bottom, height in zip(panels, [0.61, 0.151], [0.354, 0.305]):

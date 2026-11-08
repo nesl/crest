@@ -25,14 +25,12 @@ NAS, replay, or measurement artifacts and do not run NAS or touch hardware.
 Each guide lists inputs, commands, and outputs.
 
 Other utilities include [Pareto comparison](compare_pareto_front_calcs/README.md),
-the
-[hardware energy probe](micro_workload_energy_probe/README.md), and
+the [hardware energy probe](micro_workload_energy_probe/README.md), and
 [publication plots](paper_plots/README.md). The hardware probe requires a target
 board and measurement harness; the analysis tools read saved artifacts.
 
-The [figure catalog](paper_plots/README.md) lists plot generators, required
-external inputs, and commands. Generators also save plotted-point and summary
-sidecars.
+The publication-plot guide includes the figure map, input schemas, reproduction
+commands, and numeric sidecars.
 
 
 ## Case Study 3: proposal strategies and search effort
@@ -63,6 +61,3 @@ hardware. Keep generated outputs outside the source checkout.
 Search refreshes score or hypervolume plots automatically under each study's
 `progress/` directory. To regenerate them from a saved database, use the
 [shared progress Python API](../src/crest/search/README.md).
-
-For the current paper figure-to-script mapping, required input schemas, and
-reproduction commands, see [Publication Figure Scripts](paper_plots/README.md).
