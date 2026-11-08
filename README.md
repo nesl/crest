@@ -9,24 +9,37 @@ SPDX-License-Identifier: BSD-3-Clause
 
 ## Summary
 
-Selecting a neural network for an embedded sensing application requires more than
-comparing prediction accuracy or operation counts. Memory limits, the target
-microcontroller, and the time spent waiting between inferences all affect which
-model can meet an application's latency and energy requirements.
+CREST is a modular hardware-in-the-loop (HIL) experimentation system for
+selecting neural networks for embedded sensing. It lets you vary the selection
+objective, runtime schedule, target microcontroller, and candidate proposer while
+reusing the same evaluation and replay workflow.
 
-CREST connects neural architecture search with hardware-in-the-loop evaluation.
-It trains candidate models, compiles and deploys them to a target MCU, and uses
-measured latency and energy alongside task quality to guide model selection.
-Experiments can compare continuous inference with periodic execution, including
-waiting and sleep, and express application requirements through scalar or
-multiple objectives and feasibility constraints.
+A model's deployment cost depends on more than inference alone. In periodic
+sensing, the board also spends energy waiting or sleeping between releases.
+Changing the release period, clock, or target can change which configuration is
+preferable—or whether it meets the application's memory and timing constraints.
+CREST measures candidates under the intended deployment conditions so those
+choices can be checked on hardware.
 
-The framework separates workloads, model families, candidate generators, and
-hardware backends around a shared evaluation pipeline. It includes inertial
-odometry and audio classification examples, native Optuna search, optional LLM
-candidate generation, and tools for replaying selected candidates on another
-supported target. The accompanying analyses examine how hardware measurements,
-runtime schedules, and search choices affect model selection.
+With CREST, you can:
+
+- **Search using proxy or measured costs.** Train, compile, and deploy candidates,
+  then select using task quality, latency, energy, or proxy metrics with scalar
+  or multiple objectives and feasibility constraints.
+- **Compare runtime schedules.** Continuous execution reports energy per
+  inference. Periodic execution reports energy per release, including inference
+  and the following waiting or sleep interval, where supported by the backend.
+  Energy is measured at the board supply.
+- **Replay selected candidates.** Reevaluate candidates on another supported
+  target or under another schedule, keeping source results separate from new
+  measurements.
+- **Distinguish measurement validity from deployment feasibility.** Records
+  identify the target and measurement interval. A candidate can have a valid
+  energy measurement while missing its deadline and being excluded from selection.
+- **Extend the experiment.** Reuse the evaluator with another workload, model
+  family, hardware backend, or candidate proposer. Included examples cover
+  inertial odometry and audio classification, with native Optuna search and
+  optional LLM candidate generation.
 
 ## Code architecture
 
