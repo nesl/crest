@@ -225,7 +225,7 @@ class HILServer:
 
         # Resolve repository root once so sketch variants can be copied before each compile.
         self.repo_root = Path(__file__).resolve().parent.parent
-        self.sketch_variants_dir = self.repo_root / "sketches"
+        self.sketch_variants_dir = self.repo_root / "firmware"
         self.active_sketch_path: Path | None = None
         self.calibration_split: DataSplit | None = None
         self._calibration_split_resolved = False
@@ -1342,9 +1342,9 @@ class HILServer:
         Selection depends on ``device.name``, optional Portenta
         ``device.portenta.target_core``, ``training.energy_aware``, and
         ``training.input_mode`` in the loaded config. Uniform sketches use the
-        shared root ``sketches/crest_inference_*.ino`` assets, while
+        shared root ``firmware/crest_inference_*.ino`` assets, while
         dataset-specific representative/real analysis variants continue to use
-        ``sketches/analysis_sketches``.
+        ``firmware/analysis_sketches``.
 
         Returns
         -------

@@ -69,7 +69,7 @@ BOARD_NAME = "STM32_NUCLEO_N657X0_Q"
 # Repository root used to resolve checked-in STM32 templates and helper assets.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 # Canonical project root copied into a per-candidate staging directory.
-DEFAULT_TEMPLATE_ROOT = REPO_ROOT / "sketches" / "stm32" / "crest_stm32_lrun"
+DEFAULT_TEMPLATE_ROOT = REPO_ROOT / "firmware" / "stm32" / "crest_stm32_lrun"
 # Internal STM32 workspace layout for the production N657X0 backend.
 LRUN_PROJECT_LAYOUT = "lrun_dev_boot"
 # ST STM32N657X0 product docs describe the part as having 4.2-Mbyte contiguous

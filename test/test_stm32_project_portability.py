@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CANONICAL_ROOT = REPO_ROOT / "sketches" / "stm32" / "crest_stm32_lrun"
+CANONICAL_ROOT = REPO_ROOT / "firmware" / "stm32" / "crest_stm32_lrun"
 
 
 class Stm32ProjectPortabilityTests(unittest.TestCase):

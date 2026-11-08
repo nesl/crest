@@ -866,7 +866,7 @@ def resolve_settings(args: argparse.Namespace) -> RuntimeSettings:
         raise ValueError("--repeats must be >= 1.")
 
     active_timeout_default = max(5.0, (float(window_ms) / 1000.0) + 5.0)
-    stm32_project_default = REPO_ROOT / "sketches" / "stm32" / "crest_stm32_lrun"
+    stm32_project_default = REPO_ROOT / "firmware" / "stm32" / "crest_stm32_lrun"
     return RuntimeSettings(
         config_path=config_path,
         boards=resolve_board_specs(args.boards),
@@ -982,7 +982,7 @@ def stage_arduino_sketch(stage_root: Path | None = None) -> Path:
     stage_dir = root / ARDUINO_SKETCH_NAME
     stage_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ARDUINO_TEMPLATE, stage_dir / f"{ARDUINO_SKETCH_NAME}.ino")
-    shutil.copytree(REPO_ROOT / "sketches" / "common", stage_dir / "common", dirs_exist_ok=True)
+    shutil.copytree(REPO_ROOT / "firmware" / "common", stage_dir / "common", dirs_exist_ok=True)
     return stage_dir
 
 

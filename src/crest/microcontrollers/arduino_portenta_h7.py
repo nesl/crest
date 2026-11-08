@@ -34,7 +34,7 @@ DEFAULT_SPLIT_BY_CORE = {"cm7": "75_25", "cm4": "50_50"}
 CM4_AUTOSTART_DELAY_MS = 2001
 CM7_BOOT_HELPER_SKETCH = (
     Path(__file__).resolve().parents[3]
-    / "sketches"
+    / "firmware"
     / "boot_m4_helper"
 )
 _CM4_BOOT_HELPER_SIGNATURES: dict[str, str] = {}

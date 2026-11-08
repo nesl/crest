@@ -17,7 +17,7 @@ A target development board and CREST HIL harness are required.
 Follow the [common command setup](../README.md).
 
 For general HIL setup and backend details, see [hardware guide](../../src/crest/microcontrollers/README.md).
-For the STM32 LRUN workspace used by the STM32 probe path, see [STM32 workspace guide](../../sketches/stm32/crest_stm32_lrun/README.md).
+For the STM32 LRUN workspace used by the STM32 probe path, see [STM32 workspace guide](../../firmware/stm32/crest_stm32_lrun/README.md).
 
 ### Contents
 

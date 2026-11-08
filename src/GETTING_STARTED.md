@@ -79,7 +79,7 @@ For a full search, omit `--smoke-test` and choose a fresh study name after revie
 
 Install tools on the machine connected to the board.
 The [hardware guide](crest/microcontrollers/README.md) covers board packages, vendor tools, measurement requirements, and troubleshooting.
-The [firmware guide](../sketches/README.md) covers target and harness firmware.
+The [firmware guide](../firmware/README.md) covers target and harness firmware.
 
 For Arduino targets, bootstrap the CLI and reactivate the environment.
 

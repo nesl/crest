@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / 'sketches/stm32/crest_stm32_lrun/Appli/Src/crest_dut_runner.c'
+RUNNER = ROOT / 'firmware/stm32/crest_stm32_lrun/Appli/Src/crest_dut_runner.c'
 
 
 class MeasurementWindowTests(unittest.TestCase):

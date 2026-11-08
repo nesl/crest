@@ -27,7 +27,7 @@ def test_real_stop_function_resynchronizes_before_reading():
     if not cc:
         pytest.skip('C compiler unavailable')
     import tempfile
-    source = (Path(__file__).resolve().parents[1] / 'sketches/stm32/crest_stm32_lrun/Appli/Src/crest_dut_runner.c').read_text()
+    source = (Path(__file__).resolve().parents[1] / 'firmware/stm32/crest_stm32_lrun/Appli/Src/crest_dut_runner.c').read_text()
     measurement = re.search(r'typedef struct\n\{.*?\} CrestDutMeasurement;', source, re.S).group()
     function = source[source.index('static bool stop_sleep_for_us'):source.index('static bool rtc_wakeup_irq_self_test')]
     fake = r'''
