@@ -57,15 +57,12 @@ Memory and rationales are proposal guidance, not measured results. Inspect trial
 state, feasibility, and measurements before treating a candidate as successful:
 `COMPLETE` alone can include penalty results or skipped training.
 
-Memory updates retain cited findings and bounded pending evidence. Rejected
-summaries get one repair; further rejection preserves accepted memory and reports
-omitted evidence. After three consecutive exhausted summary chunks, summary calls
-remain suspended across restarts while generation continues with bounded pending
-records. Inspect the memory ledger's `optimizer_events.jsonl`, correct the cause,
-and call `ExperimentalMemory.reset_summary_failures()` on the owning memory
-instance to resume summaries without discarding findings or coverage. There is no
-CLI reset switch. See the [configuration guide](../../../config/README.md) for
-history, semantic-context, and memory settings.
+Repeated summary failures suspend memory updates while candidate generation
+continues. Inspect `optimizer_events.jsonl` in the memory ledger to diagnose the
+cause. For programmatic recovery, see
+[`ExperimentalMemory.reset_summary_failures`](memory.py); there is no CLI reset
+switch. The [configuration guide](../../../config/README.md) covers history and
+memory settings.
 
 ## Validation and failures
 

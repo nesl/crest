@@ -13,9 +13,8 @@ improve incumbents or hypervolume.
 [`progress.py`](progress.py) writes scalar score-progress CSV and PNG/PDF charts
 against attempts and elapsed time. Multiobjective reports use only hypervolume: `hypervolume_progress.csv`,
 `hypervolume_history.png`/`.pdf`, `hypervolume_vs_time.png`/`.pdf`, and
-`hypervolume_reference.json`. History plots use Optuna's public Matplotlib
-`plot_hypervolume_history` API. Matplotlib is a declared dependency and is imported
-lazily. An `error.txt` in the progress directory indicates a reporting failure:
+`hypervolume_reference.json`. An `error.txt` in the progress directory indicates
+a reporting failure:
 existing plots may be stale even though search results remain available.
 
 Hypervolume uses a fixed reference point in objective order and original units.

@@ -52,11 +52,6 @@ multi-objective NAS fails during config validation. The dataset owns where
 fold-specific caches live; the task owns whether final reporting rotates
 through those folds.
 
-The runtime loader and validator live in
-[`../crest/model.py`](../crest/model.py), while the task-aware bootstrap
-that resolves components and validates NAS policy against the active task lives
-in [`../crest/runtime_bootstrap.py`](../crest/runtime_bootstrap.py).
-
 ## Top-Level Blocks
 
 The main top-level blocks are:
@@ -88,10 +83,7 @@ The main top-level blocks are:
   the existing Optuna sampler path. Set `type: llm_generator` to validate and
   enqueue exact candidates before the unchanged CREST objective runs.
 
-Those component blocks are resolved by
-[`../crest/component_selection.py`](../crest/component_selection.py), and
-they are mandatory. Use `dataset`, `task`, and `model`; the old top-level
-`data` block is not supported.
+`dataset`, `task`, and `model` are required configuration blocks.
 
 ## `device`
 
@@ -146,9 +138,8 @@ Per-backend nested blocks include:
 - `device.portenta.*`
 - `device.stm32.*`
 
-STM32 option plumbing is resolved by
-[`../crest/microcontrollers/__init__.py`](../crest/microcontrollers/__init__.py).
-Examples of STM32-owned keys include:
+See the [STM32 backend guide](../crest/microcontrollers/README.md#stm32-bring-up-guide)
+for setup and supported options. STM32 settings include:
 
 - `template_root`
 - `project_root`
@@ -235,10 +226,8 @@ Runtime behavior:
   calibrating on one contiguous prefix of an ordered time-series split.
 - HIL metrics are deployment-mode preflight metrics collected before training.
   Per-trial NAS scoring evaluates the trained checkpoint with host-side TFLite
-  on the validation split using interpreter-provided input/output
-  scale/zero-point values and TFLite signature output order; final fixed-split
-  reporting exports/evaluates the trained TFLite on the test split after
-  `train_best_trial`.
+  on the validation split; final fixed-split reporting evaluates the selected
+  trained TFLite model on the test split.
 - Some closeout artifact paths are Keras-derived unless the path explicitly
   requests TFLite evaluation.
 - `training.input_mode` defaults to `uniform` when omitted
@@ -581,17 +570,9 @@ Keys:
 - `outputs.artifact_stem`
 - `outputs.log_file_name`
 
-Runtime notes:
-
-- `load_config(...)` derives read-only runtime fields `model_name` and
-  `checkpoint_name` from `outputs.artifact_stem` and `device.name`, then
-  populates derived paths such as `tflite_model_path` and `checkpoint_path`
-- YAML-authored `outputs.model_name` and `outputs.checkpoint_name` are rejected
-  because artifact names follow the shared `{artifact_stem}_{device.name}`
-  rule
-- `models_dir` and `candidate_dir` are resolved into absolute paths in memory
-
-So the final in-memory values may differ from the literal YAML text.
+Artifact names follow `{artifact_stem}_{device.name}`. Configure `artifact_stem`
+and the directory roots; do not set the derived `model_name` or `checkpoint_name`
+fields in YAML.
 
 ## `network`
 

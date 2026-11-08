@@ -11,7 +11,6 @@ sends requests and validates responses.
 | `history.py` | Select recent trial evidence and best-trial anchors from snapshots. |
 | `objective_renderer.py` | Explain supported scoring expressions using known context; does not calculate measured scores. |
 | `phase_policy.py` | Derive exploration/refinement guidance from trial budgets; does not enforce stopping conditions. |
-| `__init__.py` | Package marker with no initialization side effects. |
 
 ## Use the request builder
 

@@ -27,9 +27,8 @@ from crest.interfaces import OptimizerBudgetExhausted
 optimizer-owned budget cannot fund another round. Shared request/result records
 remain in [`pipeline_types.py`](../pipeline_types.py).
 
-Importing these contracts does not load TensorFlow or concrete component backends.
-Model-dependent default hooks import their runtime helpers when called. Method
-docstrings specify required overrides and default behavior; use the linked
+The contracts can be inspected without loading TensorFlow or device backends.
+Method docstrings specify required overrides and default behavior; use the linked
 component guides when adding an implementation.
 
 ## Required hooks and defaults

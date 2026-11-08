@@ -7,7 +7,6 @@ SPDX-License-Identifier: BSD-3-Clause
 
 `crest` implements the reusable pipeline behind the [source entry points](../README.md).
 Install and configure the environment using the [repository guide](../../README.md).
-Package exports are lazy; importing `crest` alone does not initialize TensorFlow or hardware.
 
 | Area | Responsibility |
 | --- | --- |
@@ -28,6 +27,6 @@ runtime modules may require TensorFlow, Optuna, serial libraries, or board toolc
 
 For contributions, keep dataset/task/family/device responsibilities in their component
 layers and extend the matching tests in [`test`](../../test). Run pytest from the
-repository root; its configuration places this checkout's `src` on the import path.
+repository root.
 Hardware execution requires the configured target and, for harness measurements, the
 measurement harness; pure contract and configuration checks do not.

@@ -122,16 +122,11 @@ concrete starting point.
   from [`../optimizers/search_space.py`](../optimizers/search_space.py), using
   raw persisted trial names, inclusive numeric bounds, or categorical choices.
   Optional descriptions, units, and typical effects provide prompt semantics.
-  The default hook raises `NotImplementedError`. Both shipped families reuse
-  these declarations in `sample_hparams(...)` through `SearchParam.suggest(...)`
-  so legal ranges and choices stay consistent. Keep decoding inside the family
-  (for example, `dilations_index` becomes a dilation schedule); the runner adds
-  `quantization_mode` when quantization search and its deployment path are active,
-  and `cpu_clock_mhz_index` when compile-derived metrics and configured clock
-  options activate that search. Explicit candidates must supply exactly every
-  active raw field.
-  Import these declarations from `crest.optimizers.search_space`. See the
-  [configuration guide](../../config/README.md).
+  Keep architecture decoding inside the family and declarations consistent with
+  `sample_hparams(...)`. Import `SearchParam` from
+  `crest.optimizers.search_space`; see the
+  [interface method](../interfaces/model_family.py) for the full contract and the
+  [configuration guide](../../config/README.md) for deployment search options.
 - `build_model(hparams, ctx, config)`
   Required. Builds the uncompiled Keras model from normalized hyperparameters
   and `ModelBuildContext`.

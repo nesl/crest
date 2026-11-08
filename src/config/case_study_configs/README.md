@@ -13,7 +13,7 @@ combinations.
 Each YAML includes its intended launch command near the top. Run commands from
 the repository root with the `crest` environment active.
 
-## Case Study 1: OxIOD TCN Across Targets
+## Case Study 2: OxIOD TCN Across Targets
 
 Hardware requirement: target development board and HIL harness required for
 the measured-energy configs in this folder.
@@ -32,7 +32,7 @@ The desktop proxy examples for the same OxIOD path live one directory up:
 [`../nas_config_memory_proxy.yaml`](../nas_config_memory_proxy.yaml). Those
 proxy configs do not require hardware.
 
-## Case Study 2: STM32 Runtime Schedule Comparison
+## Case Study 1: STM32 Runtime Schedule Comparison
 
 Hardware requirement: NUCLEO-N657X0-Q board required; HIL harness required for
 energy-measured runs.

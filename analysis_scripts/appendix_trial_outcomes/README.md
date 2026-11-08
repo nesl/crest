@@ -11,7 +11,7 @@ outside the checkout.
 
 - `periodic.py MANIFEST OUTPUT_DIR` audits periodic campaigns and separately
   records paired-measurement eligibility and configured population exclusions.
-- `recorded.py --config CONFIG --output-dir OUTPUT_DIR` audits legacy SQLite
+- `recorded.py --config CONFIG --output-dir OUTPUT_DIR` audits saved SQLite
   databases or saved JSON exports using recorded operational eligibility.
 - `scored.py --config CONFIG --output-dir OUTPUT_DIR` audits scored campaigns
   through an explicit completion endpoint.
@@ -24,7 +24,7 @@ Each native `trial_outcomes.csv` contains `case_study`, `campaign`, `trial`, and
 alone does not establish measurement success. Missing evidence stays explicit;
 historical success conventions do not imply modern validity checks ran.
 
-Legacy configuration is a JSON list with `campaign`, `case_study`, and either
+The `recorded.py` configuration is a JSON list with `campaign`, `case_study`, and either
 `db` or `export` plus `export_campaign`. Optional `study_id` selects an Optuna
 study; databases with multiple studies require it. `trial_min` is inclusive and
 `trial_max` exclusive. `host_only` campaigns appear in summary JSON and are

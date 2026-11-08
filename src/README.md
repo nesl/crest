@@ -175,10 +175,9 @@ Pareto front, and reuses the same HIL server/backend request path that normal
 hardware scoring uses.
 
 Use `--dry-run` as a hardware-free preflight; it writes `manifest.json`,
-`replay_requests.jsonl`, and `replay_results.csv` without instantiating
-`HILServer`. For hardware execution, the command forwards reconstructed
-`family_hparams`, `runtime_metadata`, `quantization_mode`, optional preserved
-device options, and optional CLI model/checkpoint overrides to HIL.
+`replay_requests.jsonl`, and `replay_results.csv` without accessing hardware.
+Review these requests before running against a board. Hardware execution uses
+the saved candidate parameters and any model/checkpoint overrides you supply.
 
 `--resume` skips payload keys already present in `replay_results.csv` with
 `completed` or `dry_run` status. Do not reuse a dry-run output directory for a

@@ -61,7 +61,8 @@ entries must match provider, base URL, model, and tier (`default` when omitted).
 Capped studies save their selected rates in `llm_optimizer/spend_state.json`;
 resume requires the same rates and provenance. Failed or interrupted requests
 retain their reservation because they may have been billed. Recorded charges
-round upward to 12 decimal places in USD. Without `max_usd`, spending is not tracked.
+are conservative estimates, not provider invoices. Without `max_usd`, spending
+is not tracked.
 
 ## Try the interface offline
 

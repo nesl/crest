@@ -25,13 +25,18 @@ from their guides. Run only one experiment at a time on a DUT/harness. The
 repeatability, waiting-power, and policy runners require explicit serial ports
 and `--board-ready`. Training requires `--execute` and does not use HIL.
 
+The [measurement-context guide](appendix_measurement_context/README.md)
+introduces the synthetic workload probes. The CS1 hardware recipes use the
+measurement protocol specified in their guides; they have not been updated for
+the current STM32 runtime. For new board runs, start with the main
+[HIL workflow](../src/GETTING_STARTED.md#running-nas-and-hil).
+
 ## 2. Analyze saved results
 
 | Guide | Questions it answers |
 | --- | --- |
 | [CS1](cs1/README.md) | How do waiting power, clock, and execution policy affect prediction and selection? |
 | [CS3](cs3/README.md) | How do proposal strategies, score weights, and target replay affect search outcomes? |
-| [Measurement-context appendix](appendix_measurement_context/README.md) | How do fixed-duration sleep and compute workloads compare? |
 | [Evaluation cost appendix](appendix_evaluation_cost/README.md) | Where is time spent in candidate evaluation? |
 | [Training budget appendix](appendix_training_budget/README.md) | How do training budgets affect rankings and fronts? |
 | [Trial outcomes appendix](appendix_trial_outcomes/README.md) | Which attempts passed and which observations enter each analysis? |

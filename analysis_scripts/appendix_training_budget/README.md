@@ -19,10 +19,10 @@ Each batch contains `manifest.json`, `execution.json`, source/effective YAML
 configs, and `<candidate>/seed_<seed>/` with `history.json`, `results.json`,
 `checkpoints.json`, and `complete.json`. Batches must describe compatible runs.
 Candidate counts, budgets and seeds come from the manifests; use `--help` for
-options. The submitted CS2 Portenta CM7 panel combines all four batches: 50 candidates.
+options.
 
 Outputs: `summary.json` (correlations, fronts, shortlist regret and training time),
-`checkpoint_metrics.csv`, and a plot-ready CSV per seed. Keep outputs private and
+`checkpoint_metrics.csv`, and a plot-ready CSV per seed. Keep generated outputs
 outside the checkout. Training times sum trajectory prefixes; they exclude later
 checkpoint evaluation and hardware measurement.
 

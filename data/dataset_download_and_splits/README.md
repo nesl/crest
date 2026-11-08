@@ -45,10 +45,8 @@ make prepare-audio-dataset URBANSOUND8K_ARGS="--download --accept-license"
 ```
 
 The audio preparation script writes `metadata.json`, `train.npz`, `val.npz`,
-`test.npz`, and `calibration.npz`. The cache schema, feature parameters, crop
-policy, normalization, class ordering, and calibration selection are implemented
-in the preparation script and consumed by the `urbansound8k_mel` dataset
-adapter.
+`test.npz`, and `calibration.npz`. Use the generated cache directory as
+`dataset.params.cache_dir` with `dataset.name: urbansound8k_mel`. Keep its metadata and arrays together.
 
 The script lives at:
 
@@ -66,16 +64,9 @@ make prepare-dataset
 python data/dataset_download_and_splits/oxiod/prepare_oxiod.py --zip-path /path/to/OxIOD.zip
 ```
 
-The preparation script does four things:
-
-1. Captures the curated tracked split files already present in the repo.
-2. Replaces `data/oxiod` with a fresh extraction from the OxIOD archive.
-3. Normalizes folder names such as `slow walking -> slow_walking`.
-4. Writes the curated `Train.txt`, `Valid.txt`, `Test.txt`, and
-   `Train_Valid.txt` files back into each activity folder.
-
-The curated tracked splits reproduce the built-in OxIOD path after extracting
-a fresh copy of the upstream archive.
+Preparation replaces `data/oxiod` with a fresh extraction, normalizes activity
+folder names, and restores the curated train/validation/test split files. Keep
+any local data you need outside that directory before rerunning preparation.
 
 Dataset-specific preparation files:
 
@@ -85,29 +76,13 @@ Dataset-specific preparation files:
 The preparation script uses the per-activity split files under
 `data/oxiod/<activity>/` as its default template source.
 
-## Current Loader Paths
+## Use the prepared datasets
 
-The built-in UrbanSound8K audio dataset adapter lives in:
-
-- [`src/crest/datasets/urbansound8k_mel.py`](../../src/crest/datasets/urbansound8k_mel.py)
-- [`src/crest/datasets/urbansound8k_common.py`](../../src/crest/datasets/urbansound8k_common.py)
-
-It loads the cached log-mel feature tensors produced by
-`prepare_urbansound8k.py` and is selected with `dataset.name:
-urbansound8k_mel`.
-
-The built-in OxIOD dataset adapter lives in:
-
-- [`src/crest/datasets/oxiod.py`](../../src/crest/datasets/oxiod.py)
-- [`src/crest/data.py`](../../src/crest/data.py)
-
-`import_oxiod_dataset(...)` in `src/crest/data.py` reads the split files
-from each activity folder and uses:
-
-- `type_flag=1` for `Train_Valid.txt`
-- `type_flag=2` for `Train.txt`
-- `type_flag=3` for `Valid.txt`
-- `type_flag=4` for `Test.txt`
+Select `dataset.name: oxiod` with `dataset.params.directory: data/oxiod/`, or
+`dataset.name: urbansound8k_mel` with the generated audio cache path. See the
+[configuration examples](../../src/config/README.md#example-configs) for complete
+experiments and the [dataset guide](../../src/crest/datasets/README.md) to add
+another dataset.
 
 ## Raw vs Syn Data
 

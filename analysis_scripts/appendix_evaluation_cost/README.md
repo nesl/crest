@@ -20,14 +20,14 @@ logs. Host names and candidate counts are inferred. Output must be outside the
 source archive.
 
 Outputs are `breakdown.json`, `proxy_times.csv`, `arena_search.json`, and detailed
-local audit files. Keep these private. For other log layouts, run `analyze.py`
+audit files. For other log layouts, run `analyze.py`
 and `summarize_campaign.py` separately; their `--help` lists input options.
 
 Nested spans use exclusive time; remote/worker links compare durations without
 subtracting clocks across hosts. Arena timeouts contain failed measurement and
 protocol handling; compilation and programming remain separate.
 
-For the submitted figure, prepare STM32 tables at the output root and Portenta
+For the two-board timing figure, prepare STM32 tables at the output root and Portenta
 tables in `portenta_m7/`. Run
 `paper_plots/plot_appendix_timing_analysis.py --data-dir /path/to/results` with
 an external `--output-dir`. The analysis supports other panel sizes. Results describe these saved

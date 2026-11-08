@@ -12,6 +12,13 @@ For the broader source map, see [`../../README.md`](../../README.md). If you
 are working on dataset loading, task semantics, or model architecture, use the
 neighboring component-layer READMEs instead.
 
+## Use a supported board
+
+CREST supports Arduino Nano 33 BLE Sense, Portenta H7 (CM7 and CM4), and
+STM32 NUCLEO-N657X0-Q. Start with the [hardware setup instructions](../../GETTING_STARTED.md#hardware-setup)
+and a matching [example configuration](../../config/README.md#example-configs).
+The sections below are for contributors adding or extending a backend.
+
 ## What This Layer Owns
 
 This layer owns:
@@ -83,8 +90,7 @@ Current examples:
 
 ### STM32 Cube Backend
 
-The STM32 implementation is intentionally split across three modules because
-they own different responsibilities and failure domains.
+The STM32 backend has three main integration points:
 
 1. [`stm32_nucleo_n657x0.py`](stm32_nucleo_n657x0.py)
    The concrete CREST board backend. It implements `DeviceInterface`,
@@ -247,12 +253,6 @@ Required work:
 2. Add lazy export support in `__getattr__` if the backend class should be
    importable from the package root.
 3. Add the class name to `__all__`.
-
-Why this matters:
-
-1. `get_device(...)` instantiates backend wrappers.
-2. `list_device_specs()` projects default specs for compatibility paths.
-3. `devices.DEVICE_SPECS` is rebuilt from this registry plus legacy entries.
 
 ### Device Options
 
@@ -532,8 +532,6 @@ The current backend assumes:
    only if your firmware emits the same runtime tokens.
 4. Add a new concrete STM backend module when the board-specific differences are
    too large to express as metadata only.
-
-There is no generic `stm_base.py` yet.
 
 ## New-Vendor Bring-Up Guide
 

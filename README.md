@@ -43,10 +43,17 @@ runtime schedules, and search choices affect model selection.
 The [source guide](src/README.md) describes the component interfaces and how to
 extend CREST to another workload, model family, optimizer, or hardware backend.
 
-## Getting started
+## Requirements
 
-Install Git, Conda, and Make. The supplied environment uses Python 3.11 and the
-project's TensorFlow dependencies; CPU execution is sufficient for this example.
+- Git, Conda, and Make. The supplied environment installs Python 3.11 and the
+  project's Python dependencies.
+- A local dataset: OxIOD for odometry or UrbanSound8K for audio classification.
+- For hardware evaluation, a supported target board and its build/programming
+  tools. Energy measurements also need the CREST harness and INA228 monitor.
+- A GPU is optional; the hardware-free example below can run on a CPU.
+- Provider credentials are needed only for live LLM candidate generation.
+
+## Getting started
 
 ```bash
 git clone --recurse-submodules https://github.com/nesl/crest.git

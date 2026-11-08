@@ -16,9 +16,9 @@ Run commands from the repository root with the `crest` Conda environment
 active.
 
 For general HIL setup and backend details, see
-[`../../src/crest/microcontrollers/README.md`](../../../../src/crest/microcontrollers/README.md).
+[hardware guide](../../../../src/crest/microcontrollers/README.md).
 For the STM32 LRUN workspace used by the STM32 probe path, see
-[`../../sketches/stm32/crest_stm32_lrun/README.md`](../../../../sketches/stm32/crest_stm32_lrun/README.md).
+[STM32 workspace guide](../../../../sketches/stm32/crest_stm32_lrun/README.md).
 
 ## Contents
 
