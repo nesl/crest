@@ -301,8 +301,7 @@ Validation notes:
 ## `optimizer`
 
 The [optimizer system guide](../crest/optimizers/README.md) explains the
-proposal contract, shared evaluation, evidence, and restart behavior; its
-[flow diagram](../../assets/optimizer_flow.svg) shows ownership at each boundary.
+proposal contract, shared evaluation, evidence, and restart behavior.
 Optimizer components reuse the same objective while making candidate choices
 explicit. The YAML blocks below are merge snippets for a complete study config.
 
@@ -902,8 +901,7 @@ Use these files together:
 - [`../crest/model.py`](../crest/model.py) for validation and derived
   runtime behavior
 - [`../README.md`](../README.md) for source architecture
-- [Optimizer system guide](../crest/optimizers/README.md) and
-  [flow diagram](../../assets/optimizer_flow.svg) for the full proposal,
+- [Optimizer system guide](../crest/optimizers/README.md) for the full proposal,
   evaluation, budget, and resume contract
 - [`../crest/model_families/README.md`](../crest/model_families/README.md)
   for model-family selection and extension

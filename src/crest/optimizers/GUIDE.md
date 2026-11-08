@@ -6,10 +6,6 @@ SPDX-License-Identifier: BSD-3-Clause
 
 CREST searches for models that work under a concrete deployment contract: a workload and task, a model family, a target device, a runtime schedule, and a scoring and feasibility policy. The optimizer chooses experiments within that contract. CREST retains responsibility for building, measuring, training, evaluating, and recording them.
 
-![CREST optimizer and shared evaluation flow](../../../assets/optimizer_flow.svg)
-
-Diagram downloads: [PNG](../../../assets/optimizer_flow.png) · [editable Mermaid source](../../../assets/optimizer_flow.mmd).
-
 ## Why this boundary exists
 
 Embedded model search involves more than architecture. Quantization, CPU clock, inference cadence, memory limits, and short training schedules can change what a result means. Different workloads, models, devices, schedules, and proposal algorithms should remain understandable experiments. AI-generated candidates especially need comparable evidence: an attractive explanation from a provider is not a deployment measurement or a trained-model result.

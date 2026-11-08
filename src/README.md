@@ -17,8 +17,7 @@ Related docs:
 - Config block meanings, NAS policy shape, and runtime config caveats live in
   [`config/README.md`](config/README.md).
 - The complete optimizer contract, evidence, budgeting, and restart behavior live
-  in the [optimizer system guide](crest/optimizers/README.md), with a
-  [flow diagram](../assets/optimizer_flow.svg).
+  in the [optimizer system guide](crest/optimizers/README.md).
 - Microcontroller and hardware-backend bring-up live in
   [`crest/microcontrollers/README.md`](crest/microcontrollers/README.md).
 
@@ -307,7 +306,7 @@ Implementation entry points are [`search_space.py`](crest/optimizers/search_spac
 [optimizer config reference](config/README.md#optimizer) for defaults, provider
 credentials, memory/resume behavior, and context ablations. The
 [optimizer system guide](crest/optimizers/README.md) includes a complete
-contract walkthrough, [flow diagram](../assets/optimizer_flow.svg), and a minimal
+contract walkthrough and a minimal
 custom proposer example.
 
 Run the focused offline optimizer tests from the repository root in the CREST
