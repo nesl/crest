@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 
-def reproduce(archive, output, source_root=None):
+def reproduce(archive, output, source_root=None, *, policy_pairs, repeat_pairs):
     """Run reusable analyses with the submitted paper's inputs and settings.
 
     Parameters
@@ -19,6 +19,8 @@ def reproduce(archive, output, source_root=None):
         Destination for regenerated results.
     source_root : pathlib.Path, optional
         Relocated source logs referenced by the observation CSV.
+    policy_pairs, repeat_pairs : pathlib.Path
+        External JSON pairing lists for policy and repeated-search analyses.
 
     Returns
     -------
@@ -86,7 +88,7 @@ def reproduce(archive, output, source_root=None):
                 "--energy-records",
                 archive / "analysis_results/policy_replay_20261103/energy_records.json",
                 "--pairs",
-                scripts / "paper_config/policy_pairs.json",
+                policy_pairs,
             ],
             "policy",
         ),
@@ -98,7 +100,7 @@ def reproduce(archive, output, source_root=None):
                 "--joint-fit",
                 output / "calibration/calibration.csv",
                 "--pairs",
-                scripts / "paper_config/repeat_pairs.json",
+                repeat_pairs,
             ],
             "repeats",
         ),
@@ -150,8 +152,13 @@ def main():
     parser.add_argument("--archive-root", type=Path, required=True)
     parser.add_argument("--source-root", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--policy-pairs", type=Path, required=True,
+                        help="External JSON list of policy comparison pairs.")
+    parser.add_argument("--repeat-pairs", type=Path, required=True,
+                        help="External JSON list of repeated-search comparison pairs.")
     args = parser.parse_args()
-    reproduce(args.archive_root.resolve(), args.output_dir.resolve(), args.source_root)
+    reproduce(args.archive_root.resolve(), args.output_dir.resolve(), args.source_root,
+              policy_pairs=args.policy_pairs.resolve(), repeat_pairs=args.repeat_pairs.resolve())
 
 
 if __name__ == "__main__":

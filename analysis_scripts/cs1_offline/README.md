@@ -20,8 +20,9 @@ this package. Each command supports `--help` and records input hashes.
 | `scaling_periods.py` | Clock scaling and measured energy optima |
 
 Use explicit input/output paths for new datasets. Prediction supports configurable
-folds, repeats and quality ceilings; replay pairs are supplied as JSON (examples
-in `paper_config/`). Calibration assumes one/ten-release awake-final windows;
+folds, repeats and quality ceilings. Supply pairings in external JSON files, with
+each list entry shaped as `{"left": "candidate_a", "right": "candidate_b"}`.
+Calibration assumes one/ten-release awake-final windows;
 its periods and excluded pools are explicit options. Input column names follow
 the saved CREST measurement tables. Graph grouping currently supports TCN logs.
 
@@ -29,11 +30,14 @@ the saved CREST measurement tables. Graph grouping currently supports TCN logs.
 
 ```sh
 python analysis_scripts/cs1_offline/reproduce_paper.py \
-  --archive-root /path/to/research-archive --output-dir /path/to/results
+  --archive-root /path/to/research-archive --output-dir /path/to/results \
+  --policy-pairs /path/to/policy_pairs.json \
+  --repeat-pairs /path/to/repeat_pairs.json
 ```
 
-The recipe selects the original files and settings, including three-decimal
-calibration export rounding. Add `--source-root` if the original candidate logs
+Keep the pairing files with the research archive and use the original pairings
+when checking the paper results. The recipe selects the original data files and
+settings, including three-decimal calibration export rounding. Add `--source-root` if the original candidate logs
 have moved. `verify_paper.py --results /path/to/results` checks printed values and
 counts; only this recipe/checker requires the submitted dataset. Results include
 CSVs, input hashes, short reports and `paper_checks.csv`.
