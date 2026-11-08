@@ -38,6 +38,30 @@ See [`OptimizerABC`](../interfaces/optimizer.py), the round and budget types in
 Progress reporting is shared across optimizers; see
 [search utilities](../search/README.md).
 
+## Budgets and resume
+
+`training.nas_trials` and `training.max_total_trials` are study totals. To extend
+250 completions to 300, keep the same study name, database, artifact directory,
+and original experiment configuration, then raise the total target and cap.
+Optimizer identity checks do not fingerprint the whole experiment: retain the
+original dataset, model, device, training, and score settings yourself. Changing
+proposal settings requires a new study; nonempty unsigned studies cannot resume.
+
+All reserved trials, including WAITING and RUNNING, consume the attempt cap.
+With feasibility enabled, only feasible COMPLETE trials satisfy the target;
+otherwise every COMPLETE trial counts. Failed or pruned attempts still use budget.
+The runner checks the target between rounds, drains existing WAITING reservations
+before requesting new work, and can drain them even at the attempt cap. A batch
+can exceed the remaining completion need; an already satisfied target leaves
+WAITING work untouched. `--smoke-test N` instead runs N additional attempts in
+a separate smoke-study database.
+
+RUNNING trials are never recovered automatically. After confirming their workers
+have stopped, set `optimizer.recover_orphaned_trials: [12]` to the exact orphan
+trial numbers and resume. Listed RUNNING trials become FAIL and still consume
+attempts; unknown or WAITING numbers are rejected. Remove the list after recovery.
+See the [configuration guide](../../config/README.md) for budget settings.
+
 ## Responsibilities and lifecycle
 
 An optimizer chooses **raw trial parameters** or requests native sampling. It does
@@ -197,5 +221,4 @@ context.
 | Proposer not called immediately after resume | Existing WAITING reservations are drained first. |
 | Empty or oversized round rejected | Return positive work within `permitted_round_size`; use `OptimizerBudgetExhausted` for resource exhaustion. |
 
-For LLM proposal policies, provider configuration, budgets, and recovery details,
-see the [optimizer system guide](GUIDE.md).
+For LLM evidence, provider setup, and recovery, see the [LLM guide](llm/README.md).

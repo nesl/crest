@@ -287,53 +287,27 @@ Validation notes:
 
 ## `optimizer`
 
-The [optimizer system guide](../crest/optimizers/README.md) explains the
-proposal contract, shared evaluation, evidence, and restart behavior.
-Optimizer components reuse the same objective while making candidate choices
-explicit. The YAML blocks below are merge snippets for a complete study config.
-
-`optimizer.type` defaults to `optuna`; use `llm_generator` for explicit LLM
-candidates. Custom registered optimizers may supply their own configuration
-fields and need no `llm` block. See the [extension guide](../crest/optimizers/README.md)
-for registration, interfaces, and a complete plugin example.
-
-Native sampling does not require a model-family descriptor. Explicit proposals
-require one and must supply exactly all active raw fields. The runner validates
-every candidate before queueing any candidate; it owns proposal provenance in
-namespaced trial user attributes and executes the same objective for all modes.
-
-Resume requires the same registered optimizer, proposal identity, native sampler
-configuration, and feasibility policy. Keep the study name, database, and original
-experiment configuration, then increase `training.nas_trials` (the total COMPLETE
-target, or feasible COMPLETE target with feasibility enabled) and
-`training.max_total_trials` (the total stored-attempt cap). These are total counts,
-not additional trials. Budgets, output paths, and transport `timeout_s` may change;
-proposal-affecting settings such as `json_response_mode` remain signed.
-
-The optimizer signature does not fingerprint dataset, model, training, device,
-runtime schedule, or score settings. Preserve and compare the original config;
-budget-only extension is the supported use. Optimizer switching and searching
-nonempty unsigned studies are unsupported; use a new study name. Unsigned
-histories remain available for analysis and offline plotting.
-
-The runner stops when the completion target is met, leaving WAITING work untouched.
-Otherwise it drains queued work before requesting new candidates, including at the
-attempt cap. The cap must cover all stored trials, including FAIL, PRUNED,
-infeasible, RUNNING, and WAITING trials. A population round may exceed the remaining
-completion target. Orphan RUNNING trials consume attempts until explicitly
-recovered (see below). `--smoke-test N` runs N additional attempts in a separate
-per-study smoke database. See the [optimizer guide](../crest/optimizers/GUIDE.md)
-for the complete queue, identity, and compatibility contract.
-
-The default remains the existing Optuna path:
+`optimizer.type` defaults to `optuna`; use `llm_generator` for LLM proposals.
+Custom registered optimizers can supply their own fields without an `llm` block.
+See the [optimizer interface and extension guide](../crest/optimizers/README.md).
+The YAML blocks below are merge snippets for a complete experiment configuration.
 
 ```yaml
 optimizer:
   type: optuna
 ```
 
-The LLM generator supports OpenRouter, OpenAI-compatible Chat Completions,
-and Responses endpoints:
+`training.nas_trials` is the total completion target (feasible completions when
+feasibility is enabled); `training.max_total_trials` is the total stored-attempt
+cap, including failed, pruned, infeasible, RUNNING, and WAITING trials. To extend a
+study, retain its name, database, and original experiment configuration and raise
+these totals. Proposal settings, sampler configuration, and feasibility policy
+must match on resume. Budgets, output paths, and transport timeouts may change.
+The optimizer signature does not fingerprint the whole experiment; budget-only
+extension is the supported use. See [budgets and resume](../crest/optimizers/README.md#budgets-and-resume)
+for queue handling, compatibility, smoke tests, and recovery.
+
+### LLM settings
 
 ```yaml
 optimizer:
@@ -363,96 +337,66 @@ optimizer:
     extra_headers: {}
 ```
 
-The generator emits raw Optuna parameters such as `dilations_index` and
-`cpu_clock_mhz_index`; decoded fields are not accepted. `quantization_mode`
-and CPU clock search appear only when their corresponding runtime paths are
-active. The required JSON envelope is `{"candidates": [{...}]}`. Local validation
-checks exact keys, types, bounds/choices, batch size, and duplicates against
-descriptor-complete COMPLETE trials and earlier accepted candidates in the
-batch. Penalized COMPLETE trials count for duplicate detection but do not
-qualify as anchors. The shared runner drains waiting work before fresh proposals;
-WAITING parameters are never interpreted as already sampled evidence.
-Any accepted candidates run through the existing CREST objective; a partially
-accepted batch is evaluated without filling its rejected slots. A batch with no
-accepted candidates gets at most `max_repair_attempts` additional calls (default
-1). After all attempts fail, the component logs and returns one random candidate from
-the same descriptor. If 100 fallback samples cannot pass the same validation,
-generation stops explicitly. `random_seed` controls this local fallback
-RNG; it does not seed the remote provider.
+| Setting | Default and requirements |
+| --- | --- |
+| `provider` | `openrouter`; also supports `openai_compatible`, `openai_responses`, and `fake`. |
+| `model` | Required for live providers; use a model available to your account. |
+| `base_url` | OpenRouter defaults to `https://openrouter.ai/api/v1`; generic Chat Completions and Responses providers require it explicitly. No URL userinfo, query parameters, or fragments. |
+| `api_key_env` | OpenRouter defaults to `OPENROUTER_API_KEY`; generic Chat Completions and Responses providers require an explicit environment-variable name. Live credentials are required at initialization. |
+| `json_response_mode` | `true` for OpenRouter and Responses; `false` for generic Chat Completions. Enable only when the endpoint/model supports it. This setting is part of resume identity. |
+| `temperature` | Default 0.4 for Chat Completions, `null` for Responses. Set `null` to omit it. |
+| `batch_size` | Default 5; positive integer (at most 5 in full-history mode). |
+| `timeout_s` | Default 60 seconds; transport timeout, excluded from resume identity. |
+| `prompt_version` | Default `v1`; nonempty version label, part of resume identity. |
+| `max_repair_attempts` | Default 1; additional content-repair calls after the initial generation request. |
+| `random_seed` | Default 0; controls local fallback randomness, not the remote provider. |
+| `recent_trial_window` | Default 10; non-negative integer, with 0 disabling recent records. Independent of batch size and memory timing. |
+| `anchor_count` | Default 5; non-negative integer, with 0 disabling best-trial anchors. |
+| `semantic_context` | Default `true`; `false` omits explanatory context while retaining the legal search descriptor and configured trial evidence. |
+| `responses` | Required nonempty ordered fixture list for `fake`; include summary fixtures in request order when memory is enabled. |
+| `extra_headers` | Optional provider headers; excluded from study identity, as are credentials. |
+| `max_transport_retries` | Default 5; excluded from study identity. |
+| `retry_backoff_s` | Default 5 seconds; excluded from study identity. |
+| `retry_backoff_cap_s` | Default 60 seconds per wait; excluded from study identity. |
 
-Request/response logs and proposal evidence live under
-`models/<study_name>/llm_optimizer/`; see the
-[artifact guide](../crest/optimizers/GUIDE.md#inspect-results-finalize-and-replay).
-API keys are read from the configured environment variable and excluded from
-serialized requests and normal responses.
-Nonfake providers require the API key environment variable during component
-initialization, before new study signatures are stored. The fake provider
-requires no credentials. `provider: openrouter` defaults `api_key_env` to
-`OPENROUTER_API_KEY`.
-Generic `provider: openai_compatible` endpoints require `api_key_env` to be
-set explicitly so they never inherit an OpenRouter credential name silently.
-`base_url` must be a clean endpoint without URL userinfo, query parameters, or
-fragments; Chat Completions transports append `/chat/completions` to it. Use `api_key_env` or
-`extra_headers` for authentication. Extra headers and credentials are excluded
-from the study identity.
-The `openrouter` and `openai_compatible` transports use `/chat/completions`. OpenRouter defaults
-`json_response_mode` to `true`, which sends
-`response_format: {type: json_object}`. Generic `openai_compatible` providers
-default it to `false` because that option is not universally supported; set it
-to `true` only when the selected endpoint and model accept JSON response mode.
-Set `temperature: null` to omit temperature from the request. The optional output-token limit below
-is sent using the selected provider field. `provider: fake` uses a required non-empty `responses` list to exercise the
-same validation/ledger path without network access; memory summary responses must
-be included when memory is enabled.
-
-Provider authentication/credit errors stop immediately. Transient HTTP 429/5xx,
-network failures and incomplete HTTP reads use bounded retries, then stop if
-exhausted. YAML settings `optimizer.llm.max_transport_retries` (default 5),
-`retry_backoff_s` (5 seconds), and `retry_backoff_cap_s` (60 seconds per wait)
-control transport retry policy without changing study identity. Valid
-`Retry-After` seconds or HTTP dates set a minimum wait; if the server requests
-more than the configured cap, the study stops instead of retrying early.
-Only malformed provider responses or candidate content use repair/random fallback;
-transport failures never become random search. Proposal-source counts in the run
-summary distinguish LLM candidates, fixed warm-up attempts, and random fallback.
-Duplicate filtering includes pruned and known deterministic failed candidates;
-infrastructure and unknown failures remain retryable. See the
-[optimizer guide](../crest/optimizers/GUIDE.md) for failure classification and
-proposal provenance.
+Use complete raw descriptor parameters such as `dilations_index` and
+`cpu_clock_mhz_index`, not decoded architecture fields. Include deployment fields
+only when active for the experiment. See [validation and failures](../crest/optimizers/llm/README.md#validation-and-failures)
+for response validation and fallback, [run artifacts](../crest/optimizers/llm/README.md#inspect-a-run)
+for saved evidence, and the [provider guide](../crest/optimizers/llm/providers/README.md)
+for authentication, transport behavior, and retry handling.
 
 ### Responses transport and history modes
 
-For a Responses endpoint, select `provider: openai_responses` and set `base_url`,
-`model`, and `api_key_env` explicitly. The transport appends `/responses` to the
-base URL. Temperature defaults to `null`; output limits use `max_output_tokens`.
-Optional `reasoning_effort` and `service_tier` must be supported by the configured
-endpoint and model. Prices come from the bundled provider catalog or a custom `pricing_file`.
+For `provider: openai_responses`, set `base_url`, `model`, and `api_key_env`
+explicitly. Output limits use `max_output_tokens`. Optional `reasoning_effort`
+and `service_tier` must be supported by the configured endpoint and model.
 
-`history_mode` defaults to `bounded`, using the recent window, anchors, and
-optional accumulated memory described below. `history_mode: full` is supported
-for `model.family: audio_dscnn` and includes exact columnar trial evidence and
-decoded architecture coverage. It requires `require_rationale: true`,
-`memory.enabled: false`, `batch_size` between 1 and 5, and `max_repair_attempts`
-at most 1. In full mode, `max_refill_attempts` accepts 0 through 2 (default 2);
-this option is invalid in bounded mode. The allocation policy and decoded
-architecture duplicate checks are described in the
-[optimizer guide](../crest/optimizers/GUIDE.md#provider-transports-and-full-history).
+`history_mode` defaults to `bounded`. `history_mode: full` is supported only for
+`model.family: audio_dscnn` and requires `require_rationale: true`,
+`memory.enabled: false`, `batch_size` from 1 through 5, and
+`max_repair_attempts` at most 1. Full mode accepts `max_refill_attempts` from 0
+through 2 (default 2); that option is invalid in bounded mode. See
+[full-history generation](../crest/optimizers/llm/README.md#full-history-generation)
+for policy behavior and response examples.
 
-`require_rationale` defaults to `false`. Enabling it requires candidates shaped as `{"params": {...}, "rationale": "..."}`
-with a nonempty rationale of at most 2000 characters. Rationale is retained as provenance;
-it does not alter candidate legality, measured evidence, or scoring.
+`require_rationale` defaults to `false`. When enabled, each candidate has the
+shape `{"params": {...}, "rationale": "..."}` with a nonempty rationale of at
+most 2000 characters. Rationale is proposal metadata and does not change scoring.
+Changing identity-bearing settings requires a new study.
 
 ### Output-token and spending limits
 
-Set `max_output_tokens` to limit each completion, including memory and repair
-calls. `output_token_parameter` selects `max_completion_tokens` (default) or
-`max_tokens`; verify which field the chosen model accepts and that it covers all
-billable completion/reasoning tokens. The limit is part of optimizer identity;
-changing it requires a new study. Omitting it preserves existing behavior.
+`max_output_tokens` optionally limits each completion, including repair and
+memory calls. `output_token_parameter` selects `max_completion_tokens` (default)
+or `max_tokens` for Chat Completions; choose a field supported by the endpoint
+and model that covers billable completion/reasoning tokens. These limits are
+part of resume identity. Omitting them preserves uncapped completion behavior.
 
-For a monetary cap, supply token limits and select a catalog matching your
-provider, endpoint, model, and service tier. Omit `pricing_file` to use the bundled
-catalog, or provide a custom JSON file relative to this experiment YAML:
+A monetary cap requires `max_usd`, `max_input_tokens`, `max_output_tokens`, and
+matching prices for provider, endpoint, model, and service tier. Omit
+`pricing_file` to use the bundled catalog or supply a custom JSON file relative
+to the experiment YAML. Explicit inline prices remain supported.
 
 ```yaml
 optimizer:
@@ -466,33 +410,15 @@ optimizer:
     pricing_file: prices.json  # Omit when the bundled catalog has a matching tariff.
 ```
 
-See the [pricing catalog guide](../crest/optimizers/llm/providers/README.md#configure-pricing-and-a-spending-cap)
-for the JSON schema and supported bundled rates. The selected rates, source, and
-verification date are saved with the study; a changed tariff is rejected on
-resume. Existing explicit inline prices remain supported.
+`max_usd: 0` permits fixed warm-ups without paid requests. To continue a capped
+study, retain `llm_optimizer/spend_state.json` and increase `max_usd`; model,
+rates, pricing provenance, and token limits must match. Removing an existing cap
+or enabling one over existing request logs without spend state is rejected.
+The cap uses local accounting under configured prices and token assumptions.
+See [pricing catalogs and spending caps](../crest/optimizers/llm/providers/README.md#configure-pricing-and-a-spending-cap)
+for catalog format, accounting limitations, and interrupted-request handling.
 
-`llm_optimizer/spend_state.json` tracks generation, repairs, summaries, and HTTP
-retries. Each request reserves its full configured input/output ceilings at the
-selected prices; valid usage releases the unused portion. Unknown usage,
-transport failures, and crashes retain the reservation, so tracked cost may
-exceed the invoice. An observed token overrun stops further requests.
-
-Input size is checked conservatively using serialized message bytes plus 1024
-framing tokens; this is not a model-specific tokenizer. Choose a ceiling large
-enough for saved prompts. The provider receives the output ceiling. The cap is
-local accounting under the configured prices and token assumptions, not a
-provider-enforced dollar limit; extra fees or provider violations are not bounded.
-
-When the next reservation cannot fit, NAS/smoke stops cleanly before HTTP or new
-candidate enqueue, with no random fallback. `max_usd: 0` allows fixed warm-up
-without paid calls. Already queued candidates use no new API call and still run
-under the normal evaluation budget. To continue a capped study, retain its state
-file and increase `max_usd`; model, prices, provenance and token limits must match.
-Removing the cap from a tracked study is rejected. Enabling a cap over existing
-request logs without spend state is also rejected: use a new study rather than
-silently resetting earlier cost. Use one writer per study, as with the runner.
-
-To give the LLM a fixed measured warm-up, add an ordered JSON parameter file:
+### Fixed warm-up and recovery
 
 ```yaml
 optimizer:
@@ -507,95 +433,42 @@ optimizer:
       interval_trials: 15
 ```
 
-The file must contain a nonempty JSON list of complete raw parameter dictionaries
-for the active search space. The 15-entry window above is an example; choose
-a window large enough to show the complete warm-up. When loaded from YAML, relative paths
-resolve from the YAML file directory (and `~` expands to the home directory).
-Direct component callers should supply an absolute path. All entries are validated before
-execution. One fixed candidate runs per round through the same objective before
-any provider request; failures and pruned trials count as warm-up attempts.
-Warm-up uses the normal attempt/completion budgets, so a smaller budget can stop
-partway through it. Set the recent window to at least the warm-up length to expose all warm-up
-attempts in the first LLM prompt.
+`warmup_params_file` must contain a nonempty ordered JSON list of complete raw
+parameter dictionaries. Relative paths resolve from the YAML directory; `~`
+expands to the home directory. Direct component callers should use absolute
+paths. Set `recent_trial_window` at least as large as the warm-up to expose all
+attempts in the first LLM prompt. Warm-up consumes normal attempt/completion
+budgets and may stop partway through. Moving or reformatting the file is allowed;
+changing its candidates requires a new study. Credentials are still checked at
+initialization.
 
-Warm-up resumes without replaying completed entries. Identity hashes the ordered
-file contents: moving or reformatting the file is allowed; changing candidates
-requires a new study. Omitting warm-up preserves existing LLM behavior and identity.
-Provider configuration and credentials are still checked during initialization.
-
-For orphan recovery, first confirm **the workers for the selected trials have
-stopped**, then set `optimizer.recover_orphaned_trials: [12]` with exact Optuna
-trial numbers. Only listed RUNNING trials are marked FAIL. Terminal numbers are
-harmless; unknown or WAITING numbers reject the request before changes. Recovery
-defaults to `[]`; legacy `false` disables it and `true` is rejected. It never
-infers that a worker is dead. Remove the list when recovery is finished. See the
-[recovery guide](../crest/optimizers/GUIDE.md) for recorded evidence and restart behavior.
-
-`recent_trial_window` bounds compact records read directly from recent Optuna
-trials and included in the next prompt. It defaults to 10; set it to 0 to
-disable that recent window. `batch_size` controls candidates per generation call;
-`recent_trial_window` controls detailed recent records. Both are independent of
-`memory.interval_trials`, which controls when accumulated evidence is summarized.
-`anchor_count` bounds persistent best-candidate records in every generation prompt.
-It defaults to 5 and must be a non-negative integer; set it to 0 to disable anchors.
-Anchors come from eligible finite COMPLETE trials across the full study,
-independently of the recent window and memory. Scalar studies retain the best
-trials; multi-objective studies select from the feasible nondominated front.
-Recorded failure, pruning, or infeasibility excludes a trial. With feasibility
-rules enabled, a recorded `feasible` status is required. See the
-[optimizer guide](../crest/optimizers/GUIDE.md) for selection details.
-Repeated trial numbers across prompt sections represent the same evidence.
-
-`semantic_context` defaults to `true`. It adds a deterministic, versioned,
-hashed summary of the normalized dataset/input contract, task outputs and
-metrics, objective and feasibility policy, model family, known device
-capacities and deployment choices, and runtime flags. Parameter descriptions,
-units, and typical architectural effects augment the existing search-space
-schema; those effects are priors, and measured CREST/HIL observations take
-precedence. Set `semantic_context: false` for an ablation that retains legal
-parameter names/ranges/choices, recent trial history, best-candidate anchors,
-and trial-budget state.
-Paths, serial ports, credential values, dataset examples, and unfiltered config
-trees are not included.
-
+`optimizer.recover_orphaned_trials` defaults to `[]`. After confirming the selected
+workers have stopped, supply exact trial numbers, for example `[12]`. Only listed
+RUNNING trials become FAIL; terminal numbers are harmless, while unknown or
+WAITING numbers reject the request. Legacy `false` disables recovery; `true` is
+rejected. Remove the list afterward. See [budgets and resume](../crest/optimizers/README.md#budgets-and-resume).
 
 ### Accumulated experimental memory
 
-For `llm_generator`, memory is enabled by default; set `optimizer.llm.memory.enabled:
-false` to disable accumulated memory while retaining configured recent trials
-and anchors. The same configured provider/model makes separate JSON summarization
-calls. This adds API usage once the start threshold is reached. For the fake provider, interleave candidate and summary responses in request order.
+Memory is enabled by default. Set `optimizer.llm.memory.enabled: false` to disable
+summary calls while retaining configured recent trials and anchors. Memory uses
+the configured provider/model and incurs separate API usage.
 
-The default first summary is created once ten **terminal trials** (COMPLETE, FAIL,
-or PRUNED) exist, before the next candidate-generation call. Later summaries are
-created after five additional terminal trials. Thresholds are checked at generation
-batch boundaries, not in the middle of evaluating a batch. Partial accepted batches
-therefore change the timing. A final summary is not requested when no more candidates
-are needed. `start_after_trials` and `interval_trials` are independent positive
-integers; changing the recent-trial window does not change either setting.
+| Memory setting | Default and requirements |
+| --- | --- |
+| `start_after_trials` | 10 eligible terminal trials (COMPLETE, FAIL, or PRUNED); positive integer. |
+| `interval_trials` | 5 additional eligible terminal trials; positive integer, independent of the recent window. |
+| `lag_trials` | Default 0; non-negative number of newest terminal trials withheld from summarization. |
+| `max_findings` | 12 structured findings. |
+| `max_chars` | 6000 characters, not tokens. |
+| `max_pending_trials` | 100; must be at least both timing thresholds. |
 
-`max_findings` (default 12) and `max_chars` (6000) bound accepted structured
-memory and its rendered prose. `max_chars` is a character limit, not a token
-limit. `max_pending_trials` (100) bounds summary chunks and pending records shown
-to the generator; it must be at least both timing thresholds. Unsummarized
-records outside the recent window appear as bounded pending evidence, with
-explicit omission counts. Disabling memory removes this additional window.
+Reduced bounds must still fit saved findings. Resume requires compatible saved
+context and covered evidence; incompatible changes require a new study/output
+directory. Use one writer per study. See [evidence and memory](../crest/optimizers/llm/README.md#evidence-and-memory)
+for summary timing, rejection/suspension handling, audit artifacts, and recovery.
 
-Rejected summaries receive one repair attempt. Failed repairs retain the last
-valid memory and underlying study evidence; three consecutive deferrals suspend
-summary calls across restarts. Provider execution errors stop the study. After
-fixing the cause with workers stopped, use the explicit reset procedure in the
-[optimizer guide](../crest/optimizers/GUIDE.md#recovery-and-provider-failures).
-Memory is fallible guidance, not verified conclusions.
-
-Memory state, snapshots, and request logs live under
-`models/<study>/llm_optimizer/memory/`. Resume checks the saved context and covered
-trial evidence; incompatible changes require a new study/output directory.
-Reduced memory bounds must still fit saved findings. Use one writer per study.
-See the [optimizer guide](../crest/optimizers/GUIDE.md) for memory updates,
-coverage, audit artifacts, and recovery.
-
-Minimal example:
+Minimal dataset/task/model example to accompany an optimizer block:
 
 ```yaml
 dataset:

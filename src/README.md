@@ -165,7 +165,7 @@ CSV output includes study identity, objectives, hardware measurements, pruning,
 and feasibility status. Task metrics use `metric__{name}` columns and
 hyperparameters use `hparam__{name}`. The corresponding values also appear in
 Optuna trial attributes. For analysis, use the
-[trial-outcome guide](../analysis_scripts/trial_outcomes/README.md).
+[trial-outcome guide](../analysis_scripts/appendix_trial_outcomes/README.md).
 
 ## Pareto HIL Replay
 

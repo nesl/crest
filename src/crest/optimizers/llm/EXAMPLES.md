@@ -1,13 +1,14 @@
 # Generation examples
 
-These examples use configured responses without calling an LLM. For a live
-experiment, start with the [package guide](README.md#run-an-experiment).
+Start with a local generation check, then adapt the campaign fragments below.
+The full-history fragment uses a live provider. For credentials and launch steps,
+see the [package guide](README.md#run-an-experiment).
 
 ## Try generation without running a campaign
 
 From the repository root, in an environment with CREST's dependencies installed,
-run the following example. It creates a temporary ledger and exercises the same
-prompt, provider, validation, and provenance path used by the optimizer. It does
+run the following example. It validates two configured candidates and writes a
+temporary ledger. It does
 not start the runner, train a model, or access hardware.
 
 ```sh
@@ -56,6 +57,9 @@ with TemporaryDirectory() as directory:
     print(sorted(path.name for path in ledger.root.iterdir()))
 PY
 ```
+
+Expected result: two raw mappings matching the assertions, followed by the
+ledger filenames. No trials are created.
 
 To inspect the files afterward, replace the temporary directory with a dedicated
 persistent output path. Each ledger directory must have a single writer.
@@ -110,11 +114,8 @@ For `require_rationale: true`, each candidate must instead have exactly this sha
 ```
 
 Optional `warmup_params_file` points to a nonempty JSON list of raw parameter
-mappings. Configuration loading resolves its path relative to the YAML file.
-Warm-ups are validated locally and proposed one at a time before provider calls;
-resume checks verify their order, parameters, and provenance. Changes to fixed
-warm-ups, fixtures, or identity-bearing policy settings can prevent resuming an
-existing study. Use a new study for a changed experiment contract.
+mappings, relative to the YAML file. Warm-ups run before provider calls. See the
+[configuration guide](../../../config/README.md) for warm-up and resume settings.
 
 ## Full-history audio DS-CNN
 
@@ -166,20 +167,13 @@ fields active, is:
 }
 ```
 
-The initial prompt has no feasible parent and assigns exploration. Later prompts
-may require a different coverage cell, so this response is not a reusable fixture
-for every round. Use every active raw descriptor field, including runtime fields
-when enabled. For a local slot, set `intent` to `local` and `parent_trial` to an
-integer trial number from the prompt's eligible parents. Supply a new candidate,
-not the parent's unchanged parameters. Parent diversity, allocation, and coverage
-are checked locally; the words in a rationale do not prove measured improvement
-or enforce a maximum edit distance from the parent.
+The initial prompt assigns exploration. Later prompts can assign a different
+coverage cell, so this response is not a fixture for every round. Supply every
+active descriptor field, including runtime fields when enabled. For a local slot,
+set `intent` to `local` and `parent_trial` to an integer from the prompt's eligible
+parents, and supply a new candidate with complete parameters.
 
-Full history rejects decoded duplicates as well as exact raw duplicates. For
-example, changing a channel cap that never affects the decoded widths does not
-create a new network. Accepted candidates remain retained while refill calls
-request only missing local/exploration slots. Malformed content consumes the
-shared repair budget; well-formed incomplete or rejected batches consume the
-refill budget. When those allowances end, any retained subset is returned;
-only an empty result attempts one locally sampled fallback (up to 100 draws).
-Neither rationale nor intent changes the shared evaluation procedure.
+Expected result: accepted proposals enter the normal trial queue and evaluation
+path. The example response is valid only when it matches the prompt's assigned
+coverage cell and active descriptor. See [full-history generation](README.md#full-history-generation)
+for duplicate, repair, and refill behavior.

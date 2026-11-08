@@ -47,20 +47,44 @@ required rationale and policy settings. See the
 rationale requirements, budgets, and resume rules. Changing identity-bearing settings,
 including the rationale contract, requires a new study.
 
-## How bounded generation works
+## Evidence and memory
 
-1. The component proposes configured warm-ups first, then builds a request from
-   recent history, best-trial anchors, the search space, objective, and budget.
-2. A provider returns candidates. Local validation checks raw parameter names,
-   values, duplicates, and any required rationales.
-3. A partially accepted bounded-history batch returns immediately without
-   refilling rejected slots. If none are accepted, content errors can trigger
-   bounded repairs, then local random fallback. Transport failures propagate.
-4. The component returns validated proposals to the shared runner for queueing
-   and evaluation. A valid proposal is not yet a feasible or successful trial.
+Bounded history supplies recent trials, best eligible anchors, and optional
+memory derived from older terminal evidence. Semantic context adds workload and
+deployment guidance; it does not change parameter legality. Failed attempts are
+useful evidence, and repeated references to a trial represent one observation.
+Memory and rationales are proposal guidance, not measured results. Inspect trial
+state, feasibility, and measurements before treating a candidate as successful:
+`COMPLETE` alone can include penalty results or skipped training.
 
-See the [shared optimizer guide](../README.md) for evaluation and lifecycle
-contracts, and the [component interfaces](../../interfaces/README.md) for APIs.
+Memory updates retain cited findings and bounded pending evidence. Rejected
+summaries get one repair; further rejection preserves accepted memory and reports
+omitted evidence. After three consecutive exhausted summary chunks, summary calls
+remain suspended across restarts while generation continues with bounded pending
+records. Inspect the memory ledger's `optimizer_events.jsonl`, correct the cause,
+and call `ExperimentalMemory.reset_summary_failures()` on the owning memory
+instance to resume summaries without discarding findings or coverage. There is no
+CLI reset switch. See the [configuration guide](../../../config/README.md) for
+history, semantic-context, and memory settings.
+
+## Validation and failures
+
+Candidates must supply every active raw descriptor field with legal values;
+required rationales must use the configured envelope. Bounded generation returns
+any accepted subset immediately. If none pass, it uses bounded content repairs,
+then tries a legal unique local random fallback. Full-history mode has separate
+refill rules below. `random_seed` controls local fallback, not provider output.
+
+Authentication and credit failures stop immediately. Transient transport failures
+receive bounded retries, then stop; they do not trigger random fallback. Inspect
+`rejected_candidates.jsonl` and request/response pairs for content errors before
+changing the experiment contract. Fixed warm-up attempts run before provider
+calls, consume trial budget, and resume from saved provenance; keep their file
+unchanged. See [budgets and resume](../README.md#budgets-and-resume) for interrupted
+trials and the [pricing guide](providers/README.md#configure-pricing-and-a-spending-cap)
+for provider caps. Retain `spend_state.json` on resume: uncertain usage keeps its
+reservation, and insufficient funds stop generation without fallback. The dollar
+cap may increase, but saved tariffs and token bounds must match.
 
 ## Full-history generation
 
@@ -91,6 +115,11 @@ The ledger is stored under `<artifact_dir>/llm_optimizer`:
 | `optimizer_events.jsonl` | Repair and fallback events |
 
 Returned proposals alone do not establish that trials were queued or evaluated.
+Use Optuna trial state and `crest_proposal` attributes for queue acceptance.
+Actual sampled values are in `trial.params`; early failures can leave it incomplete.
+Keep the study database and artifact directory together. `trials.csv` exports
+Optuna parameters and attributes; the configured measurement CSV records outcome
+and feasibility evidence. Each ledger directory requires a single writer.
 
 ## Extend the optimizer
 
