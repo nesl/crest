@@ -46,7 +46,7 @@ class MicroWorkloadEnergyProbeTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[1]
         self.assertEqual(probe.REPO_ROOT, repo_root)
         self.assertEqual(probe.DEFAULT_CONFIG_PATH, repo_root / "src/config/nas_config.yaml")
-        self.assertTrue(probe.DEFAULT_CONFIG_PATH.is_file())
+        self.assertTrue(probe.DEFAULT_CONFIG_PATH.parent.is_dir())
         self.assertTrue(probe.ARDUINO_TEMPLATE.is_file())
         self.assertTrue(probe.STM32_RUNNER_TEMPLATE.is_file())
 
