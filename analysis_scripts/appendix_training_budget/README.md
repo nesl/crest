@@ -2,12 +2,13 @@
 Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 SPDX-License-Identifier: BSD-3-Clause
 -->
-# Appendix: training-budget sensitivity
+# Appendix training-budget sensitivity
 
 To collect new training trajectories, use the [training-budget experiment](experiments/README.md).
 
-Analyze saved checkpoint evaluations and training histories. No training,
-TensorFlow or hardware access is required. Install NumPy, SciPy and PyYAML.
+Analyze saved checkpoint evaluations and training histories.
+No training, TensorFlow or hardware access is required.
+Install NumPy, SciPy and PyYAML.
 
 ```sh
 python analysis_scripts/appendix_training_budget/analyze.py \
@@ -15,18 +16,18 @@ python analysis_scripts/appendix_training_budget/analyze.py \
   --reference-budget 300 --seed 17 --output-dir /path/to/results
 ```
 
-Each batch contains `manifest.json`, `execution.json`, source/effective YAML
-configs, and `<candidate>/seed_<seed>/` with `history.json`, `results.json`,
-`checkpoints.json`, and `complete.json`. Batches must describe compatible runs.
-Candidate counts, budgets and seeds come from the manifests; use `--help` for
-options.
+Each batch contains `manifest.json`, `execution.json`, source/effective YAML configs, and `<candidate>/seed_<seed>/` with `history.json`, `results.json`, `checkpoints.json`, and `complete.json`.
+Batches must describe compatible runs.
+Candidate counts, budgets and seeds come from the manifests.
+Use `--help` for options.
 
-Outputs: `summary.json` (correlations, fronts, shortlist regret and training time),
-`checkpoint_metrics.csv`, and a plot-ready CSV per seed. Keep generated outputs
-outside the checkout. Training times sum trajectory prefixes; they exclude later
-checkpoint evaluation and hardware measurement.
+Outputs.
+`summary.json` (correlations, fronts, shortlist regret and training time), `checkpoint_metrics.csv`, and a plot-ready CSV per seed.
+Keep generated outputs outside the checkout.
+Training times sum trajectory prefixes.
+They exclude later checkpoint evaluation and hardware measurement.
 
-Pass `figure10_training_budget.csv` to the existing training-budget plotter
-using `--input-csv` to regenerate the figures. These analyses use saved
-evaluations; they do not rerun inference. The selected panel and fixed historical
-energy do not establish convergence or search-wide ranking reliability.
+Pass `figure10_training_budget.csv` to the existing training-budget plotter using `--input-csv` to regenerate the figures.
+These analyses use saved evaluations.
+They do not rerun inference.
+The selected panel and fixed historical energy do not establish convergence or search-wide ranking reliability.

@@ -2,12 +2,13 @@
 Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 SPDX-License-Identifier: BSD-3-Clause
 -->
-# CS1: waiting power and model selection
+# CS1 waiting power and model selection
 
-The analysis commands below use saved energy measurements without training or
-hardware access. Hardware experiment recipes are grouped under `experiments/`.
-Requires Python, NumPy, pandas and SciPy. Inputs and generated results stay outside
-this package. Each command supports `--help` and records input hashes.
+The analysis commands below use saved energy measurements without training or hardware access.
+Hardware experiment recipes are grouped under `experiments/`.
+Requires Python, NumPy, pandas and SciPy.
+Inputs and generated results stay outside this package.
+Each command supports `--help` and records input hashes.
 
 | Script | Purpose |
 | --- | --- |
@@ -20,22 +21,21 @@ this package. Each command supports `--help` and records input hashes.
 | `direct_session.py` | Direct contrasts, waiting slopes and accounting |
 | `scaling_periods.py` | Clock scaling and measured energy optima |
 
-Run the commands below from the repository root. Relative input/output paths
-resolve from the current working directory. Use explicit input/output paths for new datasets. Prediction supports configurable
-folds, repeats and quality ceilings. Supply pairings in external JSON files, with
-each list entry shaped as `{"left": "candidate_a", "right": "candidate_b"}`.
-Calibration assumes one/ten-release awake-final windows;
-its periods and excluded pools are explicit options. Input column names follow
-the saved CREST measurement tables. Graph grouping currently supports TCN logs.
+Run the commands below from the repository root.
+Relative input/output paths resolve from the current working directory.
+Use explicit input/output paths for new datasets.
+Prediction supports configurable folds, repeats and quality ceilings.
+Supply pairings in external JSON files, with each list entry shaped as `{"left": "candidate_a", "right": "candidate_b"}`.
+Calibration assumes one/ten-release awake-final windows.
+Its periods and excluded pools are explicit options.
+Input column names follow the saved CREST measurement tables.
+Graph grouping currently supports TCN logs.
 
 ## Collect new measurements
 
-The [repeatability](experiments/repeatability/README.md),
-[waiting-power](experiments/waiting_power/README.md), and
-[waiting-policy](experiments/waiting_policy/README.md) recipes run new STM32
-experiments. Each guide describes preparation, hardware requirements, outputs,
-and the inputs needed for subsequent analysis. Run one experiment at a time
-on a DUT/harness.
+The [repeatability](experiments/repeatability/README.md), [waiting-power](experiments/waiting_power/README.md), and [waiting-policy](experiments/waiting_policy/README.md) recipes run new STM32 experiments.
+Each guide describes preparation, hardware requirements, outputs, and the inputs needed for subsequent analysis.
+Run one experiment at a time on a DUT/harness.
 
 ## Explicit-input analysis
 
@@ -61,17 +61,16 @@ python analysis_scripts/cs1/repeats.py \
   --output-dir /path/to/results/repeats
 ```
 
-The calibration command writes `calibration.csv`, `predictions.csv`,
-`probe_joint_fit_per_round.csv`, and input provenance. Use `--fit-decimals` to
-choose coefficient export rounding and repeat `--exclude-pool` to exclude pools.
-The held-out analysis uses candidate source logs for graph grouping; its
-`--archive-root` relocates saved source paths when needed. Repeat analysis takes
-a frozen joint-fit CSV with one row per `clock_mhz` and columns
-`P_busy_mw_mean`, `P_stop_mw_mean`, and `K_mj_mean`.
-Keep pairing files alongside their input datasets. Results include CSVs, input
-hashes and short reports.
+The calibration command writes `calibration.csv`, `predictions.csv`, `probe_joint_fit_per_round.csv`, and input provenance.
+Use `--fit-decimals` to choose coefficient export rounding and repeat `--exclude-pool` to exclude pools.
+The held-out analysis uses candidate source logs for graph grouping.
+Its `--archive-root` relocates saved source paths when needed.
+Repeat analysis takes a frozen joint-fit CSV with one row per `clock_mhz` and columns `P_busy_mw_mean`, `P_stop_mw_mean`, and `K_mj_mean`.
+Keep pairing files alongside their input datasets.
+Results include CSVs, input hashes and short reports.
 
-Selection regret uses the lowest saved energy in the same eligible bank. Repeated
-folds/ceilings are correlated. Paired intervals describe within-session repeats;
-estimated STOP intervals condition on the calibration. These scripts regenerate
-analysis results from saved observations, not new hardware measurements.
+Selection regret uses the lowest saved energy in the same eligible bank.
+Repeated folds/ceilings are correlated.
+Paired intervals describe within-session repeats.
+Estimated STOP intervals condition on the calibration.
+These scripts regenerate analysis results from saved observations, not new hardware measurements.

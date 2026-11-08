@@ -22,11 +22,10 @@ Install and configure the environment using the [repository guide](../../README.
 Use canonical imports such as `from crest.pipeline_types import ModelBuildContext`.
 The orchestration entry point is [`nas_model_client.py`](../nas_model_client.py).
 Configuration examples and supported settings live in [`config`](../config/README.md).
-Heavy dependencies are declared in [`pyproject.toml`](../../pyproject.toml); individual
-runtime modules may require TensorFlow, Optuna, serial libraries, or board toolchains.
+Heavy dependencies are declared in [`pyproject.toml`](../../pyproject.toml).
+Individual runtime modules may require TensorFlow, Optuna, serial libraries, or board toolchains.
 
-For contributions, keep dataset/task/family/device responsibilities in their component
-layers and extend the matching tests in [`test`](../../test). Run pytest from the
-repository root.
-Hardware execution requires the configured target and, for harness measurements, the
-measurement harness; pure contract and configuration checks do not.
+For contributions, keep dataset/task/family/device responsibilities in their component layers and extend the matching tests in [`test`](../../test).
+Run pytest from the repository root.
+Hardware execution requires the configured target and, for harness measurements, the measurement harness.
+Pure contract and configuration checks do not.

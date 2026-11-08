@@ -1,68 +1,57 @@
 # STM32 LRUN Workspace
 
-This is the repo-local LRUN `dev_boot` workspace for the STM32
-NUCLEO-N657X0-Q backend.
+This is the repo-local LRUN `dev_boot` workspace for the STM32 NUCLEO-N657X0-Q backend.
 
 ## Upstream Base And Local Modifications
 
-This workspace is derived from the ST `Template_FSBL_LRUN` project for the
-STM32 NUCLEO-N657X0-Q board.
+This workspace is derived from the ST `Template_FSBL_LRUN` project for the STM32 NUCLEO-N657X0-Q board.
 
 Modifications Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory.
 
-Licensing note:
+Licensing note
 
-- The upstream ST template and copied STM32 workspace content remain subject to
-  their original STMicroelectronics license terms.
-- This README documents local modifications and workspace usage; it does not
-  replace the upstream license terms for the underlying vendor-derived project.
+- The upstream ST template and copied STM32 workspace content remain subject to their original STMicroelectronics license terms.
+- This README documents local modifications and workspace usage.
+  It does not replace the upstream license terms for the underlying vendor-derived project.
 
-It mirrors the ST `Template_FSBL_LRUN` project shape and keeps both halves of
-the LRUN handoff in one workspace:
+It mirrors the ST `Template_FSBL_LRUN` project shape and keeps both halves of the LRUN handoff in one workspace.
 
 - `FSBL/`
 - `Appli/`
 - `STM32CubeIDE/Boot/`
 - `STM32CubeIDE/AppS/`
 
-The committed `Debug/` trees only keep the CubeIDE-managed build recipe files
-such as `makefile`, `sources.mk`, `objects.mk`, `objects.list`, and `subdir.mk`.
+The committed `Debug/` trees only keep the CubeIDE-managed build recipe files such as `makefile`, `sources.mk`, `objects.mk`, `objects.list`, and `subdir.mk`.
 Compiled outputs are intentionally ignored by the repo.
 
 ## Runtime Model
 
-This workspace supports only the unattended `dev_boot` flow used by the
-shipped CREST STM32 backend. Its value is the LRUN `AppS` memory layout,
-which exposes about `2047K` of linker-visible runtime RAM at `0x34000400` for
-the CREST app. It does not provide a deployment-style boot-from-flash flow.
+This workspace supports only the unattended `dev_boot` flow used by the shipped CREST STM32 backend.
+Its value is the LRUN `AppS` memory layout, which exposes about `2047K` of linker-visible runtime RAM at `0x34000400` for the CREST app.
+It does not provide a deployment-style boot-from-flash flow.
 
-The supported flow is:
+The supported flow is as follows.
 
 - signed `Appli` image is programmed to external flash at `0x70100000`
 - optional external weights blob is programmed at `0x71000000`
 - `FSBL` ELF is debug-loaded into RAM
 - `FSBL` copies the trusted app into AXISRAM and jumps to it
 
-Manual BOOT strap changes and reset sequencing are intentionally out of scope
-for this workspace because they are not usable for unattended NAS/HIL loops on
-the stock board.
+Manual BOOT strap changes and reset sequencing are intentionally out of scope for this workspace because they are not usable for unattended NAS/HIL loops on the stock board.
 
 ## Workspace Layout
 
-The checked-in files form a minimal LRUN overlay. `setup_stm32.sh` materializes
-the vendor dependencies required to build it.
+The checked-in files form a minimal LRUN overlay.
+`setup_stm32.sh` materializes the vendor dependencies required to build it.
 
-- `FSBL/` and `STM32CubeIDE/Boot/` come from the ST LRUN template, with local
-  path adjustments for repo-contained builds.
+- `FSBL/` and `STM32CubeIDE/Boot/` come from the ST LRUN template, with local path adjustments for repo-contained builds.
 - `Appli/` carries the CREST DUT runtime.
-- The ST Edge AI `network*` files and `crest_dut_phase_config.h` are staged
-  artifacts generated during candidate preparation and are not committed.
-- `Drivers/` and `Middlewares/` carry the STM32CubeN6 subsets needed for the
-  repo-local LRUN build.
+- The ST Edge AI `network*` files and `crest_dut_phase_config.h` are staged artifacts generated during candidate preparation and are not committed.
+- `Drivers/` and `Middlewares/` carry the STM32CubeN6 subsets needed for the repo-local LRUN build.
 
 ## License Files
 
-This repo-local project includes copied ST license material:
+This repo-local project includes copied ST license material.
 
 - `LICENSE.md`
 - `LICENSE.STM32N6xx_HAL_Driver.md`
@@ -71,12 +60,11 @@ This repo-local project includes copied ST license material:
 
 ## Measurement protocol
 
-Measurements use RTC/LSE for the full window and DWT for cadenced active timing
-when wrap-safe, with RTC as the fallback. Every cadenced release slot, including
-the final slot, is eligible for Stop when sufficient slack remains; short slack
-uses the wake-margin busy wait. The measurement window still spans all scheduled
-periods. Stop counts establish entry, not time spent in Stop.
+Measurements use RTC/LSE for the full window and DWT for cadenced active timing when wrap-safe, with RTC as the fallback.
+Every cadenced release slot, including the final slot, is eligible for Stop when sufficient slack remains.
+Short slack uses the wake-margin busy wait.
+The measurement window still spans all scheduled periods.
+Stop counts establish entry, not time spent in Stop.
 
-The host and firmware measurement protocols must match. Rebuild and deploy the
-firmware when updating the host, following the [setup guide](../../../src/GETTING_STARTED.md)
-and [NAS/HIL run instructions](../../../src/GETTING_STARTED.md#running-nas-and-hil).
+The host and firmware measurement protocols must match.
+Rebuild and deploy the firmware when updating the host, following the [setup guide](../../../src/GETTING_STARTED.md) and [NAS/HIL run instructions](../../../src/GETTING_STARTED.md#running-nas-and-hil).
