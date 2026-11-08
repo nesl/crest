@@ -30,23 +30,7 @@ def _history_candidates(
     descriptor: SearchSpaceDescriptor,
     states: set[str],
 ) -> list[dict[str, Any]]:
-    """Extract full candidates while leaving infrastructure failures retryable.
-
-    Parameters
-    ----------
-    history : tuple[TrialRecord, ...]
-        Detached study evidence, including queued and terminal trials.
-    descriptor : SearchSpaceDescriptor
-        Active parameter declarations.
-    states : set[str]
-        Uppercase Optuna state names to include.
-
-    Returns
-    -------
-    list[dict[str, Any]]
-        Full descriptor-shaped candidates reconstructed from proposal metadata,
-        queued fixed parameters, and actual sampled parameters, in that order.
-    """
+    """Extract blocking candidates while leaving infrastructure failures retryable."""
     candidates = []
     for trial in history:
         state = str(trial.state).strip().upper()
@@ -77,20 +61,7 @@ def _history_candidates(
 
 
 def _sample_param(param: SearchParam, rng: random.Random) -> Any:
-    """Sample a locally valid fallback value from one declaration.
-
-    Parameters
-    ----------
-    param : SearchParam
-        Numeric bounds or categorical choices to sample.
-    rng : random.Random
-        Caller-owned deterministic random generator.
-
-    Returns
-    -------
-    Any
-        Sampled raw parameter value.
-    """
+    """Sample one fallback value from a parameter declaration."""
     if param.kind == "int":
         return rng.randint(param.low, param.high)
     if param.kind == "float":
@@ -165,9 +136,31 @@ def generate_llm_batch(
         If no unique legal fallback can be sampled within the attempt bound.
     """
     if getattr(context, "full_history_mode", False):
-        return _generate_policy_batch(history, provider, context, ledger, prompt_version=prompt_version,
-                                      max_repair_attempts=max_repair_attempts,
-                                      max_refill_attempts=max_refill_attempts, rng=rng)
+        return _generate_policy_batch(
+            history,
+            provider,
+            context,
+            ledger,
+            prompt_version=prompt_version,
+            max_repair_attempts=max_repair_attempts,
+            max_refill_attempts=max_refill_attempts,
+            rng=rng,
+        )
+    return _generate_bounded_batch(
+        history,
+        provider,
+        context,
+        ledger,
+        prompt_version=prompt_version,
+        max_repair_attempts=max_repair_attempts,
+        rng=rng,
+    )
+
+
+def _generate_bounded_batch(
+    history, provider, context, ledger, *, prompt_version, max_repair_attempts, rng
+):
+    """Repair bounded-context responses, then sample a unique fallback."""
     completed = _history_candidates(history, context.descriptor, {"COMPLETE", "PRUNED", "FAIL"})
     queued = _history_candidates(history, context.descriptor, {"WAITING"})
     repair_feedback = None
@@ -197,31 +190,8 @@ def generate_llm_batch(
             raise
         ledger.write_response(request_id, response)
 
-        try:
-            raw_envelope = json.loads(response.content)
-        except (TypeError, json.JSONDecodeError) as exc:
-            ledger.record_rejected(
-                {
-                    "request_id": request_id,
-                    "code": "invalid_json",
-                    "message": str(exc),
-                    "raw_content": response.content,
-                }
-            )
-            repair_feedback = "The prior response was not valid JSON. Return only the required JSON envelope."
-            continue
-        try:
-            batch = CandidateBatch.model_validate(raw_envelope)
-        except ValidationError as exc:
-            ledger.record_rejected(
-                {
-                    "request_id": request_id,
-                    "code": "schema_validation",
-                    "message": str(exc),
-                    "raw_content": response.content,
-                }
-            )
-            repair_feedback = "The prior JSON did not match the required CandidateBatch envelope."
+        batch, repair_feedback = _parse_bounded_response(response.content, request_id, ledger)
+        if batch is None:
             continue
 
         validation = validate_candidate_batch(
@@ -256,6 +226,11 @@ def generate_llm_batch(
         })
         return proposals
 
+    return _bounded_random_fallback(context, ledger, request_id, completed, queued, rng)
+
+
+def _bounded_random_fallback(context, ledger, request_id, completed, queued, rng):
+    """Sample and record one unique bounded-mode fallback."""
     for _ in range(100):
         candidate = sample_random_candidate(context.descriptor, rng=rng)
         validation = validate_candidate_batch(
@@ -279,24 +254,52 @@ def generate_llm_batch(
             return (proposal,)
     raise RuntimeError("Unable to sample a unique random fallback candidate after 100 attempts.")
 
+def _parse_bounded_response(content, request_id, ledger):
+    """Parse bounded-mode content and preserve its distinct rejection codes."""
+    try:
+        raw_envelope = json.loads(content)
+    except (TypeError, json.JSONDecodeError) as exc:
+        ledger.record_rejected(
+            {
+                "request_id": request_id,
+                "code": "invalid_json",
+                "message": str(exc),
+                "raw_content": content,
+            }
+        )
+        return None, "The prior response was not valid JSON. Return only the required JSON envelope."
+    try:
+        batch = CandidateBatch.model_validate(raw_envelope)
+    except ValidationError as exc:
+        ledger.record_rejected(
+            {
+                "request_id": request_id,
+                "code": "schema_validation",
+                "message": str(exc),
+                "raw_content": content,
+            }
+        )
+        return None, "The prior JSON did not match the required CandidateBatch envelope."
+    return batch, None
+
+
+def _parse_policy_response(content):
+    """Parse full-history content into a batch or bounded validation detail."""
+    try:
+        batch = CandidateBatch.model_validate(json.loads(content))
+    except (ValueError, TypeError, ValidationError) as exc:
+        malformed = str(exc)
+        if isinstance(exc, ValidationError):
+            malformed = json.dumps(
+                exc.errors(include_input=False, include_url=False, include_context=False),
+                default=str,
+            )
+        return None, malformed
+    return batch, None
 
 
 def _policy_feedback(retained, rejections, *, malformed=None):
-    """Build structurally bounded feedback without repeated history or rationales.
-
-    Parameters
-    ----------
-    retained, rejections : object
-        Accepted entries and validation failures. Missing slots and targets
-        already appear in the current request.
-    malformed : str or None
-        Specific error, capped at 500 characters, retaining prior rejections.
-
-    Returns
-    -------
-    str
-        Compact JSON feedback bounded independently of provider response text.
-    """
+    """Build bounded repair feedback from retained candidates and rejections."""
     compact = []
     for rejection in rejections[:5]:
         item = {"index": rejection.index, "code": rejection.code}
@@ -305,13 +308,20 @@ def _policy_feedback(retained, rejections, *, malformed=None):
             ids = detail["matching_trials"]
             item.update(matching_trials=ids[:8], additional_matches=max(0, len(ids) - 8))
         compact.append(item)
-    return json.dumps({"retained_candidates": [{k: entry[k] for k in
-                           ("params", "intent", "parent_trial", "assigned_target") if k in entry}
-                           for entry in retained],
-                       "rejections": compact, "additional_rejections": max(0, len(rejections) - 5),
-                       **({"repair": "Return only the required valid CandidateBatch JSON envelope.",
-                           "error": malformed[:500]}
-                          if malformed else {})}, separators=(",", ":"), default=str)
+    feedback = {
+        "retained_candidates": [
+            {key: entry[key] for key in ("params", "intent", "parent_trial", "assigned_target") if key in entry}
+            for entry in retained
+        ],
+        "rejections": compact,
+        "additional_rejections": max(0, len(rejections) - 5),
+    }
+    if malformed:
+        feedback.update({
+            "repair": "Return only the required valid CandidateBatch JSON envelope.",
+            "error": malformed[:500],
+        })
+    return json.dumps(feedback, separators=(",", ":"), default=str)
 
 
 def _prepare_policy_evidence(history, descriptor):
@@ -363,10 +373,15 @@ def _policy_provenance(entry, index, request_id, context, history, used_parents,
     from .full_history import decoded_fingerprint, parameter_differences, nearest_prior_distances
 
     intent = entry["intent"]
-    provenance = {"proposal_source": "llm", "optimizer": "llm_generator",
-                  "request_id": request_id, "batch_id": f"llm-{request_id:06d}",
-                  "batch_index": index, **{k: v for k, v in entry.items() if k != "params"},
-                  "nearest_prior_distances": nearest_prior_distances(entry["params"], history)}
+    provenance = {
+        "proposal_source": "llm",
+        "optimizer": "llm_generator",
+        "request_id": request_id,
+        "batch_id": f"llm-{request_id:06d}",
+        "batch_index": index,
+        **{key: value for key, value in entry.items() if key != "params"},
+        "nearest_prior_distances": nearest_prior_distances(entry["params"], history),
+    }
     if intent == "exploration":
         provenance["exploration_policy"] = ("compulsory_coverage" if "assigned_target" in entry
             else "post_coverage" if context.coverage.get("goal_complete") else "untargeted")
@@ -382,33 +397,7 @@ def _policy_provenance(entry, index, request_id, context, history, used_parents,
 
 def _generate_policy_batch(history, provider, context, ledger, *, prompt_version,
                            max_repair_attempts, max_refill_attempts, rng):
-    """Generate a retained subset under shared repair and refill budgets.
-
-    Parameters
-    ----------
-    history, provider, context, ledger : object
-        Study snapshot and existing generation services.
-    prompt_version : str
-        Version recorded with each request.
-    max_repair_attempts, max_refill_attempts : int
-        Shared malformed-response and missing-slot budgets.
-    rng : random.Random
-        Existing explicit fallback random source.
-
-    Returns
-    -------
-    tuple[CandidateProposal, ...]
-        Valid retained proposals, or an explicitly attributed random fallback.
-
-    Raises
-    ------
-    ValueError
-        If full-history repair or refill budgets exceed supported bounds.
-    RuntimeError
-        If no unique legal fallback is found within the sampling limit.
-    ProviderError
-        If authentication, transport, or spending prevents a request.
-    """
+    """Retain valid full-history proposals within shared repair and refill budgets."""
     from dataclasses import replace
     from .schemas import validate_policy_batch
     from .spending import SpendInputLimitExceeded
@@ -418,7 +407,9 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
             and 0 <= max_refill_attempts <= 2):
         raise ValueError("Full history mode requires repair attempts <= 1 and refill attempts <= 2.")
     completed, queued, matches = _prepare_policy_evidence(history, context.descriptor)
-    retained, proposals, targets = [], [], list(context.exploration_targets)
+    retained = []
+    proposals = []
+    targets = list(context.exploration_targets)
     quotas = dict(context.allocation)
     # Malformed responses consume the shared repair budget. Valid responses with
     # missing slots consume refills; both keep every previously accepted entry.
@@ -430,14 +421,23 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
     request_ids = []
     while True:
         # Each request asks only for outstanding slots and coverage targets.
-        current = replace(context, batch_size=sum(quotas.values()), allocation=dict(quotas),
-                          exploration_targets=tuple(targets))
+        current = replace(
+            context,
+            batch_size=sum(quotas.values()),
+            allocation=dict(quotas),
+            exploration_targets=tuple(targets),
+        )
         request_id = ledger.next_request_id()
         request_ids.append(request_id)
         request = build_candidate_request(current, prompt_version=prompt_version, repair_feedback=feedback)
-        ledger.record_prompt_context({**current.as_prompt_payload(), "request_id": request_id,
-                                     "repair_attempt": repairs, "refill_attempt": refills,
-                                     "retained_candidates": retained, "repair_feedback": feedback})
+        ledger.record_prompt_context({
+            **current.as_prompt_payload(),
+            "request_id": request_id,
+            "repair_attempt": repairs,
+            "refill_attempt": refills,
+            "retained_candidates": retained,
+            "repair_feedback": feedback,
+        })
         ledger.write_request(request_id, request)
         malformed = None
         try:
@@ -449,17 +449,12 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
             if isinstance(exc, SpendInputLimitExceeded) and proposals:
                 stop_reason = "input_guard"
                 break
-            if not isinstance(exc, ProviderResponseError): raise
+            if not isinstance(exc, ProviderResponseError):
+                raise
             malformed = str(exc)
         else:
             ledger.write_response(request_id, response)
-            try:
-                batch = CandidateBatch.model_validate(json.loads(response.content))
-            except (ValueError, TypeError, ValidationError) as exc:
-                malformed = str(exc)
-                if isinstance(exc, ValidationError):
-                    malformed = json.dumps(exc.errors(include_input=False, include_url=False,
-                                                       include_context=False), default=str)
+            batch, malformed = _parse_policy_response(response.content)
         if malformed is not None:
             ledger.record_rejected({"request_id": request_id, "code": "malformed_response", "message": malformed})
             if repairs >= max_repair_attempts:
@@ -469,15 +464,24 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
             feedback = _policy_feedback(retained, last_rejections, malformed=malformed)
             continue
         accepted, rejected = validate_policy_batch(
-            batch, context.descriptor, quotas=quotas, targets=targets, parents=context.eligible_parents,
-            completed_candidates=completed, queued_candidates=queued, retained=retained,
-            used_parents=used_parents, history_matches=matches)
+            batch,
+            context.descriptor,
+            quotas=quotas,
+            targets=targets,
+            parents=context.eligible_parents,
+            completed_candidates=completed,
+            queued_candidates=queued,
+            retained=retained,
+            used_parents=used_parents,
+            history_matches=matches,
+        )
         for rejection in rejected:
             ledger.record_rejected({"request_id": request_id, **rejection.__dict__})
         for index, entry in enumerate(accepted):
             intent = entry["intent"]
             quotas[intent] -= 1
-            if "assigned_target" in entry: targets.remove(entry["assigned_target"])
+            if "assigned_target" in entry:
+                targets.remove(entry["assigned_target"])
             provenance = _policy_provenance(
                 entry, index, request_id, context, history, used_parents, ledger)
             retained.append(entry)
@@ -499,7 +503,13 @@ def _generate_policy_batch(history, provider, context, ledger, *, prompt_version
         for proposal in proposals:
             ledger.record_returned({**proposal.provenance, "candidate": proposal.params})
         return tuple(proposals)
-    # Reuse the legacy fallback path without making another content request.
+    return _policy_random_fallback(context, ledger, request_id, completed, queued, rng)
+
+
+def _policy_random_fallback(context, ledger, request_id, completed, queued, rng):
+    """Sample and record an explicitly attributed full-history fallback."""
+    from .schemas import validate_policy_batch
+
     for _ in range(100):
         candidate = sample_random_candidate(context.descriptor, rng=rng)
         valid, _ = validate_policy_batch(
