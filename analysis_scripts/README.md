@@ -24,7 +24,7 @@ NAS, replay, or measurement artifacts and do not run NAS or touch hardware.
 Each guide lists inputs, commands, and outputs.
 
 Other utilities include [Pareto comparison](compare_pareto_front_calcs/README.md),
-[audio score sensitivity](cs3_audio_sensitivity/README.md), the
+the
 [hardware energy probe](micro_workload_energy_probe/README.md), and
 [publication plots](paper_plots/README.md). The hardware probe requires a target
 board and measurement harness; the analysis tools read saved artifacts.

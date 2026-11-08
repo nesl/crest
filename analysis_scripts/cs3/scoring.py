@@ -5,8 +5,8 @@
 
 CSV decimals are interpreted exactly. Intervals include explicit endpoint flags;
 point-only winners are retained. Ties use quality descending, energy ascending,
-numeric trial ID ascending, then method and source order. This complements the
-published coarse score_sensitivity sweep rather than replacing its reports.
+numeric trial ID ascending, then method and source order. Use score_sensitivity.py for discrete weight and energy-scale sweeps over
+CSV logs; its floating-point arithmetic and string-ID ties differ.
 """
 from __future__ import annotations
 
