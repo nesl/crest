@@ -5,7 +5,8 @@ SPDX-License-Identifier: BSD-3-Clause
 
 # Publication Figure Scripts
 
-These generators cover the eight data plots in the submitted CREST paper.
+Seven generators cover the seven data figures (Figures 5–11) in the CREST paper.
+Figure 10 has two image panels, giving eight plot assets in total.
 They read saved measurements and evaluations; they do not train models, launch
 searches, contact providers, or access hardware. Diagrams and photographs are
 separate artwork.
@@ -29,16 +30,24 @@ support `--help`.
 
 ## Submitted figure manifest
 
-| Manuscript asset | Generator | Input |
-| --- | --- | --- |
-| `cs1_clock_reversal.png` | `plot_case1_clock_reversal.py` | Paired policy rounds |
-| `cs1_energy_ranks.png` | `plot_case1_energy_ranks.py` | Joined candidate table |
-| `cs1_model_transfer.png` | `plot_case1_model_transfer.py` | Same joined table |
-| `cs2_proxy_replay_fronts.png` | `plot_case2_proxy_replay_fronts.py` | Measured NAS logs and proxy replays |
-| `cs3_proposal_comparison.png` | `plot_case3_proposal_comparison.py` | Feasible observations and endpoint table |
-| `cs2_training_budget_ranking.png` | `plot_training_budget.py` | Checkpoint evaluations or frozen panel CSV |
-| `cs2_training_budget_fronts.png` | Same training generator | Same input |
-| `appendix_timing_analysis.png` | `plot_appendix_timing_analysis.py` | Reconciled timing tables for both boards |
+| Figure | Manuscript asset | Generator | Input |
+| --- | --- | --- | --- |
+| 5 | `cs1_clock_reversal.png` | `plot_case1_clock_reversal.py` | Paired policy rounds |
+| 6 | `cs1_energy_ranks.png` | `plot_case1_energy_ranks.py` | Joined candidate table |
+| 7 | `cs2_proxy_replay_fronts.png` | `plot_case2_proxy_replay_fronts.py` | Measured NAS logs and proxy replays |
+| 8 | `cs3_proposal_comparison.png` | `plot_case3_proposal_comparison.py` | Feasible observations and endpoint table |
+| 9 | `cs1_model_transfer.png` | `plot_case1_model_transfer.py` | Joined candidate table |
+| 10, top | `cs2_training_budget_ranking.png` | `plot_training_budget.py` | Checkpoint evaluations or panel CSV |
+| 10, bottom | `cs2_training_budget_fronts.png` | `plot_training_budget.py` | Same input |
+| 11 | `appendix_timing_analysis.png` | `plot_appendix_timing_analysis.py` | Reconciled timing tables for both boards |
+
+Figures 1–4 are the runtime-schedule diagram, framework diagram, NAS-flow
+illustration, and hardware-harness artwork. They are not data plots and have no
+Python generators here. `replay_front_support.py` contains shared data-loading
+and front-comparison helpers; it does not generate a separate figure.
+
+PNG, PDF, and SVG exports are formats of the same figures, not additional plots.
+Numeric sidecars record the plotted data and summaries.
 
 Outputs use these basenames directly. The CS1, CS2 and CS3 generators also
 write plotted-point CSVs and numeric summaries. Training writes correlations,

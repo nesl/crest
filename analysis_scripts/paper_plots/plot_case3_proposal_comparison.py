@@ -127,7 +127,7 @@ def render(
     winners : dict
         Maximum-score observation for each board/method pair.
     output_dir : pathlib.Path
-        Explicit destination for PNG, PDF, SVG, and preview files.
+        Explicit destination for PNG, PDF, and SVG files.
 
     Returns
     -------
@@ -254,7 +254,7 @@ def render(
 
 
 def save(fig: Figure, output_dir: Path) -> dict[str, Any]:
-    """Check text bounds and write the figure in publication and preview formats.
+    """Check text bounds and write the figure in publication formats.
 
     Parameters
     ----------
@@ -284,7 +284,6 @@ def save(fig: Figure, output_dir: Path) -> dict[str, Any]:
                 raise ValueError(f"Clipped label: {label.get_text()}")
     for ext in ("png", "pdf", "svg"):
         fig.savefig(output_dir / f"{name}.{ext}", dpi=400, facecolor="white")
-    fig.savefig(output_dir / f"{name}_preview.png", dpi=140, facecolor="white")
     plt.close(fig)
     with Image.open(output_dir / f"{name}.png") as im:
         if not all(abs(d - 400) < 0.1 for d in im.info["dpi"]):
@@ -301,7 +300,7 @@ def main() -> None:
 
     Notes
     -----
-    Writes the paper asset, vector versions, a preview, plotted observations,
+    Writes the paper asset, vector versions, plotted observations,
     and score-selected winners. No studies or model evaluations are launched.
     """
     parser = argparse.ArgumentParser(description=__doc__)
