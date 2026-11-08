@@ -4,7 +4,7 @@ SPDX-License-Identifier: BSD-3-Clause
 -->
 # Paired repeatability experiments
 
-This package runs **new hardware experiments**, with a frozen randomized schedule and compile-once STM32 artifacts. It does not train models. For offline reanalysis of saved measurements, see [CS1 offline analysis](../cs1/README.md).
+This package runs **new hardware experiments**, with a frozen randomized schedule and compile-once STM32 artifacts. It does not train models. Outputs are native experiment evidence; see the analysis compatibility note below.
 
 Run from the repository root:
 
@@ -14,7 +14,7 @@ python -m analysis_scripts.repeatability build-artifacts --study /path/new-study
 python -m analysis_scripts.repeatability run --study /path/new-study --device-id lab-device --dut-port /path/dut --harness-port /path/harness --board-ready
 ```
 
-The caller supplies all candidate identities, architectures, clocks, input dimensions, cadence, run count, and initialization seed. The manifest has this shape; replace the architecture objects with valid CREST architecture specifications:
+The caller supplies all candidate identities, architectures, clocks, input dimensions, cadence, run count, and initialization seed. This small manifest uses the supported `odom_tcn` architecture schema:
 
 ```json
 {
@@ -25,12 +25,14 @@ The caller supplies all candidate identities, architectures, clocks, input dimen
   "measured_runs": 4,
   "initialization_seed": 7,
   "candidates": [
-    {"candidate_id": "a", "architecture": {}, "clock_mhz": 80},
-    {"candidate_id": "b", "architecture": {}, "clock_mhz": 160}
+    {"candidate_id": "a", "architecture": {"nb_filters": 8, "kernel_size": 3, "dropout_rate": 0.0, "use_skip_connections": true, "norm_flag": false, "dilations": [1, 2]}, "clock_mhz": 200},
+    {"candidate_id": "b", "architecture": {"nb_filters": 8, "kernel_size": 3, "dropout_rate": 0.0, "use_skip_connections": true, "norm_flag": false, "dilations": [1, 2]}, "clock_mhz": 400}
   ],
   "pairs": [{"pair_id": "pair", "candidate_a": "a", "candidate_b": "b"}]
 }
 ```
+
+Architecture keys are defined by [OdomTCNFamily.validate_hparams](../../src/crest/model_families/odom_tcn.py). Use a configuration selecting that family, such as the [STM32 OxIOD configuration](../../src/config/nas_config_stm32.yaml), adapted to your calibration data, dimensions, project and toolchain paths. The [configuration guide](../../src/config/README.md) defines the accepted YAML settings. Clocks and cadence must also suit your board and workload; these values do not establish hardware feasibility.
 
 Each candidate belongs to exactly one pair. Each round measures both continuous and cadenced phases for every candidate. AB/BA order is balanced across even round counts, with one randomized extra order for odd counts. `--max-attempts` bounds retries across invocations; `run --max-evaluations` bounds work per invocation. Accepted evaluations are skipped on restart. Exceptions and uncertain interruptions require inspection before resuming; evidence is retained.
 
@@ -38,7 +40,9 @@ Each candidate belongs to exactly one pair. Each round measures both continuous 
 
 Prepared bundle manifests hash model inputs, compiled artifacts, backend code, and tools. Absolute generated paths make a prepared bundle host/path bound: build a new bundle after moving it. Runtime programming caches and sidecars are changed only in disposable attempt workspaces; frozen inputs are verified again after each phase. Acceptance requires matching raw native records, successful app and weight programming, protocol/clock/run identity, cadence timing, and deadline/STOP checks.
 
-All hardware runners sharing a DUT/harness must use the **same `--device-id`** and shared lock root. `--lock-dir` or `CREST_DEVICE_LOCK_DIR` overrides the common per-user default. Port aliases do not establish device identity. The shared lock covers the entire hardware run. Harness firmware must already match the manifest's run count; this runner disables automatic harness flashing. Diagnostic profiling is outside this protocol.
+The repeatability, waiting-power and policy-replay runners sharing a DUT/harness must use the **same `--device-id`** and shared lock root. `--lock-dir` or `CREST_DEVICE_LOCK_DIR` overrides the common per-user default. Port aliases do not establish device identity. The shared lock covers the entire hardware run. Harness firmware must already match the manifest's run count; this runner disables automatic harness flashing. Diagnostic profiling is outside this protocol.
+
+The study contains `manifest.json`, `schedule.json`, `seal.json`, compiled bundles under `artifacts/<candidate>/`, and `evaluations/<round>/<candidate>/attempt-*/` with `raw.json`, acceptance `result.json` or `failure.json`, native phase records and logs. `complete.json` identifies the accepted attempt. This package has no offline analysis command. [CS1 repeats](../cs1/repeats.py) expects a flat CSV with `round`, `config`, `clock_hz`, `scheduled_mj`, `T_s`, `C_s`, plus a separate joint-fit CSV; it cannot consume this directory directly. No adapter is supplied.
 
 Safe checks:
 

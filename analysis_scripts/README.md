@@ -12,9 +12,10 @@ Run these scripts from the repository root with the `crest` Conda environment
 active unless a package README says otherwise. Most scripts consume existing
 NAS, replay, or measurement artifacts and do not run NAS or touch hardware.
 
-The recipes below run training or collect hardware measurements. Hardware
-measurement commands require explicit device identity and board readiness;
-training requires `--execute`.
+The recipes below run training or collect hardware measurements. The repeatability, waiting-power and policy-replay runners require explicit
+device identity and `--board-ready`; training requires `--execute`.
+The micro-workload probe has its own hardware safeguards and does not participate
+in the shared device lock.
 Offline analysis and publication scripts consume saved artifacts separately.
 
 ## Experiment recipes

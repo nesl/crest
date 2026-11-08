@@ -65,8 +65,7 @@ are set, but GPU bitwise determinism is not guaranteed.
 `--skip-completed` only with the same manifest and dataset identity; partial
 trajectories are refused. There is no automatic mid-trajectory resume. Preserve
 partial outputs and prepare a new directory for a documented restart. Training
-also runs the single-panel analysis on completion. For offline analysis across
-multiple completed batches, see [training budget](../appendix_training_budget/README.md).
+also runs the single-panel analysis on completion. The `analyze --experiment-dir` command above consumes this directory directly. [Training-budget appendix analysis](../appendix_training_budget/README.md) has separate input contracts; use its documented tables rather than passing this directory to an arbitrary appendix command.
 
 ```bash
 python -m pytest -q test/test_training_experiment.py
