@@ -1,4 +1,5 @@
-"""Execute the actual STM32 window functions with deterministic clock/HIL fakes."""
+"""Check STM32 window timing, slot sleep, and failures with deterministic fakes."""
+
 import re
 import shutil
 import subprocess
@@ -11,14 +12,19 @@ RUNNER = ROOT / 'sketches/stm32/crest_stm32_lrun/Appli/Src/crest_dut_runner.c'
 
 
 class MeasurementWindowTests(unittest.TestCase):
-    def test_wall_timing_and_cycle_wraps(self):
-        """Long batches and single invokes retain valid wall timing, without UART."""
+    def test_window_timing_slot_sleep_and_failure_handling(self):
+        """Verify timing, cycle wraps, slot sleep, and failure cleanup without UART."""
         compiler = shutil.which('cc')
         if not compiler:
             self.skipTest('C compiler unavailable')
         source = RUNNER.read_text()
-        measurement = re.search(r'typedef struct\n\{.*?\} CrestDutMeasurement;', source, re.S).group()
-        windows = source[source.index('static bool run_back_to_back_window'):source.index('void crest_dut_harness_gpio_init')]
+        measurement = re.search(
+            r'typedef struct\n\{.*?\} CrestDutMeasurement;', source, re.S
+        ).group()
+        windows = source[
+            source.index('static bool run_back_to_back_window'):
+            source.index('void crest_dut_harness_gpio_init')
+        ]
         fake = r'''
 #include <stdbool.h>
 #include <stdint.h>
@@ -46,85 +52,148 @@ static void flush_stdout(void) { assert(!armed); }
 static int measured_printf(const char *fmt, ...) { assert(!armed); return 0; }
 #define printf measured_printf
 static int ai_network_run(ai_handle n, ai_buffer *i, ai_buffer *o) {
-  now += duration; dwt.CYCCNT += (uint32_t)(duration * 800); return 1;
+    now += duration;
+    dwt.CYCCNT += (uint32_t)(duration * 800);
+    return 1;
 }
 '''
         stop_fake = r'''
 static bool fail_stop;
 static int fail_on_sleep;
 static const char *last_line;
-static void emit_line(const char *s) { assert(!armed); last_line=s; }
+static void emit_line(const char *s) { assert(!armed); last_line = s; }
 static bool stop_sleep_for_us(uint32_t us, int64_t *recovery, CrestDutMeasurement *m) {
- if (fail_stop || (fail_on_sleep && sleeps + 1 == fail_on_sleep)) return false;
- ++sleeps; ++m->slept_slots; ++m->stop_entries; now += us; *recovery = 0; return true;
+    if (fail_stop || (fail_on_sleep && sleeps + 1 == fail_on_sleep)) return false;
+    ++sleeps;
+    ++m->slept_slots;
+    ++m->stop_entries;
+    now += us;
+    *recovery = 0;
+    return true;
 }
 '''
         checks = r'''
 int main(void) {
- CrestDutMeasurement m = {0};
- duration = 1000000; /* batch wraps repeatedly, individual invokes do not */
- assert(run_back_to_back_window(0,0,0,&m));
- assert(m.have_timing && !m.have_cycles);
- assert(rtc_reads==2);
- assert(m.timer_per_inference_scaled_1e6 >= duration);
- assert(m.timer_per_inference_scaled_1e6 < duration + 100);
- assert(m.dwt_cycles_per_inference_milli == 800000000000ULL);
- memset(&m,0,sizeof m); duration=20000; rtc_reads=0;
- assert(run_back_to_back_window(0,0,0,&m));
- assert(m.have_timing && m.have_cycles && rtc_reads==2);
- memset(&m,0,sizeof m); duration = 6000000; /* single invoke wraps at 800 MHz */
- assert(run_back_to_back_window(0,0,0,&m));
- assert(m.have_timing && !m.have_cycles);
- assert(m.timer_per_inference_scaled_1e6 >= duration);
- memset(&m,0,sizeof m); now=0; duration=20000; sleeps=0;
- assert(run_cadenced_window(0,0,0,&m));
- assert(m.have_cycles && m.runs_completed==10 && m.deadline_miss_count==0);
- assert(m.timer_per_window_scaled_1e6 >= 2000000);
- assert(m.timer_per_window_scaled_1e6 < 2000200);
- assert(sleeps==10 && m.slept_slots==10 && m.stop_entries==10); /* final slot uses Stop too */
- assert(m.timer_per_inference_scaled_1e6 == duration);
- /* Each fake RTC read advances by a tick: DWT must avoid this fixed bias. */
- memset(&m,0,sizeof m); now=0; duration=100;
- assert(run_cadenced_window(0,0,0,&m));
- assert(m.have_cycles && m.timer_per_inference_scaled_1e6 == 100);
- assert(m.timer_per_window_scaled_1e6 >= 2000000);
- memset(&m,0,sizeof m); duration=6000000; sleeps=0;
- assert(run_cadenced_window(0,0,0,&m));
- assert(!m.have_cycles && m.have_timing && m.deadline_miss_count==10 && sleeps==0);
- assert(m.timer_per_inference_scaled_1e6 >= duration);
- memset(&m,0,sizeof m); now=0; duration=195000; sleeps=0;
- assert(run_cadenced_window(0,0,0,&m));
- assert(sleeps==0 && m.runs_completed==10); /* insufficient slack stays awake */
- memset(&m,0,sizeof m); now=0; duration=20000; sleeps=0; fail_on_sleep=10;
- assert(!run_cadenced_window(0,0,0,&m)); /* failure in final slot invalidates window */
- assert(sleeps==9 && m.runs_completed==10 && !armed);
- assert(strcmp(last_line,"STM32_AI_RUN=FAIL measurement_integrity:stop_sleep")==0);
- fail_on_sleep=0;
- memset(&m,0,sizeof m); now=0; duration=20000; fail_stop=true;
- assert(!run_cadenced_window(0,0,0,&m));
- assert(!armed && strcmp(last_line,"STM32_AI_RUN=FAIL measurement_integrity:stop_sleep")==0);
- return 0;
+    CrestDutMeasurement m = {0};
+    /* The batch wraps repeatedly, but individual invokes do not. */
+    duration = 1000000;
+    assert(run_back_to_back_window(0, 0, 0, &m));
+    assert(m.have_timing && !m.have_cycles);
+    assert(rtc_reads == 2);
+    assert(m.timer_per_inference_scaled_1e6 >= duration);
+    assert(m.timer_per_inference_scaled_1e6 < duration + 100);
+    assert(m.dwt_cycles_per_inference_milli == 800000000000ULL);
+    /* A short batch retains both wall timing and valid cycle counts. */
+    memset(&m, 0, sizeof m);
+    duration = 20000;
+    rtc_reads = 0;
+    assert(run_back_to_back_window(0, 0, 0, &m));
+    assert(m.have_timing && m.have_cycles && rtc_reads == 2);
+    /* A single invoke wraps at 800 MHz, invalidating its cycle count. */
+    memset(&m, 0, sizeof m);
+    duration = 6000000;
+    assert(run_back_to_back_window(0, 0, 0, &m));
+    assert(m.have_timing && !m.have_cycles);
+    assert(m.timer_per_inference_scaled_1e6 >= duration);
+    /* All ten cadence slots, including the final slot, enter Stop. */
+    memset(&m, 0, sizeof m);
+    now = 0;
+    duration = 20000;
+    sleeps = 0;
+    assert(run_cadenced_window(0, 0, 0, &m));
+    assert(m.have_cycles && m.runs_completed == 10 && m.deadline_miss_count == 0);
+    assert(m.timer_per_window_scaled_1e6 >= 2000000);
+    assert(m.timer_per_window_scaled_1e6 < 2000200);
+    assert(sleeps == 10 && m.slept_slots == 10 && m.stop_entries == 10);
+    assert(m.timer_per_inference_scaled_1e6 == duration);
+    /* Each fake RTC read advances by a tick: DWT must avoid this fixed bias. */
+    memset(&m, 0, sizeof m);
+    now = 0;
+    duration = 100;
+    assert(run_cadenced_window(0, 0, 0, &m));
+    assert(m.have_cycles && m.timer_per_inference_scaled_1e6 == 100);
+    assert(m.timer_per_window_scaled_1e6 >= 2000000);
+    /* Over-budget invokes miss every deadline and leave no sleep time. */
+    memset(&m, 0, sizeof m);
+    duration = 6000000;
+    sleeps = 0;
+    assert(run_cadenced_window(0, 0, 0, &m));
+    assert(!m.have_cycles && m.have_timing && m.deadline_miss_count == 10 && sleeps == 0);
+    assert(m.timer_per_inference_scaled_1e6 >= duration);
+    /* Insufficient slack keeps the processor awake for every slot. */
+    memset(&m, 0, sizeof m);
+    now = 0;
+    duration = 195000;
+    sleeps = 0;
+    assert(run_cadenced_window(0, 0, 0, &m));
+    assert(sleeps == 0 && m.runs_completed == 10);
+    /* A final-slot Stop failure invalidates the completed inference window. */
+    memset(&m, 0, sizeof m);
+    now = 0;
+    duration = 20000;
+    sleeps = 0;
+    fail_on_sleep = 10;
+    assert(!run_cadenced_window(0, 0, 0, &m));
+    assert(sleeps == 9 && m.runs_completed == 10 && !armed);
+    assert(strcmp(last_line, "STM32_AI_RUN=FAIL measurement_integrity:stop_sleep") == 0);
+    fail_on_sleep = 0;
+    /* An immediate Stop failure also disarms the harness and reports failure. */
+    memset(&m, 0, sizeof m);
+    now = 0;
+    duration = 20000;
+    fail_stop = true;
+    assert(!run_cadenced_window(0, 0, 0, &m));
+    assert(!armed && strcmp(last_line, "STM32_AI_RUN=FAIL measurement_integrity:stop_sleep") == 0);
+    return 0;
 }
 '''
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
             (path / 'test.c').write_text(fake + measurement + stop_fake + windows + checks)
-            subprocess.run([compiler, '-std=c11', '-Werror=implicit-function-declaration', str(path/'test.c'), '-o', str(path/'test')], check=True, capture_output=True)
-            subprocess.run([str(path/'test')], check=True, capture_output=True)
+            subprocess.run(
+                [
+                    compiler,
+                    '-std=c11',
+                    '-Werror=implicit-function-declaration',
+                    str(path / 'test.c'),
+                    '-o',
+                    str(path / 'test'),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run([str(path / 'test')], check=True, capture_output=True)
             single = r"""
 int main(void) {
- CrestDutMeasurement m = {0}; duration=20000;
- assert(run_cadenced_window(0,0,0,&m));
- assert(m.runs_completed==1 && sleeps==1 && m.stop_entries==1);
- assert(m.timer_per_window_scaled_1e6 >= 200000 && m.timer_per_window_scaled_1e6 < 200200);
- assert(m.timer_per_inference_scaled_1e6==duration && !armed);
- return 0;
+    /* A one-inference window still sleeps through its final cadence slot. */
+    CrestDutMeasurement m = {0};
+    duration = 20000;
+    assert(run_cadenced_window(0, 0, 0, &m));
+    assert(m.runs_completed == 1 && sleeps == 1 && m.stop_entries == 1);
+    assert(m.timer_per_window_scaled_1e6 >= 200000 && m.timer_per_window_scaled_1e6 < 200200);
+    assert(m.timer_per_inference_scaled_1e6 == duration && !armed);
+    return 0;
 }
 """
-            (path / 'single.c').write_text(fake.replace('CREST_DUT_MEASURED_RUNS 10', 'CREST_DUT_MEASURED_RUNS 1') + measurement + stop_fake + windows + single)
-            subprocess.run([compiler, '-std=c11', '-Werror=implicit-function-declaration', str(path/'single.c'), '-o', str(path/'single')], check=True, capture_output=True)
-            subprocess.run([str(path/'single')], check=True, capture_output=True)
-
+            single_fake = fake.replace(
+                'CREST_DUT_MEASURED_RUNS 10', 'CREST_DUT_MEASURED_RUNS 1'
+            )
+            (path / 'single.c').write_text(
+                single_fake + measurement + stop_fake + windows + single
+            )
+            subprocess.run(
+                [
+                    compiler,
+                    '-std=c11',
+                    '-Werror=implicit-function-declaration',
+                    str(path / 'single.c'),
+                    '-o',
+                    str(path / 'single'),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run([str(path / 'single')], check=True, capture_output=True)
 
 
 if __name__ == '__main__':
