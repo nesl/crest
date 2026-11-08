@@ -72,17 +72,6 @@ The probe reuses the standard CREST HIL harness contract:
 - STM32 DUT trigger: PD0
 - STM32 DUT arm: PE9, active-low
 
-The harness emits the normal INA228 telemetry lines, including:
-
-- `runs:`
-- `energy output (mJ):`
-- `avg power output (mW):`
-- `avg current output (mA):`
-- `bus voltage output (V):`
-- `idle power baseline (mW):`
-- `harness timer output:`
-- `DONE`
-
 Before running a probe, confirm:
 
 - the target board is connected and visible at the serial port used by the
@@ -143,9 +132,8 @@ Use `--help` for the full option list.
 
 ## Outputs
 
-The runner opens output files before the first hardware attempt and streams each
-completed attempt to CSV and JSONL immediately. This protects long hardware
-runs from losing completed rows if later attempts fail.
+Completed attempts are saved incrementally, so their results remain available
+if a later attempt fails.
 
 Passing a directory to `--output-json` or `--output-csv` is allowed; the runner
 places a timestamped default filename inside that directory. The final JSON

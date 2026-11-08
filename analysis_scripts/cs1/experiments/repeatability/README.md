@@ -4,7 +4,7 @@ SPDX-License-Identifier: BSD-3-Clause
 -->
 # Paired repeatability experiments
 
-This package runs **new hardware experiments**, with a frozen randomized schedule and compile-once STM32 artifacts. It does not train models. Outputs are native experiment evidence; see the analysis compatibility note below.
+Run paired STM32 measurements with a fixed randomized schedule and reusable compiled models. This recipe initializes model weights; it does not train models.
 
 Run from the repository root:
 
@@ -36,13 +36,13 @@ Architecture keys are defined by [OdomTCNFamily.validate_hparams](../../../../sr
 
 Each candidate belongs to exactly one pair. Each round measures both continuous and cadenced phases for every candidate. AB/BA order is balanced across even round counts, with one randomized extra order for odd counts. `--max-attempts` bounds retries across invocations; `run --max-evaluations` bounds work per invocation. Accepted evaluations are skipped on restart. Exceptions and uncertain interruptions require inspection before resuming; evidence is retained.
 
-`build-artifacts` initializes weights deterministically, performs int8 PTQ, and compiles each phase without device evaluation. It requires the configured calibration dataset, TensorFlow/NumPy and CREST dependencies, firmware template, ST Edge AI, and ARM/STM32 toolchain. Missing dependencies fail explicitly. `bind-artifacts --artifact-root /path/bundles` can instead bind existing verified bundles before any attempt.
+`build-artifacts` initializes weights, quantizes models to int8, and compiles each measurement phase. It requires the configured calibration dataset, CREST runtime, firmware template, ST Edge AI, and ARM/STM32 toolchain. To use existing prepared bundles, run `bind-artifacts --artifact-root /path/bundles` before starting measurements.
 
-Prepared bundle manifests hash model inputs, compiled artifacts, backend code, and tools. Absolute generated paths make a prepared bundle host/path bound: build a new bundle after moving it. Frozen inputs remain immutable and are verified again after each phase. Acceptance requires matching raw native records, successful app and weight programming, protocol/clock/run identity, cadence timing, and deadline/STOP checks.
+Keep prepared bundles at their original paths and leave their inputs unchanged. Rebuild after moving them or changing the model, configuration, or toolchain.
 
 Run only one experiment at a time on a DUT/harness. Harness firmware must already match the manifest's run count; this runner disables automatic harness flashing. Diagnostic profiling is outside this protocol.
 
-The study contains `manifest.json`, `schedule.json`, `seal.json`, compiled bundles under `artifacts/<candidate>/`, and `evaluations/<round>/<candidate>/attempt-*/` with `raw.json`, acceptance `result.json` or `failure.json`, native phase records and logs. `complete.json` identifies the accepted attempt. This package has no offline analysis command. [CS1 repeats](../../repeats.py) expects a flat CSV with `round`, `config`, `clock_hz`, `scheduled_mj`, `T_s`, `C_s`, plus a separate joint-fit CSV; it cannot consume this directory directly. No adapter is supplied.
+Find compiled bundles under `artifacts/<candidate>/` and measurements, results, and logs under `evaluations/<round>/<candidate>/attempt-*/`. This recipe has no analysis subcommand. To use [CS1 repeatability analysis](../../README.md), first convert the measurements to its documented CSV inputs; it does not read this study directory directly.
 
 Safe checks:
 
