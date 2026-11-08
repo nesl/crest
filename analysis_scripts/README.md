@@ -13,11 +13,11 @@ Run commands from the repository root with the `crest` Conda environment active 
 
 | Tool | Purpose |
 | --- | --- |
-| [Paired repeatability](cs1/experiments/repeatability/README.md) | Randomized paired measurements using compiled STM32 artifacts |
-| [Waiting power](cs1/experiments/waiting_power/README.md) | Continuous and cadenced probes for waiting-power calibration |
-| [Waiting-policy experiments](cs1/experiments/waiting_policy/README.md) | Compare prepared continuous, awake-final, and STOP-final deployments |
-| [Micro-workload probe](appendix_measurement_context/experiments/micro_workload_energy_probe/README.md) | Fixed-duration board measurements for sleep and compute phases |
-| [Training budget](appendix_training_budget/experiments/README.md) | Train and evaluate candidates at different checkpoint budgets |
+| [Paired repeatability](cs1/README.md#paired-repeatability-experiments) | Randomized paired measurements using compiled STM32 artifacts |
+| [Waiting power](cs1/README.md#waiting-power-experiments) | Continuous and cadenced probes for waiting-power calibration |
+| [Waiting-policy experiments](cs1/README.md#waiting-policy-experiments) | Compare prepared continuous, awake-final, and STOP-final deployments |
+| [Micro-workload probe](appendix_measurement_context/README.md#micro-workload-energy-probe) | Fixed-duration board measurements for sleep and compute phases |
+| [Training budget](appendix_training_budget/README.md#training-budget-experiment) | Train and evaluate candidates at different checkpoint budgets |
 
 Hardware runners require a target board, measurement harness, and device setup from their guides.
 Run only one experiment at a time on a DUT/harness.
@@ -38,7 +38,7 @@ For new board runs, start with the main [HIL workflow](../src/GETTING_STARTED.md
 | [Evaluation cost appendix](appendix_evaluation_cost/README.md) | Where is time spent in candidate evaluation? |
 | [Training budget appendix](appendix_training_budget/README.md) | How do training budgets affect rankings and fronts? |
 | [Trial outcomes appendix](appendix_trial_outcomes/README.md) | Which attempts passed and which observations enter each analysis? |
-| [Pareto comparison](compare_pareto_front_calcs/README.md) | How do two measured fronts compare under explicit matching rules? |
+| [Pareto comparison](#pareto-front-comparison) | How do two measured fronts compare under explicit matching rules? |
 
 These analyses read saved inputs without training, contacting providers, or accessing hardware.
 Each guide describes inputs, commands, and outputs.
@@ -56,7 +56,7 @@ PYTHONPATH=src python analysis_scripts/cs3/search_history.py \
 
 Omit `--ledger-dir` when there are no LLM request records.
 Search also refreshes score or hypervolume plots under each study's `progress/` directory.
-The [progress API](../src/crest/search/README.md) can regenerate them offline.
+The [progress API](../src/crest/optimizers/README.md#progress-and-reproducibility) can regenerate them offline.
 
 ## 3. Generate figures
 
@@ -70,3 +70,76 @@ python analysis_scripts/paper_plots/plot_case1_clock_reversal.py \
   --input-csv /path/to/results/policy_per_round.csv \
   --output-dir /path/to/figures
 ```
+
+## Pareto front comparison
+
+This folder contains calculation-only scripts for comparing CSV-derived Pareto fronts.
+They consume existing NAS or replay artifacts.
+They do not run NAS, retrain models, or replay hardware.
+
+No hardware required.
+Run commands from the repository root with the `crest` Conda environment active.
+
+### Generic Front Comparison
+
+`compare_pareto_fronts.py` compares two CSV-derived Pareto fronts using explicit column names and matching semantics.
+It is intended for users who rerun NAS or replay experiments and want to compare the resulting fronts without relying on hard-coded study paths.
+
+```bash
+python -B analysis_scripts/compare_pareto_front_calcs/compare_pareto_fronts.py \
+  --source-csv path/to/source/replay_results.csv \
+  --target-csv path/to/target/trials.csv \
+  --source-quality-col source__metric__rmse_total \
+  --source-cost-col target__energy_mj_per_inference \
+  --target-quality-col values_rmse_total \
+  --target-cost-col values_energy_mj_per_inference \
+  --source-status-col replay_status \
+  --source-status-values completed \
+  --target-status-col state \
+  --target-status-values COMPLETE \
+  --source-filter target__latency_ms le 200 \
+  --match-rule nearest-quality \
+  --reduction-direction target-vs-source \
+  --reduction-denominator source \
+  --output-dir outputs/front_compare/example
+```
+
+The command writes the following.
+
+- `manifest.json`.
+  Command, input paths, columns, filters, matching rule, denominator, formulas, and row counts.
+- `source_front.csv` and `target_front.csv`.
+  Recomputed non-dominated fronts.
+- `matches.csv`.
+  Source-front to target-front matches, with source/target row IDs, quality values, cost values, quality gap, oriented cost delta, fallback status, and source/target denominator reduction percentages.
+- `summary.json` and `summary.md`.
+  Dominance counts and median reductions.
+
+Reduction orientation is explicit.
+Reductions are numeric cost deltas.
+With the default `--cost-direction minimize`, positive values are energy/cost reductions.
+With `--reduction-direction target-vs-source`, positive reductions mean the target front has lower numeric cost.
+
+```text
+oriented_cost_delta = source_cost - target_cost
+source_denominator_reduction = (source_cost - target_cost) / source_cost
+target_denominator_reduction = (source_cost - target_cost) / target_cost
+```
+
+With `--reduction-direction source-vs-target`, positive reductions mean the source front has lower numeric cost.
+
+```text
+oriented_cost_delta = target_cost - source_cost
+source_denominator_reduction = (target_cost - source_cost) / source_cost
+target_denominator_reduction = (target_cost - source_cost) / target_cost
+```
+
+Use `--match-rule nearest-quality` for nearest-front RMSE-style comparisons.
+Use `--match-rule equal-or-better-quality` when each source-front point should match the best-cost target-front point at equal-or-better quality, falling back to nearest quality only when no such target point exists.
+
+Use repeatable `--source-filter COLUMN OP VALUE` and `--target-filter COLUMN OP VALUE` options for explicit numeric feasibility gates, such as deadline-miss or latency-budget audits.
+Supported operations are `lt`, `le`, `eq`, `ge`, `gt`, and `ne`.
+
+By default, status filters accept `COMPLETE`, `completed`, `success`, `succeeded`, `1`, and `true` when a status column is supplied.
+The tool filters blank, non-finite, sentinel-sized, and nonpositive minimized cost values.
+Use `--sentinel-abs-threshold` and `--allow-nonpositive-cost` only when those defaults do not match the artifact being audited.

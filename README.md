@@ -39,7 +39,7 @@ With CREST, you can do the following.
 | Location | Contents |
 | --- | --- |
 | [`src/`](src/README.md) | Search client, HIL server, and shared evaluation pipeline |
-| [`src/crest/`](src/crest/README.md) | Dataset, task, model-family, optimizer, and hardware components |
+| [`src/crest/`](src/README.md#package-map) | Dataset, task, model-family, optimizer, and hardware components |
 | [`src/config/`](src/config/README.md) | Experiment configurations and settings reference |
 | [`sketches/`](sketches/README.md) | Target-device and power-measurement harness firmware |
 | [`data/`](data/dataset_download_and_splits/README.md) | Dataset preparation and split definitions |
@@ -99,7 +99,7 @@ Follow the [hardware guide](src/crest/microcontrollers/README.md) for board and 
 
 - [Experiment configuration](src/config/README.md).
   Objectives, runtime schedules, constraints, and search settings.
-- [Case studies](src/config/case_study_configs/README.md).
+- [Case studies](src/config/README.md#case-study-configurations).
   Proxy versus measured energy selection and runtime-schedule comparisons.
 - [Optimizers](src/crest/optimizers/README.md).
   Native and LLM candidate generation, provider setup, and extension instructions.

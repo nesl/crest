@@ -295,9 +295,12 @@ optimizer:
 | `retry_backoff_s` | Default 5 seconds. Excluded from study identity. |
 | `retry_backoff_cap_s` | Default 60 seconds per wait. Excluded from study identity. |
 
+`base_url` is the API root.
+Chat Completions adapters append `/chat/completions`, and the Responses adapter appends `/responses`.
+
 Use complete raw descriptor parameters such as `dilations_index` and `cpu_clock_mhz_index`, not decoded architecture fields.
 Include deployment fields only when active for the experiment.
-See [validation and failures](../crest/optimizers/llm/README.md#validation-and-failures) for response validation and fallback, [run artifacts](../crest/optimizers/llm/README.md#inspect-a-run) for saved evidence, and the [provider guide](../crest/optimizers/llm/providers/README.md) for authentication, transport behavior, and retry handling.
+See [validation and failures](../crest/optimizers/llm/README.md#validation-and-failures) for response validation and fallback, [run artifacts](../crest/optimizers/llm/README.md#inspect-a-run) for saved evidence, and the [provider interface](../crest/optimizers/llm/README.md#completion-providers) for authentication, transport behavior, and retry handling.
 
 ### Responses transport and history modes
 
@@ -345,7 +348,38 @@ To continue a capped study, retain `llm_optimizer/spend_state.json` and increase
 Model, rates, pricing provenance, and token limits must match.
 Removing an existing cap or enabling one over existing request logs without spend state is rejected.
 The cap uses local accounting under configured prices and token assumptions.
-See [pricing catalogs and spending caps](../crest/optimizers/llm/providers/README.md#configure-pricing-and-a-spending-cap) for catalog format, accounting limitations, and interrupted-request handling.
+See [pricing catalogs and spending caps](#configure-pricing-and-a-spending-cap) for catalog matching, accounting limitations, and interrupted-request handling.
+
+### Configure pricing and a spending cap
+
+Add this optimizer block to a complete experiment configuration.
+
+```yaml
+optimizer:
+  type: llm_generator
+  llm:
+    provider: openai_responses
+    base_url: https://api.openai.com/v1
+    model: gpt-6-luna
+    api_key_env: OPENAI_API_KEY
+    max_usd: 5
+    max_input_tokens: 100000
+    max_output_tokens: 2000
+    # pricing_file: prices.json  # Optional custom catalog, relative to this YAML.
+```
+
+A spending cap requires both token limits and matching prices.
+The bundled [`pricing.json`](../crest/optimizers/llm/providers/pricing.json) covers OpenAI `gpt-6-luna`.
+Its conservative rates can exceed the actual bill.
+For another model, endpoint, or service tier, copy that file and set `pricing_file`.
+A custom catalog replaces the bundled one.
+Entries must match provider, base URL, model, and tier (`default` when omitted).
+
+Capped studies save their selected rates in `llm_optimizer/spend_state.json`.
+Resume requires the same rates and provenance.
+Failed or interrupted requests retain their reservation because they may have been billed.
+Recorded charges are conservative estimates, not provider invoices.
+Without `max_usd`, spending is not tracked.
 
 ### Fixed warm-up and recovery
 
@@ -485,7 +519,7 @@ Keys
   Fixed multiobjective progress reference, one finite value per objective in objective order and original units.
   The reference is persisted under the study's `progress/` directory and cannot change on resume.
   Without one, the first eligible trial plus a 10% worse-direction margin supplies a monitoring-only reference.
-  See [progress reporting](../crest/search/README.md).
+  See [progress reporting](../crest/optimizers/README.md#progress-and-reproducibility).
 
 - `outputs.candidate_dir`
 - `outputs.artifact_stem`
@@ -522,6 +556,44 @@ Valid values are listed below.
 - `INFO`
 - `DEBUG`
 - `NOTSET`
+
+## Case study configurations
+
+These configs preserve the run axes used by the CREST case studies.
+Use the top-level configs in `src/config/` as general starting points.
+Use `case_study_configs/` when you want the case-study device, workload, runtime-mode, and scoring combinations.
+
+Each YAML includes its intended launch command near the top.
+Run commands from the repository root with the `crest` environment active.
+
+### Case Study 2 OxIOD TCN Across Targets
+
+A target development board and HIL harness are required for the measured-energy configs in `case_study_configs/`.
+
+- [`nas_config_case1_2_ble33_b2b_oxiod.yaml`](case_study_configs/nas_config_case1_2_ble33_b2b_oxiod.yaml) Arduino Nano 33 BLE Sense, OxIOD, back-to-back runtime.
+- [`nas_config_case1_3_portenta_m7_b2b_oxiod.yaml`](case_study_configs/nas_config_case1_3_portenta_m7_b2b_oxiod.yaml) Portenta H7 CM7, OxIOD, back-to-back runtime.
+- [`nas_config_case1_4_portenta_m4_b2b_oxiod.yaml`](case_study_configs/nas_config_case1_4_portenta_m4_b2b_oxiod.yaml) Portenta H7 CM4, OxIOD, back-to-back runtime.
+- [`nas_config_case1_5_stm32_b2b_oxiod.yaml`](case_study_configs/nas_config_case1_5_stm32_b2b_oxiod.yaml) NUCLEO-N657X0-Q, OxIOD, back-to-back runtime.
+
+The desktop proxy examples for the same OxIOD path are [`nas_config_flops_rmse.yaml`](nas_config_flops_rmse.yaml) and [`nas_config_memory_proxy.yaml`](nas_config_memory_proxy.yaml).
+Those proxy configs do not require hardware.
+
+### Case Study 1 STM32 Runtime Schedule Comparison
+
+A NUCLEO-N657X0-Q board is required.
+A HIL harness is required for energy-measured runs.
+
+- [`nas_config_case2_1_stm32_b2b_oxiod.yaml`](case_study_configs/nas_config_case2_1_stm32_b2b_oxiod.yaml) NUCLEO-N657X0-Q, OxIOD, continuous back-to-back runtime.
+- [`nas_config_case2_2_stm32_cadenced_oxiod.yaml`](case_study_configs/nas_config_case2_2_stm32_cadenced_oxiod.yaml) NUCLEO-N657X0-Q, OxIOD, cadenced sensing-window runtime with cadence-aware feasibility constraints.
+
+### Case Study 3 UrbanSound8K DS-CNN Application Scoring
+
+A target board and HIL harness are required as shipped.
+For hardware-free training, use these configs as templates with HIL and measured scoring disabled.
+
+- [`nas_config_case3_1_portenta_m7_audio.yaml`](case_study_configs/nas_config_case3_1_portenta_m7_audio.yaml) Portenta H7 CM7, UrbanSound8K cached log-mel inputs, DS-CNN family.
+- [`nas_config_case3_2_stm32_audio.yaml`](case_study_configs/nas_config_case3_2_stm32_audio.yaml) NUCLEO-N657X0-Q, UrbanSound8K cached log-mel inputs, DS-CNN family.
+
 
 ## Where To Look Next
 

@@ -21,7 +21,7 @@ For installation and runnable workflows, see [Getting started](GETTING_STARTED.m
 | Goal | Start Here | Hardware Requirement |
 |------|------------|----------------------|
 | Run or modify NAS/training orchestration | [`nas_model_client.py`](nas_model_client.py) and [`crest/runtime_bootstrap.py`](crest/runtime_bootstrap.py) | No hardware required when `device.hil: false` |
-| Add a proposer or inspect the shared optimizer flow | [Optimizer system guide](crest/optimizers/README.md) and [`crest/interfaces/README.md`](crest/interfaces/README.md) | No hardware required for contract checks |
+| Add a proposer or inspect the shared optimizer flow | [Optimizer system guide](crest/optimizers/README.md) and [shared contracts](#shared-contracts) | No hardware required for contract checks |
 | Modify LLM candidate generation | [`crest/optimizers/llm/`](crest/optimizers/llm) and [optimizer config](config/README.md#optimizer) | No hardware required for fake-provider tests |
 | Run or modify HIL server behavior | [`hil_server.py`](hil_server.py) and [`crest/hil/runtime.py`](crest/hil/runtime.py) | Development board required for execution. HIL harness required for energy measurement |
 | Add a dataset | [`crest/datasets/README.md`](crest/datasets/README.md) | No hardware required for adapter development |
@@ -40,23 +40,69 @@ For installation and runnable workflows, see [Getting started](GETTING_STARTED.m
 | Area | Responsibility |
 | --- | --- |
 | [`crest/component_selection.py`](crest/component_selection.py), [`registry.py`](crest/registry.py), [`builtin_components.py`](crest/builtin_components.py) | Resolve configured names and register components |
-| [`crest/interfaces/`](crest/interfaces/README.md), [`pipeline_types.py`](crest/pipeline_types.py) | Component contracts and shared records |
+| [`crest/interfaces/`](crest/interfaces), [`pipeline_types.py`](crest/pipeline_types.py) | Component contracts and shared records |
 | [`crest/datasets/`](crest/datasets/README.md) | Data loading, splits, and calibration data |
 | [`crest/tasks/`](crest/tasks/README.md) | Training, evaluation, and task metrics |
 | [`crest/model_families/`](crest/model_families/README.md) | Search spaces, model construction, and export variants |
 | [`crest/optimizers/`](crest/optimizers/README.md) | Candidate proposals and shared round execution |
-| [`crest/search/`](crest/search/README.md) | Progress reporting and training randomness |
-| [`crest/hil/`](crest/hil/README.md), [`microcontrollers/`](crest/microcontrollers/README.md) | Hardware requests, measurement, and board backends |
+| [`crest/search/`](crest/optimizers/README.md#progress-and-reproducibility) | Progress reporting and training randomness |
+| [`crest/hil/`](#hil-request-and-serial-helpers), [`microcontrollers/`](crest/microcontrollers/README.md) | Hardware requests, measurement, and board backends |
 | [`crest/model.py`](crest/model.py), [`runtime_bootstrap.py`](crest/runtime_bootstrap.py) | Configuration, scoring, and component initialization |
 | [`crest/pareto_replay.py`](crest/pareto_replay.py) | Candidate selection and request reconstruction for Pareto HIL replay |
 | [`crest/devices.py`](crest/devices.py), [`hardware.py`](crest/hardware.py) | Device contracts and shared hardware utilities |
 
-## Shared Abstractions
+## Shared Contracts
 
-The four component interfaces separate data loading (`DatasetABC`), task behavior (`TaskABC`), model construction (`ModelFamilyABC`), and proposal strategy (`OptimizerABC`).
-The [interface guide](crest/interfaces/README.md) lists required hooks, optional defaults, and implementation examples.
+The `crest` package implements the reusable pipeline behind the source entry points.
+Use canonical imports such as `from crest.pipeline_types import ModelBuildContext`.
+Dependencies are declared in [`../pyproject.toml`](../pyproject.toml).
+Runtime modules may require TensorFlow, Optuna, serial libraries, or board toolchains.
 
-[`pipeline_types.py`](crest/pipeline_types.py) defines the records they exchange, including dataset splits, target specifications, model contexts, evaluation results, trial history, budgets, and candidate proposals.
+| Module | Contract | Implementation guide |
+| --- | --- | --- |
+| [`dataset.py`](crest/interfaces/dataset.py) | `DatasetABC` loads and validates data and supplies calibration inputs | [Datasets](crest/datasets/README.md) |
+| [`task.py`](crest/interfaces/task.py) | `TaskABC` owns training, evaluation, and metrics | [Tasks](crest/tasks/README.md) |
+| [`model_family.py`](crest/interfaces/model_family.py) | `ModelFamilyABC` samples, builds, and exports architectures | [Model families](crest/model_families/README.md) |
+| [`optimizer.py`](crest/interfaces/optimizer.py) | `OptimizerABC` owns proposal rounds and resume identity | [Optimizers](crest/optimizers/README.md) |
+
+Import contracts through the package exports.
+
+```python
+from crest.interfaces import DatasetABC, TaskABC, ModelFamilyABC, OptimizerABC
+from crest.interfaces import OptimizerBudgetExhausted
+```
+
+`OptimizerBudgetExhausted` signals that an optimizer-owned budget cannot fund another round.
+Shared input/output records live in [`crest/pipeline_types.py`](crest/pipeline_types.py), including splits, target specifications, model contexts, evaluation results, history, budgets, and proposals.
+The contracts can be inspected without loading TensorFlow or device backends.
+Method docstrings specify required overrides and default behavior.
+
+### Required Hooks And Defaults
+
+| Contract | Required methods |
+| --- | --- |
+| `DatasetABC` | `load` |
+| `TaskABC` | `build_target_spec`, `metric_contract`, `compile_model`, `build_fit_plan`, `evaluate`, `evaluate_predictions` |
+| `ModelFamilyABC` | `sample_hparams`, `build_model` |
+| `OptimizerABC` | `propose_round` |
+
+Implement abstract methods first and override defaults only when needed.
+Some execution modes require optional hooks.
+An explicit proposer needs the model family's `trial_search_space` declaration, while native sampling can work without it.
+
+### Inspect An Implementation's Obligations
+
+This example needs no dataset, model, provider, or TensorFlow import.
+
+```python
+from crest.interfaces import ModelFamilyABC
+
+print(sorted(ModelFamilyABC.__abstractmethods__))
+# ['build_model', 'sample_hparams']
+```
+
+A subclass with an unimplemented abstract method cannot be instantiated.
+Implementing those methods alone does not establish compatibility with a selected task, dataset, or deployment mode.
 
 ## End-to-End Flow
 
@@ -91,22 +137,18 @@ The main config knobs are as follows.
 
 See [`config/README.md`](config/README.md) for the current shipped config shape.
 
-## Candidate Generation
-
-`optimizer.type` defaults to `optuna`.
-`llm_generator` proposes explicit candidates.
-Both use the shared objective, feasibility rules, and evaluation budget.
-The runner validates complete explicit batches before queueing them.
-
-Use the [optimizer guide](crest/optimizers/README.md) for the proposal contract, [configuration reference](config/README.md#optimizer) for settings and resume rules, and [LLM guide](crest/optimizers/llm/README.md) for provider setup and examples.
-
 ## Registration Model
 
 Registration is explicit.
-Placing a file in a component directory does not make it available through configuration.
+Adding a Python file does not make a component selectable.
 Built-ins are registered in [`crest/builtin_components.py`](crest/builtin_components.py).
-Register custom components under stable names before loading configuration.
-Each component guide below shows the registration and configuration steps.
+Register custom classes under stable keys in [`crest/registry.py`](crest/registry.py) before loading configuration.
+Select them through `dataset.name`, `task.name`, `model.family`, or `optimizer.type`.
+Follow the matching component guide's extension steps and completion checks, including small inputs and invalid configurations before a full search.
+
+Native sampling and explicit LLM proposals use the same objective, feasibility rules, and evaluation budget.
+The runner validates complete explicit batches before queueing them.
+See the [optimizer guide](crest/optimizers/README.md) for the proposal contract and [LLM guide](crest/optimizers/llm/README.md) for provider examples.
 
 ## Shared Scoring And Trial Outputs
 
@@ -163,23 +205,36 @@ Contributor standards for new implementation work
   Hardware flows should expose non-hardware preflight checks for config, model construction, export, and generated requests.
 - Pin dependencies and explain additions in the relevant package documentation.
 
-### Add A New Model Family
+## Change An Interface
 
-Follow the [model-family guide](crest/model_families/README.md) for required hooks, registration, raw search-space declarations, a worked example, and completion checks.
-Model families own architecture and export variants.
-Hardware backends own staging, compilation, upload, and measurement.
+1. Read the method contract and all affected implementations before changing a hook.
+   Put shared records in [`crest/pipeline_types.py`](crest/pipeline_types.py) and keep interfaces independent of concrete implementations.
+2. Prefer a useful default when possible.
+   A new abstract hook requires every subclass, including third-party components, to implement it.
+3. Update module docstrings, implementations, component guides, and migration instructions together.
+   Preserve package exports in `crest/interfaces/__init__.py`.
+4. Run interface compatibility and affected component tests from the repository root.
+   Run the full suite when changing shared signatures or defaults.
 
-### Add A New Dataset
+### Completion Checks
 
-Follow the [dataset guide](crest/datasets/README.md) for normalized splits, calibration data, validation, registration, and a runnable adapter example.
+- Required hooks, return types, defaults, and failure behavior are documented.
+- Public imports resolve to the exported classes without initializing ML runtimes or concrete backends.
+- Existing implementations instantiate and have behavior covered by tests.
+- Intentional compatibility changes have an explicit migration path.
+- Examples, registration instructions, and links match the source layout.
 
-### Add A New Task
+```bash
+python -m pytest test/test_interfaces_package.py test/test_modularity_scaffolding.py
+```
 
-Follow the [task guide](crest/tasks/README.md) for target specifications, metric declarations, fitting, evaluation, and task-specific reporting.
+### Contract Troubleshooting
 
-### Add A New Microcontroller Or Hardware Backend
-
-Follow the [backend guide](crest/microcontrollers/README.md) for Arduino, STM32, and new-vendor bring-up, configuration, and hardware acceptance checks.
+- If an abstract class cannot instantiate, inspect `__abstractmethods__` for missing hooks.
+- If a component name is unknown, check registration and its config selector.
+  Importing a contract does not register implementations.
+- If importing contracts loads a runtime unexpectedly, keep framework types under `TYPE_CHECKING` and runtime-dependent imports inside the default hook that needs them.
+- If a component works alone but fails in a study, inspect shared payloads and the selected task, family, and optimizer requirements.
 
 ## NAS Policy And HIL Details
 
@@ -190,8 +245,10 @@ For the current scoring, pruning, and runtime knobs, use the following guides.
 - [`crest/model.py`](crest/model.py) for score/prune/feasibility evaluation and HIL request construction
 - [`hil_server.py`](hil_server.py) for the HIL-side request handling and backend failure shaping
 
-## HIL import paths
+## HIL Request And Serial Helpers
 
-HIL helpers live in `crest.hil`.
+HIL helpers connect runtime configuration to the hardware controller and provide the DUT/harness handshake used by device backends.
+[`crest/hil/runtime.py`](crest/hil/runtime.py) builds measurement requests and normalizes metrics.
+[`crest/hil/protocol.py`](crest/hil/protocol.py) parses serial messages and synchronizes the DUT and harness.
 Import serial helpers from `crest.hil.protocol` and request/metric helpers from `crest.hil.runtime`.
 Start the server with `python src/hil_server.py`.

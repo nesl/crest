@@ -34,8 +34,18 @@ The key above is a placeholder.
 Keep real credentials out of configuration files and source control.
 Live calls may incur charges, and the experiment can train models or access hardware according to its configuration.
 
-See the [provider guide](providers/README.md) for other endpoints, credential entry without shell-history exposure, and [pricing catalogs and spending caps](providers/README.md#configure-pricing-and-a-spending-cap).
-For a local example that makes no provider calls and performs no training or hardware evaluation, use the [generation examples](EXAMPLES.md).
+See [LLM settings](../../../config/README.md#llm-settings) for endpoint choices and [pricing catalogs and spending caps](../../../config/README.md#configure-pricing-and-a-spending-cap).
+For the OpenAI Responses [pricing example](../../../config/README.md#configure-pricing-and-a-spending-cap), enter credentials without shell-history exposure using the following zsh commands.
+Use the environment-variable name configured by `api_key_env`.
+
+```zsh
+read -rs 'OPENAI_API_KEY?API key: '; printf '\n'
+export OPENAI_API_KEY
+python src/nas_model_client.py --config /path/to/experiment.yaml --study-name llm-live
+unset OPENAI_API_KEY
+```
+
+For a local example that makes no provider calls and performs no training or hardware evaluation, use the [offline generation example](#try-generation-without-running-a-campaign).
 
 Bounded history is the default.
 Accumulated memory is enabled by default.
@@ -74,7 +84,7 @@ They do not trigger random fallback.
 Inspect `rejected_candidates.jsonl` and request/response pairs for content errors before changing the experiment contract.
 Fixed warm-up attempts run before provider calls, consume trial budget, and resume from saved provenance.
 Keep their file unchanged.
-See [budgets and resume](../README.md#budgets-and-resume) for interrupted trials and the [pricing guide](providers/README.md#configure-pricing-and-a-spending-cap) for provider caps.
+See [budgets and resume](../README.md#budgets-and-resume) for interrupted trials and the [pricing guide](../../../config/README.md#configure-pricing-and-a-spending-cap) for provider caps.
 Retain `spend_state.json` on resume because uncertain usage keeps its reservation, and insufficient funds stop generation without fallback.
 The dollar cap may increase, but saved tariffs and token bounds must match.
 
@@ -90,7 +100,7 @@ Python assigns local/exploration quotas and coverage targets.
 Local candidates name eligible historical parents.
 Exploration has no parent.
 Raw and decoded network duplicates are rejected.
-See the [configuration and response example](EXAMPLES.md#full-history-audio-ds-cnn) for parent rules and response semantics.
+See the [configuration and response example](#full-history-audio-ds-cnn) for parent rules and response semantics.
 
 ## Inspect a run
 
@@ -119,15 +129,15 @@ Each ledger directory requires a single writer.
 | Location | Responsibility |
 | --- | --- |
 | [`component.py`](component.py) | Implements `OptimizerABC`. Coordinates lifecycle, warm-ups, and proposal rounds |
-| [`providers/`](providers/README.md) | Completion interface, adapters, and provider setup |
-| [`prompting/`](prompting/README.md) | Request construction, evidence selection, and phase guidance |
+| [`providers/`](providers/) | Completion interface, adapters, and provider setup |
+| [`prompting/`](prompting/) | Request construction, evidence selection, and phase guidance |
 | [`generation.py`](generation.py), [`schemas.py`](schemas.py) | Bounded/full request loops. Candidate, rationale, quota, and duplicate validation |
 | [`memory.py`](memory.py), [`full_history.py`](full_history.py) | Summary updates. Exact evidence, decoded identities, coverage, and parent selection |
 | [`config.py`](config.py), [`component.py`](component.py) | Settings validation and deterministic resume identity |
 | [`ledger.py`](ledger.py), [`spending.py`](spending.py) | Proposal provenance and provider spending accounting |
 
 1. Choose the responsible module.
-   Follow the provider or prompting guide for their extension procedures.
+   Follow the [adapter](#add-an-adapter) or [prompt](#extend-the-prompts) extension procedure below.
    Model parameters belong in the family's search descriptor, not a provider-specific schema.
 2. Preserve local candidate validation and resume identity.
    Update the prompt version or optimizer identity when the experiment contract changes.
@@ -138,3 +148,258 @@ Each ledger directory requires a single writer.
    ```
 
 A change is done when the generation example works, focused tests cover its behavior, proposal evidence remains auditable, and the shared runner retains ownership of queueing and evaluation.
+
+## Try generation without running a campaign
+
+From the repository root, in an environment with CREST's dependencies installed, run the following example.
+It validates two configured candidates and writes a temporary ledger.
+It does not start the runner, train a model, or access hardware.
+
+```sh
+PYTHONPATH=src python - <<'PY'
+import random
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from crest.optimizers.llm import (
+    FakeProvider, LLMLedger, PromptContext, SearchParam,
+    SearchSpaceDescriptor, generate_llm_batch,
+)
+
+space = SearchSpaceDescriptor((
+    SearchParam("width", "int", low=2, high=8),
+    SearchParam("mode", "categorical", choices=("small", "large")),
+))
+context = PromptContext(
+    study_name="llm-smoke",
+    model_family="example",
+    descriptor=space,
+    objective_summary="maximize measured accuracy",
+    attempted_trials=0,
+    feasible_completed_trials=0,
+    target_feasible_trials=2,
+    max_total_attempts=4,
+    batch_size=2,
+)
+provider = FakeProvider([{"candidates": [
+    {"width": 4, "mode": "small"},
+    {"width": 7, "mode": "large"},
+]}])
+with TemporaryDirectory() as directory:
+    ledger = LLMLedger(Path(directory) / "llm_optimizer")
+    proposals = generate_llm_batch(
+        (), provider, context, ledger,
+        prompt_version="v1", max_repair_attempts=0,
+        rng=random.Random(0),
+    )
+    assert [dict(p.params) for p in proposals] == [
+        {"width": 4, "mode": "small"},
+        {"width": 7, "mode": "large"},
+    ]
+    assert all(p.provenance["proposal_source"] == "llm" for p in proposals)
+    print([dict(p.params) for p in proposals])
+    print(sorted(path.name for path in ledger.root.iterdir()))
+PY
+```
+
+The expected result is two raw mappings matching the assertions, followed by the ledger filenames.
+No trials are created.
+
+To inspect the files afterward, replace the temporary directory with a dedicated persistent output path.
+Each ledger directory must have a single writer.
+
+## Configure a campaign
+
+Keep an existing complete campaign configuration for the chosen dataset, model family, objective, and runtime.
+Replace its optimizer block with this pattern, substituting legal raw parameters for that family's descriptor.
+
+```yaml
+optimizer:
+  type: llm_generator
+  llm:
+    provider: fake
+    batch_size: 2
+    max_repair_attempts: 1
+    random_seed: 0
+    recent_trial_window: 10
+    anchor_count: 5
+    semantic_context: true
+    require_rationale: false
+    memory:
+      enabled: false
+    responses:
+      - candidates:
+          - {width: 4, mode: small}
+          - {width: 7, mode: large}
+```
+
+This is an optimizer fragment, not a complete campaign configuration.
+`width` and `mode` belong only to the smoke example above.
+Use the normal campaign entry point after configuring actual parameters and evaluation resources.
+Selecting `fake` prevents provider network calls and does **not** disable training, dataset access, deployment, or hardware evaluation in the runner.
+
+Launch the configured campaign from the repository root.
+
+```sh
+python3 src/nas_model_client.py --config /path/to/config.yaml --study-name llm_fake_smoke
+```
+
+Fixtures are consumed once per provider request, including repair requests, and must cover the intended run.
+Exhaustion raises an error and does not automatically trigger random fallback.
+Each fixture may be a JSON object or a string containing completion text, so strings such as `"not JSON"` can exercise repair behavior.
+
+For `require_rationale: true`, each candidate must instead have exactly this shape.
+
+```json
+{"candidates": [{"params": {"width": 4, "mode": "small"}, "rationale": "Test a smaller architecture first."}]}
+```
+
+Optional `warmup_params_file` points to a nonempty JSON list of raw parameter mappings, relative to the YAML file.
+Warm-ups run before provider calls.
+See the [configuration guide](../../../config/README.md) for warm-up and resume settings.
+
+## Full-history audio DS-CNN
+
+Merge this block into a complete `audio_dscnn` experiment.
+The existing dataset, score, deployment, training, and budget settings still apply.
+
+```yaml
+optimizer:
+  type: llm_generator
+  llm:
+    provider: openrouter
+    model: YOUR_PROVIDER_MODEL_ID
+    api_key_env: OPENROUTER_API_KEY
+    history_mode: full
+    require_rationale: true
+    batch_size: 1
+    max_repair_attempts: 1
+    max_refill_attempts: 2
+    memory:
+      enabled: false
+```
+
+A valid response for an initial exploration slot, with no extra runtime search fields active, is shown below.
+
+```json
+{
+  "candidates": [{
+    "params": {
+      "base_channels": 8,
+      "num_blocks": 2,
+      "kernel_time": 3,
+      "kernel_freq": 3,
+      "stride_schedule": "light",
+      "channel_growth": 1.0,
+      "max_channels": 64,
+      "depth_multiplier": 1,
+      "pointwise_scale": 1.0,
+      "dropout_rate": 0.0,
+      "norm_flag": true,
+      "dense_units": 0,
+      "global_pool_type": "avg",
+      "activation": "relu"
+    },
+    "rationale": "Measure a compact baseline in the assigned coverage cell.",
+    "intent": "exploration",
+    "parent_trial": null
+  }]
+}
+```
+
+The initial prompt assigns exploration.
+Later prompts can assign a different coverage cell, so this response is not a fixture for every round.
+Supply every active descriptor field, including runtime fields when enabled.
+For a local slot, set `intent` to `local` and `parent_trial` to an integer from the prompt's eligible parents, and supply a new candidate with complete parameters.
+
+Accepted proposals enter the normal trial queue and evaluation path.
+The example response is valid only when it matches the prompt's assigned coverage cell and active descriptor.
+See [full-history generation](#full-history-generation) for duplicate, repair, and refill behavior.
+
+## Completion providers
+
+Providers turn prompts into normalized completion responses.
+See [LLM settings](../../../config/README.md#llm-settings) for endpoints, authentication defaults, JSON mode, and retry settings.
+
+| File | Responsibility |
+| --- | --- |
+| `providers/provider.py` | Public imports and `build_provider` factory |
+| `providers/records.py` | Request/response records, `LLMProvider` protocol, errors, and `FakeProvider` |
+| `providers/chat.py`, `providers/responses.py` | Chat Completions and Responses adapters |
+| `providers/transport.py` | Authentication, retries, and per-attempt spend accounting |
+| `providers/utils.py` | JSON-mode defaults and pricing lookup |
+| `providers/pricing.json` | Bundled conservative accounting rates |
+
+
+### Try the provider interface offline
+
+```python
+from crest.optimizers.llm.providers.provider import FakeProvider, LLMRequest
+
+provider = FakeProvider([{"candidates": [{"width": 4}]}])
+response = provider.complete_json(LLMRequest(
+    system_prompt="Return candidate parameters as JSON.",
+    user_prompt="Propose a width.",
+    prompt_version="v1",
+))
+```
+
+The [offline generation example](#try-generation-without-running-a-campaign) also exercises candidate validation and ledger output.
+
+### Add an adapter
+
+1. Implement `LLMProvider.complete_json`, returning a normalized `LLMResponse`.
+   Live adapters can reuse `HTTPProvider` in `providers/transport.py` for authentication, retries, and accounting.
+2. Add factory selection in `providers/provider.py` and validation in `config.py`.
+3. Distinguish transport/authentication failures from repairable response errors.
+   Keep credentials out of saved request and response evidence.
+4. Test valid and malformed responses, retries, and spending limits with mocked transport.
+   From the repository root, run the following checks.
+
+   ```sh
+   python -m pytest -q test/test_llm_openai_provider.py test/test_llm_responses_provider.py test/test_llm_provider_defaults.py test/test_llm_pricing.py test/test_llm_spending.py
+   ```
+
+An adapter is ready when configuration selects it, the checks pass, and generation still validates candidates before returning them to the runner.
+
+## Prompt construction and evidence
+
+This package turns search snapshots into provider-neutral requests.
+It performs no provider calls, study writes, training, or hardware evaluation.
+The [optimizer component](component.py) supplies context.
+[generation](generation.py) sends requests and validates responses.
+
+| File | Responsibility |
+| --- | --- |
+| `prompting/prompt_builder.py` | `PromptContext` and `build_candidate_request`. Assemble declarations, evidence, objectives, budgets, and repair feedback. |
+| `prompting/history.py` | Select recent trial evidence and best-trial anchors from snapshots. |
+| `prompting/objective_renderer.py` | Explain supported scoring expressions using known context. Does not calculate measured scores. |
+| `prompting/phase_policy.py` | Derive exploration/refinement guidance from trial budgets. Does not enforce stopping conditions. |
+
+### Use the request builder
+
+The [offline generation example](#try-generation-without-running-a-campaign) has a complete generation example.
+Prompt construction can also be exercised directly using that example's `PromptContext`.
+
+```python
+from crest.optimizers.llm.prompting.prompt_builder import build_candidate_request
+
+request = build_candidate_request(context, prompt_version="v1")
+print(request.user_prompt)
+```
+
+### Extend the prompts
+
+1. Change the module responsible for the evidence or text you need.
+   Keep provider transport details out of request construction.
+2. Preserve raw parameter declarations and distinguish observed trial evidence from suggestions or explanations.
+   Do not introduce credentials into context.
+3. Update prompt/optimizer identity when the experiment contract changes, so incompatible settings cannot silently resume an existing study.
+4. Add focused examples for the new behavior and missing or invalid evidence.
+
+A change is complete when request construction remains deterministic, evidence selection tests pass, and generation still validates all returned candidates.
+From the repository root, run the following checks.
+
+```sh
+python -m pytest -q test/test_llm_provider_prompt_ledger.py test/test_llm_history.py test/test_llm_anchors.py test/test_llm_objective_renderer.py test/test_llm_semantic_context.py
+```
