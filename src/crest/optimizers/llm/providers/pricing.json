@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "rates": [
+    {
+      "provider": "openai_compatible",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-6-luna",
+      "service_tier": "default",
+      "currency": "USD",
+      "input_usd_per_million_tokens": 0.25,
+      "output_usd_per_million_tokens": 0.75,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-luna",
+      "verified_on": "2026-11-07",
+      "accounting_notes": "Conservative standard global rates covering cache writes and long contexts: input 0.125 x 2; output 0.50 x 1.5 USD per million tokens. Applied to every request; discounts are not deducted. Regional premiums and other service tiers are excluded."
+    },
+    {
+      "provider": "openai_responses",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-6-luna",
+      "service_tier": "default",
+      "currency": "USD",
+      "input_usd_per_million_tokens": 0.25,
+      "output_usd_per_million_tokens": 0.75,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-luna",
+      "verified_on": "2026-11-07",
+      "accounting_notes": "Conservative standard global rates covering cache writes and long contexts: input 0.125 x 2; output 0.50 x 1.5 USD per million tokens. Applied to every request; discounts are not deducted. Regional premiums and other service tiers are excluded."
+    }
+  ]
+}

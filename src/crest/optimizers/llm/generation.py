@@ -183,10 +183,7 @@ def generate_llm_batch(
         try:
             response = provider.complete_json(request)
         except Exception as exc:
-            ledger.write_response(
-                request_id,
-                {"error_type": type(exc).__name__, "error": str(exc)},
-            )
+            ledger.write_provider_error(request_id, exc)
             ledger.record_event(
                 {"event": "provider_error", "request_id": request_id, "repair_attempt": attempt}
             )

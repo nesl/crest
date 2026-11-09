@@ -15,7 +15,7 @@ sends requests and validates responses.
 
 ## Use the request builder
 
-The [parent guide](../README.md#try-generation-without-running-a-campaign) has a
+The [examples guide](../EXAMPLES.md#try-generation-without-running-a-campaign) has a
 complete generation example. Prompt construction can also be exercised directly
 using that example's `PromptContext`:
 

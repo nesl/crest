@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 from functools import partial
@@ -21,6 +23,53 @@ from ..history import to_plain
 from crest.optimizers.llm.providers.provider import LLMRequest, LLMResponse
 
 _json_safe = partial(to_plain, nonfinite_to_none=True)
+
+
+def durable_write(path: Path, body: bytes) -> None:
+    """Replace a file atomically and sync its contents and containing directory.
+
+    The destination directory must already exist. Filesystem errors propagate
+    to the caller, and an unfinished temporary file is removed on failure.
+    """
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}-",
+                                         suffix=".tmp", delete=False) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(body)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def save_wire_request(root: Path, payload: dict[str, Any]) -> dict[str, str]:
+    """Persist the exact serialized request body and return its audit reference.
+
+    Existing content must match the hash-named artifact. Serialization and
+    filesystem failures propagate so callers can stop before a provider attempt.
+    """
+    body = json.dumps(payload, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    digest = hashlib.sha256(body).hexdigest()
+    artifact_dir = root / "wire_requests"
+    artifact = artifact_dir / f"{digest}.json"
+    artifact_dir.mkdir(exist_ok=True)
+    if artifact.exists():
+        if artifact.read_bytes() != body:
+            raise ValueError("Saved request body does not match its hash.")
+    else:
+        durable_write(artifact, body)
+    return {
+        "wire_payload_sha256": digest,
+        "wire_payload_path": str(artifact.relative_to(root)),
+    }
 
 
 class LLMLedger:
@@ -190,6 +239,24 @@ class LLMLedger:
             self.requests_dir / f"{stem}.response.json",
             {**response_payload, "response_hash": response_hash},
         )
+
+    def write_provider_error(self, request_id: int, error: Exception) -> None:
+        """Persist a provider failure and its available credential-free evidence.
+
+        Parameters
+        ----------
+        request_id : int
+            Request sequence number associated with the provider failure.
+        error : Exception
+            Failure optionally carrying raw response, request body, usage, and
+            spending evidence. Arbitrary attributes such as HTTP headers are
+            deliberately excluded.
+        """
+        payload = {"error_type": type(error).__name__, "error": str(error)}
+        for name in ("raw_response", "wire_payload", "usage", "spending"):
+            if hasattr(error, name):
+                payload[name] = getattr(error, name)
+        self.write_response(request_id, payload)
 
     def record_prompt_context(self, context: dict[str, Any]) -> None:
         """Append complete prompt context supplied for a request.

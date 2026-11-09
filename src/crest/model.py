@@ -2444,6 +2444,15 @@ def load_config(
         training,
         normalized_device_name,
     )
+    # Custom tariffs travel with the experiment YAML, independent of launch cwd.
+    raw_optimizer = config.get("optimizer", {})
+    raw_llm = raw_optimizer.get("llm", {}) if isinstance(raw_optimizer, dict) else {}
+    pricing_file = raw_llm.get("pricing_file") if isinstance(raw_llm, dict) else None
+    if isinstance(pricing_file, str) and pricing_file.strip():
+        pricing_path = Path(pricing_file).expanduser()
+        if not pricing_path.is_absolute():
+            pricing_path = cfg_path.resolve().parent / pricing_path
+        raw_llm["pricing_file"] = str(pricing_path.resolve())
     config.optimizer = _normalize_optimizer_config(config)
     if config.optimizer.type == "llm_generator":
         # Fixed warm-up candidates belong to the experiment config. Resolve
