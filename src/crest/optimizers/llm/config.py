@@ -3,9 +3,9 @@
 """Normalize and validate the LLM optimizer configuration before execution.
 
 This boundary supplies defaults used by configuration loading and the optimizer
-component, without constructing clients or looking up credentials. The supported
-configuration selects fake or live providers, bounded history, and disabled memory;
-unsupported policies fail here rather than silently changing proposal behavior."""
+component, without constructing clients or looking up credentials. It validates
+provider settings and combinations of bounded/full history and accumulated
+memory; unsupported policies fail before proposal generation."""
 
 import math
 from urllib.parse import urlsplit
@@ -87,19 +87,32 @@ def normalize_llm_config(optimizer_config) -> Dict:
     if not isinstance(raw_semantic_context, bool):
         raise ValueError("optimizer.llm.semantic_context must be a boolean.")
     llm.semantic_context = raw_semantic_context
+    from .memory import MemoryConfig
+    from dataclasses import asdict
     raw_memory = llm.get("memory", {})
     if not isinstance(raw_memory, (dict, Dict)):
         raise ValueError("optimizer.llm.memory must be a mapping")
-    if raw_memory.get("enabled", False):
-        raise ValueError("Persistent memory is not available in the bounded proposer.")
-    # Preserve the disabled-memory identity when advanced policies are added.
-    memory_defaults = dict(enabled=False, start_after_trials=10, interval_trials=5,
-                           max_findings=12, max_chars=6000, max_pending_trials=100, lag_trials=0)
-    memory_defaults.update(raw_memory)
-    llm.memory = Dict(memory_defaults)
-    if llm.get("history_mode", "bounded") != "bounded":
-        raise ValueError("Only bounded history is available.")
-    if "max_refill_attempts" in llm:
+    llm.memory = Dict(asdict(MemoryConfig.from_config(raw_memory)))
+
+    history_mode = llm.get("history_mode", "bounded")
+    if not isinstance(history_mode, str) or history_mode not in {"bounded", "full"}:
+        raise ValueError("optimizer.llm.history_mode must be bounded or full.")
+    # New policy settings are opt-in so existing normalized identities stay stable.
+    if history_mode == "full":
+        llm.history_mode = history_mode
+        if llm.memory.enabled:
+            raise ValueError("Full history requires optimizer.llm.memory.enabled=false.")
+        if not llm.require_rationale:
+            raise ValueError("Full history requires optimizer.llm.require_rationale=true.")
+        if llm.batch_size > 5:
+            raise ValueError("Full-history allocation supports batch sizes 1 through 5.")
+        refill = llm.get("max_refill_attempts", 2)
+        if type(refill) is not int or not 0 <= refill <= 2:
+            raise ValueError("optimizer.llm.max_refill_attempts must be an integer from 0 through 2.")
+        if llm.max_repair_attempts > 1:
+            raise ValueError("Full history requires max_repair_attempts <= 1.")
+        llm.max_refill_attempts = refill
+    elif "max_refill_attempts" in llm:
         raise ValueError("max_refill_attempts requires history_mode=full.")
 
     prompt_version = str(llm.get("prompt_version", "v1")).strip()

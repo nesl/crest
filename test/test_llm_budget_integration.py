@@ -151,6 +151,52 @@ def test_warmup_resume_is_free_and_first_paid_prompt_keeps_all_fifteen_outcomes(
     assert len(state['reservations']) == 1
 
 
+def test_memory_and_candidate_repairs_share_cap_and_resume_cannot_reset_it(campaign, tmp_path):
+    """All repair calls are charged before a resumed campaign stops at its cap."""
+    client, storage = campaign
+    paid_campaign(client, tmp_path, memory=True)
+    transport = Mock(side_effect=[
+        completion({}), completion({'updates': [], 'retire': []}),
+        completion({}), completion({'candidates': [{'width': 8}]}),
+    ])
+    with patch.dict(os.environ, {'CREST_TEST_ONLY_API_KEY': 'test-only'}), patch(
+            'crest.optimizers.llm.component.build_provider', side_effect=provider_factory(transport)):
+        study = client.run_nas('campaign', storage=storage)
+        assert len(study.trials) == 16
+        assert transport.call_count == 4
+        state_path = ledger_root(client) / 'spend_state.json'
+        before = json.loads(state_path.read_text())
+        assert float(before['charged_usd']) == pytest.approx(3.6)
+        assert len(before['reservations']) == 4
+        assert all(record['status'] == 'settled' for record in before['reservations'].values())
+        prompts = [json.loads(call.args[0].data)['messages'][1]['content']
+                   for call in transport.call_args_list]
+        memory_prompt, memory_repair, proposal, proposal_repair = map(json.loads, prompts)
+        assert memory_prompt['new_trials'] == memory_repair['new_trials']
+        assert memory_repair['repair_feedback']
+        assert proposal_repair['repair_feedback']
+        assert [trial['number'] for trial in proposal['recent_trials']] == list(range(15))
+        assert len(list((ledger_root(client) / 'memory' / 'requests').glob('*.response.json'))) == 2
+        assert len(list((ledger_root(client) / 'requests').glob('*.response.json'))) == 2
+
+        client.config.training.max_total_trials = 17
+        for _ in range(2):
+            resumed = client.run_nas('campaign', storage=storage)
+            assert resumed.trials == study.trials
+            assert transport.call_count == 4
+            assert json.loads(state_path.read_text()) == before
+        del client.config.optimizer.llm['max_usd']
+        try:
+            with pytest.raises(ValueError, match='retain max_usd'):
+                client.run_nas('campaign', storage=storage)
+        finally:
+            client.config.optimizer.llm.max_usd = 4.0
+        assert optuna.load_study(study_name='campaign', storage=storage).trials == study.trials
+        assert transport.call_count == 4
+        assert json.loads(state_path.read_text()) == before
+
+    assert all(trial.user_attrs[PROPOSAL_ATTR]['proposal_source'] != 'random_fallback'
+               for trial in resumed.trials)
 
 
 def test_smoke_cap_exhaustion_stops_before_http_and_restores_temporary_config(campaign, tmp_path):

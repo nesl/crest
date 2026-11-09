@@ -40,24 +40,42 @@ entry without shell-history exposure, and [pricing catalogs and spending caps](p
 that makes no provider calls and performs no training or hardware evaluation,
 use the [generation examples](EXAMPLES.md).
 
-History is bounded and `memory.enabled` must be false. The
-[configuration guide](../../../config/README.md) covers warm-ups, rationale
-requirements, budgets, and resume rules. Changing identity-bearing settings,
+Bounded history is the default. Accumulated memory is enabled by default; the
+example disables it. Full-history mode is available for `audio_dscnn` with its
+required rationale and policy settings. See the
+[configuration guide](../../../config/README.md) for evidence policies, warm-ups,
+rationale requirements, budgets, and resume rules. Changing identity-bearing settings,
 including the rationale contract, requires a new study.
 
-## How generation works
+## How bounded generation works
 
 1. The component proposes configured warm-ups first, then builds a request from
    recent history, best-trial anchors, the search space, objective, and budget.
 2. A provider returns candidates. Local validation checks raw parameter names,
    values, duplicates, and any required rationales.
-3. Invalid content can trigger bounded repair requests, followed by a random
-   fallback if repairs are exhausted. Other provider failures propagate.
+3. A partially accepted bounded-history batch returns immediately without
+   refilling rejected slots. If none are accepted, content errors can trigger
+   bounded repairs, then local random fallback. Transport failures propagate.
 4. The component returns validated proposals to the shared runner for queueing
    and evaluation. A valid proposal is not yet a feasible or successful trial.
 
 See the [shared optimizer guide](../README.md) for evaluation and lifecycle
 contracts, and the [component interfaces](../../interfaces/README.md) for APIs.
+
+## Full-history generation
+
+For `audio_dscnn`, `history_mode: full` supplies exact columnar evidence and
+network coverage instead of bounded summaries. It requires rationales, requires memory
+to be disabled, and supports batch sizes 1–5. Accepted entries are retained across up to
+`max_refill_attempts` refill calls (default 2); malformed responses use the
+separate shared repair allowance (at most 1). Exhaustion returns any retained
+subset, or attempts local random fallback when nothing was accepted.
+
+Python assigns local/exploration quotas and coverage targets. Local candidates
+name eligible historical parents; exploration has no parent. Raw and decoded
+network duplicates are rejected. See the
+[configuration and response example](EXAMPLES.md#full-history-audio-ds-cnn) for
+parent rules and response semantics.
 
 ## Inspect a run
 
@@ -81,8 +99,9 @@ Returned proposals alone do not establish that trials were queued or evaluated.
 | [`component.py`](component.py) | Implements `OptimizerABC`; coordinates lifecycle, warm-ups, and proposal rounds |
 | [`providers/`](providers/README.md) | Completion interface, adapters, and provider setup |
 | [`prompting/`](prompting/README.md) | Request construction, evidence selection, and phase guidance |
-| [`generation.py`](generation.py), [`schemas.py`](schemas.py) | Generation, local validation, repair, and fallback |
-| [`config.py`](config.py) | Settings defaults and validation |
+| [`generation.py`](generation.py), [`schemas.py`](schemas.py) | Bounded/full request loops; candidate, rationale, quota, and duplicate validation |
+| [`memory.py`](memory.py), [`full_history.py`](full_history.py) | Summary updates; exact evidence, decoded identities, coverage, and parent selection |
+| [`config.py`](config.py), [`component.py`](component.py) | Settings validation and deterministic resume identity |
 | [`ledger.py`](ledger.py), [`spending.py`](spending.py) | Proposal provenance and provider spending accounting |
 
 1. Choose the responsible module; follow the provider or prompting guide for

@@ -4,7 +4,7 @@
 
 LLMGeneratorOptimizer validates policy settings, establishes reproducibility
 identity, verifies fixed warm-up history, and converts runner snapshots into
-bounded prompt evidence. It returns ExplicitRound proposals; the shared runner
+policy-specific prompt evidence. It returns ExplicitRound proposals; the shared runner
 owns queue mutation, trial evaluation, budgets, and lifecycle persistence."""
 from __future__ import annotations
 
@@ -23,13 +23,8 @@ from .config import normalize_llm_config
 from .generation import generate_llm_batch
 from crest.optimizers.llm.prompting.history import build_best_trial_anchors, build_recent_trial_history
 from .ledger import LLMLedger
-import hashlib
-
-def digest(value):
-    """Hash canonical finite JSON evidence for fixed candidate identity."""
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
-
-from crest.optimizers.llm.prompting.prompt_builder import PromptContext
+from .memory import MEMORY_PROMPT_VERSION, ExperimentalMemory, MemoryConfig, digest
+from crest.optimizers.llm.prompting.prompt_builder import PromptContext, enrich_full_history
 from crest.optimizers.llm.providers.provider import build_provider
 
 
@@ -145,13 +140,19 @@ class LLMGeneratorOptimizer(OptimizerABC):
             "candidate_schema_version": 1,
             "semantic_context_version": SEMANTIC_CONTEXT_VERSION,
             "memory_schema_version": 1,
-            "memory_prompt_version": "memory-v3",
+            "memory_prompt_version": MEMORY_PROMPT_VERSION,
             "phase_policy_version": 2,
             "fallback_policy": {"type": "unique_random", "max_attempts": 100},
         })
         if llm["require_rationale"]:
             identity["require_rationale"] = True
             identity["candidate_schema_version"] = 2
+        if llm.get("history_mode") == "full":
+            identity.update(history_mode="full", candidate_schema_version=3,
+                            phase_policy_version=3, decoded_fingerprint_version=1,
+                            coverage_policy_version=3, coverage_target_per_cell=2,
+                            feedback_policy_version=4, unclassified_failure_max_attempts=2,
+                            max_refill_attempts=llm["max_refill_attempts"])
         if llm.get("max_output_tokens") is not None:
             identity["max_output_tokens"] = llm["max_output_tokens"]
             identity["output_token_parameter"] = llm["output_token_parameter"]
@@ -241,6 +242,8 @@ class LLMGeneratorOptimizer(OptimizerABC):
                 f"Required API key environment variable '{llm['api_key_env']}' is not set."
             )
         self.context = context
+        if llm.get("history_mode") == "full" and context.model_family_name != "audio_dscnn":
+            raise ValueError("Full-history decoded policy currently supports audio_dscnn only.")
         self.config = llm
         self.ledger = LLMLedger(Path(context.artifact_dir) / "llm_optimizer")
         spend_tracker = None
@@ -252,6 +255,9 @@ class LLMGeneratorOptimizer(OptimizerABC):
         self.provider = (build_provider(llm, spend_tracker=spend_tracker)
                          if spend_tracker is not None else build_provider(llm))
         self.rng = random.Random(llm["random_seed"])
+        memory_config = MemoryConfig.from_config(llm["memory"])
+        self.memory = (ExperimentalMemory(self.ledger.root / "memory", memory_config)
+                       if memory_config.enabled else None)
         self.semantic_context = _plain(context.semantic_context)
         if not llm["semantic_context"]:
             self.semantic_context = disabled_semantic_context()
@@ -325,8 +331,19 @@ class LLMGeneratorOptimizer(OptimizerABC):
             semantic_context=self.semantic_context,
             require_rationale=llm["require_rationale"],
         )
+        if llm.get("history_mode") == "full":
+            prompt = enrich_full_history(prompt, history)
+            self.ledger.record_event({"event": "full_history_policy", "phase": prompt.phase().name,
+                "attempted": budget.attempted_count, "allocation": prompt.allocation,
+                "coverage_goal_complete": prompt.coverage["goal_complete"],
+                "exploration_targets": list(prompt.exploration_targets)})
+        elif self.memory is not None:
+            prompt = self.memory.enrich(history, prompt, self.provider,
+                                        directions=context.objective_directions)
+        options = ({"max_refill_attempts": llm["max_refill_attempts"]}
+                   if llm.get("history_mode") == "full" else {})
         return ExplicitRound(generate_llm_batch(
             history, self.provider, prompt, self.ledger,
             prompt_version=llm["prompt_version"],
-            max_repair_attempts=llm["max_repair_attempts"], rng=self.rng,
+            max_repair_attempts=llm["max_repair_attempts"], rng=self.rng, **options,
         ))

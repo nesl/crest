@@ -61,8 +61,7 @@ data/urbansound8k/
 *.gif
 *.pdf
 *.png
-!assets/
-!assets/*.png
+!assets/crest_stack_diagram.png
 *.tflite
 *.xlsx
 *.zip
