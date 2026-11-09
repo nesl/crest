@@ -154,6 +154,6 @@ To extend a study, keep its name, database, and original experiment configuratio
 Use a new study when changing the optimizer or other identity-bearing settings.
 See the [resume reference](config/README.md#optimizer) for compatibility requirements.
 
-For further experiments, see the [case-study configurations](config/README.md#case-study-configurations) and [analysis utilities](../analysis_scripts/README.md).
+For further experiments, see the [case-study configurations](config/case_study_configs/README.md) and [analysis utilities](../analysis_scripts/README.md).
 Analysis commands usually consume saved results.
 Check each package's guide for its inputs and hardware requirements.

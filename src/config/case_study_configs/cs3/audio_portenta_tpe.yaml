@@ -1,0 +1,138 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
+# Source study: UrbanSound8K_DSCNN_PORTENTA_M7_AUDIO_case3_1_t1
+# Source YAML SHA256: 833d65bca9962ac00da5b5b7c997367f5360a9f7075bf2139fe850e53c273492
+# Run: python src/nas_model_client.py --config src/config/case_study_configs/cs3/audio_portenta_tpe.yaml --study-name cs3_audio_portenta_tpe
+device:
+  name: PORTENTA_H7
+  hil: true
+  compile_when_hil_disabled: auto
+  runtime_mode: back_to_back
+  latency_budget_ms: 2000.0
+  serial_port: /dev/ttyACM0
+  measured_inference_runs: 10
+  dut_ready_timeout_s: 12.0
+  serial_timeout_s: 12.0
+  harness_serial_port: /dev/ttyACM1
+  harness_fqbn: arduino:mbed_nano:nano33ble
+  harness_auto_flash: once
+  harness_ready_timeout_s: 5.0
+  harness_arm_timeout_s: 5.0
+  harness_active_timeout_s: 30.0
+  harness_done_timeout_s: 5.0
+  portenta:
+    target_core: cm7
+    split: '75_25'
+    security: none
+dataset:
+  name: urbansound8k_mel
+  params:
+    cache_dir: data/urbansound8k/cache/v2_logmel_16k_2s_64mels_25ms_10ms_folds
+    fold_rotation_cache_dir: data/urbansound8k/cache/v2_logmel_16k_2s_64mels_25ms_10ms_folds/fold_rotation
+    batch_period_ms: 2000
+task:
+  name: sound_classification
+  params:
+    early_stopping_patience: 20
+    evaluation:
+      protocol: fixed_split
+      fold_rotation:
+        test_folds:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+model:
+  family: audio_dscnn
+  params:
+    export_variant: untrained
+  search: {}
+training:
+  nas_epochs: 55
+  model_epochs: 990
+  nas_trials: 200
+  max_total_trials: 300
+  quantization:
+    mode: int8_ptq
+    search: false
+    choices:
+    - int8_ptq
+  latency_proxy_max_flops: 30000000.0
+  train: true
+  energy_aware: true
+  input_mode: uniform
+nas:
+  score:
+    type: scoring-function
+    metrics:
+      system_energy_budget_mj:
+        type: energy-budget-from-power
+        power_mw:
+          type: literal
+          value: 800.0
+        duration_ms:
+          type: metric
+          metric: latency_budget_ms
+      inference_energy_budget_mj:
+        type: energy-budget-from-power
+        power_mw:
+          type: literal
+          value: 200.0
+        duration_ms:
+          type: metric
+          metric: latency_budget_ms
+    params:
+      terms:
+      - type: weighted
+        metric: macro_f1
+        weight: 1.0
+      - type: normalized-weighted
+        metric: energy_mj_per_inference
+        weight: -0.1
+        reference:
+          type: metric
+          metric: inference_energy_budget_mj
+  prune:
+    rules: []
+  feasibility:
+    train_if_infeasible: false
+    rules:
+    - rule: latency_budget
+      metric: latency_ms
+      condition: gt
+      reference:
+        type: metric
+        metric: latency_budget_ms
+      reason: Latency exceeds the 2 s audio decision cadence
+    - rule: ram_capacity
+      metric: ram_bytes
+      condition: gt
+      reference:
+        type: metric
+        metric: max_ram_bytes
+      reason: RAM usage exceeds target capacity
+    - rule: flash_capacity
+      metric: flash_bytes
+      condition: gt
+      reference:
+        type: metric
+        metric: max_flash_bytes
+      reason: Flash usage exceeds target capacity
+outputs:
+  models_dir: models/case_studies/cs3
+  candidate_dir: audio_dscnn
+  artifact_stem: audio_portenta_tpe
+  log_file_name: log_NAS_audio_portenta_tpe.csv
+network:
+  host: 127.0.0.1
+  port: 6001
+  recv_timeout_sec: 720
+  send_timeout_sec: 720
+logging:
+  level: INFO

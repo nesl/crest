@@ -1,0 +1,103 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
+# CS1 continuous objective, 200 ms release period.
+# Source: experiments/cs2_replay_200ms_20261015/continuous/source.yaml
+# Source SHA256: 3af606011bce8d9239050aa06a82b0aa7504b59d5e4cb40a7b00a784d17a5d99
+# Historical study: OxIOD_STM32_B2B_case2_1_t3. Paper analyzes first 256 trial attempts.
+# Historical mixed float/int8 search retains its 600-attempt configured cap.
+# Original continuous search; paired periodic observations came from later corrected replay.
+# Current firmware does not by itself reproduce historical measurement sessions.
+# Launch: python src/nas_model_client.py --config src/config/case_study_configs/cs1/stm32_continuous_200ms.yaml --study-name cs1_stm32_continuous_200ms
+device:
+  name: STM32_NUCLEO_N657X0_Q
+  hil: true
+  compile_when_hil_disabled: auto
+  runtime_mode: back_to_back
+  serial_port: /dev/ttyACM0
+  measured_inference_runs: 10
+  dut_ready_timeout_s: 12.0
+  serial_timeout_s: 12.0
+  cpu_clock_mhz_options:
+  - 200
+  - 300
+  - 400
+  - 600
+  - 800
+  harness_serial_port: /dev/ttyACM1
+  harness_fqbn: arduino:mbed_nano:nano33ble
+  harness_auto_flash: once
+  harness_ready_timeout_s: 5.0
+  harness_arm_timeout_s: 5.0
+  harness_active_timeout_s: 30.0
+  harness_done_timeout_s: 5.0
+  stm32:
+    project_root: firmware/stm32/crest_stm32_lrun
+    appli_flash_address: '0x70100000'
+    wake_margin_us: 5000
+    min_sleep_us: 5000
+    weight_storage_mode: external_flash
+    weights_memory_pool: src/config/stm32_nucleo_mypool.json
+dataset:
+  name: oxiod
+  params:
+    sampling_rate_hz: 100
+    window_size: 200
+    stride: 20
+    directory: data/oxiod/
+    calibration_windows: 10000
+task:
+  name: odometry_regression
+  params:
+    early_stopping_patience: 40
+model:
+  family: odom_tcn
+  params:
+    export_variant: approx_trained
+  search: {}
+training:
+  nas_epochs: 55
+  model_epochs: 990
+  nas_trials: 256
+  nas_multiobjective_population_size: 64
+  max_total_trials: 600
+  quantization:
+    mode: int8_ptq
+    search: true
+    choices:
+    - float
+    - int8_ptq
+  latency_proxy_max_flops: 30000000.0
+  train: true
+  energy_aware: true
+  input_mode: uniform
+nas:
+  score:
+    type: multi-objective
+    params:
+      objectives:
+      - metric: rmse_total
+        direction: minimize
+      - metric: energy_mj_per_inference
+        direction: minimize
+  feasibility:
+    train_if_infeasible: false
+    rules:
+    - rule: latency_budget
+      metric: latency_ms
+      condition: gt
+      reference:
+        type: metric
+        metric: latency_budget_ms
+      reason: Latency exceeds deployment budget
+outputs:
+  models_dir: models/case_studies/cs1
+  candidate_dir: cs1_stm32_continuous_200ms
+  artifact_stem: cs1_stm32_continuous_200ms
+  log_file_name: log_NAS_cs1_stm32_continuous_200ms.csv
+network:
+  host: 127.0.0.1
+  port: 6001
+  recv_timeout_sec: 720
+  send_timeout_sec: 720
+logging:
+  level: INFO
