@@ -1161,7 +1161,7 @@ def run_arduino_attempt(settings: RuntimeSettings, board: BoardSpec, workload: s
     ensure_import_paths()
     if serial is None:
         raise RuntimeError("pyserial is required for hardware attempts.")
-    from crest import hil_protocol  # type: ignore
+    from crest.hil import protocol as hil_protocol  # type: ignore
     from crest.microcontrollers import arduino_base  # type: ignore
     from crest.microcontrollers import stm32_runtime  # type: ignore
     from crest.microcontrollers.arduino_ble33 import ArduinoBLE33Device  # type: ignore
@@ -1681,7 +1681,7 @@ def run_stm32_attempt(settings: RuntimeSettings, board: BoardSpec, workload: str
     ensure_import_paths()
     if serial is None:
         raise RuntimeError("pyserial is required for hardware attempts.")
-    from crest import hil_protocol  # type: ignore
+    from crest.hil import protocol as hil_protocol  # type: ignore
     from crest.microcontrollers import arduino_base, stm32_cube_clt  # type: ignore
     from crest.microcontrollers import stm32_runtime  # type: ignore
 
