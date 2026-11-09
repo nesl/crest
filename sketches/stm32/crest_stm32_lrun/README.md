@@ -10,15 +10,6 @@ STM32 NUCLEO-N657X0-Q board.
 
 Modifications Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory.
 
-Local changes in this repo-owned README:
-
-- Replaced the stock ST template README with CREST-specific `dev_boot`,
-  NAS, and HIL workflow documentation.
-- Documented the repo-local overlay model instead of the upstream full-project
-  distribution model.
-- Documented which artifacts are staged/generated versus intentionally
-  committed.
-
 Licensing note:
 
 - The upstream ST template and copied STM32 workspace content remain subject to

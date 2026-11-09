@@ -380,6 +380,12 @@ The `outputs` block controls directory roots and naming inputs.
 Keys:
 
 - `outputs.models_dir`
+- `outputs.hypervolume_reference_point` (optional): fixed multiobjective progress
+  reference, one finite value per objective in objective order and original units.
+  The reference is persisted under the study's `progress/` directory and cannot
+  change on resume. Without one, the first eligible trial plus a 10% worse-direction
+  margin supplies a monitoring-only reference. See [progress reporting](../crest/search/README.md).
+
 - `outputs.candidate_dir`
 - `outputs.artifact_stem`
 - `outputs.log_file_name`
@@ -390,7 +396,7 @@ Runtime notes:
   `checkpoint_name` from `outputs.artifact_stem` and `device.name`, then
   populates derived paths such as `tflite_model_path` and `checkpoint_path`
 - YAML-authored `outputs.model_name` and `outputs.checkpoint_name` are rejected
-  because artifact names now follow the shared `{artifact_stem}_{device.name}`
+  because artifact names follow the shared `{artifact_stem}_{device.name}`
   rule
 - `models_dir` and `candidate_dir` are resolved into absolute paths in memory
 

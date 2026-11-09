@@ -308,7 +308,7 @@ If the board has custom options:
 2. Parse it in
    [`resolve_device_options(...)`](__init__.py).
 3. Ensure those options flow through
-   [`build_collect_metrics_request(...)`](../hil_runtime.py)
+   [`build_collect_metrics_request(...)`](../hil/runtime.py)
    and the HIL server path in
    [`../../hil_server.py`](../../hil_server.py).
 
@@ -664,8 +664,8 @@ Practical implication:
 
 1. A CM4 runtime arena allocation failure can surface as a generic
    `HIL_ERROR_LATENCY` rather than `HIL_ERROR_UNDER_SIZED`.
-2. Deterministic CM4 runtime-fault classification would require a separate
-   fault channel and is out of scope for the current backend.
+2. This backend does not provide deterministic CM4 runtime-fault classification;
+   that requires a separate fault channel.
 
 ## Test Plan
 
@@ -675,8 +675,7 @@ and parser behavior are covered locally.
 
 ### Software Tests
 
-Add or update tests in the backend-specific and orchestration test surfaces,
-not just the older `test/test_hardware.py` and `test/test_model.py` pair.
+Add or update tests in the backend-specific and orchestration test surfaces.
 
 Important current test files include:
 

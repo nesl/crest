@@ -41,7 +41,9 @@ from crest.hardware import (
     TFLiteSubprocessError,
 )  # noqa: E402
 from crest.model import ScoreConfigEvaluationError, TrialOutcome  # noqa: E402
+from crest.model_families.odom_tcn import OdomTCNFamily  # noqa: E402
 from crest.model_metrics import StaticMemoryEstimate  # noqa: E402
+from crest.optimizers.search_space import SearchParam  # noqa: E402
 from crest.pipeline_types import (
     DataSplit,
     DatasetBundle,
@@ -51,6 +53,7 @@ from crest.pipeline_types import (
     TargetSpec,
     TaskMetricContract,
 )  # noqa: E402
+from crest.tasks.odometry_regression import OdometryRegressionTask  # noqa: E402
 
 
 def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
@@ -300,6 +303,7 @@ class DummyTrial:
     def __init__(self) -> None:
         """Initialize the instance."""
         self.report_calls = []
+        self.number = 0
         self.params = {}
         self.user_attrs = {}
 
@@ -367,6 +371,19 @@ class DummyTrial:
         """
         self.user_attrs[key] = value
 
+
+
+def _sign_test_study(client, study):
+    """Give a study fixture the signature that its original campaign stored."""
+    if not hasattr(study, "user_attrs"):
+        study.user_attrs = {}
+    if not hasattr(study, "set_user_attr"):
+        study.set_user_attr = lambda key, value: study.user_attrs.__setitem__(key, value)
+    existing = study.trials
+    study.trials = []
+    *_, signature = client._select_optimizer(study, client._build_sampler())
+    study.set_user_attr("crest_optimizer_signature", signature)
+    study.trials = existing
 
 class HILRequestTests(unittest.TestCase):
     """Validate the ZeroMQ request/response helper."""
@@ -635,6 +652,36 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(logged["prune_rule"], "measurement_integrity")
         self.client.task.build_fit_plan.assert_not_called()
 
+    def test_training_seed_recorded_before_model_build(self):
+        # Even a later hardware failure must retain the model's actual seed policy.
+        self.client.config.training.random_seed = 0
+        self.client.config.training.deterministic_ops = True
+        trial = DummyTrial()
+        policy = {"seed": 0, "deterministic_ops": True,
+                  "policy": "fixed_per_evaluation_v1", "tensorflow_version": "test"}
+        original_build = self.client.model_family.build_model
+        def checked_build(*args, **kwargs):
+            """Check seed provenance before delegating to the fixture model.
+
+            Parameters
+            ----------
+            args, kwargs : object
+                Model-family build arguments.
+
+            Returns
+            -------
+            object
+                Fixture model.
+            """
+            self.assertEqual(trial.user_attrs["training_randomness"], policy)
+            return original_build(*args, **kwargs)
+        self.client.model_family.build_model = checked_build
+        self.client._hil_request = MagicMock(return_value={"error_code": HIL_MASTER_INFRASTRUCTURE})
+        with patch("nas_model_client.reset_training_randomness", return_value=policy) as reset:
+            with self.assertRaises(MeasurementInfrastructureError):
+                self.client.objective(trial)
+        reset.assert_called_once_with(self.client.config.training)
+
     def test_multiobjective_infrastructure_failure_has_no_penalty_return(self) -> None:
         """Multiobjective infrastructure failures must raise instead of returning penalties."""
         self.client.config.nas.score = Dict(
@@ -794,6 +841,10 @@ class ObjectiveTests(unittest.TestCase):
             combine_train_val=False,
         )
         self.assertEqual(self.client._evaluate_model_with_backend.call_count, 2)
+        # Each trial retains its own flatbuffer instead of overwriting failures.
+        tflite_call = self.client._evaluate_model_with_backend.call_args_list[0]
+        self.assertEqual(tflite_call.kwargs["split_name"], "validation_trial_0")
+        self.assertEqual(trial.user_attrs["tflite_evaluation"]["status"], "passed")
         self.assertEqual(
             [call.kwargs["evaluation_backend"] for call in self.client._evaluate_model_with_backend.call_args_list],
             ["tflite", "keras"],
@@ -1841,6 +1892,7 @@ class SmokeTestTests(unittest.TestCase):
                 self.optimize_calls.append((func, n_trials))
 
         fake_study = DummyStudy()
+        _sign_test_study(client, fake_study)
 
         with patch("nas_model_client.optuna.create_study", return_value=fake_study):
             with self.assertRaises(ValueError):
@@ -1850,6 +1902,8 @@ class SmokeTestTests(unittest.TestCase):
         self.assertEqual(client.config.training.train, True)
         self.assertEqual(client.config.training.nas_epochs, 10)
         self.assertEqual(client.config.nas.score.type, "scoring-function")
+
+    pass
 
     def test_smoke_test_uses_loaded_multiobjective_config(self) -> None:
         """Smoke test should honor multi-objective mode from the loaded config."""
@@ -1907,9 +1961,10 @@ class SmokeTestTests(unittest.TestCase):
                 self.optimize_calls.append((func, n_trials))
 
         fake_study = DummyStudy()
+        _sign_test_study(client, fake_study)
 
         with patch("nas_model_client.optuna.create_study", return_value=fake_study) as mock_create:
-            client.smoke_test(train=True, hil=False, trials=1, epochs=1)
+            client.smoke_test(train=True, hil=True, trials=1, epochs=1)
 
         self.assertEqual(fake_study.optimize_calls[0][1], 1)
         self.assertEqual(fake_study.metric_names_calls, [["rmse_total", "latency_ms"]])
@@ -1956,6 +2011,7 @@ class SmokeTestTests(unittest.TestCase):
                 self.optimize_calls.append((func, n_trials))
 
         fake_study = DummyStudy()
+        _sign_test_study(client, fake_study)
         with patch("nas_model_client.optuna.create_study", return_value=fake_study) as mock_create:
             client.smoke_test(train=True, hil=False, trials=1, epochs=1)
 
@@ -2021,6 +2077,7 @@ class SmokeTestTests(unittest.TestCase):
                 func(SimpleNamespace())
 
         fake_study = DummyStudy()
+        _sign_test_study(client, fake_study)
         with patch("nas_model_client.optuna.create_study", return_value=fake_study):
             client.smoke_test(train=True, trials=1, epochs=1)
 
@@ -2081,6 +2138,7 @@ class SmokeTestTests(unittest.TestCase):
                 self.optimize_calls.append((func, n_trials))
 
         fake_study = DummyStudy()
+        _sign_test_study(client, fake_study)
         artifacts_dir = client._artifacts_dir()
         db_path = artifacts_dir / "optuna_smoke_test.db"
         db_path.write_text("stale-db", encoding="utf-8")
@@ -2201,6 +2259,8 @@ class MeasurementFailureGuardTests(unittest.TestCase):
 
 
 class RunNASTests(unittest.TestCase):
+    pass
+
     def test_real_nsga_infrastructure_failure_consumes_budget_and_continues(self):
         """NSGA must count an infrastructure failure toward budget and continue afterward."""
         with tempfile.TemporaryDirectory() as directory:
@@ -2253,6 +2313,7 @@ class RunNASTests(unittest.TestCase):
             """
             self.states_queue = list(states)
             self.trials = []
+            self.directions = [optuna.study.StudyDirection.MAXIMIZE]
             self.optimize_calls = []
             self.best_trial = SimpleNamespace(value=None, params={})
             self.best_value = None
@@ -2295,14 +2356,14 @@ class RunNASTests(unittest.TestCase):
             self.optimize_calls.append(n_trials)
             for _ in range(n_trials):
                 state = self.states_queue.pop(0) if self.states_queue else TrialState.FAIL
-                trial = SimpleNamespace(state=state)
+                trial = SimpleNamespace(state=state, number=len(self.trials), params={}, values=None, user_attrs={}, system_attrs={})
                 self.trials.append(trial)
             complete = [t for t in self.trials if t.state == TrialState.COMPLETE]
             if complete:
                 self.best_trial = SimpleNamespace(value=1.0, params={})
                 self.best_value = self.best_trial.value
 
-        def enqueue_trial(self, params):
+        def enqueue_trial(self, params, user_attrs=None):
             """Run enqueue trial.
 
             Parameters
@@ -2334,6 +2395,14 @@ class RunNASTests(unittest.TestCase):
         self.assertEqual(len(dummy.trials), 3)
         self.assertEqual(dummy.optimize_calls, [2, 1])
         self.assertEqual(dummy.enqueue_calls, [])
+
+    pass
+
+    pass
+
+    pass
+
+    pass
 
     def test_run_nas_sets_multiobjective_metric_names(self) -> None:
         """Multi-objective studies should expose configured objective names."""
@@ -2445,6 +2514,7 @@ class RunNASTests(unittest.TestCase):
                 self.metric_names_calls.append(list(metric_names))
 
         dummy = DummyStudy()
+        _sign_test_study(client, dummy)
 
         with patch("nas_model_client.optuna.create_study", return_value=dummy):
             with self.assertLogs("nas_model_client", level="INFO") as captured:

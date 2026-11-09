@@ -139,3 +139,5 @@ class ComponentRegistry(Generic[T]):
 dataset_registry: ComponentRegistry[object] = ComponentRegistry("dataset")
 task_registry: ComponentRegistry[object] = ComponentRegistry("task")
 model_family_registry: ComponentRegistry[object] = ComponentRegistry("model family")
+
+optimizer_registry: ComponentRegistry[object] = ComponentRegistry("optimizer")
