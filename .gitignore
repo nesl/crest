@@ -83,10 +83,10 @@ tools/arduino-user/libraries/Adafruit_INA228_Library/
 !src/config/stm32_nucleo_mypool.json
 
 # Probe summaries
-analysis_scripts/micro_workload_energy_probe/.staged_sketch/
-analysis_scripts/micro_workload_energy_probe/.staged_stm32/
-analysis_scripts/micro_workload_energy_probe/results
-analysis_scripts/micro_workload_energy_probe/*_logs/
+analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/.staged_sketch/
+analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/.staged_stm32/
+analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/results
+analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/*_logs/
 analysis_scripts/cs3/results/
 
 # Canonical STM32 LRUN workspace is materialized by setup_stm32.sh.

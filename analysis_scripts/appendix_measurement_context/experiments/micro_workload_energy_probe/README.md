@@ -16,9 +16,9 @@ Run commands from the repository root with the `crest` Conda environment
 active.
 
 For general HIL setup and backend details, see
-[`../../src/crest/microcontrollers/README.md`](../../src/crest/microcontrollers/README.md).
+[`../../src/crest/microcontrollers/README.md`](../../../../src/crest/microcontrollers/README.md).
 For the STM32 LRUN workspace used by the STM32 probe path, see
-[`../../sketches/stm32/crest_stm32_lrun/README.md`](../../sketches/stm32/crest_stm32_lrun/README.md).
+[`../../sketches/stm32/crest_stm32_lrun/README.md`](../../../../sketches/stm32/crest_stm32_lrun/README.md).
 
 ## Contents
 
@@ -105,7 +105,7 @@ Before running a probe, confirm:
 Run a short STM32 smoke attempt:
 
 ```bash
-python analysis_scripts/micro_workload_energy_probe/run_micro_workload_energy_probe.py \
+python analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/run_micro_workload_energy_probe.py \
   --boards stm32 \
   --workloads sleep \
   --window-ms 200 \
@@ -115,7 +115,7 @@ python analysis_scripts/micro_workload_energy_probe/run_micro_workload_energy_pr
 Run the full supported workload matrix for one-second windows:
 
 ```bash
-python analysis_scripts/micro_workload_energy_probe/run_micro_workload_energy_probe.py \
+python analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/run_micro_workload_energy_probe.py \
   --boards stm32 portenta_m4 portenta_m7 ble \
   --workloads sleep wait poll float int \
   --window-ms 1000 \
@@ -125,24 +125,24 @@ python analysis_scripts/micro_workload_energy_probe/run_micro_workload_energy_pr
 Reuse an already-flashed harness and write explicit outputs:
 
 ```bash
-python analysis_scripts/micro_workload_energy_probe/run_micro_workload_energy_probe.py \
+python analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/run_micro_workload_energy_probe.py \
   --boards ble \
   --workloads wait poll float int \
   --skip-harness-flash \
-  --output-json analysis_scripts/micro_workload_energy_probe/results/ble_probe.json \
-  --output-csv analysis_scripts/micro_workload_energy_probe/results/ble_probe.csv
+  --output-json analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/results/ble_probe.json \
+  --output-csv analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/results/ble_probe.csv
 ```
 
 Run 50 one-second STM32 repeats:
 
 ```bash
-python analysis_scripts/micro_workload_energy_probe/run_micro_workload_energy_probe.py \
+python analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/run_micro_workload_energy_probe.py \
   --boards stm32 \
   --workloads sleep wait poll float int \
   --window-ms 1000 \
   --repeats 50 \
-  --output-json analysis_scripts/micro_workload_energy_probe/results/stm32_1s_x50.json \
-  --output-csv analysis_scripts/micro_workload_energy_probe/results/stm32_1s_x50.csv
+  --output-json analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/results/stm32_1s_x50.json \
+  --output-csv analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/results/stm32_1s_x50.csv
 ```
 
 Use `--help` for the full option list.

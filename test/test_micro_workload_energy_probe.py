@@ -25,7 +25,7 @@ def _load_probe_module():
         If existing validation or execution checks fail.
     """
     repo_root = Path(__file__).resolve().parents[1]
-    module_path = repo_root / "analysis_scripts" / "micro_workload_energy_probe" / "run_micro_workload_energy_probe.py"
+    module_path = repo_root / "analysis_scripts" / "appendix_measurement_context" / "experiments" / "micro_workload_energy_probe" / "run_micro_workload_energy_probe.py"
     spec = importlib.util.spec_from_file_location("micro_workload_energy_probe_for_tests", module_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load module from {module_path}")
@@ -40,6 +40,15 @@ probe = _load_probe_module()
 
 class MicroWorkloadEnergyProbeTests(unittest.TestCase):
     """Validate workload schema, DUT telemetry defaults, and baseline math."""
+
+    def test_relocated_resources_resolve_from_repository(self):
+        """Check repository config and colocated firmware after package relocation."""
+        repo_root = Path(__file__).resolve().parents[1]
+        self.assertEqual(probe.REPO_ROOT, repo_root)
+        self.assertEqual(probe.DEFAULT_CONFIG_PATH, repo_root / "src/config/nas_config.yaml")
+        self.assertTrue(probe.DEFAULT_CONFIG_PATH.parent.is_dir())
+        self.assertTrue(probe.ARDUINO_TEMPLATE.is_file())
+        self.assertTrue(probe.STM32_RUNNER_TEMPLATE.is_file())
 
     def test_poll_workload_is_supported_in_order(self):
         """Check workload ordering and firmware mode mapping.
@@ -206,7 +215,7 @@ class MicroWorkloadEnergyProbeTests(unittest.TestCase):
             printer instead of ``%llu``.
         """
         repo_root = Path(__file__).resolve().parents[1]
-        runner_source = repo_root / "analysis_scripts" / "micro_workload_energy_probe" / "stm32_synthetic_dut_runner.c"
+        runner_source = repo_root / "analysis_scripts" / "appendix_measurement_context" / "experiments" / "micro_workload_energy_probe" / "stm32_synthetic_dut_runner.c"
         source = runner_source.read_text()
 
         self.assertNotIn("%llu", source)

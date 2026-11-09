@@ -4,6 +4,8 @@ SPDX-License-Identifier: BSD-3-Clause
 -->
 # Appendix: training-budget sensitivity
 
+To collect new training trajectories, use the [training-budget experiment](experiments/README.md).
+
 Analyze saved checkpoint evaluations and training histories. No training,
 TensorFlow or hardware access is required. Install NumPy, SciPy and PyYAML.
 

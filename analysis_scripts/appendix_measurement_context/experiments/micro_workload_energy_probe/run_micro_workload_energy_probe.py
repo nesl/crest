@@ -33,7 +33,7 @@ except Exception:  # pragma: no cover - tqdm is a declared project dependency
     tqdm = None  # type: ignore
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parents[1]
+REPO_ROOT = SCRIPT_DIR.parents[3]
 SRC_DIR = REPO_ROOT / "src"
 
 VALID_BOARDS = ("stm32", "portenta_m4", "portenta_m7", "ble")
@@ -2240,13 +2240,13 @@ def build_parser() -> argparse.ArgumentParser:
     """
     examples = """examples:
   # First smoke test on the installed STM32 board.
-  python analysis_scripts/micro_workload_energy_probe/run_micro_workload_energy_probe.py --boards stm32 --workloads sleep --window-ms 200 --repeats 1
+  python analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/run_micro_workload_energy_probe.py --boards stm32 --workloads sleep --window-ms 200 --repeats 1
 
   # Run the full requested matrix with default serial ports.
-  python analysis_scripts/micro_workload_energy_probe/run_micro_workload_energy_probe.py --boards stm32 portenta_m4 portenta_m7 ble --workloads sleep wait poll float int --repeats 3
+  python analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/run_micro_workload_energy_probe.py --boards stm32 portenta_m4 portenta_m7 ble --workloads sleep wait poll float int --repeats 3
 
   # Reuse an already-flashed harness and write explicit outputs.
-  python analysis_scripts/micro_workload_energy_probe/run_micro_workload_energy_probe.py --boards ble --workloads wait poll float int --skip-harness-flash --output-json results/probe.json --output-csv results/probe.csv
+  python analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/run_micro_workload_energy_probe.py --boards ble --workloads wait poll float int --skip-harness-flash --output-json results/probe.json --output-csv results/probe.csv
 """
     parser = argparse.ArgumentParser(
         description="Run synthetic MCU sleep/wait/poll/float/int energy windows through the CREST HIL harness.",
@@ -2272,7 +2272,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--harness-done-timeout-s", type=float, default=None, help="Additional host timeout waiting for DONE after the active window.")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD, help="Serial baud rate for DUT and harness sessions.")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Optional CREST config used as a source of port/tool defaults.")
-    parser.add_argument("--output-json", default=None, help="Final JSON output path, or a directory for a timestamped JSON file; default is analysis_scripts/micro_workload_energy_probe/results/<timestamp>.json.")
+    parser.add_argument("--output-json", default=None, help="Final JSON output path, or a directory for a timestamped JSON file; default is analysis_scripts/appendix_measurement_context/experiments/micro_workload_energy_probe/results/<timestamp>.json.")
     parser.add_argument("--output-csv", default=None, help="Attempt CSV output path, or a directory for a timestamped CSV file; rows are flushed after each attempt.")
     parser.add_argument("--log-level", default="INFO", help="Logging level: DEBUG, INFO, WARNING, or ERROR.")
     parser.add_argument("--stm32-stage-root", default=str(SCRIPT_DIR / ".staged_stm32"), help="Root for generated STM32 LRUN staging workspaces.")
