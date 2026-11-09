@@ -3,144 +3,89 @@ Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 SPDX-License-Identifier: BSD-3-Clause
 -->
 
-# Config Reference
+# Config reference
 
 This directory documents the runtime configuration surface for CREST.
 
-For the source architecture and extension map, see
-[`../README.md`](../README.md).
+For the source architecture and extension map, see [`../README.md`](../README.md).
 
-Case-study reproducibility configs live under
-[`case_study_configs/`](case_study_configs/).
+Case-study reproducibility configs live under [`case_study_configs/`](case_study_configs/).
 
-## Example Configs
+## Example configs
 
 | If You Want To... | Start With | Hardware Requirement |
 |-------------------|------------|----------------------|
 | Train or search OxIOD models without hardware energy metrics | [`nas_config_flops_rmse.yaml`](nas_config_flops_rmse.yaml) | No hardware required |
-| Run STM32 OxIOD HIL experiments | [`nas_config_stm32.yaml`](nas_config_stm32.yaml) | NUCLEO-N657X0-Q board required; HIL harness required for energy measurement |
-| Run Arduino OxIOD HIL experiments | [`nas_config_ble.yaml`](nas_config_ble.yaml) or [`nas_config_portenta.yaml`](nas_config_portenta.yaml) | Target board required; HIL harness required for energy measurement |
-| Run UrbanSound8K audio HIL experiments | [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml) or [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml) | Target board and HIL harness required as shipped; use these as templates with HIL/measured scoring disabled for hardware-free training |
+| Run STM32 OxIOD HIL experiments | [`nas_config_stm32.yaml`](nas_config_stm32.yaml) | NUCLEO-N657X0-Q board required. HIL harness required for energy measurement |
+| Run Arduino OxIOD HIL experiments | [`nas_config_ble.yaml`](nas_config_ble.yaml) or [`nas_config_portenta.yaml`](nas_config_portenta.yaml) | Target board required. HIL harness required for energy measurement |
+| Run UrbanSound8K audio HIL experiments | [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml) or [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml) | Target board and HIL harness required as shipped. Use these as templates with HIL/measured scoring disabled for hardware-free training |
 
-- [`nas_config_stm32.yaml`](nas_config_stm32.yaml)
-  NUCLEO-N657X0-Q OxIOD measured-energy NAS example and the most complete
-  commented reference for score/prune policy shapes.
-- [`nas_config_ble.yaml`](nas_config_ble.yaml)
-  Arduino Nano 33 BLE Sense OxIOD measured-energy NAS example.
-- [`nas_config_portenta.yaml`](nas_config_portenta.yaml)
-  Portenta H7 CM7 OxIOD measured-energy NAS example.
-- [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml)
-  NUCLEO-N657X0-Q UrbanSound8K / DS-CNN audio NAS example.
-- [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml)
-  Portenta H7 CM7 UrbanSound8K / DS-CNN audio NAS example.
-- [`nas_config_flops_rmse.yaml`](nas_config_flops_rmse.yaml)
-  Pure desktop OxIOD NAS example that optimizes validation RMSE and FLOPs.
-- [`nas_config_memory_proxy.yaml`](nas_config_memory_proxy.yaml)
-  Pure desktop OxIOD NAS example that optimizes validation RMSE and static
-  memory traffic.
+The STM32 example is the most complete commented score/prune reference.
+[`nas_config_memory_proxy.yaml`](nas_config_memory_proxy.yaml) adds a desktop RMSE/static-memory-traffic example.
 
-## Supporting Files
+## Supporting files
 
-- [`stm32_nucleo_mypool.json`](stm32_nucleo_mypool.json)
-  ST Edge AI memory-pool description used by STM32 configs when
-  `device.stm32.weight_storage_mode: external_flash` is enabled. This is a
-  repo-local version modified from the STM32 LRUN example for the
-  NUCLEO-N657X0-Q externalized-weights flow.
+- [`stm32_nucleo_mypool.json`](stm32_nucleo_mypool.json) ST Edge AI memory-pool description used by STM32 configs when `device.stm32.weight_storage_mode: external_flash` is enabled.
+  This is a repo-local version modified from the STM32 LRUN example for the NUCLEO-N657X0-Q externalized-weights flow.
 
-## Audio Fold Rotation
+## Audio fold rotation
 
-Audio configs can optionally run final reporting across UrbanSound8K folds:
+Audio configs can optionally run final reporting across UrbanSound8K folds.
 
 - `task.params.evaluation.protocol: fixed_split | fold_rotation`
-- `task.params.evaluation.fold_rotation.test_folds`, defaulting to all 10
-  UrbanSound8K folds.
-- `dataset.params.fold_rotation_cache_dir`, required only when fold rotation is
-  enabled.
+- `task.params.evaluation.fold_rotation.test_folds`, defaulting to all 10 UrbanSound8K folds.
+- `dataset.params.fold_rotation_cache_dir`, required only when fold rotation is enabled.
 
-The fixed `dataset.params.cache_dir` remains the source for NAS, HIL runs, and
-deployable export. Fold rotation runs after the fixed-split final checkpoint and
-does not export per-fold models.
-`task.params.evaluation.protocol: fold_rotation` is single-objective only;
-multi-objective NAS fails during config validation. The dataset owns where
-fold-specific caches live; the task owns whether final reporting rotates
-through those folds.
+The fixed `dataset.params.cache_dir` remains the source for NAS, HIL runs, and deployable export.
+Fold rotation runs after the fixed-split final checkpoint and does not export per-fold models.
+`task.params.evaluation.protocol: fold_rotation` is single-objective only.
+Multi-objective NAS fails during config validation.
+The dataset owns where fold-specific caches live.
+The task owns whether final reporting rotates through those folds.
 
-The runtime loader and validator live in
-[`../crest/model.py`](../crest/model.py), while the task-aware bootstrap
-that resolves components and validates NAS policy against the active task lives
-in [`../crest/runtime_bootstrap.py`](../crest/runtime_bootstrap.py).
+## Top-Level blocks
 
-## Top-Level Blocks
+The main top-level blocks are as follows.
 
-The main top-level blocks are:
+- `device` Hardware target, HIL runtime behavior, timing, harness options, and backend-owned device options.
+- `dataset` Required dataset selection block.
+  The built-in OxIOD dataset uses `dataset.name: oxiod` plus the keys under `dataset.params`.
+- `task` Required task selection block.
+  Task-owned final reporting policy, such as audio fold rotation, lives under `task.params.evaluation`.
+- `model` Required model-family selection block.
+- `training` NAS and training limits plus runtime-side training switches such as `energy_aware` and `input_mode`.
+- `nas` Scoring and pruning policy.
+- `outputs` Output directories and derived artifact naming inputs.
+- `network` HIL server/client socket settings.
+- `logging` Runtime log level.
+- `optimizer` Optional candidate source selection.
+  Omit it, or set `type: optuna`, to use the existing Optuna sampler path.
+  Set `type: llm_generator` to propose candidates with an LLM.
 
-- `device`
-  Hardware target, HIL runtime behavior, timing, harness options, and
-  backend-owned device options.
-- `dataset`
-  Required dataset selection block. The built-in OxIOD dataset uses
-  `dataset.name: oxiod` plus the keys under `dataset.params`.
-- `task`
-  Required task selection block. Task-owned final reporting policy, such as
-  audio fold rotation, lives under `task.params.evaluation`.
-- `model`
-  Required model-family selection block.
-- `training`
-  NAS and training limits plus runtime-side training switches such as
-  `energy_aware` and `input_mode`.
-- `nas`
-  Scoring and pruning policy.
-- `outputs`
-  Output directories and derived artifact naming inputs.
-- `network`
-  HIL server/client socket settings.
-- `logging`
-  Runtime log level.
-- `optimizer`
-  Optional candidate source selection. Omit it, or set `type: optuna`, to use
-  the existing Optuna sampler path. Set `type: llm_generator` to validate and
-  enqueue exact candidates before the unchanged CREST objective runs.
-
-Those component blocks are resolved by
-[`../crest/component_selection.py`](../crest/component_selection.py), and
-they are mandatory. Use `dataset`, `task`, and `model`; the old top-level
-`data` block is not supported.
+`dataset`, `task`, and `model` are required configuration blocks.
 
 ## `device`
 
 The `device` block owns target selection and runtime behavior.
 
-Common keys:
+Common keys
 
-- `device.name`
-  Target device identifier.
-- `device.hil`
-  Enables or disables hardware-in-the-loop measurement.
-- `device.compile_when_hil_disabled`
-  Controls whether `device.hil: false` still calls the HIL server for
-  compile-only proxy metrics. Valid values are `auto`, `true`, and `false`;
-  YAML booleans are accepted and normalized to `true`/`false`. The default
-  `auto` compiles only when the active score/prune policy references
-  compile-derived metrics such as `ram_bytes`, `flash_bytes`,
-  `external_flash_bytes`, or `arena_bytes`.
-- `device.runtime_mode`
-  `back_to_back` or `cadenced`.
-- `device.latency_budget_ms`
-  Optional shared cadence-budget override. When omitted, the runtime derives
-  it from the active dataset cadence: first `dataset.params.batch_period_ms`,
-  then `dataset.params.stride / dataset.params.sampling_rate_hz * 1000` for
-  the built-in `oxiod` dataset.
-- `device.serial_port`
-  DUT serial port.
-- `device.measured_inference_runs`
-  Number of repeated inference invokes averaged into one measured pass.
+- `device.name` Target device identifier.
+- `device.hil` Enables or disables hardware-in-the-loop measurement.
+- `device.compile_when_hil_disabled` Controls whether `device.hil: false` still calls the HIL server for compile-only proxy metrics.
+  Valid values are `auto`, `true`, and `false`.
+  YAML booleans are accepted and normalized to `true`/`false`.
+  The default `auto` compiles only when the active score/prune policy references compile-derived metrics such as `ram_bytes`, `flash_bytes`, `external_flash_bytes`, or `arena_bytes`.
+- `device.runtime_mode` `back_to_back` selects continuous execution, while `cadenced` selects periodic execution.
+- `device.latency_budget_ms` Optional shared cadence-budget override.
+  When omitted, the runtime derives it from the active dataset cadence, first `dataset.params.batch_period_ms`, then `dataset.params.stride / dataset.params.sampling_rate_hz * 1000` for the built-in `oxiod` dataset.
+- `device.serial_port` DUT serial port.
+- `device.measured_inference_runs` Number of repeated inference invokes averaged into one measured pass.
 - `device.serial_timeout_s`
 - `device.dut_ready_timeout_s`
-- `device.cpu_clock_mhz_options`
-  Optional per-trial CPU presets for boards that support runtime clock
-  selection.
+- `device.cpu_clock_mhz_options` Optional per-trial CPU presets for boards that support runtime clock selection.
 
-Harness-related keys:
+Harness-related keys
 
 - `device.harness_serial_port`
 - `device.harness_fqbn`
@@ -154,14 +99,13 @@ Harness-related keys:
 - `device.harness_active_timeout_s`
 - `device.harness_done_timeout_s`
 
-Per-backend nested blocks include:
+Per-backend nested blocks include the following.
 
 - `device.portenta.*`
 - `device.stm32.*`
 
-STM32 option plumbing is resolved by
-[`../crest/microcontrollers/__init__.py`](../crest/microcontrollers/__init__.py).
-Examples of STM32-owned keys include:
+See the [STM32 backend guide](../crest/microcontrollers/README.md#shipped-config-shape) for setup and supported options.
+STM32 settings include the following.
 
 - `template_root`
 - `project_root`
@@ -183,40 +127,33 @@ Examples of STM32-owned keys include:
 - `signing_header_version`
 - `max_external_flash_bytes`
 
-Validation notes:
+Validation notes
 
 - `device.runtime_mode` must be `back_to_back` or `cadenced`.
-- `device.stm32.runtime_mode` is no longer supported. Use
-  `device.runtime_mode` instead.
-- `device.stm32.project_layout` is no longer supported. LRUN `dev_boot` is
-  implicit for the STM32 backend.
+- The STM32 backend uses the LRUN `dev_boot` layout.
 - `device.latency_budget_ms` must be positive when set.
 - `device.measured_inference_runs` must be an integer `>= 1`.
 - `device.cpu_clock_mhz_options` must be a non-empty integer list when set.
-- For `STM32_NUCLEO_N657X0_Q`, `device.cpu_clock_mhz_options` is validated
-  against the backend-supported set in code.
-- For `PORTENTA_H7` and `ARDUINO_NANO_33_BLE_SENSE`, cadenced mode requires
-  `training.input_mode: uniform`.
+- For `STM32_NUCLEO_N657X0_Q`, `device.cpu_clock_mhz_options` is validated against the backend-supported set in code.
+- For `PORTENTA_H7` and `ARDUINO_NANO_33_BLE_SENSE`, cadenced mode requires `training.input_mode: uniform`.
 
 ## `training`
 
-`training.random_seed` optionally resets Python, NumPy and TensorFlow to the same
-integer seed before each candidate evaluation and final fit. Acceptable values
-are integers in `[0, 2**32)`; omission preserves unseeded behavior. The seed is
-independent of trial number and `optimizer.llm.random_seed`, which controls local
-proposal fallback sampling. `training.deterministic_ops: true` additionally asks
-TensorFlow for deterministic operations and requires a training seed. It is
-process-wide and may reject unsupported kernels; fixed seeds alone do not
-promise bitwise-identical GPU results.
+`training.random_seed` optionally resets Python, NumPy and TensorFlow to the same integer seed before each candidate evaluation and final fit.
+Acceptable values are integers in `[0, 2**32)`.
+Omission preserves unseeded behavior.
+The seed is independent of trial number and `optimizer.llm.random_seed`, which controls local proposal fallback sampling.
+`training.deterministic_ops: true` additionally asks TensorFlow for deterministic operations and requires a training seed.
+It is process-wide and may reject unsupported kernels.
+Fixed seeds alone do not promise bitwise-identical GPU results.
 
-The configured randomness policy is recorded in trial attributes and optimizer
-identity, with a `.randomness.json` sidecar for final fits. Changing the policy
-requires a fresh study. Other training settings are not covered by this identity
-check, so retain the original configuration when extending an experiment.
+The configured randomness policy is recorded in trial attributes and optimizer identity, with a `.randomness.json` sidecar for final fits.
+Changing the policy requires a fresh study.
+Other training settings are not covered by this identity check, so retain the original configuration when extending an experiment.
 
 The `training` block owns the main NAS/training runtime switches.
 
-Common keys in the shipped config:
+Common keys in the shipped config
 
 - `training.nas_epochs`
 - `training.model_epochs`
@@ -229,51 +166,35 @@ Common keys in the shipped config:
 - `training.energy_aware`
 - `training.input_mode`
 
-Runtime behavior:
+Runtime behavior
 
 - `training.energy_aware` defaults to `false` when omitted
-- `training.quantization` is required and must use the mapping shape:
-  `mode`, `search`, and non-empty `choices`. The main measured-board configs
-  search `choices: [float, int8_ptq]` so float32 and int8 PTQ exports can be
-  compared on the same backend.
-- Supported quantization modes are `float` and `int8_ptq`. Enabling
-  `training.quantization.search: true` samples `quantization_mode` from
-  `choices`; this expands the effective NAS search space and usually needs a
-  larger trial budget. Mixed `float`/`int8_ptq` studies also conflate
-  architecture quality with quantization effects, so compare them deliberately.
-- `int8_ptq` export uses full-integer TensorFlow Lite conversion with int8
-  inputs and outputs. Representative calibration data is taken from the
-  explicit calibration split when available, otherwise the training split, and
-  conversion samples up to 1000 windows evenly across that split. This avoids
-  calibrating on one contiguous prefix of an ordered time-series split.
+- `training.quantization` is required and must use the mapping shape with `mode`, `search`, and non-empty `choices`.
+  The main measured-board configs search `choices: [float, int8_ptq]` so float32 and int8 PTQ exports can be compared on the same backend.
+- Supported quantization modes are `float` and `int8_ptq`.
+  Enabling `training.quantization.search: true` samples `quantization_mode` from `choices`.
+  This expands the effective NAS search space and usually needs a larger trial budget.
+  Mixed `float`/`int8_ptq` studies also conflate architecture quality with quantization effects, so compare them deliberately.
+- `int8_ptq` export uses full-integer TensorFlow Lite conversion with int8 inputs and outputs.
+  Representative calibration data is taken from the explicit calibration split when available, otherwise the training split, and conversion samples up to 1000 windows evenly across that split.
+  This avoids calibrating on one contiguous prefix of an ordered time-series split.
 - HIL metrics are deployment-mode preflight metrics collected before training.
-  Per-trial NAS scoring evaluates the trained checkpoint with host-side TFLite
-  on the validation split using interpreter-provided input/output
-  scale/zero-point values and TFLite signature output order; final fixed-split
-  reporting exports/evaluates the trained TFLite on the test split after
-  `train_best_trial`.
-- Some closeout artifact paths are Keras-derived unless the path explicitly
-  requests TFLite evaluation.
+  Per-trial NAS scoring evaluates the trained checkpoint with host-side TFLite on the validation split.
+  Final fixed-split reporting evaluates the selected trained TFLite model on the test split.
+- Some closeout artifact paths are Keras-derived unless the path explicitly requests TFLite evaluation.
 - `training.input_mode` defaults to `uniform` when omitted
-- `training.input_mode` supports dataset-agnostic `uniform` plus
-  dataset-specific analysis modes: `oxiod_representative`, `oxiod_real`,
-  `urbansound8k_representative`, and `urbansound8k_real`
-- `training.max_total_trials` defaults to `training.nas_trials * 2` when
-  omitted
-- `training.nas_trials` is the total COMPLETE trial target, or the total feasible
-  COMPLETE target when `nas.feasibility.rules` is enabled. Without feasibility,
-  penalized multi-objective COMPLETE trials also count toward that target.
-- `training.max_total_trials` is a total attempt cap. All stored trials, including
-  failed, pruned, infeasible, RUNNING, and reserved WAITING trials, consume it.
+- `training.input_mode` supports dataset-agnostic `uniform` plus dataset-specific analysis modes including `oxiod_representative`, `oxiod_real`, `urbansound8k_representative`, and `urbansound8k_real`
+- `training.max_total_trials` defaults to `training.nas_trials * 2` when omitted
+- `training.nas_trials` is the total COMPLETE trial target, or the total feasible COMPLETE target when `nas.feasibility.rules` is enabled.
+  Without feasibility, penalized multi-objective COMPLETE trials also count toward that target.
+- `training.max_total_trials` is a total attempt cap.
+  All stored trials, including failed, pruned, infeasible, RUNNING, and reserved WAITING trials, consume it.
   Constrained runs usually need a larger attempt cap than the completion target.
   See [optimizer resume behavior](#optimizer) before extending a study.
 
 ## `dataset`, `task`, and `model`
 
-The modular component-selection surface is resolved by
-[`../crest/component_selection.py`](../crest/component_selection.py).
-
-Keys:
+Keys
 
 - `dataset.name`
 - `dataset.params`
@@ -283,143 +204,35 @@ Keys:
 - `model.params`
 - `model.search`
 
-For `audio_dscnn`, `model.search: {}` means "use the model-family default
-search surface" from `AudioDSCNNFamily.AUDIO_DSCNN_SEARCH_CHOICES`. Add keys
-under `model.search` only when you want to narrow that default surface.
+For `audio_dscnn`, `model.search: {}` means "use the model-family default search surface" described in the [audio model-family guide](../crest/model_families/audio_dscnn/README.md).
+Add keys under `model.search` only when you want to narrow that default surface.
 
-Validation notes:
+Validation notes
 
 - `dataset`, `task`, and `model` are required top-level blocks
 - `dataset.params` is required for the built-in `oxiod` dataset path
-- dataset classes are instantiated as zero-argument classes
-- model family classes are instantiated as zero-argument classes
-- task classes are expected to use the explicit keyword-only constructor
-  contract `__init__(*, checkpoint_path, early_stopping_patience)`; the runtime
-  does not probe constructor signatures or provide compatibility shims for
-  older task classes.
-
 ## `optimizer`
 
-The [optimizer system guide](../crest/optimizers/README.md) explains the
-proposal contract, shared evaluation, evidence, and restart behavior.
-Optimizer components reuse the same objective while making candidate choices
-explicit. The YAML blocks below are merge snippets for a complete study config.
-
-Optimizer names are resolved through `optimizer_registry` after lazy built-in
-registration. Names strip surrounding whitespace and preserve the registry's
-case-sensitive custom keys. An exact registration takes precedence; when none
-exists, case variants of the historical built-in names `optuna` and
-`llm_generator` resolve to those lowercase keys. The resolved registration name
-is stored in study identity and proposal provenance. Register custom classes
-before calling `load_config()`; their custom optimizer fields are preserved,
-and they need no `llm` block. Only
-`llm_generator` receives the LLM-specific compatibility defaults and validation.
-Registration and config validation do not read credentials or create clients.
-
-Each component receives the whole normalized `optimizer` block. Implement
-`OptimizerABC` with a zero-argument constructor and `propose_round`, and override
-`validate_config` and `identity_config` for configurable behavior. Identity
-settings must be deterministic JSON-safe plain data with no secrets or paths.
-An example plugin can use the existing execution path without importing Optuna:
-
-```python
-from collections.abc import Mapping
-from crest.interfaces import OptimizerABC
-from crest.pipeline_types import CandidateProposal, ExplicitRound
-from crest.registry import optimizer_registry
-from crest.optimizers.search_space import validate_candidate
-from crest.model import load_config
-
-class FixedCandidate(OptimizerABC):
-    def validate_config(self, config):
-        if not isinstance(config.get("candidate"), Mapping):
-            raise ValueError("optimizer.candidate must be a mapping")
-
-    def identity_config(self, config):
-        return {"candidate": dict(config["candidate"])}
-
-    def requires_semantic_context(self, config):
-        return False
-
-    def initialize(self, context, config):
-        self.params = dict(config["candidate"])
-        validate_candidate(self.params, context.search_space)
-
-    def propose_round(self, history, budget):
-        return ExplicitRound((CandidateProposal(self.params),))
-
-optimizer_registry.register("fixed_candidate", FixedCandidate)
-config = load_config("config.yaml")
-```
-
-```yaml
-optimizer:
-  type: fixed_candidate
-  candidate: {} # Replace with every active raw field for the selected family/runtime.
-```
-
-The empty mapping is a placeholder and fails descriptor validation. Supply legal
-values for the complete descriptor. This example deliberately repeats a fixed
-experiment; shared validation allows repetition, while duplicate filtering is a
-proposer policy. Use the usual runner after registering the class.
-
-Native sampling does not require a model-family descriptor. Explicit proposals
-require one and must supply exactly all active raw fields. The runner validates
-every candidate before queueing any candidate; it owns proposal provenance in
-namespaced trial user attributes and executes the same objective for all modes.
-
-Study resume requires the same registered optimizer, proposal identity, and
-native sampler configuration. Completion/attempt budgets, output paths, and LLM
-transport `timeout_s` can change without changing identity. `json_response_mode`
-remains signed because it changes the provider request. Exact older built-in
-version-1 signatures for `openrouter` or `openai_compatible`, with otherwise
-matching identity and a valid `timeout_s`, compare after excluding only that
-transport field; stored signatures are preserved. `training.nas_trials` is the
-**total completed
-trial target** (feasible completions when feasibility is enabled), and
-`training.max_total_trials` is the **total attempt cap**, including failed,
-pruned, infeasible, RUNNING, and reserved WAITING trials. To add evaluations, keep
-the same study name, database and original experiment configuration, then increase
-the total
-target and cap as needed. These are not counts of additional trials.
-
-The optimizer signature is not a fingerprint of the whole scientific experiment.
-It does not certify unchanged dataset, model, training, device, runtime schedule,
-or score settings. Preserve and compare the original experiment configuration;
-budget-only extension is the supported use.
-
-At each production boundary the runner stops first if the completion target is
-met, leaving WAITING work untouched. Otherwise it drains the oldest contiguous
-WAITING group before checking the cap for new proposals. The cap is at least the
-number of stored trials at study open; reservations can be drained at that cap.
-Targets and caps are rechecked between rounds, so a multi-objective population
-round can exceed the remaining completion need. Orphan RUNNING trials keep
-consuming attempts and are not recovered automatically. `--smoke-test N` instead
-executes N additional attempts in the separate per-study smoke database.
-
-A signed native or LLM study resumes with unchanged optimizer identity when these
-budgets increase. Sampler signatures use stable public TPE/NSGA-II names;
-legacy private sampler paths remain compatible when all other identity fields
-match. Stored optimizer and feasibility
-identity is checked before component initialization or queued work. New signatures
-are written only after component initialization succeeds; failed initialization
-leaves an unsigned study unsigned. Existing signed studies, including empty ones,
-still require compatible identity.
-
-Nonempty unsigned studies cannot resume searching, regardless of optimizer type.
-Use a new study name to start a signed search. Existing unsigned histories remain
-available for analysis and offline plotting; they are not relabeled or modified.
-Optimizer switching within an existing study is unsupported.
-
-The default remains the existing Optuna path:
+`optimizer.type` defaults to `optuna`.
+Use `llm_generator` for LLM proposals.
+Custom registered optimizers can supply their own fields without an `llm` block.
+See the [optimizer interface and extension guide](../crest/optimizers/README.md).
+The YAML blocks below are merge snippets for a complete experiment configuration.
 
 ```yaml
 optimizer:
   type: optuna
 ```
 
-The LLM generator supports OpenRouter, OpenAI-compatible Chat Completions,
-and Responses endpoints:
+See [training budgets](#training) for completion targets and attempt caps.
+To extend a study, retain its name, database, and original experiment configuration and raise these totals.
+Proposal settings, sampler configuration, and feasibility policy must match on resume.
+Budgets, output paths, and transport timeouts may change.
+The optimizer signature does not fingerprint the whole experiment.
+Budget-only extension is the supported use.
+See [budgets and resume](../crest/optimizers/README.md#budgets-and-resume) for queue handling, compatibility, smoke tests, and recovery.
+
+### LLM settings
 
 ```yaml
 optimizer:
@@ -449,157 +262,98 @@ optimizer:
     extra_headers: {}
 ```
 
-The generator emits raw Optuna parameters such as `dilations_index` and
-`cpu_clock_mhz_index`; decoded fields are not accepted. `quantization_mode`
-and CPU clock search appear only when their corresponding runtime paths are
-active. The required JSON envelope is `{"candidates": [{...}]}`. Local validation
-checks exact keys, types, bounds/choices, batch size, and duplicates against
-descriptor-complete COMPLETE trials and earlier accepted candidates in the
-batch. Penalized COMPLETE trials count for duplicate detection but do not
-qualify as anchors. The shared runner drains waiting work before fresh proposals;
-WAITING parameters are never interpreted as already sampled evidence.
-Any accepted candidates run through the existing CREST objective; a partially
-accepted batch is evaluated without filling its rejected slots. A batch with no
-accepted candidates gets at most `max_repair_attempts` additional calls (default
-1). After all attempts fail, the component logs and returns one random candidate from
-the same descriptor. If 100 fallback samples cannot pass the same validation,
-generation stops explicitly. `random_seed` controls this local fallback
-RNG; it does not seed the remote provider.
+| Setting | Default and requirements |
+| --- | --- |
+| `provider` | `openrouter`. Also supports `openai_compatible`, `openai_responses`, and `fake`. |
+| `model` | Required for live providers. Use a model available to your account. |
+| `base_url` | OpenRouter defaults to `https://openrouter.ai/api/v1`. Generic Chat Completions and Responses providers require it explicitly. No URL userinfo, query parameters, or fragments. |
+| `api_key_env` | OpenRouter defaults to `OPENROUTER_API_KEY`. Generic Chat Completions and Responses providers require an explicit environment-variable name. Live credentials are required at initialization. |
+| `json_response_mode` | `true` for OpenRouter and Responses. `false` for generic Chat Completions. Enable only when the endpoint/model supports it. This setting is part of resume identity. |
+| `temperature` | Default 0.4 for Chat Completions, `null` for Responses. Set `null` to omit it. |
+| `batch_size` | Default 5. Positive integer (at most 5 in full-history mode). |
+| `timeout_s` | Default 60 seconds. Transport timeout, excluded from resume identity. |
+| `prompt_version` | Default `v1`. Nonempty version label, part of resume identity. |
+| `max_repair_attempts` | Default 1. Additional content-repair calls after the initial generation request. |
+| `random_seed` | Default 0. Controls local fallback randomness, not the remote provider. |
+| `recent_trial_window` | Default 10. Non-negative integer, with 0 disabling recent records. Independent of batch size and memory timing. |
+| `anchor_count` | Default 5. Non-negative integer, with 0 disabling best-trial anchors. |
+| `semantic_context` | Default `true`. `false` omits explanatory context while retaining the legal search descriptor and configured trial evidence. |
+| `responses` | Required nonempty ordered fixture list for `fake`. Include summary fixtures in request order when memory is enabled. |
+| `extra_headers` | Optional provider headers. Excluded from study identity, as are credentials. |
+| `max_transport_retries` | Default 5. Excluded from study identity. |
+| `retry_backoff_s` | Default 5 seconds. Excluded from study identity. |
+| `retry_backoff_cap_s` | Default 60 seconds per wait. Excluded from study identity. |
 
-Requests/responses live in `models/<study_name>/llm_optimizer/requests/` as
-numbered `.request.json` / `.response.json` pairs. The same directory's parent
-contains `prompt_contexts.jsonl`, `returned_candidates.jsonl`,
-`rejected_candidates.jsonl`, and `optimizer_events.jsonl`. Responses retain raw
-provider output, usage when supplied, finish reason, and latency.
-`returned_candidates.jsonl` records `returned_to_runner`, which means validated
-proposals were returned, not that the queue accepted them. Successful queue
-acceptance is evidenced only by study trial attributes. Historical
-`accepted_candidates.jsonl` and `batch_enqueued` artifacts retain their original
-historical meaning and remain readable. API keys are
-read from the configured environment variable and are not included in the
-serialized requests or normal responses.
-Nonfake providers require the API key environment variable during component
-initialization, before new study signatures are stored. The fake provider
-requires no credentials. `provider: openrouter` defaults `api_key_env` to
-`OPENROUTER_API_KEY`.
-Generic `provider: openai_compatible` endpoints require `api_key_env` to be
-set explicitly so they never inherit an OpenRouter credential name silently.
-`base_url` must be a clean endpoint without URL userinfo, query parameters, or
-fragments; Chat Completions transports append `/chat/completions` to it. Use `api_key_env` or
-`extra_headers` for authentication. Extra headers and credentials are excluded
-from the study identity.
-The `openrouter` and `openai_compatible` transports use `/chat/completions`. OpenRouter defaults
-`json_response_mode` to `true`, which sends
-`response_format: {type: json_object}`. Generic `openai_compatible` providers
-default it to `false` because that option is not universally supported; set it
-to `true` only when the selected endpoint and model accept JSON response mode.
-Set `temperature: null` to omit temperature from the request. The optional output-token limit below
-is sent using the selected provider field. `provider: fake` uses a required non-empty `responses` list to exercise the
-same validation/ledger path without network access; memory summary responses must
-be included when memory is enabled.
+`base_url` is the API root.
+Chat Completions adapters append `/chat/completions`, and the Responses adapter appends `/responses`.
 
-Provider authentication/credit errors stop immediately. Transient HTTP 429/5xx,
-network failures and incomplete HTTP reads use bounded retries, then stop if
-exhausted. YAML settings `optimizer.llm.max_transport_retries` (default 5),
-`retry_backoff_s` (5 seconds), and `retry_backoff_cap_s` (60 seconds per wait)
-control transport retry policy without changing study identity. Valid
-`Retry-After` seconds or HTTP dates set a minimum wait; if the server requests
-more than the configured cap, the study stops instead of retrying early.
-Only malformed provider responses or candidate content use repair/random fallback;
-transport failures never become random search. Proposal-source counts in the run
-summary distinguish LLM candidates, fixed warm-up attempts, and random fallback.
-Duplicate filtering includes pruned and known deterministic failed candidates,
-while infrastructure and unknown failures remain retryable. Model construction
-`ValueError`/`NotImplementedError` failures persist `candidate_failure_class`,
-stage and reason; deduplication consumes that evidence. Resource/transport and
-unknown backend exceptions are not labeled deterministic. Float descriptors
-normalize numeric values before deduplication; categorical types stay strict.
+Use complete raw descriptor parameters such as `dilations_index` and `cpu_clock_mhz_index`, not decoded architecture fields.
+Include deployment fields only when active for the experiment.
+See [validation and failures](../crest/optimizers/llm/README.md#validation-and-failures) for response validation and fallback, [run artifacts](../crest/optimizers/llm/README.md#inspect-a-run) for saved evidence, and the [provider interface](../crest/optimizers/llm/README.md#completion-providers) for authentication, transport behavior, and retry handling.
 
 ### Responses transport and history modes
 
-For a Responses endpoint, select `provider: openai_responses` and set `base_url`,
-`model`, and `api_key_env` explicitly. The transport appends `/responses` to the
-base URL. Temperature defaults to `null`; output limits use `max_output_tokens`.
-The configured endpoint and model must support any reasoning or service-tier
-options you select. Prices come from the bundled provider catalog or a custom `pricing_file`.
+For `provider: openai_responses`, set `base_url`, `model`, and `api_key_env` explicitly.
+Output limits use `max_output_tokens`.
+Optional `reasoning_effort` and `service_tier` must be supported by the configured endpoint and model.
 
-`history_mode` defaults to `bounded`, using the recent window, anchors, and
-optional accumulated memory described below. `history_mode: full` is supported
-for `model.family: audio_dscnn` and includes exact columnar trial evidence and
-decoded architecture coverage. It requires `require_rationale: true`,
-`memory.enabled: false`, `batch_size` between 1 and 5, and `max_repair_attempts`
-at most 1. In full mode, `max_refill_attempts` accepts 0 through 2 (default 2);
-this option is invalid in bounded mode. The allocation policy and decoded
-architecture duplicate checks are described in the
-[optimizer guide](../crest/optimizers/GUIDE.md#provider-transports-and-full-history).
+`history_mode` defaults to `bounded`.
+`history_mode: full` is supported only for `model.family: audio_dscnn` and requires `require_rationale: true`, `memory.enabled: false`, `batch_size` from 1 through 5, and `max_repair_attempts` at most 1.
+Full mode accepts `max_refill_attempts` from 0 through 2 (default 2).
+That option is invalid in bounded mode.
+See [full-history generation](../crest/optimizers/llm/README.md#full-history-generation) for policy behavior and response examples.
 
-`require_rationale` defaults to `false`. Enabling it requires candidates shaped as `{"params": {...}, "rationale": "..."}`
-with a nonempty rationale of at most 2000 characters. Rationale is retained as provenance;
-it does not alter candidate legality, measured evidence, or scoring.
+`require_rationale` defaults to `false`.
+When enabled, each candidate has the shape `{"params": {...}, "rationale": "..."}` with a nonempty rationale of at most 2000 characters.
+Rationale is proposal metadata and does not change scoring.
+Changing identity-bearing settings requires a new study.
 
 ### Output-token and spending limits
 
-Set `max_output_tokens` to limit each completion, including memory and repair
-calls. `output_token_parameter` selects `max_completion_tokens` (default) or
-`max_tokens`; verify which field the chosen model accepts and that it covers all
-billable completion/reasoning tokens. The limit is part of optimizer identity;
-changing it requires a new study. Omitting it preserves existing behavior.
+`max_output_tokens` optionally limits each completion, including repair and memory calls.
+`output_token_parameter` selects `max_completion_tokens` (default) or `max_tokens` for Chat Completions.
+Choose a field supported by the endpoint and model that covers billable completion/reasoning tokens.
+These limits are part of resume identity.
+Omitting them preserves uncapped completion behavior.
 
-For a monetary cap, supply token limits and select a catalog matching your
-provider, endpoint, model, and service tier. Omit `pricing_file` to use the bundled
-catalog, or provide a custom JSON file relative to this experiment YAML:
+<a id="configure-pricing-and-a-spending-cap"></a>
+
+#### Pricing catalogs and spending caps
+
+Add this optimizer block to a complete experiment configuration.
 
 ```yaml
 optimizer:
   type: llm_generator
   llm:
-    # Keep the verified provider/model/authentication settings.
-    max_output_tokens: 4096
-    output_token_parameter: max_completion_tokens
-    max_usd: 10.0
+    provider: openai_responses
+    base_url: https://api.openai.com/v1
+    model: gpt-6-luna
+    api_key_env: OPENAI_API_KEY
+    max_usd: 5
     max_input_tokens: 100000
-    pricing_file: prices.json  # Omit when the bundled catalog has a matching tariff.
+    max_output_tokens: 2000
+    # pricing_file: prices.json  # Optional custom catalog, relative to this YAML.
 ```
 
-See the [pricing catalog guide](../crest/optimizers/llm/providers/README.md#configure-pricing-and-a-spending-cap)
-for the JSON schema and supported bundled rates. The selected rates, source, and
-verification date are saved with the study; a changed tariff is rejected on
-resume. Existing explicit inline prices remain supported.
+A spending cap requires `max_usd`, `max_input_tokens`, `max_output_tokens`, and matching prices.
+Explicit inline prices remain supported.
+The bundled [`pricing.json`](../crest/optimizers/llm/providers/pricing.json) covers OpenAI `gpt-6-luna`.
+Its conservative rates can exceed the actual bill.
+For another model, endpoint, or service tier, copy that file and set `pricing_file`.
+A custom catalog replaces the bundled one.
+Entries must match provider, base URL, model, and tier (`default` when omitted).
 
-One shared `llm_optimizer/spend_state.json` accounts for generation, candidate
-repairs, memory summaries, summary repairs, and every HTTP retry. Before an
-attempt, it atomically reserves the full configured input/output token ceilings
-at the supplied prices. It rejects prompts whose serialized message-byte bound
-plus 1024 framing tokens exceeds `max_input_tokens`; this deliberately
-conservative check is not a model-specific tokenizer or a universal billing
-bound. Choose a ceiling large enough for real saved prompts. The provider receives
-the output ceiling; input size is checked locally.
+`max_usd: 0` permits fixed warm-ups without paid requests.
+Capped studies save their selected rates in `llm_optimizer/spend_state.json`.
+Retain that file when resuming and increase `max_usd` to continue.
+Model, rates, pricing provenance, and token limits must match.
+Removing an existing cap or enabling one over existing request logs without spend state is rejected.
+Failed or interrupted requests retain their reservation because they may have been billed.
+Recorded charges are conservative estimates, not provider invoices.
+Without `max_usd`, spending is not tracked.
 
-Valid `prompt_tokens`/`completion_tokens` usage settles actual configured cost;
-unused reservation is released. Missing/malformed usage, transport errors, and
-crashes retain the full reservation, including failed HTTP attempts that may
-ultimately be unbilled. Thus the tracked total can exceed the actual invoice.
-An observed token overrun is recorded and stops further requests. This is a
-local accounting cap under the configured tariff and token-limit assumptions,
-not a provider-enforced dollar limit; taxes, extra fees, incorrect prices, and
-provider violations are not bounded by it.
-
-When the next reservation cannot fit, NAS/smoke stops cleanly before HTTP or new
-candidate enqueue, with no random fallback. `max_usd: 0` allows fixed warm-up
-without paid calls. Already queued candidates use no new API call and still run
-under the normal evaluation budget. To continue a capped study, retain its state
-file and increase `max_usd`; model, prices, provenance and token limits must match.
-Removing the cap from a tracked study is rejected. Enabling a cap over existing
-request logs without spend state is also rejected: use a new study rather than
-silently resetting earlier cost. Use one writer per study, as with the runner.
-
-Each prompt includes attempted and feasible-trial budgets. Its phase guidance is
-based on the greater of attempted/maximum attempts and feasible/target feasible:
-`exploration` below 35%, `specification` below 85%,
-and `finalization` afterward. These are prompt instructions; CREST still evaluates
-candidates with the configured objective and feasibility rules.
-
-To give the LLM a fixed measured warm-up, add an ordered JSON parameter file:
+### Fixed warm-up and recovery
 
 ```yaml
 optimizer:
@@ -614,133 +368,44 @@ optimizer:
       interval_trials: 15
 ```
 
-The file must contain a nonempty JSON list of complete raw parameter dictionaries
-for the active search space. The 15-entry window above is an example; choose
-a window large enough to show the complete warm-up. When loaded from YAML, relative paths
-resolve from the YAML file directory (and `~` expands to the home directory).
-Direct component callers should supply an absolute path. All entries are validated before
-execution. One fixed candidate runs per round through the same objective before
-any provider request; failures and pruned trials count as warm-up attempts.
-Warm-up uses the normal attempt/completion budgets, so a smaller budget can stop
-partway through it. Set the recent window to at least the warm-up length to expose all warm-up
-attempts in the first LLM prompt.
+`warmup_params_file` must contain a nonempty ordered JSON list of complete raw parameter dictionaries.
+Relative paths resolve from the YAML directory.
+`~` expands to the home directory.
+Set `recent_trial_window` at least as large as the warm-up to expose all attempts in the first LLM prompt.
+Warm-up consumes normal attempt/completion budgets and may stop partway through.
+Moving or reformatting the file is allowed.
+Changing its candidates requires a new study.
+Credentials are still checked at initialization.
 
-Existing queue/provenance handling resumes without replaying completed entries.
-An orphan RUNNING trial requires explicit recovery. After confirming **the workers
-for the selected trials have stopped**, set `optimizer.recover_orphaned_trials:
-[12]` to list their exact Optuna trial numbers. The runner marks only those listed
-trials that are still RUNNING as FAIL through Optuna, records the target list and
-recovery evidence, and continues. Reusing that list leaves later trials untouched;
-terminal trial numbers are harmless. Unknown or WAITING trial numbers are rejected
-before any state changes so a future worker cannot become a retained target. The default is `[]`;
-legacy `false` also disables recovery, while `true` is rejected with instructions
-to provide exact trial numbers. Remove the list when recovery is finished for
-clarity. It never infers that a RUNNING worker is dead. Study identity hashes
-the ordered file contents rather than the path: relocation or JSON formatting
-changes are allowed, changing the candidates requires a new study. Omitting the
-option preserves the existing LLM behavior and optimizer identity. Provider
-configuration and credentials are still checked during initialization.
-
-`recent_trial_window` bounds compact records read directly from recent Optuna
-trials and included in the next prompt. It defaults to 10; set it to 0 to
-disable that recent window. `batch_size` controls candidates per generation call;
-`recent_trial_window` controls detailed recent records. Both are independent of
-`memory.interval_trials`, which controls when accumulated evidence is summarized.
-`anchor_count` bounds persistent best-candidate records in every generation prompt.
-It defaults to 5 and must be a non-negative integer; set it to 0 to disable anchors.
-Anchors are selected directly from the full study, independently of the recent
-window and memory. Only COMPLETE trials with finite objective values and no
-recorded failure, pruning, or infeasibility are eligible; when feasibility rules
-are active, recorded status must be `feasible`. Scalar studies retain the best
-trials according to the study direction. Multi-objective studies retain the feasible nondominated front; if it
-exceeds the limit, normalize each objective's front values to [0, 1], accounting
-for its direction, and keep candidates nearest the knee. For two objectives, the
-knee has the greatest positive distance toward the ideal from the line joining
-the objective extremes. When no positive bend exists (including a flat front),
-an objective has zero span, or there are more than two objectives, the candidate
-closest to the normalized ideal is used as a compromise proxy.
-The knee and its nearest neighbors are selected using normalized Euclidean
-distance. Trial numbers break ties deterministically. Records reuse the recent
-history format, including exact raw parameters and available measurements.
-Repeated trial numbers across prompt sections are the same evidence.
-
-`semantic_context` defaults to `true`. It adds a deterministic, versioned,
-hashed summary of the normalized dataset/input contract, task outputs and
-metrics, objective and feasibility policy, model family, known device
-capacities and deployment choices, and runtime flags. Parameter descriptions,
-units, and typical architectural effects augment the existing search-space
-schema; those effects are priors, and measured CREST/HIL observations take
-precedence. Set `semantic_context: false` for an ablation that retains legal
-parameter names/ranges/choices, recent trial history, best-candidate anchors,
-and trial-budget state.
-Paths, serial ports, credential values, dataset examples, and unfiltered config
-trees are not included.
-
+`optimizer.recover_orphaned_trials` is a list of trial numbers, defaulting to `[]`.
+After confirming the selected workers have stopped, supply exact trial numbers, for example `[12]`.
+Only listed RUNNING trials become FAIL.
+Terminal numbers are harmless, while unknown or WAITING numbers reject the request.
+Remove the list afterward.
+See [budgets and resume](../crest/optimizers/README.md#budgets-and-resume).
 
 ### Accumulated experimental memory
 
-For `llm_generator`, memory is enabled by default; set `optimizer.llm.memory.enabled:
-false` to disable accumulated memory while retaining configured recent trials
-and anchors. The same configured provider/model makes separate JSON summarization
-calls. This adds API usage once the start threshold is reached. Fake-provider
-fixtures must interleave candidate and summary responses in the same order; the
-two response schemas are different.
+Memory is enabled by default.
+Set `optimizer.llm.memory.enabled: false` to disable summary calls while retaining configured recent trials and anchors.
+Memory uses the configured provider/model and incurs separate API usage.
 
-The default first summary is created once ten **terminal trials** (COMPLETE, FAIL,
-or PRUNED) exist, before the next candidate-generation call. Later summaries are
-created after five additional terminal trials. Thresholds are checked at generation
-batch boundaries, not in the middle of evaluating a batch. Partial accepted batches
-therefore change the timing. A final summary is not requested when no more candidates
-are needed. `start_after_trials` and `interval_trials` are independent positive
-integers; changing the recent-trial window does not change either setting.
+| Memory setting | Default and requirements |
+| --- | --- |
+| `start_after_trials` | 10 eligible terminal trials (COMPLETE, FAIL, or PRUNED). Positive integer. |
+| `interval_trials` | 5 additional eligible terminal trials. Positive integer, independent of the recent window. |
+| `lag_trials` | Default 0. Non-negative number of newest terminal trials withheld from summarization. |
+| `max_findings` | 12 structured findings. |
+| `max_chars` | 6000 characters, not tokens. |
+| `max_pending_trials` | 100. Must be at least both timing thresholds. |
 
-Every summary update receives the previous structured findings, new trial records,
-and the static task/model/deployment context. The LLM returns updates to stable
-finding IDs, with observation, conditions, evidence, exceptions, uncertainty, and
-audit trial numbers. Findings must carry their evidence in readable prose, not just
-references to unavailable trials. Unmentioned findings persist. Replacing a finding
-must explicitly retain still-relevant caveats. Retirement requires an ID and reason;
-old snapshots remain available. The generator receives a paragraph for each finding,
-rendered without another LLM rewrite, plus the recent detailed trials.
+Reduced bounds must still fit saved findings.
+Resume requires compatible saved context and covered evidence.
+Incompatible changes require a new study/output directory.
+Use one writer per study.
+See [evidence and memory](../crest/optimizers/llm/README.md#evidence-and-memory) for summary timing, rejection/suspension handling, audit artifacts, and recovery.
 
-The newest unsummarized trials outside the recent window appear as bounded
-`pending_trials`, with explicit counts when older evidence is omitted. Disabling
-memory intentionally removes this additional evidence window.
-`max_findings` and `max_chars` bound accepted memory; `max_chars` is a character
-limit on the structured memory and its rendered prose, **not a tokenizer count or
-an API output-token cap**. Oversized/malformed summaries are rejected, never
-truncated. The model's factual conclusions are not automatically proven correct.
-
-`max_pending_trials` bounds each summary chunk and the pending records shown to
-the generator. It must be at least both timing thresholds. Rejected summaries get
-one repair attempt with rejection feedback. If both fail, the last valid memory
-remains in use, all uncovered evidence remains in the study, and the generator
-receives the newest bounded pending evidence with explicit total and omitted counts. Three
-consecutive deferrals suspend further summary calls, including across restarts;
-a successful summary resets the counter. The prompt reports suspension and its
-reason. After correcting the cause with all workers stopped, explicitly call
-`ExperimentalMemory(memory_directory, MemoryConfig.from_config(llm_memory_config)).reset_summary_failures()`
-to resume summaries. The directory is the study's `llm_optimizer/memory` folder;
-use its existing memory configuration. Resetting preserves findings and coverage.
-Ledger events record the backlog. Provider execution failures
-stop the study; they do not silently degrade memory or candidate generation.
-A reduced memory size on resume must still fit the saved findings.
-
-Artifacts live under `models/<study>/llm_optimizer/memory/`:
-
-- `state.json`: atomically replaced current memory, version, context hash, and hashes
-  of covered trial records. Coverage IDs/hashes remain on disk, not in every prompt.
-- `snapshots/`: prior committed memory versions, including subsequently retired findings.
-- `requests/`: summary requests/responses, including provider usage and latency.
-- `optimizer_events.jsonl`: commits, failures, rejections, and retirement reasons.
-
-Resume verifies the context and previously covered trial records. A changed context
-or incompatible study fails explicitly; use a new study/output directory. This is a
-single-writer workflow. It does not provide concurrent-worker locking. Summary
-quality, loss of nuance during revisions, and live provider behavior require empirical
-validation; schema and provenance checks cannot guarantee semantic faithfulness.
-
-Minimal example:
+Minimal dataset/task/model example to accompany an optimizer block.
 
 ```yaml
 dataset:
@@ -768,108 +433,76 @@ model:
 
 The `nas` block owns scoring, pruning, and constrained-feasibility policy.
 
-Structure:
+Structure
 
-- `nas.score.type`
-  `scoring-function` or `multi-objective`
-- `nas.score.metrics`
-  Optional derived metrics
-- `nas.score.params`
-  Score terms or objectives depending on `score.type`
-- `nas.prune.rules`
-  Optional post-build/pre-fit hard termination gates
-- `nas.feasibility.train_if_infeasible`
-  Whether trials that violate feasibility constraints should still train and
-  return real objective values. Defaults to `false`.
-- `nas.feasibility.rules`
-  Optional post-build/pre-fit deployability constraints using the same rule
-  shape as `nas.prune.rules`: `rule`, `metric`, `condition`, `reference`, and
-  `reason`.
+- `nas.score.type` `scoring-function` or `multi-objective`
+- `nas.score.metrics` Optional derived metrics
+- `nas.score.params` Score terms or objectives depending on `score.type`
+- `nas.prune.rules` Optional post-build/pre-fit hard termination gates
+- `nas.feasibility.train_if_infeasible` Whether trials that violate feasibility constraints should still train and return real objective values.
+  Defaults to `false`.
+- `nas.feasibility.rules` Optional post-build/pre-fit deployability constraints using the same rule shape as `nas.prune.rules`, with fields `rule`, `metric`, `condition`, `reference`, and `reason`.
 
-Built-in derived metric types validated in code include:
+Built-in derived metric types validated in code include the following.
 
 - `add`
 - `energy-budget-from-power`
 
-Scalar term types include:
+Scalar term types include the following.
 
 - `weighted`
 - `normalized-weighted`
 - `boundary`
 - `target`
 
-Practical guidance:
+Practical guidance
 
 - use `scoring-function` when you want one scalar score
 - use `multi-objective` when you want a Pareto front instead of one scalar
-- use `nas.prune.rules` with either score type when a pre-fit metric should
-  hard-stop a trial before feasibility is evaluated. Rules run after model
-  build/compile, FLOP counting,
-  and HIL/compile metric collection, but before `task.build_fit_plan`,
-  `model.fit`, TFLite validation, or Keras validation. Multi-objective gate
-  hits are logged with `pruned=True` but remain Optuna COMPLETE trials with
-  direction-aware penalty values.
-- use `nas.feasibility.rules` for deployability constraints that should be
-  visible to Optuna constrained samplers. Feasibility is evaluated after hard
-  failures and `nas.prune.rules`; each rule persists one signed constraint
-  where `<= 0` is feasible and `> 0` is infeasible. With
-  `train_if_infeasible: false`, infeasible trials skip training and return
-  penalties while still consuming `training.max_total_trials`. With
-  `train_if_infeasible: true`, trials train normally but remain
-  constrained-infeasible for samplers, CSV filtering, and plots.
-- move latency/deadline budget gates such as `latency_ms > latency_budget_ms`
-  or `cadenced_deadline_miss_count > 0` to `nas.feasibility.rules` when you
-  want constrained dominance. Keep the same metric in `nas.prune.rules` only
-  when you deliberately want hard early termination for debugging or resource
-  protection.
-- keep non-HIL configs away from score/prune terms that require measured
-  latency or energy. `latency_ms`, energy/power/current/voltage metrics,
-  `clock_hz`, `harness_latency_ms`, and `cadenced_*` metrics require
-  `device.hil: true`.
-- set `device.compile_when_hil_disabled: false` for pure desktop scores such
-  as RMSE/FLOPs; leave it as `auto` when non-HIL score/prune terms still need
-  compile-derived resource metrics.
-- in cadenced multi-objective runs, overload is telemetry unless you add a
-  `nas.feasibility.rules` constraint such as
-  `cadenced_deadline_miss_count > 0`
+- use `nas.prune.rules` with either score type when a pre-fit metric should hard-stop a trial before feasibility is evaluated.
+  Rules run after model build/compile, FLOP counting, and HIL/compile metric collection, but before `task.build_fit_plan`, `model.fit`, TFLite validation, or Keras validation.
+  Multi-objective gate hits are logged with `pruned=True` but remain Optuna COMPLETE trials with direction-aware penalty values.
+- use `nas.feasibility.rules` for deployability constraints that should be visible to Optuna constrained samplers.
+  Feasibility is evaluated after hard failures and `nas.prune.rules`.
+  Each rule persists one signed constraint where `<= 0` is feasible and `> 0` is infeasible.
+  With `train_if_infeasible: false`, infeasible trials skip training and return penalties while still consuming `training.max_total_trials`.
+  With `train_if_infeasible: true`, trials train normally but remain constrained-infeasible for samplers, CSV filtering, and plots.
+- move latency/deadline budget gates such as `latency_ms > latency_budget_ms` or `cadenced_deadline_miss_count > 0` to `nas.feasibility.rules` when you want constrained dominance.
+  Keep the same metric in `nas.prune.rules` only when you deliberately want hard early termination for debugging or resource protection.
+- keep non-HIL configs away from score/prune terms that require measured latency or energy.
+  `latency_ms`, energy/power/current/voltage metrics, `clock_hz`, `harness_latency_ms`, and `cadenced_*` metrics require `device.hil: true`.
+- set `device.compile_when_hil_disabled: false` for pure desktop scores such as RMSE/FLOPs.
+  Leave it as `auto` when non-HIL score/prune terms still need compile-derived resource metrics.
+- in cadenced multi-objective runs, overload is telemetry unless you add a `nas.feasibility.rules` constraint such as `cadenced_deadline_miss_count > 0`
 
-The most complete commented examples remain in
-[`nas_config_stm32.yaml`](nas_config_stm32.yaml) itself.
+The most complete commented examples remain in [`nas_config_stm32.yaml`](nas_config_stm32.yaml) itself.
 
 ## `outputs`
 
 The `outputs` block controls directory roots and naming inputs.
 
-Keys:
+Keys
 
 - `outputs.models_dir`
-- `outputs.hypervolume_reference_point` (optional): fixed multiobjective progress
-  reference, one finite value per objective in objective order and original units.
-  The reference is persisted under the study's `progress/` directory and cannot
-  change on resume. Without one, the first eligible trial plus a 10% worse-direction
-  margin supplies a monitoring-only reference. See [progress reporting](../crest/search/README.md).
+- `outputs.hypervolume_reference_point` (optional).
+  Fixed multiobjective progress reference, one finite value per objective in objective order and original units.
+  The reference is persisted under the study's `progress/` directory and cannot change on resume.
+  Without one, the first eligible trial plus a 10% worse-direction margin supplies a monitoring-only reference.
+  See [progress reporting](../crest/optimizers/README.md#progress-and-reproducibility).
 
 - `outputs.candidate_dir`
 - `outputs.artifact_stem`
 - `outputs.log_file_name`
 
-Runtime notes:
-
-- `load_config(...)` derives read-only runtime fields `model_name` and
-  `checkpoint_name` from `outputs.artifact_stem` and `device.name`, then
-  populates derived paths such as `tflite_model_path` and `checkpoint_path`
-- YAML-authored `outputs.model_name` and `outputs.checkpoint_name` are rejected
-  because artifact names follow the shared `{artifact_stem}_{device.name}`
-  rule
-- `models_dir` and `candidate_dir` are resolved into absolute paths in memory
-
-So the final in-memory values may differ from the literal YAML text.
+Artifact names follow `{artifact_stem}_{device.name}`.
+Configure `artifact_stem` and the directory roots.
+Do not set the derived `model_name` or `checkpoint_name` fields in YAML.
 
 ## `network`
 
 The `network` block owns HIL socket settings.
 
-Keys:
+Keys
 
 - `network.host`
 - `network.port`
@@ -880,11 +513,11 @@ These must match the HIL client/server deployment you actually run.
 
 ## `logging`
 
-The `logging` block exposes:
+The `logging` block exposes the following.
 
 - `logging.level`
 
-Valid values are:
+Valid values are listed below.
 
 - `CRITICAL`
 - `ERROR`
@@ -893,21 +526,51 @@ Valid values are:
 - `DEBUG`
 - `NOTSET`
 
-## Where To Look Next
+## Case study configurations
 
-Use these files together:
+These configs preserve the run axes used by the CREST case studies.
+Use the top-level configs in `src/config/` as general starting points.
+Use `case_study_configs/` when you want the case-study device, workload, runtime-mode, and scoring combinations.
+
+Each YAML includes its intended launch command near the top.
+Run commands from the repository root with the `crest` environment active.
+
+### Case study 2 OxIOD TCN across targets
+
+A target development board and HIL harness are required for the measured-energy configs in `case_study_configs/`.
+
+- [`nas_config_case1_2_ble33_b2b_oxiod.yaml`](case_study_configs/nas_config_case1_2_ble33_b2b_oxiod.yaml) Arduino Nano 33 BLE Sense, OxIOD, back-to-back runtime.
+- [`nas_config_case1_3_portenta_m7_b2b_oxiod.yaml`](case_study_configs/nas_config_case1_3_portenta_m7_b2b_oxiod.yaml) Portenta H7 CM7, OxIOD, back-to-back runtime.
+- [`nas_config_case1_4_portenta_m4_b2b_oxiod.yaml`](case_study_configs/nas_config_case1_4_portenta_m4_b2b_oxiod.yaml) Portenta H7 CM4, OxIOD, back-to-back runtime.
+- [`nas_config_case1_5_stm32_b2b_oxiod.yaml`](case_study_configs/nas_config_case1_5_stm32_b2b_oxiod.yaml) NUCLEO-N657X0-Q, OxIOD, back-to-back runtime.
+
+The desktop proxy examples for the same OxIOD path are [`nas_config_flops_rmse.yaml`](nas_config_flops_rmse.yaml) and [`nas_config_memory_proxy.yaml`](nas_config_memory_proxy.yaml).
+Those proxy configs do not require hardware.
+
+### Case study 1 STM32 runtime schedule comparison
+
+A NUCLEO-N657X0-Q board is required.
+A HIL harness is required for energy-measured runs.
+
+- [`nas_config_case2_1_stm32_b2b_oxiod.yaml`](case_study_configs/nas_config_case2_1_stm32_b2b_oxiod.yaml) NUCLEO-N657X0-Q, OxIOD, continuous back-to-back runtime.
+- [`nas_config_case2_2_stm32_cadenced_oxiod.yaml`](case_study_configs/nas_config_case2_2_stm32_cadenced_oxiod.yaml) NUCLEO-N657X0-Q, OxIOD, cadenced sensing-window runtime with cadence-aware feasibility constraints.
+
+### Case study 3 UrbanSound8K DS-CNN application scoring
+
+A target board and HIL harness are required as shipped.
+For hardware-free training, use these configs as templates with HIL and measured scoring disabled.
+
+- [`nas_config_case3_1_portenta_m7_audio.yaml`](case_study_configs/nas_config_case3_1_portenta_m7_audio.yaml) Portenta H7 CM7, UrbanSound8K cached log-mel inputs, DS-CNN family.
+- [`nas_config_case3_2_stm32_audio.yaml`](case_study_configs/nas_config_case3_2_stm32_audio.yaml) NUCLEO-N657X0-Q, UrbanSound8K cached log-mel inputs, DS-CNN family.
+
+
+## Where to look next
+
+Use these files together.
 
 - [`nas_config_stm32.yaml`](nas_config_stm32.yaml) for the STM32 commented example
-- [`../crest/model.py`](../crest/model.py) for validation and derived
-  runtime behavior
+- [`../crest/model.py`](../crest/model.py) for validation and derived runtime behavior
 - [`../README.md`](../README.md) for source architecture
-- [Optimizer system guide](../crest/optimizers/README.md) for the full proposal,
-  evaluation, budget, and resume contract
-- [`../crest/model_families/README.md`](../crest/model_families/README.md)
-  for model-family selection and extension
-- [`../crest/microcontrollers/README.md`](../crest/microcontrollers/README.md)
-  for backend-owned hardware options
-
-Paid providers accept optional `reasoning_effort` and `service_tier` request
-fields. These settings must match the chosen provider and model. Memory-summary
-suspension emits a warning in the run log and preserves ledger evidence.
+- [Optimizer system guide](../crest/optimizers/README.md) for the full proposal, evaluation, budget, and resume contract
+- [`../crest/model_families/README.md`](../crest/model_families/README.md) for model-family selection and extension
+- [`../crest/microcontrollers/README.md`](../crest/microcontrollers/README.md) for backend-owned hardware options
