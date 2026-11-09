@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crest"
-version = "0.1.0"
+version = "0.2.0"
 description = "Cross-platform runtime evaluation and search for embedded sensing systems"
 license = { text = "BSD-3-Clause" }
 classifiers = [
