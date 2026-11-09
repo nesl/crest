@@ -5,7 +5,7 @@ SPDX-License-Identifier: BSD-3-Clause
 
 # Experiments and analysis
 
-Use these tools to collect CREST measurements, analyze saved results, and reproduce the paper's data figures.
+Use these tools to collect CREST measurements, analyze saved results, and generate case-study and appendix figures.
 Supply your own datasets, study databases, logs, and output paths.
 Run commands from the repository root with the `crest` Conda environment active unless a guide specifies otherwise.
 
@@ -60,7 +60,7 @@ The [progress API](../src/crest/optimizers/README.md#progress-and-reproducibilit
 
 ## 3. Generate figures
 
-The [figure catalog](paper_plots/README.md) maps the paper's data figures to scripts, required inputs, and runnable commands.
+The [figure catalog](paper_plots/README.md) lists the supported figures, their scripts, required inputs, and runnable commands.
 Generators read saved results and write figures plus numeric sidecars for checking the plotted values.
 
 For example, plot the CS1 clock comparison from paired policy measurements.

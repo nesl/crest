@@ -5,7 +5,8 @@ SPDX-License-Identifier: BSD-3-Clause
 
 # Publication Figure Scripts
 
-Seven generators cover the seven data figures (Figures 5–11) in the CREST paper.
+Seven generators cover runtime schedules, energy rankings, cross-target replay, proposal strategies, training budgets, and evaluation timing.
+The catalog retains manuscript figure numbers (5–11) to identify the corresponding assets.
 Figure 10 has two image panels, giving eight plot assets in total.
 They read saved measurements and evaluations.
 They do not train models, launch searches, contact providers, or access hardware.
@@ -68,7 +69,7 @@ python analysis_scripts/paper_plots/plot_case1_model_transfer.py \
 
 Policy columns include `candidate`, `clock_mhz`, `period_ms`, `round`, `E_stop_mj`, `E_inf_mj`, `C_s`.
 Compare `continuous_203` and `continuous_137` at 300 MHz against trial 203 at 800 MHz.
-The paper has five paired rounds at 100/500 ms.
+The reference experiment has five paired rounds at 100/500 ms.
 Round IDs pair observations across candidates and periods.
 Endpoint intervals use paired Student-t uncertainty.
 Lines interpolate only between measured periods.
@@ -78,7 +79,7 @@ Out-of-domain crossings are null.
 Candidate columns include `pool`, `trial`, `study`, `period_ms`, `continuous_mj`, `scheduled_mj`.
 Transfer also requires `E_pred`.
 Study codes `continuous` and `cadenced` display as continuous and periodic search.
-Ranks use all **905** paper candidates, independently within each period/study, averaging ties.
+Ranks use all **905** reference candidates, independently within each period/study, averaging ties.
 Transfer excludes `200ms_cadenced`, leaving **756**, and plots measured minus predicted release energy.
 Do not apply that exclusion to the rank figure.
 
@@ -106,7 +107,7 @@ See `load_crest_points` and `load_replay_points` in [`replay_front_support.py`](
 STM32 replay inputs remain required by the common loader but are omitted from its measured-only panel.
 The 200 ms threshold changes marker fill, not Pareto membership.
 Arduino-panel counts refer to the FLOPs replay front.
-`--clock-target LABEL` is an optional frequency-marker view, not enabled in the final-paper recipe.
+`--clock-target LABEL` is an optional frequency-marker view, not enabled in the example command.
 
 ## CS3 proposal strategies
 

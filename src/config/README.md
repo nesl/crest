@@ -76,7 +76,7 @@ Common keys
   Valid values are `auto`, `true`, and `false`.
   YAML booleans are accepted and normalized to `true`/`false`.
   The default `auto` compiles only when the active score/prune policy references compile-derived metrics such as `ram_bytes`, `flash_bytes`, `external_flash_bytes`, or `arena_bytes`.
-- `device.runtime_mode` `back_to_back` or `cadenced`.
+- `device.runtime_mode` `back_to_back` selects continuous execution, while `cadenced` selects periodic execution.
 - `device.latency_budget_ms` Optional shared cadence-budget override.
   When omitted, the runtime derives it from the active dataset cadence, first `dataset.params.batch_period_ms`, then `dataset.params.stride / dataset.params.sampling_rate_hz * 1000` for the built-in `oxiod` dataset.
 - `device.serial_port` DUT serial port.
@@ -130,10 +130,7 @@ STM32 settings include the following.
 Validation notes
 
 - `device.runtime_mode` must be `back_to_back` or `cadenced`.
-- `device.stm32.runtime_mode` is no longer supported.
-  Use `device.runtime_mode` instead.
-- `device.stm32.project_layout` is no longer supported.
-  LRUN `dev_boot` is implicit for the STM32 backend.
+- The STM32 backend uses the LRUN `dev_boot` layout.
 - `device.latency_budget_ms` must be positive when set.
 - `device.measured_inference_runs` must be an integer `>= 1`.
 - `device.cpu_clock_mhz_options` must be a non-empty integer list when set.
@@ -380,12 +377,10 @@ Moving or reformatting the file is allowed.
 Changing its candidates requires a new study.
 Credentials are still checked at initialization.
 
-`optimizer.recover_orphaned_trials` defaults to `[]`.
+`optimizer.recover_orphaned_trials` is a list of trial numbers, defaulting to `[]`.
 After confirming the selected workers have stopped, supply exact trial numbers, for example `[12]`.
 Only listed RUNNING trials become FAIL.
 Terminal numbers are harmless, while unknown or WAITING numbers reject the request.
-Legacy `false` disables recovery.
-`true` is rejected.
 Remove the list afterward.
 See [budgets and resume](../crest/optimizers/README.md#budgets-and-resume).
 
