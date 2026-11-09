@@ -13,7 +13,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-CANONICAL_ROOT = ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun"
+CANONICAL_ROOT = ROOT_DIR / "firmware" / "stm32" / "crest_stm32_lrun"
 MANIFEST_PATH = CANONICAL_ROOT / "lrun_ownership_manifest.tsv"
 ALLOWED_CATEGORIES = {
     "vendor_copy",
@@ -74,7 +74,7 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
             "Tcn" + "Dut",
         )
         scoped_prefixes = (
-            "sketches/stm32/crest_stm32_lrun/",
+            "firmware/stm32/crest_stm32_lrun/",
             "src/config/",
             "src/crest/microcontrollers/stm32_nucleo_n657x0.py",
             "test/test_model.py",
@@ -83,7 +83,7 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
         scoped_files = {
             "README.md",
             "setup_stm32.sh",
-            "sketches/README.md",
+            "firmware/README.md",
             "src/crest/microcontrollers/README.md",
             "src/crest/model.py",
         }
@@ -122,7 +122,7 @@ class STM32TemplateOwnershipTests(unittest.TestCase):
         """
         script_text = (ROOT_DIR / "setup_stm32.sh").read_text(encoding="utf-8")
 
-        self.assertIn("sketches/stm32/crest_stm32_lrun", script_text)
+        self.assertIn("firmware/stm32/crest_stm32_lrun", script_text)
         self.assertIn('"Appli/Inc/crest_dut_runner.h"', script_text)
         self.assertIn('"Appli/Src/crest_dut_runner.c"', script_text)
         self.assertIn(

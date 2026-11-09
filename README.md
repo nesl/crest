@@ -41,7 +41,7 @@ With CREST, you can do the following.
 | [`src/`](src/README.md) | Search client, HIL server, and shared evaluation pipeline |
 | [`src/crest/`](src/README.md#package-map) | Dataset, task, model-family, optimizer, and hardware components |
 | [`src/config/`](src/config/README.md) | Experiment configurations and settings reference |
-| [`sketches/`](sketches/README.md) | Target-device and power-measurement harness firmware |
+| [`firmware/`](firmware/README.md) | Target-device and power-measurement harness firmware |
 | [`data/`](data/dataset_download_and_splits/README.md) | Dataset preparation and split definitions |
 | [`analysis_scripts/`](analysis_scripts/README.md) | Analysis and plotting of saved experiment results |
 | [`test/`](test/) | Automated tests |
@@ -120,7 +120,7 @@ See [LICENSE](LICENSE) for the full license text.
 
 Important exceptions and separately governed materials
 
-- STM32/ST/CMSIS material under [`sketches/stm32/crest_stm32_lrun/`](sketches/stm32/crest_stm32_lrun/) remains subject to the upstream STMicroelectronics, CMSIS, and related license terms documented in that directory.
+- STM32/ST/CMSIS material under [`firmware/stm32/crest_stm32_lrun/`](firmware/stm32/crest_stm32_lrun/) remains subject to the upstream STMicroelectronics, CMSIS, and related license terms documented in that directory.
 - STM32 vendor-derived and tool-generated build recipe files in the LRUN workspace are not relicensed by CREST headers.
 - The Arduino TensorFlow Lite Micro dependency tracked as the [`tools/arduino-user/libraries/Arduino_TensorFlowLite`](tools/arduino-user/libraries/Arduino_TensorFlowLite) submodule remains governed by its upstream Apache-2.0 license and is not relicensed by CREST.
 - OxIOD split metadata and upstream OxIOD readme snippets are dataset-related materials.

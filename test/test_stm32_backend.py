@@ -3705,10 +3705,10 @@ class STM32HelperTests(unittest.TestCase):
         """Ensure the checked-in canonical LRUN linkers reserve safe heap/stack floors."""
         # Canonical LRUN linker templates should keep the checked-in minimum heap and stack floors.
         app_reservations = stm32_n657_backend._parse_linker_reservations(
-            ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun" / "STM32CubeIDE" / "AppS" / "STM32N657XX_LRUN.ld"
+            ROOT_DIR / "firmware" / "stm32" / "crest_stm32_lrun" / "STM32CubeIDE" / "AppS" / "STM32N657XX_LRUN.ld"
         )
         boot_reservations = stm32_n657_backend._parse_linker_reservations(
-            ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun" / "STM32CubeIDE" / "Boot" / "STM32N657XX_AXISRAM2_fsbl.ld"
+            ROOT_DIR / "firmware" / "stm32" / "crest_stm32_lrun" / "STM32CubeIDE" / "Boot" / "STM32N657XX_AXISRAM2_fsbl.ld"
         )
         self.assertEqual(app_reservations["heap_bytes"], 0x2000)
         self.assertEqual(app_reservations["stack_bytes"], 0x4000)
@@ -3718,7 +3718,7 @@ class STM32HelperTests(unittest.TestCase):
     def test_real_lrun_template_parsers_match_checked_in_files(self) -> None:
         """Ensure LRUN path resolution and parser expectations match the checked-in workspace."""
         # Template parsers should still match the checked-in LRUN files shipped with the repository.
-        canonical_root = ROOT_DIR / "sketches" / "stm32" / "crest_stm32_lrun"
+        canonical_root = ROOT_DIR / "firmware" / "stm32" / "crest_stm32_lrun"
         with tempfile.TemporaryDirectory() as tmpdir:
             staged_root = Path(tmpdir) / canonical_root.name
             shutil.copytree(canonical_root, staged_root)
@@ -3754,7 +3754,7 @@ class STM32HelperTests(unittest.TestCase):
         # The canonical LRUN app recipe should keep the secure NSC region enabled.
         recipe = (
             ROOT_DIR
-            / "sketches"
+            / "firmware"
             / "stm32"
             / "crest_stm32_lrun"
             / "STM32CubeIDE"
@@ -3771,7 +3771,7 @@ class STM32HelperTests(unittest.TestCase):
         # The canonical LRUN XSPI2 IRQ hook should keep using the second HAL handle.
         irq_text = (
             ROOT_DIR
-            / "sketches"
+            / "firmware"
             / "stm32"
             / "crest_stm32_lrun"
             / "Appli"
@@ -3786,7 +3786,7 @@ class STM32HelperTests(unittest.TestCase):
         # The canonical LRUN runner should fail cadenced init when the RTC self-test fails.
         runner_text = (
             ROOT_DIR
-            / "sketches"
+            / "firmware"
             / "stm32"
             / "crest_stm32_lrun"
             / "Appli"

@@ -24,7 +24,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[3]
-FIRMWARE = REPO / "sketches/stm32/crest_stm32_lrun/Appli/Src/crest_dut_runner.c"
+FIRMWARE = REPO / "firmware/stm32/crest_stm32_lrun/Appli/Src/crest_dut_runner.c"
 EXPECTED_PROTOCOL = "rtc_wall_v4_dwt_active_stop_evidence_awake_tail"  # codex/llm-generator-mvp @ 0445a49
 BUSY_SCRIPTS = (
     "runner.py",
@@ -38,7 +38,7 @@ BUSY_SCRIPTS = (
 BUSY_TOOLS = ("STM32_Programmer_CLI", "arduino-cli", "ST-LINK_gdbserver")
 PROVENANCE_FILES = [
     FIRMWARE,
-    REPO / "sketches/harness/harness.ino",
+    REPO / "firmware/harness/harness.ino",
     REPO / "src/crest/microcontrollers/stm32_nucleo_n657x0.py",
     REPO / "src/crest/microcontrollers/stm32_measurement.py",
     REPO / "src/crest/microcontrollers/stm32_runtime.py",
@@ -206,7 +206,7 @@ def provenance():
         "firmware_head_blob": git("rev-parse", f"HEAD:{rel}").strip(),
         "firmware_worktree_blob": git("hash-object", rel).strip(),
         "stm32_project_status_porcelain": git(
-            "status", "--porcelain", "--", "sketches/stm32/crest_stm32_lrun"
+            "status", "--porcelain", "--", "firmware/stm32/crest_stm32_lrun"
         ).splitlines(),
         "file_sha256": {str(p): sha256(p) for p in PROVENANCE_FILES if p.is_file()},
     }, diff

@@ -44,7 +44,7 @@ DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "nas_conf
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STM32_DEFAULT_PROJECT_ROOT = (
     REPO_ROOT
-    / "sketches"
+    / "firmware"
     / "stm32"
     / "crest_stm32_lrun"
 )

@@ -3,9 +3,9 @@ Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 SPDX-License-Identifier: BSD-3-Clause
 -->
 
-# Sketches
+# Firmware
 
-This directory contains the repo-owned Arduino and STM32 sketch/workspace sources used by CREST runtime, HIL, and analysis flows.
+This directory contains the repo-owned Arduino and STM32 firmware sources used by CREST runtime, HIL, and analysis flows.
 
 Hardware requirement depends on the workflow.
 Reading or modifying these sources is software-only.

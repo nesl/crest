@@ -1686,7 +1686,7 @@ class SketchVariantTests(unittest.TestCase):
         """Energy-aware uniform staging should use the generic energy sketch."""
         # Uniform energy runs should pick the energy-enabled sketch variant so the DUT exports the expected telemetry.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(sketches / "crest_inference_energy.ino", "uniform_shared")
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
@@ -1700,7 +1700,7 @@ class SketchVariantTests(unittest.TestCase):
     def test_stages_sketch_using_candidate_dir_basename(self) -> None:
         """Arduino sketch staging should preserve the folder/sketch basename rule."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "audio_dscnn"
             self._write_sketch(sketches / "crest_inference_no_energy.ino", "audio_uniform")
             server = self._build_server(sketches, candidate_dir, energy_aware=False, input_mode="uniform")
@@ -1715,7 +1715,7 @@ class SketchVariantTests(unittest.TestCase):
         """Cadenced staging should use the generic cadenced energy sketch."""
         # Cadenced energy runs must switch to the cadenced uniform sketch so the harness and DUT share the same timing protocol.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(sketches / "crest_inference_energy_cadenced.ino", "cadenced_shared")
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")
@@ -1729,7 +1729,7 @@ class SketchVariantTests(unittest.TestCase):
         """Portenta CM7 uniform staging should use the generic energy sketch."""
         # Uniform energy runs should pick the energy-enabled sketch variant so the DUT exports the expected telemetry.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(sketches / "crest_inference_energy.ino", "uniform_shared_cm7")
             server = self._build_server(
@@ -1750,7 +1750,7 @@ class SketchVariantTests(unittest.TestCase):
         """Portenta CM4 no-energy staging should use the generic no-energy sketch."""
         # Portenta CM4 uniform runs without energy measurement should select the no-energy sketch variant.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(sketches / "crest_inference_no_energy.ino", "no_energy_shared_cm4")
             server = self._build_server(
@@ -1771,7 +1771,7 @@ class SketchVariantTests(unittest.TestCase):
         """Representative OxIOD staging should copy the sketch and staged include header."""
         # Representative input-mode runs should switch sketches and copy the generated header that drives the sample payload.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
                 sketches / "analysis_sketches/crest_inference_representative.ino",
@@ -1792,7 +1792,7 @@ class SketchVariantTests(unittest.TestCase):
         """Real-data OxIOD staging should copy the sketch and staged include header."""
         # Real-input runs should stage the real-data sketch and copy the matching generated header.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
                 sketches / "analysis_sketches/crest_inference_real_data.ino",
@@ -1811,7 +1811,7 @@ class SketchVariantTests(unittest.TestCase):
     def test_selects_urbansound8k_variants_and_copies_audio_header(self) -> None:
         """UrbanSound8K modes should stage the shared sketches with the audio header."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "audio_dscnn"
             self._write_sketch(
                 sketches / "analysis_sketches/crest_inference_representative.ino",
@@ -1842,7 +1842,7 @@ class SketchVariantTests(unittest.TestCase):
         """Dataset representative staging should require its input header."""
         # Representative-mode staging should fail fast if the generated header is missing.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
                 sketches / "analysis_sketches/crest_inference_representative.ino",
@@ -1857,7 +1857,7 @@ class SketchVariantTests(unittest.TestCase):
         # Unknown input modes should fail before sketch selection can stage the wrong artifact.
         """Validate invalid input mode raises."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="bad_mode")
 
@@ -1867,7 +1867,7 @@ class SketchVariantTests(unittest.TestCase):
     def test_old_generic_input_modes_are_unsupported(self) -> None:
         """Old generic representative/real modes should fail through normal validation."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             for mode in ("representative", "real"):
                 with self.subTest(mode=mode):
@@ -1879,7 +1879,7 @@ class SketchVariantTests(unittest.TestCase):
         """Cadenced Arduino staging should still reject non-uniform inputs."""
         # Cadenced runtime mode should reject non-uniform input modes because the timing harness expects fixed windows.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(
                 sketches / "analysis_sketches/crest_inference_representative.ino",
@@ -1896,7 +1896,7 @@ class SketchVariantTests(unittest.TestCase):
         # Uniform Portenta sketch selection needs an explicit target core so the server does not guess between CM4 and CM7.
         """Validate Portenta uniform requires target core."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             server = self._build_server(
                 sketches,
@@ -1914,7 +1914,7 @@ class SketchVariantTests(unittest.TestCase):
         """No-energy uniform staging should use the generic no-energy sketch."""
         # Turning off energy awareness should switch to the no-energy sketch variant to avoid unnecessary harness instrumentation.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(sketches / "crest_inference_no_energy.ino", "no_energy_shared")
             server = self._build_server(sketches, candidate_dir, energy_aware=False, input_mode="uniform")
@@ -1928,7 +1928,7 @@ class SketchVariantTests(unittest.TestCase):
         """Input-mode updates should stage the renamed generic energy sketch."""
         # Input-mode switching should update both the active config and the selected sketch path together.
         with tempfile.TemporaryDirectory() as tmpdir:
-            sketches = Path(tmpdir) / "sketches"
+            sketches = Path(tmpdir) / "firmware"
             candidate_dir = Path(tmpdir) / "odom_tcn"
             self._write_sketch(sketches / "crest_inference_energy.ino", "uniform_shared")
             server = self._build_server(sketches, candidate_dir, energy_aware=True, input_mode="uniform")

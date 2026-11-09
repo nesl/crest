@@ -55,8 +55,8 @@ def _log_arduino_cli_path() -> None:
         logger.debug("Using Arduino CLI at: %s", ARDUINO_CLI_BIN)
         _ARDUINO_CLI_PATH_LOGGED = True
 
-_HARNESS_SKETCH_DIR = _PROJECT_ROOT / "sketches" / "harness"
-_SHARED_COMMON_DIR = _PROJECT_ROOT / "sketches" / "common"
+_HARNESS_SKETCH_DIR = _PROJECT_ROOT / "firmware" / "harness"
+_SHARED_COMMON_DIR = _PROJECT_ROOT / "firmware" / "common"
 _SHARED_HEADER_NAMES = (
     "crest_hil_config.h",
     "crest_power.h",
@@ -764,7 +764,7 @@ def compile_harness_sketch(
     """Compile the harness sketch without patching deployment constants.
 
     The harness keeps local `common/` headers for Arduino include compatibility.
-    Before each compile, shared protocol/power headers from `sketches/common/`
+    Before each compile, shared protocol/power headers from `firmware/common/`
     are copied into the harness `common/` directory so there is one source of
     truth and no manual sync step.
 

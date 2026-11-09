@@ -63,8 +63,8 @@ def _stm32_context(device_config: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         "acceleration_semantics": "NPU use unverified; stm32n6 target and silicon accelerator capability do not establish its use.",
         "profile_sources": [
             "src/crest/microcontrollers/stm32_nucleo_n657x0.py",
-            "sketches/stm32/crest_stm32_lrun/STM32CubeIDE/AppS/Debug/stedgeai.mk",
-            "sketches/stm32/crest_stm32_lrun/STM32CubeIDE/AppS/STM32N657XX_LRUN.ld",
+            "firmware/stm32/crest_stm32_lrun/STM32CubeIDE/AppS/Debug/stedgeai.mk",
+            "firmware/stm32/crest_stm32_lrun/STM32CubeIDE/AppS/STM32N657XX_LRUN.ld",
         ],
     }
     if options.weight_storage_mode == "external_flash":
@@ -90,7 +90,7 @@ def _stm32_context(device_config: Any) -> tuple[dict[str, Any], dict[str, Any]]:
             "application logging, and communications workloads are excluded. Host task accuracy is evaluated separately."
             if checked_in_template else "Custom firmware measurement scope unverified"
         ),
-        "measurement_source": "src/crest/microcontrollers/stm32_measurement.py; sketches/stm32/crest_stm32_lrun/Appli/Src/crest_dut_runner.c",
+        "measurement_source": "src/crest/microcontrollers/stm32_measurement.py; firmware/stm32/crest_stm32_lrun/Appli/Src/crest_dut_runner.c",
     }
     return device, runtime
 

@@ -103,7 +103,7 @@ def run(archive_root, output_dir):
         "e8b8ad837aedd7311cd788019337be42a2bdf47aed8e75171b21955c6a4e3c06"
     }
     runner = meta["direct"]["study.json"]["firmware_git_state"]["file_sha256"][
-        "sketches/stm32/crest_stm32_lrun/Appli/Src/crest_dut_runner.c"
+        "firmware/stm32/crest_stm32_lrun/Appli/Src/crest_dut_runner.c"
     ]
     assert all(r["runner_sha256"] == runner for r in identity137)
     assert all(

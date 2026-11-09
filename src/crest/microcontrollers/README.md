@@ -19,7 +19,7 @@ Follow [Getting started](../../GETTING_STARTED.md#running-nas-and-hil) to launch
 Compile-only checks need the target toolchain but no connected board.
 Uploading and runtime measurement need the development board.
 Energy measurement also needs the CREST harness and INA228 monitor.
-See the [firmware guide](../../../sketches/README.md) for target and harness firmware.
+See the [firmware guide](../../../firmware/README.md) for target and harness firmware.
 
 ### Arduino tools
 
@@ -59,7 +59,7 @@ device:
   runtime_mode: cadenced
   cpu_clock_mhz_options: [200, 300, 400, 600, 800]
   stm32:
-    project_root: sketches/stm32/crest_stm32_lrun
+    project_root: firmware/stm32/crest_stm32_lrun
     appli_flash_address: 0x70100000
     weight_storage_mode: external_flash
     weights_memory_pool: src/config/stm32_nucleo_mypool.json
@@ -69,7 +69,7 @@ device:
 
 Current default behavior
 
-1. If `device.stm32.project_root` is omitted, the backend defaults to `sketches/stm32/crest_stm32_lrun`.
+1. If `device.stm32.project_root` is omitted, the backend defaults to `firmware/stm32/crest_stm32_lrun`.
 2. LRUN `dev_boot` is the only supported layout shipped for this board and is implied automatically.
 
 Supported STM options today
@@ -125,7 +125,7 @@ When that happens, `runtime_measure_mode()` may return `harness_only`, which req
 
 For `PORTENTA_H7` with `target_core=cm4`, CREST uses `harness_only` measurement.
 
-CREST uploads `sketches/boot_m4_helper/boot_m4_helper.ino` on CM7 before uploading the CM4 DUT sketch.
+CREST uploads `firmware/boot_m4_helper/boot_m4_helper.ino` on CM7 before uploading the CM4 DUT sketch.
 `serial_port` is required for both uploads.
 
 The Arduino `mbed_portenta` CM4 path does not expose host USB CDC `Serial` on the primary ACM upload port.
@@ -160,7 +160,7 @@ Keep model architecture and task scoring in their respective components.
 | [`stm32_nucleo_n657x0.py`](stm32_nucleo_n657x0.py) | STM32 candidate staging and concrete backend |
 | [`stm32_cube_clt.py`](stm32_cube_clt.py), [`stm32_runtime.py`](stm32_runtime.py) | STM32 build/programming tools and runtime protocol |
 
-Arduino backends export TFLite as `model.cc` and `model.h` and stage the selected [Arduino sketch](../../../sketches/README.md).
+Arduino backends export TFLite as `model.cc` and `model.h` and stage the selected [Arduino sketch](../../../firmware/README.md).
 STM32 backends instead generate ST Edge AI outputs into a staged STM32 project.
 Keep these toolchain differences behind the shared device interface.
 

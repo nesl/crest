@@ -932,7 +932,7 @@ def _sync_arduino_sketch_variant_for_config(
         If the selected sketch or required analysis header is missing.
     """
     repo_root = Path(__file__).resolve().parents[2]
-    sketch_variants_dir = (repo_root / "sketches") if sketches_dir is None else Path(sketches_dir)
+    sketch_variants_dir = (repo_root / "firmware") if sketches_dir is None else Path(sketches_dir)
     normalized_device_name = str(_cfg_get(_cfg_get(config, "device", None), "name", "")).strip().upper()
     normalized_runtime_phase = str(runtime_phase).strip().lower() or "back_to_back"
     if normalized_runtime_phase not in {"back_to_back", "cadenced"}:
