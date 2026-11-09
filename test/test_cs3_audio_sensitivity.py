@@ -14,7 +14,7 @@ from typing import Any, Mapping, Sequence
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = ROOT_DIR / "analysis_scripts" / "cs3_audio_sensitivity" / "score_sensitivity.py"
+SCRIPT_PATH = ROOT_DIR / "analysis_scripts" / "cs3" / "score_sensitivity.py"
 
 
 def load_cs3_module() -> Any:
