@@ -77,12 +77,12 @@ This repo-local project includes copied ST license material:
 
 ## Measurement protocol
 
-The `rtc_wall_v4_dwt_active_stop_evidence_awake_tail` protocol uses RTC/LSE window
-timing and DWT cadenced active timing when wrap-safe (RTC fallback otherwise).
-Stop counts establish entry, not residency. Cadenced energy includes an awake
-final-slot tail. The host validates telemetry and retries instrumentation failure
-once with the same compiled candidate; valid measurements that miss deployment
-budgets remain ineligible. Each deployment programs and verifies the app and
-external weights, and raw evidence persists outside candidate workspaces under
-`measurement_records_dir`. Offline tests cover timing, acceptance, and recovery;
-hardware measurements require separate validation.
+Measurements use RTC/LSE for the full window and DWT for cadenced active timing
+when wrap-safe, with RTC as the fallback. Every cadenced release slot, including
+the final slot, is eligible for Stop when sufficient slack remains; short slack
+uses the wake-margin busy wait. The measurement window still spans all scheduled
+periods. Stop counts establish entry, not time spent in Stop.
+
+The host and firmware measurement protocols must match. Rebuild and deploy the
+firmware when updating the host, following the [setup guide](../../../src/GETTING_STARTED.md)
+and [NAS/HIL run instructions](../../../src/GETTING_STARTED.md#running-nas-and-hil).

@@ -1,7 +1,7 @@
-"""Pure acceptance rules for the repaired STM32 measurement protocol."""
+"""Acceptance rules for STM32 measurement telemetry."""
 import math
 
-PROTOCOL = 'rtc_wall_v4_dwt_active_stop_evidence_awake_tail'
+PROTOCOL = 'rtc_wall_v5_dwt_active_stop_evidence_all_slots'
 
 
 def firmware_period_ms(period_ms):
@@ -99,19 +99,27 @@ def validate_measurement(metrics, *, latency_s, phase, clock_mhz, runs, period_m
     if phase == 'cadenced':
         slots, entries = metrics.get('slept_slots'), metrics.get('stop_entries')
         def valid_count(value):
-            """Check a Stop count against the available inter-release sleep slots.
+            """Check whether a Stop count fits the available release slots.
 
             Parameters
             ----------
             value : object
-                Reported count, required to be an integer between zero and runs minus one.
+                Reported count, integral from zero through runs, including the
+                final slot.
 
             Returns
             -------
             bool
                 Whether the count is finite, integral, and within the slot limit.
             """
-            return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 and int(value) == value and value <= max(0, runs - 1)
+            return (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+                and value >= 0
+                and int(value) == value
+                and value <= max(0, runs)
+            )
         checks['stop_counts_valid'] = valid_count(slots) and valid_count(entries)
         checks['stop_entries_match_slots'] = checks['stop_counts_valid'] and entries == slots
         misses = metrics.get('deadline_miss_count')
