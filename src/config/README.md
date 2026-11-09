@@ -3,7 +3,7 @@ Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 SPDX-License-Identifier: BSD-3-Clause
 -->
 
-# Config Reference
+# Config reference
 
 This directory documents the runtime configuration surface for CREST.
 
@@ -11,7 +11,7 @@ For the source architecture and extension map, see [`../README.md`](../README.md
 
 Case-study reproducibility configs live under [`case_study_configs/`](case_study_configs/).
 
-## Example Configs
+## Example configs
 
 | If You Want To... | Start With | Hardware Requirement |
 |-------------------|------------|----------------------|
@@ -23,12 +23,12 @@ Case-study reproducibility configs live under [`case_study_configs/`](case_study
 The STM32 example is the most complete commented score/prune reference.
 [`nas_config_memory_proxy.yaml`](nas_config_memory_proxy.yaml) adds a desktop RMSE/static-memory-traffic example.
 
-## Supporting Files
+## Supporting files
 
 - [`stm32_nucleo_mypool.json`](stm32_nucleo_mypool.json) ST Edge AI memory-pool description used by STM32 configs when `device.stm32.weight_storage_mode: external_flash` is enabled.
   This is a repo-local version modified from the STM32 LRUN example for the NUCLEO-N657X0-Q externalized-weights flow.
 
-## Audio Fold Rotation
+## Audio fold rotation
 
 Audio configs can optionally run final reporting across UrbanSound8K folds.
 
@@ -43,7 +43,7 @@ Multi-objective NAS fails during config validation.
 The dataset owns where fold-specific caches live.
 The task owns whether final reporting rotates through those folds.
 
-## Top-Level Blocks
+## Top-Level blocks
 
 The main top-level blocks are as follows.
 
@@ -60,7 +60,7 @@ The main top-level blocks are as follows.
 - `logging` Runtime log level.
 - `optimizer` Optional candidate source selection.
   Omit it, or set `type: optuna`, to use the existing Optuna sampler path.
-  Set `type: llm_generator` to validate and enqueue exact candidates before the unchanged CREST objective runs.
+  Set `type: llm_generator` to propose candidates with an LLM.
 
 `dataset`, `task`, and `model` are required configuration blocks.
 
@@ -104,7 +104,7 @@ Per-backend nested blocks include the following.
 - `device.portenta.*`
 - `device.stm32.*`
 
-See the [STM32 backend guide](../crest/microcontrollers/README.md#stm32-bring-up-guide) for setup and supported options.
+See the [STM32 backend guide](../crest/microcontrollers/README.md#shipped-config-shape) for setup and supported options.
 STM32 settings include the following.
 
 - `template_root`
@@ -197,8 +197,6 @@ Runtime behavior
 
 ## `dataset`, `task`, and `model`
 
-The modular component-selection surface is resolved by [`../crest/component_selection.py`](../crest/component_selection.py).
-
 Keys
 
 - `dataset.name`
@@ -209,18 +207,13 @@ Keys
 - `model.params`
 - `model.search`
 
-For `audio_dscnn`, `model.search: {}` means "use the model-family default search surface" from `AudioDSCNNFamily.AUDIO_DSCNN_SEARCH_CHOICES`.
+For `audio_dscnn`, `model.search: {}` means "use the model-family default search surface" described in the [audio model-family guide](../crest/model_families/audio_dscnn/README.md).
 Add keys under `model.search` only when you want to narrow that default surface.
 
 Validation notes
 
 - `dataset`, `task`, and `model` are required top-level blocks
 - `dataset.params` is required for the built-in `oxiod` dataset path
-- dataset classes are instantiated as zero-argument classes
-- model family classes are instantiated as zero-argument classes
-- task classes are expected to use the explicit keyword-only constructor contract `__init__(*, checkpoint_path, early_stopping_patience)`.
-  The runtime does not probe constructor signatures or provide compatibility shims for older task classes.
-
 ## `optimizer`
 
 `optimizer.type` defaults to `optuna`.
@@ -234,8 +227,7 @@ optimizer:
   type: optuna
 ```
 
-`training.nas_trials` is the total completion target (feasible completions when feasibility is enabled).
-`training.max_total_trials` is the total stored-attempt cap, including failed, pruned, infeasible, RUNNING, and WAITING trials.
+See [training budgets](#training) for completion targets and attempt caps.
 To extend a study, retain its name, database, and original experiment configuration and raise these totals.
 Proposal settings, sampler configuration, and feasibility policy must match on resume.
 Budgets, output paths, and transport timeouts may change.
@@ -382,7 +374,6 @@ optimizer:
 `warmup_params_file` must contain a nonempty ordered JSON list of complete raw parameter dictionaries.
 Relative paths resolve from the YAML directory.
 `~` expands to the home directory.
-Direct component callers should use absolute paths.
 Set `recent_trial_window` at least as large as the warm-up to expose all attempts in the first LLM prompt.
 Warm-up consumes normal attempt/completion budgets and may stop partway through.
 Moving or reformatting the file is allowed.
@@ -549,7 +540,7 @@ Use `case_study_configs/` when you want the case-study device, workload, runtime
 Each YAML includes its intended launch command near the top.
 Run commands from the repository root with the `crest` environment active.
 
-### Case Study 2 OxIOD TCN Across Targets
+### Case study 2 OxIOD TCN across targets
 
 A target development board and HIL harness are required for the measured-energy configs in `case_study_configs/`.
 
@@ -561,7 +552,7 @@ A target development board and HIL harness are required for the measured-energy 
 The desktop proxy examples for the same OxIOD path are [`nas_config_flops_rmse.yaml`](nas_config_flops_rmse.yaml) and [`nas_config_memory_proxy.yaml`](nas_config_memory_proxy.yaml).
 Those proxy configs do not require hardware.
 
-### Case Study 1 STM32 Runtime Schedule Comparison
+### Case study 1 STM32 runtime schedule comparison
 
 A NUCLEO-N657X0-Q board is required.
 A HIL harness is required for energy-measured runs.
@@ -569,7 +560,7 @@ A HIL harness is required for energy-measured runs.
 - [`nas_config_case2_1_stm32_b2b_oxiod.yaml`](case_study_configs/nas_config_case2_1_stm32_b2b_oxiod.yaml) NUCLEO-N657X0-Q, OxIOD, continuous back-to-back runtime.
 - [`nas_config_case2_2_stm32_cadenced_oxiod.yaml`](case_study_configs/nas_config_case2_2_stm32_cadenced_oxiod.yaml) NUCLEO-N657X0-Q, OxIOD, cadenced sensing-window runtime with cadence-aware feasibility constraints.
 
-### Case Study 3 UrbanSound8K DS-CNN Application Scoring
+### Case study 3 UrbanSound8K DS-CNN application scoring
 
 A target board and HIL harness are required as shipped.
 For hardware-free training, use these configs as templates with HIL and measured scoring disabled.
@@ -578,7 +569,7 @@ For hardware-free training, use these configs as templates with HIL and measured
 - [`nas_config_case3_2_stm32_audio.yaml`](case_study_configs/nas_config_case3_2_stm32_audio.yaml) NUCLEO-N657X0-Q, UrbanSound8K cached log-mel inputs, DS-CNN family.
 
 
-## Where To Look Next
+## Where to look next
 
 Use these files together.
 

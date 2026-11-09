@@ -3,20 +3,14 @@ Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 SPDX-License-Identifier: BSD-3-Clause
 -->
 
-# Source Guide
+# Source guide
 
 This directory contains the Python entry points and core library code for the CREST training, hardware-in-the-loop, and deployment flow.
 
-Related docs
-
-- Repository setup, dataset preparation, and operator workflow live in [`../README.md`](../README.md).
-- Config block meanings, NAS policy shape, and runtime config caveats live in [`config/README.md`](config/README.md).
-- The complete optimizer contract, evidence, budgeting, and restart behavior live in the [optimizer system guide](crest/optimizers/README.md).
-- Microcontroller and hardware-backend bring-up live in [`crest/microcontrollers/README.md`](crest/microcontrollers/README.md).
-
 For installation and runnable workflows, see [Getting started](GETTING_STARTED.md).
+For contribution standards and test commands, see [Contributing](../CONTRIBUTING.md).
 
-## Where To Start
+## Where to start
 
 | Goal | Start Here | Hardware Requirement |
 |------|------------|----------------------|
@@ -29,13 +23,13 @@ For installation and runnable workflows, see [Getting started](GETTING_STARTED.m
 | Add a model family | [`crest/model_families/README.md`](crest/model_families/README.md) | No hardware required for model construction. Hardware needed for backend validation |
 | Add board support | [`crest/microcontrollers/README.md`](crest/microcontrollers/README.md) | Matching board and toolchain required |
 
-## Top-Level Entry Points
+## Top-Level entry points
 
 - [`nas_model_client.py`](nas_model_client.py) Runs NAS, training, scoring, artifact export, and the client side of the hardware-in-the-loop workflow.
 - [`hil_server.py`](hil_server.py) Runs the ZeroMQ HIL server that materializes models, stages device-specific candidates, and returns compile/runtime metrics.
 - [`pareto_hil_replay.py`](pareto_hil_replay.py) Replays already-logged Pareto-front NAS candidates through a target HIL config and writes replay artifacts.
 
-## Package Map
+## Package map
 
 | Area | Responsibility |
 | --- | --- |
@@ -46,12 +40,12 @@ For installation and runnable workflows, see [Getting started](GETTING_STARTED.m
 | [`crest/model_families/`](crest/model_families/README.md) | Search spaces, model construction, and export variants |
 | [`crest/optimizers/`](crest/optimizers/README.md) | Candidate proposals and shared round execution |
 | [`crest/search/`](crest/optimizers/README.md#progress-and-reproducibility) | Progress reporting and training randomness |
-| [`crest/hil/`](#hil-request-and-serial-helpers), [`microcontrollers/`](crest/microcontrollers/README.md) | Hardware requests, measurement, and board backends |
+| [`crest/hil/`](crest/hil), [`microcontrollers/`](crest/microcontrollers/README.md) | Hardware requests, measurement, and board backends |
 | [`crest/model.py`](crest/model.py), [`runtime_bootstrap.py`](crest/runtime_bootstrap.py) | Configuration, scoring, and component initialization |
 | [`crest/pareto_replay.py`](crest/pareto_replay.py) | Candidate selection and request reconstruction for Pareto HIL replay |
 | [`crest/devices.py`](crest/devices.py), [`hardware.py`](crest/hardware.py) | Device contracts and shared hardware utilities |
 
-## Shared Contracts
+## Shared contracts
 
 The `crest` package implements the reusable pipeline behind the source entry points.
 Use canonical imports such as `from crest.pipeline_types import ModelBuildContext`.
@@ -77,7 +71,7 @@ Shared input/output records live in [`crest/pipeline_types.py`](crest/pipeline_t
 The contracts can be inspected without loading TensorFlow or device backends.
 Method docstrings specify required overrides and default behavior.
 
-### Required Hooks And Defaults
+### Required hooks and defaults
 
 | Contract | Required methods |
 | --- | --- |
@@ -90,7 +84,7 @@ Implement abstract methods first and override defaults only when needed.
 Some execution modes require optional hooks.
 An explicit proposer needs the model family's `trial_search_space` declaration, while native sampling can work without it.
 
-### Inspect An Implementation's Obligations
+### Inspect an implementation's obligations
 
 This example needs no dataset, model, provider, or TensorFlow import.
 
@@ -104,7 +98,7 @@ print(sorted(ModelFamilyABC.__abstractmethods__))
 A subclass with an unimplemented abstract method cannot be instantiated.
 Implementing those methods alone does not establish compatibility with a selected task, dataset, or deployment mode.
 
-## End-to-End Flow
+## End-to-End flow
 
 1. An entry point loads configuration and resolves the selected dataset, task, model family, and optimizer.
 2. The dataset supplies splits and metadata.
@@ -117,13 +111,7 @@ Implementing those methods alone does not establish compatibility with a selecte
 
 NAS and the HIL server share component initialization through [`runtime_bootstrap.py`](crest/runtime_bootstrap.py).
 
-## Component Selection
-
-The current modular selection surface is resolved in [`crest/component_selection.py`](crest/component_selection.py).
-
-Use the [configuration reference](config/README.md) for component selectors, required blocks, defaults, and component-local parameters.
-
-## Registration Model
+## Registration model
 
 Registration is explicit.
 Adding a Python file does not make a component selectable.
@@ -136,37 +124,14 @@ Native sampling and explicit LLM proposals use the same objective, feasibility r
 The runner validates complete explicit batches before queueing them.
 See the [optimizer guide](crest/optimizers/README.md) for the proposal contract and [LLM guide](crest/optimizers/llm/README.md) for provider examples.
 
-## Shared Scoring And Trial Outputs
-
-### Task Metric Declaration
-
-Tasks declare their available metrics through `TaskMetricContract`.
-Shared scoring validates objective, pruning, and feasibility settings against that declaration.
-See the [task contract](crest/tasks/README.md#contract-in-practice).
-
-### Task-Owned Fit And Closeout Hooks
-
-Tasks own training plans, evaluation, and final reporting artifacts.
-Their [contributor guide](crest/tasks/README.md) explains these hooks and includes a concrete example.
-
-### Score Resolution
-
-Scoring supports scalar values and ordered multi-objective values/directions.
-See the [NAS configuration reference](config/README.md#nas) for score policies.
-
-### Generic Trial Outcome
-
-Trial outcomes combine score values, task metrics, hyperparameters, hardware measurements, and optional task artifacts.
-They are written to CSV and Optuna.
-
-### CSV And Optuna Logging
+## Trial outputs
 
 CSV output includes study identity, objectives, hardware measurements, pruning, and feasibility status.
 Task metrics use `metric__{name}` columns and hyperparameters use `hparam__{name}`.
 The corresponding values also appear in Optuna trial attributes.
 For analysis, use the [trial-outcome guide](../analysis_scripts/appendix_trial_outcomes/README.md).
 
-## Pareto HIL Replay
+## Pareto HIL replay
 
 `pareto_hil_replay.py` does not run NAS or retrain models.
 It reads a source NAS CSV/config, reconstructs the logged candidate payloads, selects the valid Pareto front, and reuses the same HIL server/backend request path that normal hardware scoring uses.
@@ -179,19 +144,7 @@ Hardware execution uses the saved candidate parameters and any model/checkpoint 
 `--resume` skips payload keys already present in `replay_results.csv` with `completed` or `dry_run` status.
 Do not reuse a dry-run output directory for a hardware replay with `--resume` unless skipping those candidates is intentional.
 
-## Extension Paths
-
-Contributor standards for new implementation work
-
-- Make breaking config or API changes explicit in the relevant README and config examples.
-- Avoid temporary compatibility paths unless they have a tracked owner and removal point.
-- Keep new helpers small, readable, locally validated, and documented with NumPy-style docstrings for changed functions, classes, dataclasses, and tests.
-- Keep non-obvious logic commented, especially feature caching, score/cadence derivation, export/materialization, and hardware staging decisions.
-- Keep code testable without hardware where possible.
-  Hardware flows should expose non-hardware preflight checks for config, model construction, export, and generated requests.
-- Pin dependencies and explain additions in the relevant package documentation.
-
-## Change An Interface
+## Change an interface
 
 1. Read the method contract and all affected implementations before changing a hook.
    Put shared records in [`crest/pipeline_types.py`](crest/pipeline_types.py) and keep interfaces independent of concrete implementations.
@@ -202,7 +155,7 @@ Contributor standards for new implementation work
 4. Run interface compatibility and affected component tests from the repository root.
    Run the full suite when changing shared signatures or defaults.
 
-### Completion Checks
+### Completion checks
 
 - Required hooks, return types, defaults, and failure behavior are documented.
 - Public imports resolve to the exported classes without initializing ML runtimes or concrete backends.
@@ -214,27 +167,10 @@ Contributor standards for new implementation work
 python -m pytest test/test_interfaces_package.py test/test_modularity_scaffolding.py
 ```
 
-### Contract Troubleshooting
+### Contract troubleshooting
 
 - If an abstract class cannot instantiate, inspect `__abstractmethods__` for missing hooks.
 - If a component name is unknown, check registration and its config selector.
   Importing a contract does not register implementations.
 - If importing contracts loads a runtime unexpectedly, keep framework types under `TYPE_CHECKING` and runtime-dependent imports inside the default hook that needs them.
 - If a component works alone but fails in a study, inspect shared payloads and the selected task, family, and optimizer requirements.
-
-## NAS Policy And HIL Details
-
-For the current scoring, pruning, and runtime knobs, use the following guides.
-
-- [`config/README.md`](config/README.md) for the config reference
-- [`config/nas_config_stm32.yaml`](config/nas_config_stm32.yaml) for the STM32 config shape
-- [`crest/model.py`](crest/model.py) for score/prune/feasibility evaluation and HIL request construction
-- [`hil_server.py`](hil_server.py) for the HIL-side request handling and backend failure shaping
-
-## HIL Request And Serial Helpers
-
-HIL helpers connect runtime configuration to the hardware controller and provide the DUT/harness handshake used by device backends.
-[`crest/hil/runtime.py`](crest/hil/runtime.py) builds measurement requests and normalizes metrics.
-[`crest/hil/protocol.py`](crest/hil/protocol.py) parses serial messages and synchronizes the DUT and harness.
-Import serial helpers from `crest.hil.protocol` and request/metric helpers from `crest.hil.runtime`.
-Start the server with `python src/hil_server.py`.

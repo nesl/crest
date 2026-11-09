@@ -111,8 +111,7 @@ Follow the [hardware guide](src/crest/microcontrollers/README.md) for board and 
 Questions, bug reports, and focused contributions are welcome through [GitHub issues](https://github.com/nesl/crest/issues) and [pull requests](https://github.com/nesl/crest/pulls).
 For a bug report, include the configuration, reproduction steps, software versions, and target board.
 
-Component guides linked from the [source guide](src/README.md) include extension steps and completion checklists.
-Run `make test` in the installed environment before submitting code changes.
+See [Contributing](CONTRIBUTING.md) for development setup, tests, and component extension guides.
 
 ## License
 
