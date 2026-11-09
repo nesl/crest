@@ -99,7 +99,7 @@ Follow the [hardware guide](src/crest/microcontrollers/README.md) for board and 
 
 - [Experiment configuration](src/config/README.md).
   Objectives, runtime schedules, constraints, and search settings.
-- [Case studies](src/config/README.md#case-study-configurations).
+- [Case studies](src/config/case_study_configs/README.md).
   Proxy versus measured energy selection and runtime-schedule comparisons.
 - [Optimizers](src/crest/optimizers/README.md).
   Native and LLM candidate generation, provider setup, and extension instructions.
