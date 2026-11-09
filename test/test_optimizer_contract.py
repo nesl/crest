@@ -21,6 +21,7 @@ from crest.optimizers.optuna import OptunaOptimizer
 from crest.pipeline_types import BudgetSnapshot, CandidateProposal, ExplicitRound, NativeRound
 from crest.registry import ComponentRegistry, optimizer_registry
 from crest.optimizers.search_space import SearchParam, SearchSpaceDescriptor, candidate_error, validate_candidate
+from crest.optimizers.llm.schemas import CandidateBatch, validate_candidate_batch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -75,11 +76,63 @@ assert OptunaOptimizer().propose_round((), BudgetSnapshot(0, 0, 4, 8, 4)).n_tria
         result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    pass
+    def test_builtin_registration_does_not_import_datasets_or_build_provider(self):
+        script = """
+import importlib.abc
+import sys
+class BlockDatasets(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if fullname.startswith('crest.datasets'):
+            raise RuntimeError('dataset imported: ' + fullname)
+sys.meta_path.insert(0, BlockDatasets())
+from unittest.mock import patch
+from crest.builtin_components import ensure_optimizer_components_registered
+with patch('crest.optimizers.llm.providers.provider.build_provider', side_effect=RuntimeError('provider called')):
+    ensure_optimizer_components_registered()
+    ensure_optimizer_components_registered()
+"""
+        env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONDONTWRITEBYTECODE="1")
+        result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
-    pass
+    def test_third_plugin_registered_before_load_config_keeps_custom_fields(self):
+        name = "MixedCaseContractPlugin"
+        optimizer_registry.register(name, ThirdOptimizer)
+        self.addCleanup(optimizer_registry._items.pop, name)
+        config = yaml.safe_load((ROOT / "src/config/nas_config_flops_rmse.yaml").read_text())
+        config["optimizer"] = {"type": name, "width": 7, "custom_payload": {"seed": 3}}
+        with tempfile.TemporaryDirectory() as temp:
+            config["outputs"]["models_dir"] = str(Path(temp) / "models")
+            config["outputs"]["candidate_dir"] = str(Path(temp) / "candidate")
+            path = Path(temp) / "config.yaml"
+            path.write_text(yaml.safe_dump(config))
+            loaded = load_config(path)
+        self.assertEqual(loaded.optimizer.type, name)
+        self.assertEqual(loaded.optimizer.width, 7)
+        self.assertEqual(loaded.optimizer.custom_payload.seed, 3)
+        self.assertNotIn("llm", loaded.optimizer)
+        optimizer = optimizer_registry.get(name)()
+        optimizer.initialize(None, loaded.optimizer)
+        self.assertEqual(optimizer.identity_config(loaded.optimizer), {"width": 7})
+        self.assertEqual(optimizer.propose_round((), BudgetSnapshot(0, 0, 1, 1, 1)).candidates[0].params, {"width": 7})
+        with self.assertRaisesRegex(ValueError, "width"):
+            _normalize_optimizer_config(Dict(optimizer={"type": name, "width": "7"}))
 
-    pass
+    def test_builtin_case_aliases_and_exact_registration_precedence(self):
+        for name in ("optuna", "llm_generator"):
+            with self.subTest(name=name):
+                resolved_name, component_cls = resolve_optimizer_selection(" " + name.upper() + " ")
+                self.assertEqual(resolved_name, name)
+                self.assertIs(component_cls, optimizer_registry.get(name))
+                exact_name = name.upper()
+                optimizer_registry.register(exact_name, ThirdOptimizer)
+                try:
+                    config = _normalize_optimizer_config(Dict(optimizer={"type": exact_name, "width": 7}))
+                    self.assertEqual(config.type, exact_name)
+                    self.assertNotIn("llm", config)
+                    self.assertEqual(resolve_optimizer_selection(exact_name), (exact_name, ThirdOptimizer))
+                finally:
+                    optimizer_registry._items.pop(exact_name)
 
     def test_custom_registration_case_is_not_aliased(self):
         name = "CaseSensitivePlugin"
@@ -99,9 +152,27 @@ assert OptunaOptimizer().propose_round((), BudgetSnapshot(0, 0, 4, 8, 4)).n_tria
         # Invalid round counts remain transport data until runner validation.
         self.assertEqual(NativeRound(0).n_trials, 0)
 
-    pass
+    def test_shared_legality_matches_llm_rejection_without_duplicate_policy(self):
+        descriptor = SearchSpaceDescriptor((SearchParam("width", "int", low=2, high=8),))
+        for candidate in ({}, {"width": True}, {"width": 10}, {"width": 3, "extra": 0}):
+            with self.subTest(candidate=candidate):
+                shared = candidate_error(candidate, descriptor)
+                llm = validate_candidate_batch(CandidateBatch(candidates=[candidate]), descriptor, batch_size=1)
+                self.assertEqual(shared, (llm.rejected[0].code, llm.rejected[0].message))
+                with self.assertRaises(ValueError):
+                    validate_candidate(candidate, descriptor)
+        validate_candidate({"width": 3}, descriptor)
+        validate_candidate({"width": 3}, descriptor)
+        llm = validate_candidate_batch(CandidateBatch(candidates=[{"width": 3}, {"width": 3}]), descriptor, batch_size=2)
+        self.assertEqual(llm.rejected[0].code, "duplicate_batch")
 
-    pass
+    def test_llm_public_search_declarations_use_shared_types(self):
+        from crest.optimizers.llm import SearchParam as PublicParam
+        self.assertIs(PublicParam, SearchParam)
+        with self.assertRaisesRegex(ValueError, "finite bounds"):
+            SearchParam("width", "float", low=0.0, high=float("inf"))
+        with self.assertRaisesRegex(ValueError, "SearchParam"):
+            SearchSpaceDescriptor(("invalid",))
 
 
     def test_missing_family_descriptor_differs_from_invalid_declaration(self):
@@ -119,7 +190,6 @@ assert OptunaOptimizer().propose_round((), BudgetSnapshot(0, 0, 4, 8, 4)).n_tria
         self.assertEqual(parameter.choices, ("first", "second"))
 
 
-    pass
 
 
 if __name__ == "__main__":

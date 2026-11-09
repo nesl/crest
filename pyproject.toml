@@ -28,6 +28,7 @@ dependencies = [
     "giotto-tda",
     "pydometer",
     "tqdm",
+    "pydantic>=2,<3",
     "soundata==1.0.1",
     "librosa==0.11.0",
     "soundfile==0.13.1"
@@ -37,5 +38,5 @@ dependencies = [
 where = ["src"]
 
 [tool.pytest.ini_options]
-# Test the source checkout without requiring a manual PYTHONPATH setting.
+# Test this checkout instead of unrelated installs, without a manual PYTHONPATH.
 pythonpath = ["src"]

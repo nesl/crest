@@ -61,7 +61,7 @@ def resolve_optimizer_selection(raw_name: Any = "optuna") -> tuple[str, type[obj
 
     ensure_optimizer_components_registered()
     name = str(raw_name).strip()
-    if name not in optimizer_registry and name.lower() in {"optuna"}:
+    if name not in optimizer_registry and name.lower() in {"optuna", "llm_generator"}:
         name = name.lower()
     return name, optimizer_registry.get(name)
 
