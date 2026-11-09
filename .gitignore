@@ -148,3 +148,6 @@ firmware/stm32/crest_stm32_lrun/**
 !firmware/stm32/crest_stm32_lrun/STM32CubeIDE/AppS/Debug/Startup/subdir.mk
 
 !src/crest/optimizers/llm/providers/pricing.json
+
+# Shared fixed candidates required by the CS3 campaign configs.
+!src/config/case_study_configs/cs3/warmup_params.json

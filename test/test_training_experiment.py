@@ -253,7 +253,7 @@ def test_runtime_bootstrap_reuses_real_crest_without_fit_or_hil(source, tmp_path
     pytest.importorskip("optuna")
     import numpy as np
     from crest.pipeline_types import DataSplit, DatasetBundle
-    config = ROOT / "src/config/case_study_configs/nas_config_case1_3_portenta_m7_b2b_oxiod.yaml"
+    config = ROOT / "src/config/case_study_configs/cs2/oxiod_portenta_m7_measured_energy.yaml"
     (source / "nas_config.yaml").write_text(config.read_text())
     out, _ = prepared(source, tmp_path)
     dataset = tmp_path / "dataset"
