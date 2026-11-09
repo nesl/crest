@@ -5,8 +5,10 @@ SPDX-License-Identifier: BSD-3-Clause
 
 # Case-study experiments
 
-This directory contains portable copies of saved experiment configurations, organized by the current paper's case-study numbering.
+This directory contains portable copies of saved experiment configurations, grouped into three case studies covering runtime schedules, cross-target selection, and audio proposal strategies.
 Each YAML records its source and original file hash.
+Source paths and study names refer to the lab archive and may use earlier case-study numbering.
+Each YAML header includes its launch command, run from the repository root with the `crest` environment active.
 Dataset, device, network, output, and firmware paths are adjusted for this checkout, while search objectives, budgets, precision choices, and proposal policies retain their saved values.
 Use these for new studies after preparing data and setting device ports using the [getting-started guide](../../GETTING_STARTED.md).
 Use the [general example configs](../README.md#example-configs) as the simpler starting point for a new application.
@@ -27,8 +29,8 @@ The 100 and 500 ms searches collect both measurement phases even when scoring co
 | 500 ms | [Continuous](cs1/stm32_continuous_500ms.yaml) | [Periodic](cs1/stm32_periodic_500ms.yaml) |
 
 The 100 and 500 ms campaigns use int8 and a 256-attempt cap.
-The older 200 ms configurations search float and int8 and retain their saved 600-attempt cap, although the paper analyzes only the first 256 attempts.
-The 200 ms periodic campaign used earlier firmware with per-slot UART output and is excluded from the paper's model and selection analyses.
+The older 200 ms configurations search float and int8 and retain their saved 600-attempt cap, although the corresponding analysis uses only the first 256 attempts.
+The 200 ms periodic campaign used earlier firmware with per-slot UART output and is excluded from the corresponding model and selection analyses.
 Current firmware runs cannot reproduce that historical measurement protocol from YAML alone.
 
 ## Case study 2 OxIOD TCN across targets
@@ -45,7 +47,7 @@ The four measured-energy searches require the corresponding target and measureme
 | Portenta H7 CM7 measured energy | [CM7](cs2/oxiod_portenta_m7_measured_energy.yaml) |
 | STM32 N657 measured energy and clock search | [STM32](cs2/oxiod_stm32_measured_energy.yaml) |
 
-These are the saved paper campaigns, including their precision choices and budgets.
+These configurations retain the saved campaigns’ precision choices and budgets.
 The [general FLOPs and memory examples](../README.md#example-configs) use different precision settings.
 For cross-target evaluation of selected candidates, use [Pareto HIL replay](../../README.md#pareto-hil-replay).
 
