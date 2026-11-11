@@ -32,7 +32,7 @@ if str(SRC_DIR) not in sys.path:
 # The NASModelClient is the unit under test for this module.
 from nas_model_client import (NASModelClient, MeasurementInfrastructureError,
                               MeasurementInfrastructureStop, _ConsecutiveMeasurementFailureGuard,
-                              _runner_fit_kwargs)  # noqa: E402
+                              _runner_fit_kwargs, _sha256_file)  # noqa: E402
 from crest.component_selection import RUNTIME_TRAINING_BATCH_SIZE_KEY  # noqa: E402
 from crest.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
@@ -671,6 +671,72 @@ class ObjectiveTests(unittest.TestCase):
         """Clean up test fixtures."""
         patch.stopall()
 
+    def test_tflite_path_evaluation_preserves_result_and_exports_once(self) -> None:
+        """The legacy wrapper should export once and return task EvaluationResult."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tflite_path = Path(tmpdir) / "trial.tflite"
+            tflite_path.write_bytes(b"exact-flatbuffer")
+            expected = EvaluationResult(
+                metrics={"rmse_total": 0.25},
+                artifacts={"confusion": [1, 2]},
+                predictions=sentinel.predictions,
+            )
+            diagnostics = {}
+            self.client.task.evaluate_predictions.return_value = expected
+            with patch.object(
+                self.client,
+                "_export_tflite_for_evaluation",
+                return_value=tflite_path,
+            ) as export, patch(
+                "nas_model_client.predict_tflite_model_subprocess",
+                return_value=sentinel.predictions,
+            ) as predict:
+                result = NASModelClient._evaluate_model_with_backend(
+                    self.client,
+                    model=sentinel.model,
+                    split=self.client.dataset_bundle.val,
+                    split_name="validation_trial_7",
+                    quantization_mode="int8_ptq",
+                    evaluation_backend="tflite",
+                    inference_diagnostics=diagnostics,
+                )
+
+            self.assertIs(result, expected)
+            export.assert_called_once_with(
+                model=sentinel.model,
+                split_name="validation_trial_7",
+                quantization_mode="int8_ptq",
+            )
+            predict.assert_called_once_with(
+                tflite_path,
+                self.client.dataset_bundle.val.inputs,
+                diagnostics=diagnostics,
+            )
+            self.client.task.evaluate_predictions.assert_called_once_with(
+                sentinel.predictions,
+                self.client.dataset_bundle.val,
+                self.client.task_config,
+                self.client.target_spec,
+            )
+            self.assertEqual(
+                json.loads(tflite_path.with_suffix(".evaluation.json").read_text()),
+                diagnostics,
+            )
+            self.assertEqual(len(_sha256_file(tflite_path)), 64)
+
+    def test_trial_checkpoint_snapshots_are_unique_and_retained(self) -> None:
+        """Later selected checkpoints must not overwrite earlier trial evidence."""
+        checkpoint = Path(self.client.config.outputs.checkpoint_path)
+        checkpoint.write_bytes(b"trial-zero")
+
+        first = self.client._snapshot_trial_checkpoint(0)
+        checkpoint.write_bytes(b"trial-one")
+        second = self.client._snapshot_trial_checkpoint(1)
+
+        self.assertNotEqual(first, second)
+        self.assertEqual(first.read_bytes(), b"trial-zero")
+        self.assertEqual(second.read_bytes(), b"trial-one")
+
     def test_objective_classifies_exhausted_measurement_recovery(self) -> None:
         """Exhausted recovery must raise an infrastructure failure before training."""
         self.client._hil_request = MagicMock(return_value={"error_code": HIL_MASTER_INFRASTRUCTURE})
@@ -885,6 +951,8 @@ class ObjectiveTests(unittest.TestCase):
         )
         self.assertEqual(result, -0.3)
         self.mock_log.assert_called_once()
+        self.assertTrue(trial.user_attrs["hil_first"])
+        self.assertEqual(self.mock_log.call_args.kwargs["metrics"]["hil_first"], 1)
         logged_outcome = self.mock_log.call_args.kwargs["trial_outcome"]
         self.assertEqual(logged_outcome.task_metrics["rmse_total"], 0.3)
         self.assertEqual(logged_outcome.task_metrics["keras_rmse_total"], 0.3)

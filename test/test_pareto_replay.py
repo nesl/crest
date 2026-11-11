@@ -736,6 +736,80 @@ def test_dry_run_writes_manifest_requests_and_results_without_server(
     }
 
 
+@pytest.mark.parametrize(
+    "config_override,row_override,training_enabled",
+    [
+        ({"hil_first": False}, {}, True),
+        ({"hil_first": True}, {"artifact_summary_json": '{"hil_first": false}'}, True),
+        ({"hil_first": True}, {"hil_first": "0"}, True),
+        (
+            {"hil_first": True},
+            {"artifact_summary_json": '{"hil_first": false, "tflite_sha256": "saved"}'},
+            False,
+        ),
+    ],
+)
+def test_training_first_source_replay_fails_before_output_or_server(
+    tmp_path: Path,
+    config_override: Mapping[str, Any],
+    row_override: Mapping[str, Any],
+    training_enabled: bool,
+) -> None:
+    """Replay cannot reconstruct exact trained flatbuffers from architecture data."""
+    training_first_config = source_config()
+    training_first_config["nas"].update(config_override)
+    training_first_config["training"] = {"train": training_enabled}
+    source_dir, _, _ = write_source_run(
+        tmp_path,
+        [base_row(**row_override)],
+        config=training_first_config,
+    )
+    target_config = write_target_config(tmp_path)
+    output_dir = tmp_path / "replay"
+    args = make_args(
+        source_run_dir=source_dir,
+        target_config=target_config,
+        output_dir=output_dir,
+        dry_run=False,
+    )
+    server_factory_called = False
+
+    def forbidden_factory(config_path: Path) -> object:
+        nonlocal server_factory_called
+        server_factory_called = True
+        raise AssertionError(f"Unexpected HIL server construction for {config_path}")
+
+    with pytest.raises(ValueError, match="exact TFLite artifact"):
+        pareto_replay.run_replay(args, server_factory=forbidden_factory)
+
+    assert not server_factory_called
+    assert not output_dir.exists()
+
+
+def test_no_training_hil_first_false_source_replay_remains_supported(tmp_path: Path) -> None:
+    """Order false has no trained-artifact meaning when training was disabled."""
+    hardware_only_config = source_config()
+    hardware_only_config["nas"]["hil_first"] = False
+    hardware_only_config["training"] = {"train": False}
+    source_dir, _, _ = write_source_run(
+        tmp_path,
+        [base_row(hil_first="0")],
+        config=hardware_only_config,
+    )
+    target_config = write_target_config(tmp_path)
+    output_dir = tmp_path / "replay"
+
+    result = pareto_replay.run_replay(make_args(
+        source_run_dir=source_dir,
+        target_config=target_config,
+        output_dir=output_dir,
+        dry_run=True,
+    ))
+
+    assert result == 0
+    assert (output_dir / "manifest.json").is_file()
+
+
 def test_non_dry_run_invokes_metrics_callback_with_full_request(tmp_path: Path) -> None:
     """Check hardware-free non-dry-run metrics callback payloads.
 

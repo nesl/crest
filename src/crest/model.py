@@ -188,6 +188,7 @@ TRIAL_LOG_STABLE_COLUMNS = (
     "timestamp_readable",
     "score",
     "quantization_mode",
+    "hil_first",
     "ram_bytes",
     "flash_bytes",
     "external_flash_bytes",
@@ -2848,6 +2849,7 @@ def _trial_log_row_mapping(
         "timestamp_readable": time.strftime("%m-%d-%Y %H:%M:%S"),
         "score": "" if trial_outcome.score is None else trial_outcome.score,
         "quantization_mode": trial_outcome.quantization_mode,
+        "hil_first": metrics.get("hil_first", 1),
         "ram_bytes": metrics["ram_bytes"],
         "flash_bytes": metrics["flash_bytes"],
         "external_flash_bytes": metrics.get("external_flash_bytes", -1),
@@ -3144,6 +3146,7 @@ def log_trial(
 
     trial.set_user_attr("ram_bytes", metrics["ram_bytes"])
     trial.set_user_attr("quantization_mode", trial_outcome.quantization_mode)
+    trial.set_user_attr("hil_first", bool(metrics.get("hil_first", 1)))
     trial.set_user_attr("flash_bytes", metrics["flash_bytes"])
     trial.set_user_attr("external_flash_bytes", metrics.get("external_flash_bytes", -1))
     trial.set_user_attr("weight_storage_mode", metrics.get("weight_storage_mode", "embedded"))

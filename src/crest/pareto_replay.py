@@ -1430,8 +1430,10 @@ def prepare_candidates(
     """
     resolved_source_config_path = source_config_path or find_config_path(source_run_dir)
     source_config = load_yaml_config(resolved_source_config_path)
+    require_replayable_source_order(source_config)
     resolved_source_csv_path = source_csv_path or find_csv_path(source_run_dir, source_config)
     rows, columns = read_csv_rows(resolved_source_csv_path)
+    require_replayable_source_rows(rows, source_config=source_config)
     objectives = resolve_objective_specs(
         config=source_config,
         rows=rows,
@@ -1458,6 +1460,70 @@ def prepare_candidates(
         len(rows),
         len(selected_indices),
     )
+
+
+def require_replayable_source_order(source_config: Mapping[str, Any]) -> None:
+    """Reject source studies whose exact trained flatbuffers cannot be replayed."""
+    nas_config = source_config.get("nas", {})
+    if not isinstance(nas_config, Mapping):
+        raise ValueError("Source config nas section must be a mapping.")
+    hil_first = nas_config.get("hil_first", True)
+    if not isinstance(hil_first, bool):
+        raise ValueError("Source config nas.hil_first must be a boolean when provided.")
+    training_config = source_config.get("training", {})
+    if not isinstance(training_config, Mapping):
+        raise ValueError("Source config training section must be a mapping.")
+    training_enabled = training_config.get("train", False)
+    if not isinstance(training_enabled, bool):
+        raise ValueError("Source config training.train must be a boolean when provided.")
+    if not hil_first and training_enabled:
+        raise ValueError(
+            "Pareto replay of a training-first study requires each saved exact TFLite artifact; "
+            "checkpoint/model reconstruction is not an exact-artifact replay."
+        )
+
+
+def require_replayable_source_rows(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    source_config: Mapping[str, Any],
+) -> None:
+    """Reject row evidence that identifies a training-first source trial."""
+    training_config = source_config.get("training", {})
+    training_enabled = (
+        training_config.get("train", False)
+        if isinstance(training_config, Mapping)
+        else False
+    )
+    for row_index, row in enumerate(rows):
+        row_order = parse_cell_value(row.get("hil_first"))
+        artifact_summary = parse_cell_value(row.get("artifact_summary_json"))
+        artifact_order = (
+            artifact_summary.get("hil_first")
+            if isinstance(artifact_summary, Mapping)
+            else None
+        )
+        explicit_trained_artifact = (
+            isinstance(artifact_summary, Mapping)
+            and any(
+                artifact_summary.get(key) not in (None, "")
+                for key in ("tflite_sha256", "tflite_path", "checkpoint_snapshot")
+            )
+        )
+        row_is_training_first = (
+            training_enabled
+            and (
+                row_order is False
+                or row_order == 0
+                or artifact_order is False
+                or artifact_order == 0
+            )
+        )
+        if row_is_training_first or (explicit_trained_artifact and artifact_order is False):
+            raise ValueError(
+                f"Source row {row_index} is training-first and requires its saved exact TFLite artifact; "
+                "checkpoint/model reconstruction is not an exact-artifact replay."
+            )
 
 
 def create_hil_server(config_path: Path) -> Any:

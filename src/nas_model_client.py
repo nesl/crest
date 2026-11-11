@@ -11,6 +11,7 @@ import copy
 from collections.abc import Mapping
 import csv
 from dataclasses import dataclass, replace
+import hashlib
 import json
 import logging
 import shutil
@@ -90,7 +91,7 @@ from crest.optimizers.study_state import (
 from crest.interfaces import OptimizerBudgetExhausted
 from crest.pipeline_types import (
     BudgetSnapshot, DataSplit, DatasetBundle,
-    ModelBuildContext, SearchContext,
+    EvaluationResult, ModelBuildContext, SearchContext,
 )
 from crest.registry import dataset_registry, model_family_registry
 from crest.runtime_bootstrap import bootstrap_pipeline
@@ -242,6 +243,15 @@ def _runner_fit_kwargs(fit_plan: Any, *, epochs: int, batch_size: int) -> dict[s
     else:
         fit_kwargs["batch_size"] = int(batch_size)
     return fit_kwargs
+
+
+def _sha256_file(path: Path) -> str:
+    """Return the SHA-256 identity of one local artifact file."""
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class NASModelClient:
@@ -1526,6 +1536,46 @@ class NASModelClient:
         )
         return output_path
 
+    def _evaluate_tflite_path(
+        self,
+        *,
+        tflite_path: Path,
+        split: DataSplit,
+        inference_diagnostics: dict | None = None,
+    ) -> EvaluationResult:
+        """Evaluate an existing TFLite artifact without exporting it again."""
+        tflite_path = Path(tflite_path)
+        diagnostics = inference_diagnostics if inference_diagnostics is not None else {}
+        predictions = predict_tflite_model_subprocess(
+            tflite_path,
+            split.inputs,
+            diagnostics=diagnostics,
+        )
+        tflite_path.with_suffix(".evaluation.json").write_text(
+            json.dumps(diagnostics, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return self.task.evaluate_predictions(
+            predictions,
+            split,
+            self.task_config,
+            self.target_spec,
+        )
+
+    def _snapshot_trial_checkpoint(self, trial_number: int) -> Path:
+        """Copy the selected checkpoint to a unique per-trial artifact path."""
+        source = Path(self.config.outputs.checkpoint_path)
+        if not source.is_file():
+            raise FileNotFoundError(f"Selected trial checkpoint does not exist: {source}")
+        suffix = source.suffix or ".keras"
+        destination = (
+            self._artifacts_dir()
+            / f"{self.study_name}_trial_{int(trial_number)}_selected{suffix}"
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        return destination
+
     def _evaluate_model_with_backend(
         self,
         *,
@@ -1572,14 +1622,10 @@ class NASModelClient:
             split_name=split_name,
             quantization_mode=quantization_mode,
         )
-        diagnostics = inference_diagnostics if inference_diagnostics is not None else {}
-        predictions = predict_tflite_model_subprocess(tflite_path, split.inputs, diagnostics=diagnostics)
-        tflite_path.with_suffix(".evaluation.json").write_text(json.dumps(diagnostics, indent=2) + "\n")
-        return self.task.evaluate_predictions(
-            predictions,
-            split,
-            self.task_config,
-            self.target_spec,
+        return self._evaluate_tflite_path(
+            tflite_path=tflite_path,
+            split=split,
+            inference_diagnostics=inference_diagnostics,
         )
 
     @staticmethod
@@ -1832,6 +1878,10 @@ class NASModelClient:
         log_path = artifacts_dir / self.config.outputs.log_file_name
         batch_size = resolve_training_batch_size(self.config.training)
         task_config = derive_runtime_task_config(self.task_config, self.config.training)
+        hil_first = self._cfg_get(self.config.nas, "hil_first", True)
+        if not isinstance(hil_first, bool):
+            raise ValueError("nas.hil_first must be a boolean.")
+        trial.set_user_attr("hil_first", hil_first)
         metric_dependencies = self._classify_nas_metric_dependencies()
         collect_compile_metrics = self._should_collect_compile_metrics(metric_dependencies)
         family_hparams = self.model_family.sample_hparams(
@@ -1915,12 +1965,117 @@ class NASModelClient:
         }
         if device_options_overrides is not None:
             request_payload["device_options_overrides"] = device_options_overrides
+        metrics: dict[str, Any] = {
+            "hil_first": 1 if hil_first else 0,
+            "ram_bytes": -1,
+            "flash_bytes": -1,
+            "external_flash_bytes": -1,
+            "arena_bytes": -1,
+            "error_code": HIL_MASTER_FATAL,
+        }
+        available_task_metrics: dict[str, Any] = {}
+        available_artifact_summary: dict[str, Any] | None = None
+        penalty_acc = -100.0
+
+        def _report_if_supported(value: float) -> None:
+            """Report scalar failures only when Optuna supports reporting."""
+            if not self._score_is_multiobjective():
+                trial.report(value, step=0)
+
+        def _fail_with_penalty(
+            prune_reason: str,
+            prune_rule: str = "",
+            *,
+            infrastructure_failure: bool = False,
+            task_metrics: Mapping[str, Any] | None = None,
+            artifact_summary: Mapping[str, Any] | None = None,
+        ):
+            """Log a rejected attempt while retaining any completed work."""
+            metrics.setdefault("latency_ms", 10000.0)
+            metrics.setdefault("energy_mj_per_inference", 10000.0)
+            metrics.setdefault("avg_power_mw", -1.0)
+            metrics.setdefault("avg_current_ma", -1.0)
+            metrics.setdefault("bus_voltage_v", -1.0)
+            metrics.setdefault("latency_budget_ms", -1.0)
+            metrics.setdefault("arena_bytes", -1)
+            apply_cadenced_metric_defaults(metrics, metrics)
+            self._mark_feasibility_not_evaluated(metrics)
+            directions = self._study_directions()
+            retained_task_metrics = dict(
+                available_task_metrics if task_metrics is None else task_metrics
+            )
+            retained_artifact_summary_source = (
+                available_artifact_summary if artifact_summary is None else artifact_summary
+            )
+            retained_artifact_summary = (
+                None
+                if retained_artifact_summary_source is None
+                else dict(retained_artifact_summary_source)
+            )
+            if self._score_is_multiobjective():
+                objective_names = [
+                    str(obj.metric) for obj in self.config.nas.score.params.objectives
+                ]
+                objective_values = self._direction_penalty_values()
+                trial_outcome = TrialOutcome(
+                    score=None,
+                    objective_names=objective_names,
+                    objective_values=objective_values,
+                    objective_directions=directions,
+                    task_metrics=retained_task_metrics,
+                    hyperparams=dict(hyperparams),
+                    artifact_summary=retained_artifact_summary,
+                    quantization_mode=quantization_mode,
+                )
+            else:
+                trial_outcome = TrialOutcome(
+                    score=penalty_acc,
+                    objective_names=["score"],
+                    objective_values=[penalty_acc],
+                    objective_directions=["maximize"],
+                    task_metrics=retained_task_metrics,
+                    hyperparams=dict(hyperparams),
+                    artifact_summary=retained_artifact_summary,
+                    quantization_mode=quantization_mode,
+                )
+
+            if infrastructure_failure:
+                trial_outcome = replace(
+                    trial_outcome,
+                    score=None,
+                    objective_values=[None] * len(trial_outcome.objective_names),
+                )
+                metrics["trial_outcome"] = "FAIL_infrastructure"
+                metrics["score_type"] = (
+                    "multi-objective" if self._score_is_multiobjective() else "scoring-function"
+                )
+
+            log_trial(
+                trial_outcome=trial_outcome,
+                metrics=metrics,
+                trial=trial,
+                log_file_name=str(log_path),
+                study_name=self.study_name,
+                pruned=not infrastructure_failure,
+                prune_reason=prune_reason,
+                prune_rule=prune_rule,
+            )
+
+            if infrastructure_failure:
+                raise MeasurementInfrastructureError(prune_reason)
+            if self._score_is_multiobjective():
+                return tuple(trial_outcome.objective_values)
+
+            _report_if_supported(-float("inf"))
+            raise optuna.TrialPruned(prune_reason)
+
         if collect_compile_metrics:
-            metrics = self._hil_request(request_payload)
+            metrics.update(self._hil_request(request_payload))
             metrics.setdefault("hil_enabled", bool(self.config.device.hil))
             metrics.setdefault("energy_aware", bool(self.config.training.energy_aware))
         else:
-            metrics = self._synthesize_desktop_success_metrics()
+            metrics.update(self._synthesize_desktop_success_metrics())
+        metrics["hil_first"] = 1 if hil_first else 0
         metrics.update(
             {
                 "weight_bytes": int(runtime_metadata.weight_bytes),
@@ -1958,7 +2113,6 @@ class NASModelClient:
             except ValueError:
                 runtime_device = None
 
-        penalty_acc = -100.0
         task_nonnegative_metric_names = set(self.metric_contract.nonnegative_metric_names)
         effective_nonnegative_metric_names = set(NONNEGATIVE_METRICS) | task_nonnegative_metric_names
         # If no error code present (or timeout), treat as fatal error
@@ -1970,112 +2124,6 @@ class NASModelClient:
                 f"Upload failed: target device not found on {serial_hint}. "
                 "Stopping NAS run so the board/serial port can be fixed."
             )
-
-        def _report_if_supported(value: float) -> None:
-            """Optuna trial.report is unsupported for multi-objective studies.
-
-            Parameters
-            ----------
-            value : float
-                Scalar objective value to report to Optuna when reporting is
-                supported.
-            """
-            if not self._score_is_multiobjective():
-                trial.report(value, step=0)
-
-        def _fail_with_penalty(
-            prune_reason: str,
-            prune_rule: str = "",
-            *,
-            infrastructure_failure: bool = False,
-        ):
-            """Log a rejected attempt; infrastructure failures raise a typed error.
-
-            Parameters
-            ----------
-            prune_reason : str
-                Reason text attached to the pruning decision.
-            prune_rule : str
-                Rule name attached to the pruning decision.
-            infrastructure_failure : bool
-                Log evidence, then raise a typed infrastructure error instead
-                of returning a score or pruning. Optuna records this as FAIL.
-
-            Returns
-            -------
-            object
-                Penalty score or multi-objective penalty tuple used to record
-                the failed trial.
-
-            Raises
-            ------
-            TrialPruned
-                If existing validation or execution checks fail.
-            MeasurementInfrastructureError
-                If bounded measurement recovery was exhausted.
-            """
-            # Normalize missing metrics, build a loggable TrialOutcome, and
-            # then diverge between scalar Optuna pruning and multi-objective
-            # penalty returns.
-            metrics.setdefault("latency_ms", 10000.0)
-            metrics.setdefault("energy_mj_per_inference", 10000.0)
-            metrics.setdefault("avg_power_mw", -1.0)
-            metrics.setdefault("avg_current_ma", -1.0)
-            metrics.setdefault("bus_voltage_v", -1.0)
-            metrics.setdefault("latency_budget_ms", -1.0)
-            metrics.setdefault("arena_bytes", -1)
-            apply_cadenced_metric_defaults(metrics, metrics)
-            self._mark_feasibility_not_evaluated(metrics)
-            directions = self._study_directions()
-            if self._score_is_multiobjective():
-                objective_names = [str(obj.metric) for obj in self.config.nas.score.params.objectives]
-                objective_values = self._direction_penalty_values()
-                trial_outcome = TrialOutcome(
-                    score=None,
-                    objective_names=objective_names,
-                    objective_values=objective_values,
-                    objective_directions=directions,
-                    task_metrics={},
-                    hyperparams=dict(hyperparams),
-                    artifact_summary=None,
-                    quantization_mode=quantization_mode,
-                )
-            else:
-                trial_outcome = TrialOutcome(
-                    score=penalty_acc,
-                    objective_names=["score"],
-                    objective_values=[penalty_acc],
-                    objective_directions=["maximize"],
-                    task_metrics={},
-                    hyperparams=dict(hyperparams),
-                    artifact_summary=None,
-                    quantization_mode=quantization_mode,
-                )
-
-            if infrastructure_failure:
-                trial_outcome = replace(trial_outcome, score=None,
-                    objective_values=[None] * len(trial_outcome.objective_names))
-                metrics["trial_outcome"] = "FAIL_infrastructure"
-                metrics["score_type"] = "multi-objective" if self._score_is_multiobjective() else "scoring-function"
-
-            log_trial(
-                trial_outcome=trial_outcome,
-                metrics=metrics,
-                trial=trial,
-                log_file_name=str(log_path),
-                study_name=self.study_name,
-                pruned=not infrastructure_failure,
-                prune_reason=prune_reason,
-                prune_rule=prune_rule,
-            )
-
-            if infrastructure_failure:
-                raise MeasurementInfrastructureError(prune_reason)
-            if self._score_is_multiobjective():
-                return tuple(trial_outcome.objective_values)
-
-            _report_if_supported(-float("inf"))
-            raise optuna.TrialPruned(prune_reason)
 
         # Exhausted measurement retries are infrastructure failures, not deadline
         # infeasibility. Optuna records FAIL; only this typed exception is caught
