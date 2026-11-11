@@ -2246,7 +2246,7 @@ def evaluate_feasibility_rules(
     feasibility_config: Dict,
     task_nonnegative_metric_names: set[str] | None = None,
 ) -> FeasibilityEvaluation:
-    """Evaluate NAS feasibility rules against the current pre-training context.
+    """Evaluate NAS feasibility rules against metrics available at this stage.
 
     Parameters
     ----------
