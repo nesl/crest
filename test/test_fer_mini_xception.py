@@ -9,6 +9,7 @@ import itertools
 from pathlib import Path
 
 import numpy as np
+import optuna
 import pytest
 import tensorflow as tf
 from addict import Dict
@@ -23,6 +24,7 @@ from crest.model_families.fer_mini_xception import (
     decode_block_widths,
     decoded_architecture_identity,
 )
+from crest.optimizers.search_space import SearchParam
 from crest.pipeline_types import ModelBuildContext, TargetSpec
 
 HCI_MODEL_SOURCE = Path("/home/joseph/Projects/HCI-final-project/training/hci_fer/model.py")
@@ -85,6 +87,46 @@ def test_all_3456_raw_combinations_decode_valid_structures_and_canonical_identit
         count += 1
     assert count == 3456
     assert len(identities) < count
+
+
+def test_family_descriptor_fixed_trial_sampling_persisted_decode_and_search_override() -> None:
+    family = FERMiniXceptionFamily()
+    context = _context()
+    config = _config()
+    declarations = family.trial_search_space(context, config)
+    assert all(isinstance(declaration, SearchParam) for declaration in declarations)
+    assert [declaration.name for declaration in declarations] == list(
+        FER_MINI_XCEPTION_SEARCH_CHOICES
+    )
+    assert all(declaration.kind == "categorical" for declaration in declarations)
+    assert {
+        declaration.name: declaration.choices for declaration in declarations
+    } == FER_MINI_XCEPTION_SEARCH_CHOICES
+
+    sampled = family.sample_hparams(
+        optuna.trial.FixedTrial(DEFAULT_FER_MINI_XCEPTION_SEED), context, config
+    )
+    assert sampled == DEFAULT_FER_MINI_XCEPTION_SEED
+    persisted = {**sampled, "channel_growth": 2}
+    decoded = family.decode_trial_hparams(persisted, context, config)
+    assert decoded == DEFAULT_FER_MINI_XCEPTION_SEED
+    assert type(decoded["channel_growth"]) is float
+
+    overridden = _config()
+    overridden.search = Dict(kernel_size=[5])
+    override_declarations = {
+        declaration.name: declaration
+        for declaration in family.trial_search_space(context, overridden)
+    }
+    assert override_declarations["kernel_size"].choices == (5,)
+    assert override_declarations["num_blocks"].choices == FER_MINI_XCEPTION_SEARCH_CHOICES[
+        "num_blocks"
+    ]
+    override_seed = {**DEFAULT_FER_MINI_XCEPTION_SEED, "kernel_size": 5}
+    override_sampled = family.sample_hparams(
+        optuna.trial.FixedTrial(override_seed), context, overridden
+    )
+    assert family.decode_trial_hparams(override_sampled, context, overridden) == override_seed
 
 
 def test_reference_architecture_matches_selected_hci_shape_and_parameter_count() -> None:
