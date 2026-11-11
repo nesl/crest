@@ -431,6 +431,75 @@ class HILRequestTests(unittest.TestCase):
             server_socket.close(linger=0)
             context.term()
 
+    @patch("nas_model_client.read_tflite_artifact")
+    def test_real_zmq_artifact_retry_preserves_identity_and_renegotiates(self, read_mock) -> None:
+        artifact_bytes = b"exact-tflite-bytes"
+        read_mock.return_value = (artifact_bytes, {"inputs": [], "outputs": []})
+        capabilities = self.artifact_capabilities()
+        context = zmq.Context()
+        server_socket = context.socket(zmq.REP)
+        server_socket.setsockopt(zmq.RCVTIMEO, 5000)
+        server_socket.setsockopt(zmq.SNDTIMEO, 5000)
+        port = server_socket.bind_to_random_port("tcp://127.0.0.1")
+        artifact_frames = []
+        worker_errors = []
+
+        def success_reply(metadata):
+            artifact = metadata["artifact"]
+            return {
+                "error_code": HIL_MASTER_SUCCESS, "request_id": metadata["request_id"],
+                "artifact_sha256": artifact["sha256"],
+                "artifact_byte_length": artifact["byte_length"],
+            }
+
+        def serve_requests() -> None:
+            self.assertEqual(server_socket.recv_json()["request_type"], "capabilities")
+            server_socket.send_json(capabilities)
+            frames = server_socket.recv_multipart()
+            artifact_frames.append(frames)
+            first_metadata = json.loads(frames[0])
+            time.sleep(1.1)
+            server_socket.send_json(success_reply(first_metadata))
+            self.assertEqual(server_socket.recv_json()["request_type"], "capabilities")
+            server_socket.send_json(capabilities)
+            frames = server_socket.recv_multipart()
+            artifact_frames.append(frames)
+            server_socket.send_json(success_reply(json.loads(frames[0])))
+            frames = server_socket.recv_multipart()
+            artifact_frames.append(frames)
+            server_socket.send_json(success_reply(json.loads(frames[0])))
+
+        def serve() -> None:
+            try:
+                serve_requests()
+            except BaseException as exc:
+                worker_errors.append(exc)
+
+        thread = threading.Thread(target=serve)
+        thread.start()
+        client = _build_test_client()
+        client.config.network = SimpleNamespace(host="127.0.0.1", port=port, recv_timeout_sec=1, send_timeout_sec=1, hil_request_retries=1, max_artifact_bytes=4096)
+        client.socket = None
+        client.context = None
+        payload = {"family_hparams": {}, "runtime_metadata": {}}
+        try:
+            client._hil_request(payload, artifact_path=Path("model.tflite"))
+            client._hil_request(payload, artifact_path=Path("next.tflite"))
+            thread.join(timeout=3)
+            self.assertFalse(thread.is_alive())
+            if worker_errors:
+                raise worker_errors[0]
+            first, retry, next_request = artifact_frames
+            self.assertEqual(first[1], artifact_bytes)
+            self.assertEqual(retry[1], artifact_bytes)
+            self.assertEqual(json.loads(first[0])["request_id"], json.loads(retry[0])["request_id"])
+            self.assertEqual(json.loads(first[0])["artifact"], json.loads(retry[0])["artifact"])
+            self.assertNotEqual(json.loads(retry[0])["request_id"], json.loads(next_request[0])["request_id"])
+        finally:
+            client._reset_hil_socket()
+            server_socket.close(linger=0)
+            context.term()
+
     def test_artifact_capability_preflight_and_refresh(self) -> None:
         client = _build_test_client()
         client.socket.recv_json.return_value = self.artifact_capabilities()

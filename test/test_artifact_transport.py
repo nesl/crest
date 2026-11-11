@@ -58,6 +58,16 @@ class ArtifactTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "shape"):
             validate_artifact_metadata(bad_shape, self.model_bytes, max_bytes=4096)
 
+    def test_declared_length_and_server_size_limit_are_rejected(self) -> None:
+        bad_length = self.metadata()
+        bad_length["byte_length"] += 1
+        with self.assertRaisesRegex(ValueError, "byte_length"):
+            validate_artifact_metadata(bad_length, self.model_bytes, max_bytes=4096)
+        with self.assertRaisesRegex(ValueError, "maximum"):
+            validate_artifact_metadata(
+                self.metadata(), self.model_bytes, max_bytes=len(self.model_bytes) - 1,
+            )
+
     def test_file_size_is_bounded_before_read(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "large.tflite"

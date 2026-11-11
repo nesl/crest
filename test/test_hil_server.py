@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import numpy as np
 from addict import Dict
@@ -23,7 +23,7 @@ if str(SRC_DIR) not in sys.path:
 import hil_server as hil_server_module  # noqa: E402
 from hil_server import HILServer  # noqa: E402
 from crest.devices import CandidatePreparationError, CandidatePrepareRequest, arduino_staged_sketch_path  # noqa: E402
-from crest.errors import HIL_MASTER_SUCCESS, HIL_ERROR_OK  # noqa: E402
+from crest.errors import HIL_MASTER_INFRASTRUCTURE, HIL_MASTER_SUCCESS, HIL_ERROR_OK  # noqa: E402
 from crest.hil.runtime import CollectMetricsRequest  # noqa: E402
 from crest.pipeline_types import DataSplit, DatasetBundle, TargetSpec, TaskMetricContract  # noqa: E402
 
@@ -1139,6 +1139,42 @@ class ArtifactRequestTests(HILServerTestCase):
         self.assertEqual(self.socket.send_json.call_args.args[0]["artifact_transport_versions"], [1])
 
     @patch("hil_server.validate_artifact_metadata")
+    def test_unsupported_backend_is_rejected_before_bootstrap(self, validate_mock) -> None:
+        server = self.build_server()
+        validate_mock.return_value = {
+            "sha256": "a" * 64, "byte_length": 1,
+            "inputs": [{"shape": [1, 32, 6], "dtype": "float32"}],
+            "outputs": [{"shape": [1, 1], "dtype": "float32"}, {"shape": [1, 1], "dtype": "float32"}],
+        }
+        device = MagicMock()
+        device.supports_tflite_artifact.return_value = False
+        server._artifact_device = MagicMock(return_value=device)
+        payload = self.request_payload(runtime_metadata=self.request_runtime_metadata())
+        payload.update(request_type="candidate_artifact", protocol_version=1, request_id="trial", artifact={})
+        with self.assertRaisesRegex(ValueError, "does not support"):
+            server._handle_artifact_request(payload, b"x")
+        self.assertFalse(server._pipeline_bootstrapped)
+
+    @patch("hil_server.validate_artifact_metadata")
+    def test_wrong_resolution_is_rejected_before_measurement(self, validate_mock) -> None:
+        server = self.build_server()
+        validate_mock.return_value = {
+            "sha256": "a" * 64, "byte_length": 1,
+            "inputs": [{"shape": [1, 31, 6], "dtype": "float32"}],
+            "outputs": [{"shape": [1, 1], "dtype": "float32"}, {"shape": [1, 1], "dtype": "float32"}],
+        }
+        device = MagicMock()
+        device.supports_tflite_artifact.return_value = True
+        server._artifact_device = MagicMock(return_value=device)
+        server.determine_metrics = MagicMock()
+        payload = self.request_payload(runtime_metadata=self.request_runtime_metadata())
+        payload["quantization_mode"] = "float"
+        payload.update(request_type="candidate_artifact", protocol_version=1, request_id="trial", artifact={})
+        with self.assertRaisesRegex(ValueError, "input shape"):
+            server._handle_artifact_request(payload, b"x")
+        server.determine_metrics.assert_not_called()
+
+    @patch("hil_server.validate_artifact_metadata")
     def test_exact_bytes_are_staged_uniquely_and_cleaned(self, validate_mock) -> None:
         server = self.build_server()
         server._ensure_pipeline_bootstrapped()
@@ -1165,6 +1201,42 @@ class ArtifactRequestTests(HILServerTestCase):
         metrics = server._handle_artifact_request(payload, b"exact-model!")
         self.assertEqual(metrics["artifact_sha256"], "a" * 64)
         self.assertFalse(staged_paths[0].exists())
+
+    def test_artifact_request_with_extra_frame_is_rejected(self) -> None:
+        server = self.build_server()
+        payload = {"request_type": "candidate_artifact", "protocol_version": 1}
+        self.socket.recv_multipart.side_effect = [
+            [json.dumps(payload).encode(), b"model", b"extra"], KeyboardInterrupt(),
+        ]
+        server.start()
+        reply = self.socket.send_json.call_args.args[0]
+        self.assertEqual(reply["backend_error_kind"], "request")
+
+
+class SuppliedArtifactPreparationTests(HILServerTestCase):
+    def test_supplied_artifact_bypasses_model_materialization(self) -> None:
+        server = self.build_server()
+        fake_device = MagicMock()
+        fake_device.supports_tflite_artifact.return_value = True
+        fake_device.requires_candidate_model.return_value = False
+        fake_device.supports_runtime_measurement.return_value = True
+        fake_device.prepare_candidate.return_value = self.config.outputs.candidate_dir
+        materialize_count = len(FakeModelFamily.materialize_calls)
+        source_path = Path(self.config.outputs.models_dir) / "exact.tflite"
+        source_path.write_bytes(b"exact")
+        with patch("hil_server.resolve_device_options", return_value=None), patch(
+            "hil_server.get_microcontroller_device", return_value=fake_device,
+        ), patch("hil_server.collect_metrics", return_value={"ram_bytes": 1}):
+            server.determine_metrics(
+                self.request_family_hparams(), self.request_runtime_metadata(),
+                quantization_mode="int8_ptq", source_tflite_path=source_path,
+            )
+        self.assertEqual(len(FakeModelFamily.materialize_calls), materialize_count)
+        request = fake_device.prepare_candidate.call_args.kwargs["request"]
+        self.assertEqual(request.source_tflite_path, source_path)
+        self.assertIsNone(request.model)
+        self.assertIsNone(request.checkpoint_path)
+        self.assertIsNone(request.calibration_split)
 
 
 class InitializationTests(HILServerTestCase):
@@ -2018,6 +2090,33 @@ class EvidenceFailureTests(HILServerTestCase):
         self.assertEqual(failed["backend_error_kind"], "compile")
         self.assertEqual(succeeded["ram_bytes"], 123)
         collect_mock.assert_called_once()
+        self.assertEqual(fake_device.cleanup_prepared_candidate.call_args_list, [call(None), call(self.config.outputs.candidate_dir)])
+
+    def test_expected_prepare_io_failures_recover_and_cleanup_once(self) -> None:
+        for preparation_error in (
+            OSError("tool missing"), hil_server_module.serial.SerialException("device unavailable"),
+        ):
+            with self.subTest(error=type(preparation_error).__name__):
+                server = self.build_server()
+                fake_device = MagicMock()
+                fake_device.requires_candidate_model.return_value = True
+                fake_device.requires_training_data.return_value = True
+                fake_device.supports_runtime_measurement.return_value = True
+                fake_device.prepare_candidate.side_effect = [
+                    preparation_error, self.config.outputs.candidate_dir,
+                ]
+                with patch("hil_server.resolve_device_options", return_value=None), patch(
+                    "hil_server.get_microcontroller_device", return_value=fake_device,
+                ), patch("hil_server.collect_metrics", return_value={"ram_bytes": 123}):
+                    failed = server.determine_metrics(self.request_family_hparams(), self.request_runtime_metadata())
+                    succeeded = server.determine_metrics(self.request_family_hparams(), self.request_runtime_metadata())
+                self.assertEqual(failed["error_code"], HIL_MASTER_INFRASTRUCTURE)
+                self.assertEqual(failed["backend_error_kind"], "infrastructure")
+                self.assertEqual(succeeded["ram_bytes"], 123)
+                self.assertEqual(
+                    fake_device.cleanup_prepared_candidate.call_args_list,
+                    [call(None), call(self.config.outputs.candidate_dir)],
+                )
 
     def test_non_object_and_single_frame_artifact_return_request_errors(self) -> None:
         server = self.build_server()

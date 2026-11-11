@@ -1015,6 +1015,15 @@ class HILServer:
             raise ValueError("network.max_artifact_bytes must be a positive integer.")
         return value
 
+    def _persist_request_evidence(self, record: Mapping[str, Any]) -> Path:
+        """Persist one generic HIL request/result association."""
+        records_dir = Path(self.config.outputs.models_dir) / "hil_requests"
+        records_dir.mkdir(parents=True, exist_ok=True)
+        request_record = records_dir / f"{uuid.uuid4().hex}.json"
+        with request_record.open("x") as handle:
+            json.dump(dict(record), handle, indent=2, default=str)
+        return request_record.resolve()
+
     def _artifact_device(self):
         options = resolve_device_options(self._normalized_device_name(), self.config.device) or {}
         return get_microcontroller_device(
@@ -1091,22 +1100,18 @@ class HILServer:
             )
             metrics.update(request_id=request_id, artifact_sha256=validated["sha256"], artifact_byte_length=validated["byte_length"])
             artifact_io_phase = "evidence"
-            records_dir = Path(self.config.outputs.models_dir) / "hil_requests"
-            records_dir.mkdir(parents=True, exist_ok=True)
-            request_record = records_dir / f"{uuid.uuid4().hex}.json"
-            with request_record.open("x") as handle:
-                json.dump({
+            request_record = self._persist_request_evidence({
                     "request_id": request_id,
                     "artifact_sha256": validated["sha256"],
                     "artifact_byte_length": validated["byte_length"],
                     "tensor_metadata": {"inputs": validated["inputs"], "outputs": validated["outputs"]},
                     "staged_path": str(staged_path),
                     "backend": self._normalized_device_name(),
-                    "exception": None,
+                    "exception": metrics.get("backend_error_detail"),
                     "cleanup_outcome": "pending",
                     "metrics": metrics,
-                }, handle, indent=2, default=str)
-            metrics["measurement_request_record"] = str(request_record.resolve())
+            })
+            metrics["measurement_request_record"] = str(request_record)
             artifact_io_phase = None
             return metrics
         except OSError as exc:
@@ -1397,16 +1402,47 @@ class HILServer:
         prepared_dir: Path | None = None
         metrics = {}
         try:
-            prepared_dir = runtime_device.prepare_candidate(
-                request=self._build_candidate_prepare_request(
+            prepare_request = self._build_candidate_prepare_request(
                     model=model,
                     model_variant=resolved_model_variant,
                     checkpoint_path=resolved_checkpoint_path,
                     calibration_split=calibration_split,
                     quantization_mode=resolved_quantization_mode,
                     source_tflite_path=source_tflite_path,
-                ),
             )
+            try:
+                prepared_dir = runtime_device.prepare_candidate(request=prepare_request)
+            except CandidatePreparationError as exc:
+                metrics = _build_backend_failure_metrics(
+                    error_kind=exc.error_kind, error_detail=exc.detail,
+                    latency_budget_ms=latency_budget_ms, hil_enabled=effective_hil_enabled,
+                    energy_aware=effective_energy_aware,
+                )
+                if exc.error_kind in {"upload", "runtime"}:
+                    set_error_code(metrics, HIL_MASTER_INFRASTRUCTURE)
+                metrics["cpu_clock_mhz_requested"] = requested_cpu_clock_mhz
+                return metrics
+            except ValueError as exc:
+                if source_tflite_path is None:
+                    raise
+                metrics = _build_backend_failure_metrics(
+                    error_kind="request", error_detail=str(exc),
+                    latency_budget_ms=latency_budget_ms, hil_enabled=effective_hil_enabled,
+                    energy_aware=effective_energy_aware,
+                )
+                metrics["cpu_clock_mhz_requested"] = requested_cpu_clock_mhz
+                return metrics
+            except (OSError, serial.SerialException) as exc:
+                if self._normalized_device_name() == STM32_BOARD_NAME:
+                    raise
+                metrics = _build_backend_failure_metrics(
+                    error_kind="infrastructure", error_detail=str(exc),
+                    latency_budget_ms=latency_budget_ms, hil_enabled=effective_hil_enabled,
+                    energy_aware=effective_energy_aware,
+                )
+                set_error_code(metrics, HIL_MASTER_INFRASTRUCTURE)
+                metrics["cpu_clock_mhz_requested"] = requested_cpu_clock_mhz
+                return metrics
             prepared_dir = Path(prepared_dir)
             sketch_candidate = arduino_staged_sketch_path(prepared_dir)
             if runtime_device.requires_candidate_model() and sketch_candidate.is_file():
@@ -1447,14 +1483,6 @@ class HILServer:
                     window_size=window_size,
                     input_dim=input_dim,
                 )
-        except CandidatePreparationError as exc:
-            metrics = _build_backend_failure_metrics(
-                error_kind=exc.error_kind, error_detail=exc.detail,
-                latency_budget_ms=latency_budget_ms, hil_enabled=effective_hil_enabled,
-                energy_aware=effective_energy_aware,
-            )
-            if exc.error_kind in {"upload", "runtime"}:
-                set_error_code(metrics, HIL_MASTER_INFRASTRUCTURE)
         except (
             stm32_cube_clt.WorkflowError,
             stm32_runtime.STM32RuntimeProtocolError,
@@ -1475,19 +1503,17 @@ class HILServer:
             try:
                 if self._normalized_device_name() == STM32_BOARD_NAME:
                     # Persist request identity outside disposable candidate builds.
-                    records_dir = Path(getattr(self.config.outputs, "models_dir", "outputs")) / "hil_requests"
-                    records_dir.mkdir(parents=True, exist_ok=True)
-                    request_record = records_dir / f"{uuid.uuid4().hex}.json"
-                    metrics["measurement_request_record"] = str(request_record.resolve())
                     active_exception = sys.exc_info()[1]
-                    with request_record.open("x") as handle:
-                        json.dump({"family_hparams": family_hparams,
+                    request_record = self._persist_request_evidence(
+                        {"family_hparams": family_hparams,
                                    "runtime_metadata": runtime_metadata,
                                    "quantization_mode": resolved_quantization_mode,
                                    "device_options": merged_device_options,
                                    "prepared_dir": str(prepared_dir),
                                    "exception": None if active_exception is None else str(active_exception),
-                                   "metrics": metrics}, handle, indent=2, default=str)
+                                   "metrics": metrics}
+                    )
+                    metrics["measurement_request_record"] = str(request_record)
             except OSError:
                 logger.exception("Failed to persist STM32 request evidence")
                 # Preserve any active candidate exception. A successful request
