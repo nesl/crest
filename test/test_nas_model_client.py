@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch, sentinel
 
 import numpy as np
 import optuna
+import tensorflow as tf
 import zmq
 from addict import Dict
 from optuna.trial import TrialState
@@ -30,7 +31,9 @@ if str(SRC_DIR) not in sys.path:
 
 # The NASModelClient is the unit under test for this module.
 from nas_model_client import (NASModelClient, MeasurementInfrastructureError,
-                              MeasurementInfrastructureStop, _ConsecutiveMeasurementFailureGuard)  # noqa: E402
+                              MeasurementInfrastructureStop, _ConsecutiveMeasurementFailureGuard,
+                              _runner_fit_kwargs)  # noqa: E402
+from crest.component_selection import RUNTIME_TRAINING_BATCH_SIZE_KEY  # noqa: E402
 from crest.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
     HIL_MASTER_FLASH_OVERFLOW,
@@ -494,11 +497,34 @@ class InitializationTests(unittest.TestCase):
         self.assertEqual(selection["dataset_config"].root, "custom")
         self.assertEqual(selection["task_name"], "custom_task")
         self.assertEqual(selection["task_config"].alpha, 3)
+        self.assertEqual(selection["task_config"][RUNTIME_TRAINING_BATCH_SIZE_KEY], 256)
         self.assertEqual(selection["model_family_name"], "custom_family")
         self.assertEqual(selection["model_config"]["family"], "custom_family")
         self.assertEqual(selection["model_config"]["params"].width, 8)
         self.assertEqual(selection["model_config"]["params"].export_variant, "untrained")
         self.assertEqual(selection["model_config"]["search"].depth, [2, 3])
+
+    def test_resolve_component_selection_derives_batch_without_mutating_source(self) -> None:
+        """Repeated selection should derive the current batch on copied task config."""
+        client = _build_test_client()
+        client.config.training.batch_size = 64
+        client.config.task.params = Dict(alpha=3)
+
+        first = client._resolve_component_selection(client.config)
+        second = client._resolve_component_selection(client.config)
+
+        self.assertEqual(first["task_config"][RUNTIME_TRAINING_BATCH_SIZE_KEY], 64)
+        self.assertEqual(second["task_config"][RUNTIME_TRAINING_BATCH_SIZE_KEY], 64)
+        self.assertEqual(client.config.task.params, Dict(alpha=3))
+        self.assertIsNot(first["task_config"], second["task_config"])
+
+    def test_resolve_component_selection_rejects_reserved_batch_key(self) -> None:
+        """Users cannot supply the runtime-derived task batch entry."""
+        client = _build_test_client()
+        client.config.task.params[RUNTIME_TRAINING_BATCH_SIZE_KEY] = 256
+
+        with self.assertRaisesRegex(ValueError, "reserved"):
+            client._resolve_component_selection(client.config)
 
     def test_resolve_component_selection_accepts_null_optional_task_and_search_blocks(self) -> None:
         # Optional task params and model search blocks should treat explicit null the same as omission.
@@ -514,7 +540,10 @@ class InitializationTests(unittest.TestCase):
 
         selection = client._resolve_component_selection(client.config)
 
-        self.assertEqual(selection["task_config"], Dict())
+        self.assertEqual(
+            selection["task_config"],
+            Dict({RUNTIME_TRAINING_BATCH_SIZE_KEY: 256}),
+        )
         self.assertEqual(selection["model_config"]["params"].export_variant, "untrained")
         self.assertEqual(selection["model_config"]["search"], Dict())
 
@@ -817,6 +846,7 @@ class ObjectiveTests(unittest.TestCase):
             "latency_ms": 10.0,
         }
         self.client._hil_request = MagicMock(return_value=metrics)
+        self.client.config.training.batch_size = 64
         trial = DummyTrial()
 
         result = self.client.objective(trial)
@@ -833,10 +863,13 @@ class ObjectiveTests(unittest.TestCase):
             quantization_mode="float",
         )
         logged_hparams = self.mock_log.call_args.kwargs["trial_outcome"].hyperparams
+        self.assertEqual(logged_hparams["batch_size"], 64)
         self.assertEqual(logged_hparams["memory_traffic_bytes"], 46)
+        fit_task_config = self.client.task.build_fit_plan.call_args.args[1]
+        self.assertEqual(fit_task_config[RUNTIME_TRAINING_BATCH_SIZE_KEY], 64)
         self.client.task.build_fit_plan.assert_called_once_with(
             self.client.dataset_bundle,
-            self.client.task_config,
+            fit_task_config,
             self.client.target_spec,
             mode="search",
             combine_train_val=False,
@@ -855,6 +888,19 @@ class ObjectiveTests(unittest.TestCase):
         logged_outcome = self.mock_log.call_args.kwargs["trial_outcome"]
         self.assertEqual(logged_outcome.task_metrics["rmse_total"], 0.3)
         self.assertEqual(logged_outcome.task_metrics["keras_rmse_total"], 0.3)
+        fit_kwargs = self.client.model_family.build_model.return_value.fit.call_args.kwargs
+        self.assertEqual(fit_kwargs["batch_size"], 64)
+
+    def test_runner_fit_kwargs_omits_batch_size_for_prebatched_dataset(self) -> None:
+        """Keras should receive no ineffective batch argument for dataset input."""
+        dataset = tf.data.Dataset.from_tensor_slices(([1.0, 2.0], [0.0, 1.0])).batch(2)
+        plan = FitPlan(fit_kwargs={"x": dataset, "batch_size": 999}, callbacks=["callback"])
+
+        fit_kwargs = _runner_fit_kwargs(plan, epochs=3, batch_size=64)
+
+        self.assertNotIn("batch_size", fit_kwargs)
+        self.assertEqual(fit_kwargs["epochs"], 3)
+        self.assertEqual(fit_kwargs["callbacks"], ["callback"])
 
     def test_objective_multiobjective_tflite_failure_returns_penalty_tuple(self) -> None:
         """Multi-objective TFLite worker failures should return direction penalties."""
@@ -1265,9 +1311,11 @@ class ObjectiveTests(unittest.TestCase):
 
         result = self.client.objective(trial)
 
+        runtime_task_config = self.client.task.build_fit_plan.call_args.args[1]
+        self.assertEqual(runtime_task_config[RUNTIME_TRAINING_BATCH_SIZE_KEY], 256)
         self.client.task.build_fit_plan.assert_called_once_with(
             self.client.dataset_bundle,
-            self.client.task_config,
+            runtime_task_config,
             self.client.target_spec,
             mode="search",
             combine_train_val=False,
@@ -2904,6 +2952,7 @@ class TrainBestTrialTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
+            client.config.training.batch_size = 64
             built_model = client.model_family.build_model.return_value
             built_model.fit.return_value = SimpleNamespace(history={"loss": [1.0], "val_loss": [0.5]})
             fit_task = MagicMock()
@@ -2945,16 +2994,18 @@ class TrainBestTrialTests(unittest.TestCase):
                     history_path=base / "history.json",
                 )
 
+            runtime_task_config = instantiate_mock.call_args.args[2]
+            self.assertEqual(runtime_task_config[RUNTIME_TRAINING_BATCH_SIZE_KEY], 64)
             instantiate_mock.assert_called_once_with(
                 client.task_name,
                 client.config,
-                client.task_config,
+                runtime_task_config,
                 checkpoint_path=base / "best.keras",
                 early_stopping_patience=7,
             )
             fit_task.build_fit_plan.assert_called_once_with(
                 client.dataset_bundle,
-                client.task_config,
+                runtime_task_config,
                 client.target_spec,
                 mode="final",
                 combine_train_val=False,
@@ -2975,8 +3026,48 @@ class TrainBestTrialTests(unittest.TestCase):
             fit_call = built_model.fit.call_args.kwargs
             self.assertEqual(fit_call["callbacks"], ["task-callback"])
             self.assertEqual(fit_call["epochs"], client.config.training.model_epochs)
-            self.assertEqual(fit_call["batch_size"], 256)
+            self.assertEqual(fit_call["batch_size"], 64)
             self.assertEqual(history["loss"], [1.0])
+            metadata = json.loads((base / "history.training.json").read_text())
+            self.assertEqual(metadata, {
+                "batch_size": 64,
+                "input_is_batched": False,
+                "epochs": client.config.training.model_epochs,
+                "mode": "final",
+            })
+
+    def test_final_training_prebatched_dataset_omits_keras_batch_argument(self) -> None:
+        """Final training records dataset batching and does not pass batch_size."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            client.config.training.batch_size = 64
+            built_model = client.model_family.build_model.return_value
+            built_model.fit.return_value = SimpleNamespace(history={"loss": [1.0]})
+            fit_task = MagicMock()
+            dataset = tf.data.Dataset.from_tensor_slices(([1.0, 2.0], [0.0, 1.0])).batch(64)
+            fit_task.build_fit_plan.return_value = FitPlan(
+                fit_kwargs={"x": dataset}, callbacks=["task-callback"]
+            )
+
+            with patch.object(client, "_instantiate_task", return_value=fit_task):
+                client._train_with_decoded_hparams(
+                    {},
+                    bundle=client.dataset_bundle,
+                    target_spec=client.target_spec,
+                    model_build_context=client.model_build_context,
+                    model_config=client.model_config,
+                    task_config=Dict(),
+                    checkpoint_path=base / "best.keras",
+                    history_path=base / "history.json",
+                    patience=7,
+                    combine_train_val=False,
+                )
+
+            self.assertNotIn("batch_size", built_model.fit.call_args.kwargs)
+            metadata = json.loads((base / "history.training.json").read_text())
+            self.assertEqual(metadata["batch_size"], 64)
+            self.assertTrue(metadata["input_is_batched"])
 
 
 class PlotTrainingHistoryTests(unittest.TestCase):
