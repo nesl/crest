@@ -326,6 +326,9 @@ class CandidatePrepareRequest:
     checkpoint_path : pathlib.Path | str | None, optional
         Checkpoint path associated with trained export variants when one
         exists.
+    source_tflite_path : pathlib.Path | None, optional
+        Validated pre-exported TFLite input. When present, model, calibration
+        split, and checkpoint inputs must be absent.
 
     Attributes
     ----------
@@ -348,6 +351,8 @@ class CandidatePrepareRequest:
     checkpoint_path : Path | str | None
         Checkpoint path associated with trained export variants when one
         exists.
+    source_tflite_path : Path | None
+        Validated pre-exported TFLite input, mutually exclusive with export inputs.
     """
 
     config: Any
@@ -359,6 +364,20 @@ class CandidatePrepareRequest:
     quantization_mode: str
     input_shape: tuple[int, ...] | None
     checkpoint_path: Path | str | None = None
+    source_tflite_path: Path | None = None
+
+
+class CandidatePreparationError(RuntimeError):
+    """Expected backend failure while staging candidate build inputs."""
+
+    ALLOWED_ERROR_KINDS = frozenset({"request", "config", "compile", "upload", "runtime"})
+
+    def __init__(self, error_kind: str, detail: str) -> None:
+        if error_kind not in self.ALLOWED_ERROR_KINDS:
+            raise ValueError(f"Unsupported candidate preparation error kind: {error_kind}")
+        self.error_kind = error_kind
+        self.detail = str(detail)
+        super().__init__(self.detail)
 
 
 class DeviceInterface(ABC):
@@ -373,6 +392,10 @@ class DeviceInterface(ABC):
             ``True`` when the backend needs a generated candidate model before compilation.
         """
         return True
+
+    def supports_tflite_artifact(self) -> bool:
+        """Return whether preparation accepts an already exported TFLite file."""
+        return False
 
     def requires_training_data(self) -> bool:
         """Return whether candidate preparation needs calibration/training data.

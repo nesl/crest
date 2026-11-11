@@ -11,6 +11,8 @@ doubles.
 import json
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +31,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 # The NASModelClient is the unit under test for this module.
+import nas_model_client  # noqa: E402
 from nas_model_client import (NASModelClient, MeasurementInfrastructureError,
                               MeasurementInfrastructureStop, _ConsecutiveMeasurementFailureGuard)  # noqa: E402
 from crest.hardware import (
@@ -213,7 +216,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     # Artifact, socket, and config defaults: mirror the production config shape
     # without paying the cost of real I/O-heavy initialization.
     client.config = SimpleNamespace(
-        network=SimpleNamespace(host="localhost", port=5555, recv_timeout_sec=5, send_timeout_sec=5),
+        network=SimpleNamespace(host="localhost", port=5555, recv_timeout_sec=5, send_timeout_sec=5, hil_request_retries=0),
         training=SimpleNamespace(
             drop_rate_choices=[0.1, 0.2],
             train=True,
@@ -389,6 +392,80 @@ def _sign_test_study(client, study):
 class HILRequestTests(unittest.TestCase):
     """Validate the ZeroMQ request/response helper."""
 
+    @staticmethod
+    def artifact_capabilities():
+        return {
+            "request_type": "capabilities",
+            "protocol_version": 1,
+            "artifact_transport_versions": [1],
+            "backend": {"name": "TEST_DEVICE", "supports_tflite_artifact": True},
+            "limits": {"max_artifact_bytes": 4096},
+        }
+
+    def test_delayed_real_zmq_reply_recovers_with_same_payload(self) -> None:
+        context = zmq.Context()
+        server_socket = context.socket(zmq.REP)
+        port = server_socket.bind_to_random_port("tcp://127.0.0.1")
+        received = []
+
+        def serve() -> None:
+            received.append(server_socket.recv_json())
+            time.sleep(1.1)
+            server_socket.send_json({"late": True})
+            received.append(server_socket.recv_json())
+            server_socket.send_json({"ram_bytes": 2048})
+
+        thread = threading.Thread(target=serve)
+        thread.start()
+        client = _build_test_client()
+        client.config.network = SimpleNamespace(host="127.0.0.1", port=port, recv_timeout_sec=1, send_timeout_sec=1, hil_request_retries=1)
+        client.socket = None
+        client.context = None
+        payload = {"family_hparams": {"nb_filters": 4}, "runtime_metadata": {"flops": 1}}
+        try:
+            self.assertEqual(client._hil_request(payload), {"ram_bytes": 2048})
+            thread.join(timeout=2)
+            self.assertEqual(received, [payload, payload])
+        finally:
+            client._reset_hil_socket()
+            server_socket.close(linger=0)
+            context.term()
+
+    def test_artifact_capability_preflight_and_refresh(self) -> None:
+        client = _build_test_client()
+        client.socket.recv_json.return_value = self.artifact_capabilities()
+        client.context.socket.return_value = client.socket
+        with patch("nas_model_client.zmq.Context.instance", return_value=client.context):
+            result = client._ensure_hil_artifact_support(refresh=True)
+        self.assertEqual(result["artifact_transport_versions"], [1])
+        self.assertEqual(client.socket.send_json.call_args.args[0]["request_type"], "capabilities")
+
+    def test_legacy_addict_network_uses_transport_defaults(self) -> None:
+        client = _build_test_client()
+        client.config.network = Dict(host="localhost", port=5555, recv_timeout_sec=5, send_timeout_sec=5)
+        self.assertEqual(client._hil_retry_count(), 1)
+        self.assertEqual(client._max_artifact_bytes(), 16 * 1024 * 1024)
+
+    def test_malformed_capability_is_compatibility_error(self) -> None:
+        client = _build_test_client()
+        client.socket.recv_json.return_value = {"error_code": 1}
+        with self.assertRaises(nas_model_client.HILArtifactCompatibilityError):
+            client._ensure_hil_artifact_support()
+
+    @patch("nas_model_client.read_tflite_artifact")
+    def test_tampered_successful_artifact_reply_is_transport_error(self, read_mock) -> None:
+        client = _build_test_client()
+        client._hil_artifact_capabilities = self.artifact_capabilities()
+        client._hil_artifact_capability_endpoint = "tcp://localhost:5555"
+        read_mock.return_value = (b"TFL3-bytes", {"inputs": [], "outputs": []})
+        client.socket.recv_json.return_value = {
+            "error_code": HIL_MASTER_SUCCESS, "request_id": "wrong",
+            "artifact_sha256": "wrong", "artifact_byte_length": 0,
+        }
+        with self.assertRaises(nas_model_client.HILTransportError) as raised:
+            client._hil_request({"family_hparams": {}, "runtime_metadata": {}}, artifact_path=Path("model.tflite"))
+        self.assertEqual(raised.exception.phase, "integrity")
+
     def test_hil_request_success(self) -> None:
         """A successful round-trip should log debug I/O and return metrics.
 
@@ -426,13 +503,14 @@ class HILRequestTests(unittest.TestCase):
         # Socket timeouts should surface as errors so stalled HIL servers do not look like valid trial failures.
         client = _build_test_client()
         client.socket.recv_json.side_effect = zmq.error.Again()
+        attempted_socket = client.socket
 
         with self.assertLogs("nas_model_client", level="WARNING") as captured:
             with self.assertRaises(RuntimeError):
                 client._hil_request({"family_hparams": {"nb_filters": 8}, "runtime_metadata": {"flops": 1, "timesteps": 16, "input_dim": 3}})
 
-        client.socket.send_json.assert_called_once()
-        self.assertIn("Timed out waiting for metrics", "\n".join(captured.output))
+        attempted_socket.send_json.assert_called_once()
+        self.assertIn("HIL receive failed", "\n".join(captured.output))
 
     def test_hil_request_opens_socket_lazily(self) -> None:
         """The HIL socket should connect only when a HIL request is sent."""

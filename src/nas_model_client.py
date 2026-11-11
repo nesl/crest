@@ -16,6 +16,7 @@ import logging
 import shutil
 import socket
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,10 @@ from crest.hardware import (
     convert_to_tflite_model,
     predict_tflite_model_subprocess,
     return_hardware_specs,
+)
+from crest.hil.artifact_transport import (
+    ARTIFACT_FORMAT, ARTIFACT_PROTOCOL_VERSION, DEFAULT_HIL_REQUEST_RETRIES,
+    DEFAULT_MAX_ARTIFACT_BYTES, read_tflite_artifact, sha256_bytes,
 )
 from crest.microcontrollers import (
     get_device as get_microcontroller_device,
@@ -100,6 +105,24 @@ logger = logging.getLogger(__name__)
 
 class MeasurementInfrastructureError(RuntimeError):
     """A bounded HIL recovery failed; consume this NAS attempt without a score."""
+
+
+class HILTransportError(MeasurementInfrastructureError):
+    """Bounded HIL recovery or reply-integrity validation was exhausted."""
+
+    def __init__(self, *, endpoint, request_id, attempts, phase, cause):
+        self.endpoint, self.request_id = endpoint, request_id
+        self.attempts, self.phase, self.cause = attempts, phase, cause
+        super().__init__(f"HIL transport failed during {phase} after {attempts} attempt(s) at {endpoint}: {cause}")
+
+
+class HILArtifactCompatibilityError(RuntimeError):
+    """The configured endpoint/backend cannot consume TFLite artifacts."""
+
+    def __init__(self, *, endpoint, advertised_versions, backend, reason):
+        self.endpoint, self.advertised_versions = endpoint, advertised_versions
+        self.backend, self.reason = backend, reason
+        super().__init__(f"HIL artifact transport is unsupported at {endpoint}: {reason}")
 
 
 class MeasurementInfrastructureStop(RuntimeError):
@@ -323,6 +346,9 @@ class NASModelClient:
 
         self.context = None
         self.socket = None
+        self._hil_socket_endpoint = None
+        self._hil_artifact_capabilities = None
+        self._hil_artifact_capability_endpoint = None
 
         self.study_name = "default_study"
 
@@ -1151,17 +1177,86 @@ class NASModelClient:
         connection retries when ``device.hil`` and compile proxy collection are
         disabled.
         """
+        endpoint = f"tcp://{self.config.network.host}:{self.config.network.port}"
+        connected_endpoint = getattr(self, "_hil_socket_endpoint", None)
         if self.socket is not None:
-            return
+            if connected_endpoint is None or connected_endpoint == endpoint:
+                return
+            self._reset_hil_socket()
         self.context = zmq.Context.instance()
         self.socket = self.context.socket(zmq.REQ)
         self.socket.RCVTIMEO = self.config.network.recv_timeout_sec * 1000
         self.socket.SNDTIMEO = self.config.network.send_timeout_sec * 1000
-        endpoint = f"tcp://{self.config.network.host}:{self.config.network.port}"
         self.socket.connect(endpoint)
+        self._hil_socket_endpoint = endpoint
         logger.info("[REQ] Connected to HIL server at %s", endpoint)
 
-    def _hil_request(self, payload):
+    def _reset_hil_socket(self) -> None:
+        """Discard a REQ socket whose request/reply state cannot be reused."""
+        if self.socket is not None:
+            self.socket.close(linger=0)
+        self.socket = None
+        self._hil_socket_endpoint = None
+        self._hil_artifact_capabilities = None
+        self._hil_artifact_capability_endpoint = None
+
+    def _hil_endpoint(self) -> str:
+        return f"tcp://{self.config.network.host}:{self.config.network.port}"
+
+    def _hil_retry_count(self) -> int:
+        value = cfg_get(self.config.network, "hil_request_retries", DEFAULT_HIL_REQUEST_RETRIES)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("network.hil_request_retries must be a non-negative integer.")
+        return value
+
+    def _max_artifact_bytes(self) -> int:
+        value = cfg_get(self.config.network, "max_artifact_bytes", DEFAULT_MAX_ARTIFACT_BYTES)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError("network.max_artifact_bytes must be a positive integer.")
+        return value
+
+    def _ensure_hil_artifact_support(self, *, refresh: bool = False) -> dict:
+        """Negotiate artifact protocol/backend support before expensive training."""
+        if refresh:
+            self._reset_hil_socket()
+        cached = getattr(self, "_hil_artifact_capabilities", None)
+        endpoint = self._hil_endpoint()
+        if cached is not None and getattr(self, "_hil_artifact_capability_endpoint", None) == endpoint:
+            return cached
+        attempts = self._hil_retry_count() + 1
+        query = {"request_type": "capabilities", "protocol_version": ARTIFACT_PROTOCOL_VERSION}
+        last_error = None
+        for _attempt in range(1, attempts + 1):
+            try:
+                self._ensure_hil_socket()
+                self.socket.send_json(query)
+                response = self.socket.recv_json()
+            except (zmq.error.Again, zmq.error.ZMQError) as exc:
+                last_error = exc
+                self._reset_hil_socket()
+                continue
+            except (ValueError, TypeError) as exc:
+                self._reset_hil_socket()
+                raise HILArtifactCompatibilityError(endpoint=endpoint, advertised_versions=None, backend=None, reason="malformed capability reply") from exc
+            if not isinstance(response, Mapping):
+                self._reset_hil_socket()
+                raise HILArtifactCompatibilityError(endpoint=endpoint, advertised_versions=None, backend=None, reason="malformed capability reply")
+            versions = response.get("artifact_transport_versions")
+            backend = response.get("backend")
+            limit_block = response.get("limits")
+            limit = limit_block.get("max_artifact_bytes") if isinstance(limit_block, Mapping) else None
+            response_version = response.get("protocol_version")
+            valid = (response.get("request_type") == "capabilities" and isinstance(response_version, int) and not isinstance(response_version, bool) and response_version == ARTIFACT_PROTOCOL_VERSION and isinstance(versions, list) and any(isinstance(item, int) and not isinstance(item, bool) and item == ARTIFACT_PROTOCOL_VERSION for item in versions) and isinstance(backend, Mapping) and backend.get("supports_tflite_artifact") is True and isinstance(limit, int) and not isinstance(limit, bool) and limit > 0)
+            if not valid:
+                self._reset_hil_socket()
+                raise HILArtifactCompatibilityError(endpoint=endpoint, advertised_versions=versions, backend=backend, reason="protocol version, backend support, or payload limit was not advertised")
+            self._hil_artifact_capabilities = dict(response)
+            self._hil_artifact_capability_endpoint = endpoint
+            return self._hil_artifact_capabilities
+        error = HILTransportError(endpoint=endpoint, request_id=None, attempts=attempts, phase="capability", cause=last_error)
+        raise error from last_error
+
+    def _hil_request(self, payload, *, artifact_path: Path | None = None):
         """Send a HIL request payload to the HIL server and receive metrics.
 
         Parameters
@@ -1188,26 +1283,78 @@ class NASModelClient:
             payload,
         )
 
-        try:
-            self._ensure_hil_socket()
-            self.socket.send_json(payload)
-            metrics = self.socket.recv_json()
-            logger.debug("[REQ] Received metrics: %s", metrics)
-            return metrics
-        except zmq.error.Again as ex:
-            logger.warning(
-                "[REQ] Timed out waiting for metrics after %s seconds",
-                self.config.network.recv_timeout_sec,
+        request_id = None
+        artifact_bytes = None
+        wire_payload = payload
+        if artifact_path is not None:
+            capabilities = self._ensure_hil_artifact_support()
+            server_limit = capabilities["limits"]["max_artifact_bytes"]
+            artifact_bytes, tensor_metadata = read_tflite_artifact(
+                Path(artifact_path), max_bytes=min(self._max_artifact_bytes(), server_limit)
             )
-            # TODO: This is probably bad and should be handled more gracefully.
-            raise RuntimeError("Timeout waiting for metrics from HIL server") from ex
-        except zmq.error.ZMQError as ex:
-            raise RuntimeError(
-                f"Failed to reach HIL server at {self.config.network.host}:{self.config.network.port}"
-            ) from ex
-        finally:
-            # Give stdout time to flush before tearing the socket down.
-            time.sleep(0.1)
+            request_id = uuid.uuid4().hex
+            wire_payload = dict(payload)
+            wire_payload.update(
+                request_type="candidate_artifact",
+                protocol_version=ARTIFACT_PROTOCOL_VERSION,
+                request_id=request_id,
+                artifact={
+                    "format": ARTIFACT_FORMAT,
+                    "byte_length": len(artifact_bytes),
+                    "sha256": sha256_bytes(artifact_bytes),
+                    **tensor_metadata,
+                },
+            )
+
+        endpoint = self._hil_endpoint()
+        attempts = self._hil_retry_count() + 1
+        last_error = None
+        phase = "send"
+        for attempt in range(1, attempts + 1):
+            phase = "send"
+            try:
+                if artifact_bytes is not None and attempt > 1:
+                    retry_capabilities = self._ensure_hil_artifact_support()
+                    if len(artifact_bytes) > retry_capabilities["limits"]["max_artifact_bytes"]:
+                        raise HILArtifactCompatibilityError(
+                            endpoint=endpoint, advertised_versions=retry_capabilities.get("artifact_transport_versions"),
+                            backend=retry_capabilities.get("backend"),
+                            reason="artifact exceeds the server limit advertised after reconnect",
+                        )
+                self._ensure_hil_socket()
+                if artifact_bytes is None:
+                    self.socket.send_json(wire_payload)
+                else:
+                    frames = [json.dumps(wire_payload).encode("utf-8"), artifact_bytes]
+                    self.socket.send_multipart(frames)
+                phase = "receive"
+                metrics = self.socket.recv_json()
+                if not isinstance(metrics, Mapping):
+                    raise ValueError("HIL reply must be a JSON object.")
+                if artifact_bytes is not None and metrics.get("error_code") == HIL_MASTER_SUCCESS:
+                    expected = wire_payload["artifact"]
+                    response_length = metrics.get("artifact_byte_length")
+                    identity_matches = (
+                        metrics.get("request_id") == request_id
+                        and metrics.get("artifact_sha256") == expected["sha256"]
+                        and isinstance(response_length, int)
+                        and not isinstance(response_length, bool)
+                        and response_length == expected["byte_length"]
+                    )
+                    if not identity_matches:
+                        raise ValueError("HIL artifact reply identity does not match the request.")
+                logger.debug("[REQ] Received metrics: %s", metrics)
+                return metrics
+            except (zmq.error.Again, zmq.error.ZMQError, ValueError) as exc:
+                last_error = exc
+                if isinstance(exc, ValueError):
+                    phase = "integrity"
+                logger.warning("[REQ] HIL %s failed on attempt %s/%s: %s", phase, attempt, attempts, exc)
+                self._reset_hil_socket()
+        error = HILTransportError(
+            endpoint=endpoint, request_id=request_id, attempts=attempts, phase=phase, cause=last_error
+        )
+        raise error from last_error
 
     def _build_runtime_metadata(
         self,

@@ -46,16 +46,17 @@ The server handles it before pipeline bootstrap and replies with JSON:
 The backend support value is resolved through the configured device registry
 and options without loading the dataset, task, or model family. It says only
 that the selected backend accepts a supplied TFLite file; it does not attest to
-board reachability or health. A timeout, malformed response, missing version,
-or false backend support is an incompatibility. The client resets its REQ
-socket and raises a typed transport error; it never probes support by sending
+board reachability or health. A malformed explicit response, missing version,
+or false backend support raises a compatibility error. Bounded timeout or ZMQ
+failure raises transport exhaustion. The client resets its REQ socket; it never probes support by sending
 multipart data and never falls back to an architecture-only request.
 
 Legacy clients continue to send their existing JSON candidate frame. A new
 server accepts it unchanged. A new client can use the legacy path without a
 capability query when no artifact is supplied. Old servers will return their
 ordinary structured request error for the query or time out; either result is
-reported as unsupported before multipart transfer.
+reported before multipart transfer. An explicit legacy request error is a
+compatibility failure; bounded timeout is transport exhaustion.
 
 ### Artifact request
 
@@ -93,6 +94,9 @@ with ordered finite `scales`, ordered integer `zero_points`, and integer
 The server compares this declaration exactly with the actual interpreter
 metadata and request quantization mode. Missing, reordered, omitted, or
 ambiguous scalar quantization metadata is a request error.
+The server also compares logical input shape, ordered output count/shapes, and
+batch-one deployment dimensions with its bootstrapped model/task context.
+Tensor dtype is checked against quantization mode rather than label dtype.
 
 The receive boundary rejects any frame count other than one for legacy/query
 or two for an artifact request. It rejects invalid JSON, unsupported version or
@@ -188,8 +192,9 @@ propagate.
 Callers affected are `HILServer._build_candidate_prepare_request`, the server
 candidate orchestration, concrete backends that opt in, tests constructing the
 dataclass, and Plan 4's client call. Existing positional construction remains
-compatible because the optional field is last. No ABC, `FitPlan`, optimizer,
-or metric-record signature changes.
+compatible because the optional field is last. Existing ABC method signatures,
+`FitPlan`, optimizer, and metric-record signatures remain unchanged; the
+default-false capability method is additive to `DeviceInterface`.
 
 ## Client API and recovery
 

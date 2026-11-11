@@ -15,6 +15,7 @@ from collections.abc import Mapping
 import logging
 import math
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -31,9 +32,13 @@ from crest.builtin_components import ensure_builtin_components_registered
 from crest.cadence import resolve_batch_period_ms
 from crest.component_selection import cfg_get, resolve_component_selection
 from crest.devices import (
+    CandidatePreparationError,
     CandidatePrepareRequest,
     arduino_staged_sketch_path,
     _sync_arduino_sketch_variant_for_config,
+)
+from crest.hil.artifact_transport import (
+    ARTIFACT_PROTOCOL_VERSION, DEFAULT_MAX_ARTIFACT_BYTES, validate_artifact_metadata,
 )
 from crest.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
@@ -41,6 +46,7 @@ from crest.hardware import (
 )
 from crest.hil.runtime import build_collect_metrics_request, collect_metrics
 from crest.errors import HIL_ERROR_OK, HIL_MASTER_FATAL, HIL_MASTER_SUCCESS
+from crest.errors import HIL_MASTER_INFRASTRUCTURE
 from crest.microcontrollers import (
     get_device as get_microcontroller_device,
     resolve_device_options,
@@ -689,6 +695,7 @@ class HILServer:
         checkpoint_path: Path | str | None,
         calibration_split: DataSplit | None,
         quantization_mode: str,
+        source_tflite_path: Path | None = None,
     ) -> CandidatePrepareRequest:
         """Assemble the typed backend request for candidate preparation.
 
@@ -721,6 +728,7 @@ class HILServer:
             quantization_mode=quantization_mode,
             input_shape=self.model_build_context.input_shape,
             checkpoint_path=checkpoint_path,
+            source_tflite_path=source_tflite_path,
         )
 
     def _resolve_export_model_variant(self, model_variant: str | None) -> str:
@@ -950,16 +958,37 @@ class HILServer:
 
         try:
             while True:
-                payload = self.socket.recv_json()
-                logger.debug("[HIL REP] Received payload: %s", payload)
+                frames = self.socket.recv_multipart()
+                payload = None
                 try:
-                    family_hparams, runtime_metadata, quantization_mode, device_options_overrides = self._normalize_request_payload(payload)
-                    metrics = self.determine_metrics(
-                        family_hparams=family_hparams,
-                        runtime_metadata=runtime_metadata,
-                        quantization_mode=quantization_mode,
-                        device_options_overrides=device_options_overrides,
-                    )
+                    if len(frames) not in (1, 2):
+                        raise ValueError("HIL requests must contain exactly one or two frames.")
+                    try:
+                        payload = json.loads(frames[0].decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise ValueError("HIL request metadata must be valid UTF-8 JSON.") from exc
+                    logger.debug("[HIL REP] Received payload: %s", payload)
+                    if not isinstance(payload, Mapping):
+                        raise ValueError("HIL request metadata must be a JSON object.")
+                    if payload.get("request_type") == "capabilities":
+                        if len(frames) != 1:
+                            raise ValueError("Capability queries must contain one frame.")
+                        version = payload.get("protocol_version")
+                        if not isinstance(version, int) or isinstance(version, bool) or version != ARTIFACT_PROTOCOL_VERSION:
+                            raise ValueError("Unsupported capability protocol version.")
+                        metrics = self._artifact_capabilities()
+                    elif len(frames) == 2:
+                        metrics = self._handle_artifact_request(payload, frames[1])
+                    else:
+                        if payload.get("request_type") == "candidate_artifact":
+                            raise ValueError("Artifact requests must contain metadata and binary frames.")
+                        family_hparams, runtime_metadata, quantization_mode, device_options_overrides = self._normalize_request_payload(payload)
+                        metrics = self.determine_metrics(
+                            family_hparams=family_hparams,
+                            runtime_metadata=runtime_metadata,
+                            quantization_mode=quantization_mode,
+                            device_options_overrides=device_options_overrides,
+                        )
                 except ValueError as exc:
                     logger.error("Invalid HIL request payload: %s", exc)
                     metrics = self._request_boundary_failure_metrics(
@@ -979,6 +1008,133 @@ class HILServer:
         finally:
             self.socket.close(linger=0)
             self.context.term()
+
+    def _max_artifact_bytes(self) -> int:
+        value = self._cfg_get(self.config.network, "max_artifact_bytes", DEFAULT_MAX_ARTIFACT_BYTES)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError("network.max_artifact_bytes must be a positive integer.")
+        return value
+
+    def _artifact_device(self):
+        options = resolve_device_options(self._normalized_device_name(), self.config.device) or {}
+        return get_microcontroller_device(
+            self._normalized_device_name(),
+            serial_port=getattr(self.config.device, "serial_port", None),
+            device_options=options,
+        )
+
+    def _artifact_capabilities(self) -> dict:
+        runtime_device = self._artifact_device()
+        return {
+            "request_type": "capabilities",
+            "protocol_version": ARTIFACT_PROTOCOL_VERSION,
+            "artifact_transport_versions": [ARTIFACT_PROTOCOL_VERSION],
+            "backend": {
+                "name": self._normalized_device_name(),
+                "supports_tflite_artifact": runtime_device.supports_tflite_artifact(),
+            },
+            "limits": {"max_artifact_bytes": self._max_artifact_bytes()},
+        }
+
+    def _handle_artifact_request(self, payload: object, artifact_bytes: bytes) -> dict:
+        if not isinstance(payload, Mapping):
+            raise ValueError("HIL artifact metadata must be a JSON object.")
+        version = payload.get("protocol_version")
+        if payload.get("request_type") != "candidate_artifact" or not isinstance(version, int) or isinstance(version, bool) or version != ARTIFACT_PROTOCOL_VERSION:
+            raise ValueError("Unsupported HIL artifact request type or protocol version.")
+        request_id = payload.get("request_id")
+        if not isinstance(request_id, str) or not request_id.strip():
+            raise ValueError("request_id must be a non-empty string.")
+        artifact = payload.get("artifact")
+        if not isinstance(artifact, Mapping):
+            raise ValueError("artifact metadata must be a JSON object.")
+        validated = validate_artifact_metadata(artifact, artifact_bytes, max_bytes=self._max_artifact_bytes())
+        family_hparams, runtime_metadata, quantization_mode, overrides = self._normalize_request_payload(payload)
+        runtime_device = self._artifact_device()
+        if not runtime_device.supports_tflite_artifact():
+            raise ValueError("Configured backend does not support supplied TFLite artifacts.")
+        self._ensure_pipeline_bootstrapped()
+        expected_input_shape = tuple(self.model_build_context.input_shape or ())
+        actual_inputs = validated["inputs"]
+        if (
+            len(actual_inputs) != 1
+            or actual_inputs[0]["shape"][0] != 1
+            or tuple(actual_inputs[0]["shape"][1:]) != expected_input_shape
+        ):
+            raise ValueError("TFLite input shape does not match the configured model input shape.")
+        expected_outputs = [tuple(shape) for shape in self.target_spec.output_shapes]
+        actual_outputs = [tuple(item["shape"][1:]) for item in validated["outputs"]]
+        if any(item["shape"][0] != 1 for item in validated["outputs"]) or actual_outputs != expected_outputs:
+            raise ValueError("TFLite outputs do not match the configured task output shapes.")
+        tensor_dtypes = [item["dtype"] for item in actual_inputs + validated["outputs"]]
+        allowed_dtypes = {"int8", "uint8"} if quantization_mode == "int8_ptq" else {"float32"}
+        if any(dtype not in allowed_dtypes for dtype in tensor_dtypes):
+            raise ValueError("TFLite tensor dtypes do not match quantization_mode.")
+        staging_root = Path(self._cfg_get(
+            self.config.network, "artifact_staging_dir", Path(self.config.outputs.models_dir) / "hil_staging"
+        ))
+        staged_root: Path | None = None
+        request_record: Path | None = None
+        artifact_io_phase = "staging"
+        try:
+            staging_root.mkdir(parents=True, exist_ok=True)
+            staged_root = Path(tempfile.mkdtemp(prefix="request-", dir=staging_root))
+            staged_path = staged_root / "model.tflite"
+            staged_path.write_bytes(artifact_bytes)
+            if staged_path.read_bytes() != artifact_bytes:
+                raise OSError("Staged artifact bytes changed after writing.")
+            artifact_io_phase = None
+            metrics = self.determine_metrics(
+                family_hparams=family_hparams, runtime_metadata=runtime_metadata,
+                quantization_mode=quantization_mode, device_options_overrides=overrides,
+                source_tflite_path=staged_path,
+            )
+            metrics.update(request_id=request_id, artifact_sha256=validated["sha256"], artifact_byte_length=validated["byte_length"])
+            artifact_io_phase = "evidence"
+            records_dir = Path(self.config.outputs.models_dir) / "hil_requests"
+            records_dir.mkdir(parents=True, exist_ok=True)
+            request_record = records_dir / f"{uuid.uuid4().hex}.json"
+            with request_record.open("x") as handle:
+                json.dump({
+                    "request_id": request_id,
+                    "artifact_sha256": validated["sha256"],
+                    "artifact_byte_length": validated["byte_length"],
+                    "tensor_metadata": {"inputs": validated["inputs"], "outputs": validated["outputs"]},
+                    "staged_path": str(staged_path),
+                    "backend": self._normalized_device_name(),
+                    "exception": None,
+                    "cleanup_outcome": "pending",
+                    "metrics": metrics,
+                }, handle, indent=2, default=str)
+            metrics["measurement_request_record"] = str(request_record.resolve())
+            artifact_io_phase = None
+            return metrics
+        except OSError as exc:
+            if artifact_io_phase is None:
+                raise
+            metrics = self._request_boundary_failure_metrics(
+                error_kind="infrastructure",
+                error_detail=f"Artifact {artifact_io_phase} failed: {exc}",
+            )
+            set_error_code(metrics, HIL_MASTER_INFRASTRUCTURE)
+            metrics.update(request_id=request_id, artifact_sha256=validated["sha256"], artifact_byte_length=validated["byte_length"])
+            return metrics
+        finally:
+            cleanup_outcome = "not_created"
+            if staged_root is not None:
+                try:
+                    shutil.rmtree(staged_root)
+                    cleanup_outcome = "removed"
+                except OSError:
+                    cleanup_outcome = "failed"
+                    logger.exception("Failed to remove artifact staging directory %s", staged_root)
+            if request_record is not None:
+                try:
+                    record = json.loads(request_record.read_text())
+                    record["cleanup_outcome"] = cleanup_outcome
+                    request_record.write_text(json.dumps(record, indent=2, default=str))
+                except (OSError, ValueError):
+                    logger.exception("Failed to update artifact request cleanup evidence %s", request_record)
 
     @staticmethod
     def _normalize_request_payload(payload: object) -> tuple[Dict, Dict, str, dict | None]:
@@ -1065,6 +1221,7 @@ class HILServer:
         device_options_overrides: dict | None = None,
         checkpoint_path: Path | str | None = None,
         model_variant: str | None = None,
+        source_tflite_path: Path | None = None,
     ) -> dict:
         """Build/select a model variant, compile/export it, and collect HIL metrics.
 
@@ -1127,11 +1284,16 @@ class HILServer:
         try:
             self._ensure_pipeline_bootstrapped()
             latency_budget_ms = self._effective_latency_budget_ms()
-            resolved_model_variant = self._resolve_export_model_variant(model_variant)
-            resolved_checkpoint_path = self._resolve_export_checkpoint_path(
-                model_variant=resolved_model_variant,
-                checkpoint_path=checkpoint_path,
-            )
+            if source_tflite_path is None:
+                resolved_model_variant = self._resolve_export_model_variant(model_variant)
+                resolved_checkpoint_path = self._resolve_export_checkpoint_path(
+                    model_variant=resolved_model_variant, checkpoint_path=checkpoint_path,
+                )
+            else:
+                if model_variant is not None or checkpoint_path is not None:
+                    raise ValueError("Supplied artifacts cannot include model_variant or checkpoint_path.")
+                resolved_model_variant = "supplied_tflite"
+                resolved_checkpoint_path = None
         except ValueError as exc:
             return self._request_boundary_failure_metrics(
                 error_kind="config",
@@ -1193,7 +1355,13 @@ class HILServer:
         window_size, input_dim = self._resolve_runtime_dimensions()
         model = None
         calibration_split: DataSplit | None = None
-        if runtime_device.requires_candidate_model():
+        if source_tflite_path is not None:
+            if not runtime_device.supports_tflite_artifact():
+                return self._request_boundary_failure_metrics(
+                    error_kind="config",
+                    error_detail="Configured backend does not support supplied TFLite artifacts.",
+                )
+        elif runtime_device.requires_candidate_model():
             model = self._materialize_candidate_model(
                 family_hparams,
                 model_variant=resolved_model_variant,
@@ -1236,6 +1404,7 @@ class HILServer:
                     checkpoint_path=resolved_checkpoint_path,
                     calibration_split=calibration_split,
                     quantization_mode=resolved_quantization_mode,
+                    source_tflite_path=source_tflite_path,
                 ),
             )
             prepared_dir = Path(prepared_dir)
@@ -1278,6 +1447,14 @@ class HILServer:
                     window_size=window_size,
                     input_dim=input_dim,
                 )
+        except CandidatePreparationError as exc:
+            metrics = _build_backend_failure_metrics(
+                error_kind=exc.error_kind, error_detail=exc.detail,
+                latency_budget_ms=latency_budget_ms, hil_enabled=effective_hil_enabled,
+                energy_aware=effective_energy_aware,
+            )
+            if exc.error_kind in {"upload", "runtime"}:
+                set_error_code(metrics, HIL_MASTER_INFRASTRUCTURE)
         except (
             stm32_cube_clt.WorkflowError,
             stm32_runtime.STM32RuntimeProtocolError,
