@@ -34,6 +34,8 @@ Tasks do not own dataset loading, architecture search spaces, export materializa
   Defines the two-output OxIOD velocity regression contract, task-owned fit wiring, RMSE metrics, and odometry closeout artifacts.
 - [`sound_classification.py`](sound_classification.py) Registered as `sound_classification`.
   Defines the single-output logits classification contract for cached audio features, classification metrics, fixed-split reporting, and optional fold-rotation evaluation.
+- [`facial_expression_classification.py`](facial_expression_classification.py) Registered as `facial_expression_classification`.
+  Defines five-class probability outputs, conditional FER+ training targets, hard validation labels, equal-source weighting, prebatched channel-safe augmentation, validation-loss checkpointing, and pooled/source diagnostic metrics.
 
 ## Key Files
 
