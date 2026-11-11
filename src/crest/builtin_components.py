@@ -39,6 +39,22 @@ def ensure_audio_components_registered() -> None:
         model_family_registry.register("audio_dscnn", AudioDSCNNFamily)
 
 
+def ensure_fer_components_registered() -> None:
+    """Register only the built-in facial-expression workload components."""
+    if "ferplus_rafdb_mixed" not in dataset_registry:
+        from .datasets.ferplus_rafdb_mixed import FERPlusRAFDBMixedDataset
+
+        dataset_registry.register("ferplus_rafdb_mixed", FERPlusRAFDBMixedDataset)
+    if "facial_expression_classification" not in task_registry:
+        from .tasks.facial_expression_classification import FacialExpressionClassificationTask
+
+        task_registry.register("facial_expression_classification", FacialExpressionClassificationTask)
+    if "fer_mini_xception" not in model_family_registry:
+        from .model_families.fer_mini_xception import FERMiniXceptionFamily
+
+        model_family_registry.register("fer_mini_xception", FERMiniXceptionFamily)
+
+
 def ensure_builtin_components_registered() -> None:
     """Register the built-in CREST components exactly once.
 
@@ -62,6 +78,7 @@ def ensure_builtin_components_registered() -> None:
 
         model_family_registry.register("odom_tcn", OdomTCNFamily)
     ensure_audio_components_registered()
+    ensure_fer_components_registered()
 
 
 def ensure_optimizer_components_registered() -> None:

@@ -43,3 +43,4 @@ pythonpath = ["src"]
 
 [tool.setuptools.package-data]
 "crest.optimizers.llm.providers" = ["pricing.json"]
+"crest.model_families.fer_mini_xception" = ["README.md", "THIRD_PARTY_LICENSE.txt"]

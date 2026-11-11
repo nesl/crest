@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["OxIODDataset", "UrbanSound8KMelDataset"]
+__all__ = ["FERPlusRAFDBMixedDataset", "OxIODDataset", "UrbanSound8KMelDataset"]
 
 
 def __getattr__(name: str) -> Any:
@@ -39,4 +39,8 @@ def __getattr__(name: str) -> Any:
         from .urbansound8k_mel import UrbanSound8KMelDataset
 
         return UrbanSound8KMelDataset
+    if name == "FERPlusRAFDBMixedDataset":
+        from .ferplus_rafdb_mixed import FERPlusRAFDBMixedDataset
+
+        return FERPlusRAFDBMixedDataset
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

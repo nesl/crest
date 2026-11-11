@@ -19,6 +19,7 @@ Case-study reproducibility configs live under [`case_study_configs/`](case_study
 | Run STM32 OxIOD HIL experiments | [`nas_config_stm32.yaml`](nas_config_stm32.yaml) | NUCLEO-N657X0-Q board required. HIL harness required for energy measurement |
 | Run Arduino OxIOD HIL experiments | [`nas_config_ble.yaml`](nas_config_ble.yaml) or [`nas_config_portenta.yaml`](nas_config_portenta.yaml) | Target board required. HIL harness required for energy measurement |
 | Run UrbanSound8K audio HIL experiments | [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml) or [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml) | Target board and HIL harness required as shipped. Use these as templates with HIL/measured scoring disabled for hardware-free training |
+| Configure the fixed-resolution FER workload | [`fer_components_64.yaml`](fer_components_64.yaml) or [`fer_components_96.yaml`](fer_components_96.yaml) | Component fragments only; hardware is not needed for loading/building, and campaign epoch/trial budgets remain intentionally unspecified |
 
 The STM32 example is the most complete commented score/prune reference.
 [`nas_config_memory_proxy.yaml`](nas_config_memory_proxy.yaml) adds a desktop RMSE/static-memory-traffic example.
