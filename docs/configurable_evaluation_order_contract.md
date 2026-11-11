@@ -61,6 +61,11 @@ does the existing TCP endpoint probe and a capability refresh before any
 The objective does not duplicate socket recovery, multipart framing, or
 capability caching.
 
+`network.hil_probe_timeout_sec` controls only the TCP reachability probe. It is
+a positive finite non-boolean number with a default of 5.0 seconds. Transport
+continues to own request timeouts, bounded retries, and capability-query
+timeouts; this setting is not reused for those operations.
+
 ## Defaults, migration, and validation
 
 `nas.hil_first` defaults to `true`, so existing configurations and historical

@@ -810,6 +810,15 @@ def test_no_training_hil_first_false_source_replay_remains_supported(tmp_path: P
     assert (output_dir / "manifest.json").is_file()
 
 
+def test_hardware_first_replay_does_not_tighten_legacy_training_config() -> None:
+    """The replay guard ignores unrelated historical training values in true mode."""
+    config = source_config()
+    config["nas"]["hil_first"] = True
+    config["training"] = {"train": "legacy-value"}
+
+    pareto_replay.require_replayable_source_order(config)
+
+
 def test_non_dry_run_invokes_metrics_callback_with_full_request(tmp_path: Path) -> None:
     """Check hardware-free non-dry-run metrics callback payloads.
 

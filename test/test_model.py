@@ -1871,13 +1871,19 @@ class LoadSettingsTests(unittest.TestCase):
             self.assertEqual(settings.training.drop_rate_choices, DROP_RATE_CHOICES)  
             self.assertEqual(settings.training.batch_size, 256)
             self.assertTrue(settings.nas.hil_first)
+            self.assertEqual(settings.network.hil_probe_timeout_sec, 5.0)
 
     def test_load_settings_validates_training_batch_size_and_hil_order(self) -> None:
         """Batch size and evaluation order should use strict normalized types."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
 
-            def write_config(*, batch_value: str, hil_first_value: str) -> Path:
+            def write_config(
+                *,
+                batch_value: str,
+                hil_first_value: str,
+                probe_timeout_value: str = "5.0",
+            ) -> Path:
                 score_lines = self._score_lines()
                 score_lines.insert(score_lines.index("  score:"), f"  hil_first: {hil_first_value}")
                 config_path = tmp_path / f"config_{batch_value}_{hil_first_value}.yaml"
@@ -1888,6 +1894,8 @@ class LoadSettingsTests(unittest.TestCase):
                     "  nas_trials: 5",
                     f"  batch_size: {batch_value}",
                     *score_lines,
+                    "network:",
+                    f"  hil_probe_timeout_sec: {probe_timeout_value}",
                     "outputs:",
                     f"  models_dir: \"{tmp_path / 'models'}\"",
                     f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
@@ -1898,6 +1906,7 @@ class LoadSettingsTests(unittest.TestCase):
             settings = load_config(write_config(batch_value="64", hil_first_value="false"))
             self.assertEqual(settings.training.batch_size, 64)
             self.assertFalse(settings.nas.hil_first)
+            self.assertEqual(settings.network.hil_probe_timeout_sec, 5.0)
 
             for batch_value in ("true", "\"64\"", "0", "-1"):
                 with self.subTest(batch_value=batch_value), self.assertRaisesRegex(
@@ -1909,6 +1918,15 @@ class LoadSettingsTests(unittest.TestCase):
                     ValueError, "nas.hil_first"
                 ):
                     load_config(write_config(batch_value="64", hil_first_value=hil_first_value))
+            for probe_timeout_value in ("true", "\"5\"", "0", "-1", ".nan"):
+                with self.subTest(probe_timeout_value=probe_timeout_value), self.assertRaisesRegex(
+                    ValueError, "network.hil_probe_timeout_sec"
+                ):
+                    load_config(write_config(
+                        batch_value="64",
+                        hil_first_value="true",
+                        probe_timeout_value=probe_timeout_value,
+                    ))
 
     def test_load_settings_accepts_fixed_int8_quantization(self) -> None:
         """A fixed int8 PTQ quantization block should normalize cleanly."""

@@ -2451,6 +2451,17 @@ def load_config(
         training,
         normalized_device_name,
     )
+    network = Dict(config.get("network", {}))
+    raw_hil_probe_timeout = network.get("hil_probe_timeout_sec", 5.0)
+    if (
+        isinstance(raw_hil_probe_timeout, bool)
+        or not isinstance(raw_hil_probe_timeout, (int, float))
+        or not np.isfinite(raw_hil_probe_timeout)
+        or float(raw_hil_probe_timeout) <= 0.0
+    ):
+        raise ValueError("network.hil_probe_timeout_sec must be a positive finite number.")
+    network.hil_probe_timeout_sec = float(raw_hil_probe_timeout)
+    config.network = network
     # Custom tariffs travel with the experiment YAML, independent of launch cwd.
     raw_optimizer = config.get("optimizer", {})
     raw_llm = raw_optimizer.get("llm", {}) if isinstance(raw_optimizer, dict) else {}

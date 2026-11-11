@@ -1470,13 +1470,15 @@ def require_replayable_source_order(source_config: Mapping[str, Any]) -> None:
     hil_first = nas_config.get("hil_first", True)
     if not isinstance(hil_first, bool):
         raise ValueError("Source config nas.hil_first must be a boolean when provided.")
+    if hil_first:
+        return
     training_config = source_config.get("training", {})
     if not isinstance(training_config, Mapping):
         raise ValueError("Source config training section must be a mapping.")
     training_enabled = training_config.get("train", False)
     if not isinstance(training_enabled, bool):
         raise ValueError("Source config training.train must be a boolean when provided.")
-    if not hil_first and training_enabled:
+    if training_enabled:
         raise ValueError(
             "Pareto replay of a training-first study requires each saved exact TFLite artifact; "
             "checkpoint/model reconstruction is not an exact-artifact replay."
@@ -1491,7 +1493,7 @@ def require_replayable_source_rows(
     """Reject row evidence that identifies a training-first source trial."""
     training_config = source_config.get("training", {})
     training_enabled = (
-        training_config.get("train", False)
+        training_config.get("train", False) is True
         if isinstance(training_config, Mapping)
         else False
     )
