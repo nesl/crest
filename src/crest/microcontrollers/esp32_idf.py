@@ -13,9 +13,10 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
+import time
 
 import serial
-import time
 from typing import Any, Mapping, Optional
 
 from ..errors import HIL_ERROR_INTEGRITY
@@ -24,6 +25,7 @@ from ..devices import (
     CandidatePrepareRequest,
     CompileResult,
     DeviceSpec,
+    DeviceMetrics,
     MeasureResult,
     UploadResult,
 )
@@ -351,7 +353,9 @@ class ESP32IDFDevice(ArduinoDevice):
         candidate_label = re.sub(r"[^A-Za-z0-9_.-]+", "-", request.model_variant).strip(".-")
         if not candidate_label:
             raise ValueError("ESP32 model_variant must contain a filename-safe character.")
-        candidate_root = request.artifact_root.resolve() / "esp32" / candidate_label
+        candidate_parent = request.artifact_root.resolve() / "esp32"
+        candidate_parent.mkdir(parents=True, exist_ok=True)
+        candidate_root = Path(tempfile.mkdtemp(prefix=f"{candidate_label}-", dir=candidate_parent))
         generated_dir = candidate_root / self._options.model_output_dir
         generated_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(request.tflite_model_path, generated_dir / "crest_candidate.tflite")
@@ -416,53 +420,73 @@ class ESP32IDFDevice(ArduinoDevice):
             raise ValueError(f"Unsupported ESP32 input mode: {input_mode}")
         return None
 
-    def evaluate(self, *, dirpath: str | Path, **kwargs: Any):
+    def evaluate(self, *, dirpath: str | Path, **kwargs: Any) -> DeviceMetrics:
         """Serialize staging, incremental build, app upload, and measurement."""
+
+        def _integrity_failure(detail: str) -> DeviceMetrics:
+            arena_kb = kwargs.get("arena_kb")
+            return DeviceMetrics(
+                ram_bytes=-1, flash_bytes=-1, latency_s=-1.0,
+                arena_bytes=-1 if arena_kb is None else int(arena_kb) * 1024,
+                error_code=HIL_ERROR_INTEGRITY,
+                power_metrics={
+                    "measurement_instrumentation_valid": False,
+                    "measurement_failure_detail": detail,
+                },
+            )
+
+        if kwargs.get("harness_serial_port") not in (None, ""):
+            return _integrity_failure(
+                "ESP32 classifier measurement is DUT-serial only; harness energy measurement is unsupported."
+            )
         staged_root = Path(dirpath).resolve()
         manifest_path = staged_root / self._options.model_output_dir / "crest_model_manifest.json"
-        if not manifest_path.is_file():
-            raise ValueError("ESP32 evaluate requires a staged candidate manifest.")
         project_root = self._options.project_root.resolve()
         generated_source = staged_root / self._options.model_output_dir
         generated_target = project_root / self._options.model_output_dir
         lock_path = project_root / ".crest-workspace.lock"
         run_hil = bool(kwargs.get("run_hil", True))
-        if kwargs.get("harness_serial_port") not in (None, ""):
-            raise ValueError(
-                "ESP32 classifier measurement is DUT-serial only; harness energy measurement is unsupported."
-            )
         serial_value = kwargs.get("serial_port") or self._serial_port or "compile-only"
         serial_identity = str(Path(str(serial_value)).resolve()) if run_hil else "compile-only"
         board_lock_path = Path("/tmp") / (
             "crest-esp32-board-" + hashlib.sha256(serial_identity.encode("utf-8")).hexdigest()[:16] + ".lock"
         )
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        with board_lock_path.open("a+", encoding="utf-8") as board_lock, lock_path.open("a+", encoding="utf-8") as lock_file:
-            _acquire_lock(board_lock, label="board")
-            _acquire_lock(lock_file, label="workspace")
-            self._active_manifest = manifest
-            self._active_staged_root = staged_root
-            try:
-                generated_target.mkdir(parents=True, exist_ok=True)
-                for filename in (
-                    self._options.model_source_name,
-                    self._options.model_header_name,
-                    "crest_model_manifest.json",
-                    "fixtures.h",
-                    "crest_manifest.h",
-                    "crest_candidate.tflite",
-                ):
-                    shutil.copy2(generated_source / filename, generated_target / filename)
-                metrics = super().evaluate(dirpath=project_root, **kwargs)
-                instrumentation_valid = bool(
-                    (metrics.power_metrics or {}).get("measurement_instrumentation_valid", False)
-                )
-                if run_hil and metrics.latency_s >= 0.0 and not instrumentation_valid:
-                    metrics = replace(metrics, error_code=HIL_ERROR_INTEGRITY)
-                return metrics
-            finally:
-                self._active_manifest = None
-                self._active_staged_root = None
+        setup_complete = False
+        try:
+            if not manifest_path.is_file():
+                return _integrity_failure("ESP32 staged candidate manifest is missing.")
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            with board_lock_path.open("a+", encoding="utf-8") as board_lock, lock_path.open("a+", encoding="utf-8") as lock_file:
+                _acquire_lock(board_lock, label="board")
+                _acquire_lock(lock_file, label="workspace")
+                self._active_manifest = manifest
+                self._active_staged_root = staged_root
+                try:
+                    generated_target.mkdir(parents=True, exist_ok=True)
+                    for filename in (
+                        self._options.model_source_name,
+                        self._options.model_header_name,
+                        "crest_model_manifest.json",
+                        "fixtures.h",
+                        "crest_manifest.h",
+                        "crest_candidate.tflite",
+                    ):
+                        shutil.copy2(generated_source / filename, generated_target / filename)
+                    setup_complete = True
+                    metrics = super().evaluate(dirpath=project_root, **kwargs)
+                    instrumentation_valid = bool(
+                        (metrics.power_metrics or {}).get("measurement_instrumentation_valid", False)
+                    )
+                    if run_hil and metrics.latency_s >= 0.0 and not instrumentation_valid:
+                        metrics = replace(metrics, error_code=HIL_ERROR_INTEGRITY)
+                    return metrics
+                finally:
+                    self._active_manifest = None
+                    self._active_staged_root = None
+        except (OSError, TimeoutError, json.JSONDecodeError) as exc:
+            if setup_complete:
+                raise
+            return _integrity_failure(f"ESP32 staging/lock failure: {exc}")
 
     def measure(self, **kwargs: Any) -> MeasureResult:
         """Validate runtime identity and sample evidence from serial telemetry."""
@@ -487,10 +511,14 @@ class ESP32IDFDevice(ArduinoDevice):
         if self._active_staged_root is not None:
             diagnostics["serial_log"] = list(result.serial_log)
             measurement_record = self._active_staged_root / "esp32_measurement.json"
-            measurement_record.write_text(
-                json.dumps(diagnostics, sort_keys=True, indent=2) + "\n", encoding="utf-8"
-            )
-            evidence["measurement_record"] = str(measurement_record.resolve())
+            try:
+                measurement_record.write_text(
+                    json.dumps(diagnostics, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+                )
+                evidence["measurement_record"] = str(measurement_record.resolve())
+            except OSError as exc:
+                evidence["measurement_instrumentation_valid"] = False
+                evidence["measurement_record_error"] = str(exc)
         return MeasureResult(
             latency_s=result.latency_s,
             arena_error_line=result.arena_error_line,

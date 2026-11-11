@@ -495,7 +495,9 @@ timing. Runtime telemetry is accepted only when the model and fixture hashes,
 settings, ordered samples, output vector sizes, arena accounting, sample count,
 and recomputed aggregate all agree. A completed run with incomplete evidence is
 reported as `HIL_ERROR_INTEGRITY`. Build evidence also checks that the generated
-C array and built application contain the exact staged TFLite bytes.
+C array and built application contain the exact staged TFLite bytes. Each request
+uses a unique retained staging directory, including repeated model-variant names,
+so later builds cannot overwrite earlier application and measurement evidence.
 
 The saved harness contract uses GPIO 21 as a DUT output to harness D2 trigger
 (input pulldown; rising begins activity and falling ends it) and GPIO 47 as a

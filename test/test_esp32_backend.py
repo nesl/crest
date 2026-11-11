@@ -7,6 +7,7 @@ import hashlib
 import json
 import sys
 import types
+from types import SimpleNamespace
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -18,7 +19,9 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from crest.devices import CompileResult, DeviceMetrics, MeasureResult, UploadResult
+from crest.devices import (
+    CandidatePrepareRequest, CompileResult, DeviceMetrics, MeasureResult, UploadResult,
+)
 from crest.errors import (
     HIL_ERROR_INTEGRITY, HIL_ERROR_LATENCY, HIL_ERROR_OK, HIL_ERROR_UNDER_SIZED,
 )
@@ -192,6 +195,54 @@ class ESP32BackendTests(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertEqual(run.call_args.args[0][-1], "app-flash")
 
+    def test_same_variant_preparations_have_distinct_retained_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            project = root / "project"
+            (project / "main").mkdir(parents=True)
+            (project / "CMakeLists.txt").write_text("project(fake)\n")
+            fixture_npz = root / "fixtures.npz"
+            fixture_manifest = root / "fixtures.json"
+            fixture_npz.write_bytes(b"fixture")
+            fixture_manifest.write_text("{}")
+            device = ESP32IDFDevice(device_options={
+                "project_root": project, "fixture_npz_path": fixture_npz,
+                "fixture_manifest_path": fixture_manifest,
+            })
+            contents = iter((b"first-model", b"second-model"))
+            def fake_tflite(**kwargs):
+                kwargs["output_name"].write_bytes(next(contents))
+            def fake_cpp(model_path, output_dir, **kwargs):
+                data = model_path.read_bytes()
+                (output_dir / kwargs["source_name"]).write_text(
+                    "{" + ",".join(f"0x{value:02x}" for value in data) + "}"
+                )
+                (output_dir / kwargs["header_name"]).write_text("extern const unsigned char g_model[];")
+            fixture_evidence = {
+                "fixture_sha256": "f" * 64, "fixture_manifest_sha256": "e" * 64,
+                "fixture_manifest": {}, "fixture_count": 1, "fixture_bytes_per_input": 4,
+                "fixture_ids": ["id"], "fixture_wire_ids": ["b64:aWQ"],
+                "input_scale": 0.5, "input_zero_point": 0, "output_elements": 2,
+            }
+            request = CandidatePrepareRequest(
+                config=SimpleNamespace(device=SimpleNamespace(measured_inference_runs=2)),
+                model=object(), model_variant="same", artifact_root=root / "artifacts",
+                tflite_model_path=root / "candidate.tflite", calibration_split=None,
+                quantization_mode="float32", input_shape=(2, 2),
+            )
+            with patch("crest.hardware.convert_to_tflite_model", side_effect=fake_tflite), \
+                 patch("crest.hardware.convert_to_cpp_model", side_effect=fake_cpp), \
+                 patch("crest.microcontrollers.esp32_fixtures.stage_fixture_header", return_value=fixture_evidence):
+                first = device.prepare_candidate(request=request)
+                (first / "esp32_application.bin").write_bytes(b"first-app")
+                second = device.prepare_candidate(request=request)
+                (second / "esp32_application.bin").write_bytes(b"second-app")
+            self.assertNotEqual(first, second)
+            self.assertEqual((first / "main" / "crest_candidate.tflite").read_bytes(), b"first-model")
+            self.assertEqual((second / "main" / "crest_candidate.tflite").read_bytes(), b"second-model")
+            self.assertEqual((first / "esp32_application.bin").read_bytes(), b"first-app")
+            self.assertEqual((second / "esp32_application.bin").read_bytes(), b"second-app")
+
     def test_harness_measurement_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -199,8 +250,58 @@ class ESP32BackendTests(unittest.TestCase):
             (staged / "main").mkdir(parents=True)
             (staged / "main" / "crest_model_manifest.json").write_text("{}")
             device = ESP32IDFDevice(device_options={"project_root": root / "project"})
-            with self.assertRaisesRegex(ValueError, "DUT-serial only"):
-                device.evaluate(dirpath=staged, run_hil=True, harness_serial_port="/dev/harness")
+            result = device.evaluate(
+                dirpath=staged, arena_kb=2048, run_hil=True, harness_serial_port="/dev/harness"
+            )
+            self.assertEqual(result.error_code, HIL_ERROR_INTEGRITY)
+            self.assertFalse(result.power_metrics["measurement_instrumentation_valid"])
+
+    def test_staging_failure_is_integrity_and_next_evaluation_recovers(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            project = root / "project"
+            staged = root / "staged"
+            (project / "main").mkdir(parents=True)
+            (staged / "main").mkdir(parents=True)
+            manifest = staged / "main" / "crest_model_manifest.json"
+            manifest.write_text("not-json")
+            device = ESP32IDFDevice(device_options={"project_root": project})
+            failed = device.evaluate(
+                dirpath=staged, arena_kb=2048, window_size=2, num_channels=2, run_hil=False
+            )
+            self.assertEqual(failed.error_code, HIL_ERROR_INTEGRITY)
+            self.assertFalse(failed.power_metrics["measurement_instrumentation_valid"])
+            manifest.write_text("{}")
+            for name in ("model_data.cc", "model_data.h", "fixtures.h", "crest_manifest.h", "crest_candidate.tflite"):
+                (staged / "main" / name).write_text(name)
+            recovered_metrics = DeviceMetrics(1, 2, -1.0, 2048 * 1024, HIL_ERROR_OK)
+            with patch("crest.devices.ArduinoDevice.evaluate", return_value=recovered_metrics):
+                recovered = device.evaluate(
+                    dirpath=staged, arena_kb=2048, window_size=2, num_channels=2, run_hil=False
+                )
+            self.assertEqual(recovered.error_code, HIL_ERROR_OK)
+
+    def test_lock_timeout_is_integrity_but_unexpected_backend_bug_propagates(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            project = root / "project"
+            staged = root / "staged"
+            (project / "main").mkdir(parents=True)
+            (staged / "main").mkdir(parents=True)
+            (staged / "main" / "crest_model_manifest.json").write_text("{}")
+            device = ESP32IDFDevice(device_options={"project_root": project})
+            with patch("crest.microcontrollers.esp32_idf._acquire_lock", side_effect=TimeoutError("busy")):
+                failed = device.evaluate(
+                    dirpath=staged, arena_kb=2048, window_size=2, num_channels=2, run_hil=False
+                )
+            self.assertEqual(failed.error_code, HIL_ERROR_INTEGRITY)
+            for name in ("model_data.cc", "model_data.h", "fixtures.h", "crest_manifest.h", "crest_candidate.tflite"):
+                (staged / "main" / name).write_text(name)
+            with patch("crest.devices.ArduinoDevice.evaluate", side_effect=RuntimeError("bug")):
+                with self.assertRaisesRegex(RuntimeError, "bug"):
+                    device.evaluate(
+                        dirpath=staged, arena_kb=2048, window_size=2, num_channels=2, run_hil=False
+                    )
 
     def test_evaluate_syncs_staging_under_workspace_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -280,6 +381,21 @@ class ESP32MeasurementEvidenceTests(unittest.TestCase):
         self.assertTrue(evidence["measurement_instrumentation_valid"])
         self.assertTrue(diagnostics["valid"])
         self.assertEqual(evidence["measurement_sample_count"], 4)
+
+    def test_measurement_record_write_failure_invalidates_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            device = ESP32IDFDevice(serial_port="/dev/fake")
+            device._active_manifest = self._manifest()
+            device._active_staged_root = Path(tempdir)
+            successful = MeasureResult(3.55, None, self._valid_log(), {})
+            with patch("crest.devices.ArduinoDevice.measure", return_value=successful), \
+                 patch("pathlib.Path.write_text", side_effect=OSError("read-only")):
+                measured = device.measure(
+                    serial_port="/dev/fake", baud_rate=115200, serial_timeout_s=10
+                )
+            self.assertEqual(measured.latency_s, 3.55)
+            self.assertFalse(measured.power_metrics["measurement_instrumentation_valid"])
+            self.assertIn("read-only", measured.power_metrics["measurement_record_error"])
 
     def test_serial_failure_is_recoverable_on_next_measurement(self) -> None:
         device = ESP32IDFDevice(serial_port="/dev/fake")
