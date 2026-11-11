@@ -4,9 +4,30 @@
 
 from __future__ import annotations
 
+from numbers import Integral
 from typing import Any
 
 from addict import Dict
+
+
+RUNTIME_TRAINING_BATCH_SIZE_KEY = "runtime_training_batch_size"
+
+
+def resolve_training_batch_size(training_config: Any) -> int:
+    """Return the validated runner-owned training batch size."""
+    raw_value = cfg_get(training_config, "batch_size", 256)
+    if isinstance(raw_value, bool) or not isinstance(raw_value, Integral):
+        raise ValueError("training.batch_size must be a positive integer.")
+    if int(raw_value) <= 0:
+        raise ValueError("training.batch_size must be a positive integer.")
+    return int(raw_value)
+
+
+def derive_runtime_task_config(task_config: Any, training_config: Any) -> Dict:
+    """Copy task config and attach the current runner-owned batch size."""
+    derived = _normalize_mapping_like(task_config, field_name="task.params")
+    derived[RUNTIME_TRAINING_BATCH_SIZE_KEY] = resolve_training_batch_size(training_config)
+    return derived
 
 
 def cfg_get(container: Any, key: str, default: Any = None) -> Any:
@@ -226,6 +247,12 @@ def resolve_component_selection(config: Any) -> dict[str, Any]:
         if task_params_raw is None
         else _normalize_mapping_like(task_params_raw, field_name="task.params")
     )
+    if RUNTIME_TRAINING_BATCH_SIZE_KEY in task_params:
+        raise ValueError(
+            f"task.params.{RUNTIME_TRAINING_BATCH_SIZE_KEY} is reserved for runtime derivation; "
+            "set training.batch_size instead."
+        )
+    task_params = derive_runtime_task_config(task_params, cfg_get(config, "training", {}))
     if model_params_raw is None:
         raise KeyError("Missing required 'model.params' field.")
     model_params = _normalize_mapping_like(model_params_raw, field_name="model.params")

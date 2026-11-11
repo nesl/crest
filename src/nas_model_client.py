@@ -52,7 +52,13 @@ from crest.microcontrollers import (
     resolve_device_options,
 )
 from crest.builtin_components import ensure_builtin_components_registered
-from crest.component_selection import cfg_get, resolve_component_selection, resolve_optimizer_selection
+from crest.component_selection import (
+    cfg_get,
+    derive_runtime_task_config,
+    resolve_component_selection,
+    resolve_optimizer_selection,
+    resolve_training_batch_size,
+)
 from crest.cadence import resolve_batch_period_ms
 from crest.model import (
     NONNEGATIVE_METRICS,
@@ -247,6 +253,18 @@ def _family_trial_params(params: Mapping[str, Any]) -> dict[str, Any]:
         Parameters safe to pass to ``ModelFamilyABC.decode_trial_hparams``.
     """
     return {key: value for key, value in params.items() if key not in RUNNER_OWNED_TRIAL_PARAM_KEYS}
+
+
+def _runner_fit_kwargs(fit_plan: Any, *, epochs: int, batch_size: int) -> dict[str, Any]:
+    """Combine task-owned fit wiring with runner-owned schedule settings."""
+    fit_kwargs = dict(fit_plan.fit_kwargs)
+    fit_kwargs["callbacks"] = list(fit_plan.callbacks)
+    fit_kwargs["epochs"] = int(epochs)
+    if isinstance(fit_kwargs.get("x"), tf.data.Dataset):
+        fit_kwargs.pop("batch_size", None)
+    else:
+        fit_kwargs["batch_size"] = int(batch_size)
+    return fit_kwargs
 
 
 class NASModelClient:
@@ -889,8 +907,15 @@ class NASModelClient:
         optimizer = component_cls()
         optimizer.validate_config(config)
         _, sampler_options = self._sampler_setup()
+        raw_hil_first = self._cfg_get(self.config.nas, "hil_first", True)
+        if not isinstance(raw_hil_first, bool):
+            raise ValueError("nas.hil_first must be a boolean.")
         signature = build_optimizer_signature(
             name, optimizer, config, sampler, sampler_options, self.config.training,
+            evaluation_policy={
+                "hil_first": raw_hil_first,
+                "training_batch_size": resolve_training_batch_size(self.config.training),
+            },
         )
         validate_optimizer_identity(study, signature, optimizer)
         return name, optimizer, config, signature
@@ -1952,7 +1977,8 @@ class NASModelClient:
         """
         artifacts_dir = self._artifacts_dir()
         log_path = artifacts_dir / self.config.outputs.log_file_name
-        batch_size = 256
+        batch_size = resolve_training_batch_size(self.config.training)
+        task_config = derive_runtime_task_config(self.task_config, self.config.training)
         metric_dependencies = self._classify_nas_metric_dependencies()
         collect_compile_metrics = self._should_collect_compile_metrics(metric_dependencies)
         family_hparams = self.model_family.sample_hparams(
@@ -2352,17 +2378,16 @@ class NASModelClient:
                 reset_training_randomness(self.config.training)
                 fit_plan = self.task.build_fit_plan(
                     self.dataset_bundle,
-                    self.task_config,
+                    task_config,
                     self.target_spec,
                     mode="search",
                     combine_train_val=False,
                 )
-                model.fit(
-                    **fit_plan.fit_kwargs,
-                    callbacks=fit_plan.callbacks,
+                model.fit(**_runner_fit_kwargs(
+                    fit_plan,
                     epochs=self.config.training.nas_epochs,
                     batch_size=batch_size,
-                )
+                ))
                 model = self.model_family.load_model(
                     self.config.outputs.checkpoint_path,
                     self.model_build_context,
@@ -3100,7 +3125,8 @@ class NASModelClient:
         if training_policy is not None:
             history_path.with_suffix(".randomness.json").write_text(
                 json.dumps(training_policy, indent=2) + "\n", encoding="utf-8")
-        batch_size = 256
+        batch_size = resolve_training_batch_size(self.config.training)
+        task_config = derive_runtime_task_config(task_config, self.config.training)
         fit_task = self._instantiate_task(
             self.task_name,
             self.config,
@@ -3123,11 +3149,23 @@ class NASModelClient:
             mode="final",
             combine_train_val=combine_train_val,
         )
-        fit_kwargs = dict(fit_plan.fit_kwargs)
-        fit_kwargs["callbacks"] = list(fit_plan.callbacks)
-        fit_kwargs["epochs"] = self.config.training.model_epochs
-        fit_kwargs["batch_size"] = batch_size
+        fit_kwargs = _runner_fit_kwargs(
+            fit_plan,
+            epochs=self.config.training.model_epochs,
+            batch_size=batch_size,
+        )
         history = model.fit(**fit_kwargs)
+
+        training_metadata = {
+            "batch_size": batch_size,
+            "input_is_batched": isinstance(fit_plan.fit_kwargs.get("x"), tf.data.Dataset),
+            "epochs": int(self.config.training.model_epochs),
+            "mode": "final",
+        }
+        history_path.with_suffix(".training.json").write_text(
+            json.dumps(training_metadata, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
         history_dict = {k: [float(v) for v in values] for k, values in history.history.items()}
         with open(history_path, "w") as f:

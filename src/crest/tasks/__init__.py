@@ -4,5 +4,10 @@
 
 from .odometry_regression import OdometryRegressionTask
 from .sound_classification import SoundClassificationTask
+from .facial_expression_classification import FacialExpressionClassificationTask
 
-__all__ = ["OdometryRegressionTask", "SoundClassificationTask"]
+__all__ = [
+    "FacialExpressionClassificationTask",
+    "OdometryRegressionTask",
+    "SoundClassificationTask",
+]

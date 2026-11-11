@@ -5,7 +5,7 @@
 from importlib import import_module
 from typing import Any
 
-__all__ = ["AudioDSCNNFamily", "OdomTCNFamily"]
+__all__ = ["AudioDSCNNFamily", "FERMiniXceptionFamily", "OdomTCNFamily"]
 
 
 def __getattr__(name: str) -> Any:
@@ -26,7 +26,11 @@ def __getattr__(name: str) -> Any:
     AttributeError
         If the requested name is not a package export.
     """
-    modules = {"AudioDSCNNFamily": "audio_dscnn", "OdomTCNFamily": "odom_tcn"}
+    modules = {
+        "AudioDSCNNFamily": "audio_dscnn",
+        "FERMiniXceptionFamily": "fer_mini_xception",
+        "OdomTCNFamily": "odom_tcn",
+    }
     if name not in modules:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     value = getattr(import_module(f"{__name__}.{modules[name]}"), name)

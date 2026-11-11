@@ -30,6 +30,7 @@ from tcn import TCN
 from tensorflow.keras import Input, Model
 from tensorflow.keras.layers import Dense, Flatten, MaxPooling1D, Reshape
 
+from .component_selection import resolve_training_batch_size
 from .model_metrics import count_flops_keras
 from .hardware import (
     HIL_controller,
@@ -2045,6 +2046,10 @@ def _validate_nas_config(
         raise KeyError("Missing required top-level 'nas' section in the configuration.")
 
     nas_config = Dict(config.nas)
+    raw_hil_first = nas_config.get("hil_first", True)
+    if not isinstance(raw_hil_first, bool):
+        raise ValueError("nas.hil_first must be a boolean.")
+    nas_config.hil_first = raw_hil_first
     allowed_base_metric_names, effective_training_only_metric_names = _resolve_validation_metric_sets(
         task_metric_names=task_metric_names,
         training_only_task_metric_names=training_only_task_metric_names,
@@ -2438,6 +2443,7 @@ def load_config(
     if "max_total_trials" not in training:
         # Allow pruned/failed runs without risking an infinite loop.
         training.max_total_trials = int(training.nas_trials * 2)
+    training.batch_size = resolve_training_batch_size(training)
     # If not explicitly set, disable training by default for faster debugging.
     training.energy_aware = bool(training.get("energy_aware", False))
     training.quantization = _normalize_quantization_config(
