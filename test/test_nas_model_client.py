@@ -1015,8 +1015,41 @@ class ObjectiveTests(unittest.TestCase):
         )
         self.client.model_family.build_model.return_value.fit.assert_called_once()
 
-    def test_training_first_valid_infeasible_keeps_real_objectives_when_skip_configured(self) -> None:
-        """train_if_infeasible cannot discard training that already completed."""
+    def test_training_first_compile_only_reuses_exact_tflite_artifact(self) -> None:
+        """A non-HIL compile service still consumes the host-evaluated bytes."""
+        self.client.config.nas.hil_first = False
+        self.client.config.device.hil = False
+        self.client.config.device.compile_when_hil_disabled = "true"
+        self.client._hil_request = MagicMock(return_value={
+            "error_code": HIL_MASTER_SUCCESS,
+            "ram_bytes": 512,
+            "flash_bytes": 512,
+            "arena_bytes": 1024,
+            "latency_ms": -1.0,
+        })
+
+        result = self.client.objective(DummyTrial())
+
+        self.assertEqual(result, -0.3)
+        artifact_path = self.client._hil_request.call_args.kwargs["artifact_path"]
+        self.assertEqual(artifact_path.read_bytes(), b"exact-tflite")
+        self.client.model_family.build_model.return_value.fit.assert_called_once()
+
+    def test_training_first_desktop_objective_trains_without_hil(self) -> None:
+        """Pure desktop training-first scoring skips transport end to end."""
+        self.client.config.nas.hil_first = False
+        self.client.config.device.hil = False
+        self.client.config.device.compile_when_hil_disabled = "false"
+        self.client._hil_request = MagicMock()
+
+        result = self.client.objective(DummyTrial())
+
+        self.assertEqual(result, -0.3)
+        self.client._hil_request.assert_not_called()
+        self.client.model_family.build_model.return_value.fit.assert_called_once()
+
+    def test_training_first_valid_infeasible_always_keeps_real_objectives(self) -> None:
+        """Both feasibility training policies retain work that already completed."""
         self.client.config.nas.hil_first = False
         self.client.config.nas.score = Dict(
             type="multi-objective",
@@ -1026,25 +1059,6 @@ class ObjectiveTests(unittest.TestCase):
                 Dict(metric="rmse_total", direction="maximize"),
             ]),
         )
-        self.client.config.nas.feasibility = Dict(
-            train_if_infeasible=False,
-            rules=[
-                Dict(
-                    rule="latency_ceiling",
-                    metric="latency_ms",
-                    condition="gt",
-                    reference=Dict(type="literal", value=20.0),
-                    reason="over budget",
-                ),
-                Dict(
-                    rule="quality_ceiling",
-                    metric="rmse_total",
-                    condition="gt",
-                    reference=Dict(type="literal", value=0.2),
-                    reason="quality over budget",
-                ),
-            ],
-        )
         self.client._hil_request = MagicMock(return_value={
             "error_code": HIL_MASTER_SUCCESS,
             "ram_bytes": 512,
@@ -1052,18 +1066,38 @@ class ObjectiveTests(unittest.TestCase):
             "arena_bytes": 1024,
             "latency_ms": 25.0,
         })
-        trial = DummyTrial()
+        for train_if_infeasible in (False, True):
+            with self.subTest(train_if_infeasible=train_if_infeasible):
+                self.client.config.nas.feasibility = Dict(
+                    train_if_infeasible=train_if_infeasible,
+                    rules=[
+                        Dict(
+                            rule="latency_ceiling",
+                            metric="latency_ms",
+                            condition="gt",
+                            reference=Dict(type="literal", value=20.0),
+                            reason="over budget",
+                        ),
+                        Dict(
+                            rule="quality_ceiling",
+                            metric="rmse_total",
+                            condition="gt",
+                            reference=Dict(type="literal", value=0.2),
+                            reason="quality over budget",
+                        ),
+                    ],
+                )
 
-        result = self.client.objective(trial)
+                result = self.client.objective(DummyTrial())
 
-        self.assertEqual(result, (25.0, 0.3))
-        logged = self.mock_log.call_args.kwargs
-        self.assertEqual(logged["trial_outcome"].task_metrics["rmse_total"], 0.3)
-        self.assertEqual(logged["trial_outcome"].objective_values, [25.0, 0.3])
-        self.assertEqual(len(logged["metrics"]["feasibility_constraints"]), 2)
-        self.assertAlmostEqual(logged["metrics"]["feasibility_constraints"][0], 5.0)
-        self.assertAlmostEqual(logged["metrics"]["feasibility_constraints"][1], 0.1)
-        self.assertEqual(logged["metrics"]["feasibility_status"], "infeasible")
+                self.assertEqual(result, (25.0, 0.3))
+                logged = self.mock_log.call_args.kwargs
+                self.assertEqual(logged["trial_outcome"].task_metrics["rmse_total"], 0.3)
+                self.assertEqual(logged["trial_outcome"].objective_values, [25.0, 0.3])
+                self.assertEqual(len(logged["metrics"]["feasibility_constraints"]), 2)
+                self.assertAlmostEqual(logged["metrics"]["feasibility_constraints"][0], 5.0)
+                self.assertAlmostEqual(logged["metrics"]["feasibility_constraints"][1], 0.1)
+                self.assertEqual(logged["metrics"]["feasibility_status"], "infeasible")
 
     def test_training_first_hardware_failure_retains_quality_and_artifacts(self) -> None:
         """Unavailable hardware objectives use penalties without erasing host results."""
@@ -1081,6 +1115,10 @@ class ObjectiveTests(unittest.TestCase):
             "ram_bytes": -1,
             "flash_bytes": -1,
             "arena_bytes": -1,
+            "request_id": "request-failed",
+            "artifact_sha256": "a" * 64,
+            "artifact_byte_length": 12,
+            "measurement_request_record": "/evidence/request-failed.json",
         })
 
         result = self.client.objective(DummyTrial())
@@ -1090,6 +1128,11 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(outcome.task_metrics["rmse_total"], 0.3)
         self.assertIn("tflite_sha256", outcome.artifact_summary)
         self.assertNotEqual(outcome.objective_values[0], self.mock_log.call_args.kwargs["metrics"]["latency_ms"])
+        logged_metrics = self.mock_log.call_args.kwargs["metrics"]
+        self.assertEqual(logged_metrics["measurement_request_id"], "request-failed")
+        self.assertEqual(logged_metrics["measurement_artifact_sha256"], "a" * 64)
+        self.assertEqual(logged_metrics["measurement_artifact_byte_length"], 12)
+        self.assertEqual(logged_metrics["measurement_request_record"], "/evidence/request-failed.json")
 
     def test_training_first_infrastructure_failure_retains_host_evidence(self) -> None:
         """Infrastructure exhaustion logs host evidence before the typed FAIL."""
@@ -2746,6 +2789,90 @@ class MeasurementFailureGuardTests(unittest.TestCase):
             self.assertEqual(client.objective.call_count, 1)
             self.assertEqual([t.number for t in resumed.trials], [0, 1, 2, 3])
             self.assertEqual([t.state for t in resumed.trials], [TrialState.FAIL] * 3 + [TrialState.COMPLETE])
+
+    def test_real_training_first_objective_logs_transport_failures_and_resets_guard(self):
+        """Real trial logging retains host evidence and valid HIL resets the streak."""
+        import csv
+
+        class FakeTransportError(MeasurementInfrastructureError):
+            """Contract-shaped stand-in until the transport implementation merges."""
+
+            def __init__(self, request_id: str) -> None:
+                super().__init__("bounded receive recovery exhausted")
+                self.endpoint = "tcp://hil:5555"
+                self.request_id = request_id
+                self.attempts = 2
+                self.phase = "receive"
+
+        with tempfile.TemporaryDirectory() as directory:
+            client = _build_test_client(Path(directory))
+            client.config.nas.hil_first = False
+            call_count = 0
+
+            def hil_request(_payload, *, artifact_path=None):
+                """Return one valid measurement between two failure streaks."""
+                nonlocal call_count
+                self.assertIsNotNone(artifact_path)
+                self.assertEqual(artifact_path.read_bytes(), b"exact-tflite")
+                request_index = call_count
+                call_count += 1
+                if request_index == 2:
+                    return {
+                        "error_code": HIL_MASTER_SUCCESS,
+                        "ram_bytes": 512,
+                        "flash_bytes": 512,
+                        "arena_bytes": 1024,
+                        "latency_ms": 10.0,
+                        "energy_mj_per_inference": 1.0,
+                        "avg_power_mw": 100.0,
+                        "avg_current_ma": 20.0,
+                        "bus_voltage_v": 5.0,
+                        "measurement_instrumentation_valid": True,
+                    }
+                raise FakeTransportError(f"request-{request_index}")
+
+            client._hil_request = MagicMock(side_effect=hil_request)
+            study = optuna.create_study(direction="maximize")
+            guard = _ConsecutiveMeasurementFailureGuard()
+            with patch("nas_model_client.return_hardware_specs", return_value=(2048, 4096)):
+                with self.assertRaises(MeasurementInfrastructureStop):
+                    study.optimize(
+                        client.objective,
+                        n_trials=6,
+                        callbacks=[guard],
+                        catch=(MeasurementInfrastructureError,),
+                    )
+
+            self.assertEqual(
+                [trial.state for trial in study.trials],
+                [
+                    TrialState.FAIL,
+                    TrialState.FAIL,
+                    TrialState.COMPLETE,
+                    TrialState.FAIL,
+                    TrialState.FAIL,
+                    TrialState.FAIL,
+                ],
+            )
+            self.assertTrue(study.trials[2].user_attrs["measurement_instrumentation_valid"])
+            failed_trials = [trial for trial in study.trials if trial.state == TrialState.FAIL]
+            for trial in failed_trials:
+                self.assertEqual(trial.user_attrs["error_code"], HIL_MASTER_INFRASTRUCTURE)
+                self.assertEqual(trial.user_attrs["error_code_label"], "HIL_MASTER_INFRASTRUCTURE")
+                self.assertEqual(trial.user_attrs["task_metrics"]["rmse_total"], 0.3)
+                self.assertIn("tflite_sha256", trial.user_attrs["artifact_summary"])
+                self.assertEqual(trial.user_attrs["objective_values"], [None])
+                self.assertEqual(trial.user_attrs["latency_ms"], -1.0)
+
+            log_path = client._artifacts_dir() / client.config.outputs.log_file_name
+            with log_path.open(newline="", encoding="utf-8") as stream:
+                rows = list(csv.DictReader(stream))
+            failure_rows = [row for row in rows if row["trial_outcome"] == "FAIL_infrastructure"]
+            self.assertEqual(len(failure_rows), 5)
+            for row in failure_rows:
+                self.assertEqual(int(row["error_code"]), HIL_MASTER_INFRASTRUCTURE)
+                self.assertEqual(float(row["metric__rmse_total"]), 0.3)
+                self.assertIn("tflite_sha256", json.loads(row["artifact_summary_json"]))
 
     def test_only_proven_measurement_success_resets_streak(self):
         """Only valid measurement evidence may reset the infrastructure failure streak."""

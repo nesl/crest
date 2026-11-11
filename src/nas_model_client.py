@@ -218,7 +218,7 @@ class NASMetricDependencies:
 
 @dataclass(frozen=True)
 class CompletedTrialTraining:
-    """Completed per-trial training, host evaluation, and artifact provenance."""
+    """Objective-local stage state; this does not extend shared trial records."""
 
     task_metrics: dict[str, Any]
     evaluation_result: EvaluationResult
@@ -2216,6 +2216,7 @@ class NASModelClient:
                         artifact_path=completed_training.tflite_path,
                     ))
             except MeasurementInfrastructureError as exc:
+                set_error_code(metrics, HIL_MASTER_INFRASTRUCTURE)
                 metrics["measurement_failure_class"] = "infrastructure"
                 trial.set_user_attr("measurement_failure_class", "infrastructure")
                 for attr_name in ("endpoint", "request_id", "attempts", "phase"):
@@ -2234,6 +2235,9 @@ class NASModelClient:
             metrics.setdefault("energy_aware", bool(self.config.training.energy_aware))
         else:
             metrics.update(self._synthesize_desktop_success_metrics())
+        for response_name in ("request_id", "artifact_sha256", "artifact_byte_length"):
+            if response_name in metrics:
+                metrics[f"measurement_{response_name}"] = metrics[response_name]
         metrics["hil_first"] = 1 if hil_first else 0
         metrics.update(
             {
