@@ -291,7 +291,7 @@ def _load_split(
         "ids": combined["ids"],
         "canonical48_sha256": combined["canonical48_sha256"],
     }
-    if split_name == "train":
+    if split_name in {"train", "val"}:
         metadata["training_targets"] = combined["training_targets"]
     return DataSplit(
         inputs=combined["inputs"],

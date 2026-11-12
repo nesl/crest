@@ -32,7 +32,10 @@ relative to `HCI-final-project/training`.
 The selected HCI `mixed_ferplus_raf_se_96_v1` model has 61,453 total
 parameters, uses widths `16, 32, 64, 128`, applies SE attention to the last two
 blocks, and selects its primary checkpoint by validation loss including model
-regularization. CREST retains those learned computations behind a logical
+regularization. The new FER example configs intentionally select prediction-only,
+equal-source soft-label validation cross-entropy instead; see the
+[task validation policy](../../tasks/README.md#fer-validation-loss-policy).
+CREST retains those learned computations behind a logical
 `(height, width)` input and an explicit Keras reshape to a singleton channel.
 
 Dataset loading, training orchestration, TFLite conversion, host inference,

@@ -206,7 +206,7 @@ def test_loaded_composed_hci_config_bootstraps_fixed_split_probability_pipeline(
     assert len(batches) == 1
     assert batches[0][0].shape == (10, 96, 96)
     assert batches[0][1].shape == (10, 5)
-    assert plan.monitor_metric == "val_loss"
+    assert plan.monitor_metric == "val_prediction_loss"
 
 
 def test_facial_expression_task_explicitly_rejects_fold_rotation(tmp_path: Path) -> None:
@@ -429,3 +429,116 @@ def test_task_accepts_dequantized_softmax_rounding_and_source_subsets(tmp_path: 
 def clear_tensorflow_session():
     yield
     tf.keras.backend.clear_session()
+
+
+@pytest.mark.parametrize("invalid", [True, None, "soft", 1])
+def test_validation_policy_rejects_invalid_values(tmp_path: Path, invalid) -> None:
+    task = FacialExpressionClassificationTask(checkpoint_path=tmp_path / "best.keras")
+    with pytest.raises(ValueError, match="validation_loss"):
+        task.validate_config(Dict(validation_loss=invalid))
+
+
+def test_soft_validation_uses_source_means_and_excludes_l2(tmp_path: Path) -> None:
+    """Unequal sources and a partial batch must not bias checkpoint loss."""
+    data_dir = tmp_path / "mixed"
+    _write_dataset(data_dir)
+    bundle = FERPlusRAFDBMixedDataset().load(_config(data_dir))
+    original = bundle.val
+    # Three uncertain FER+ examples and one hard RAF example.
+    indices = np.asarray([0, 0, 0, 6])
+    bundle.val = DataSplit(
+        inputs=original.inputs[indices],
+        targets=original.targets[indices],
+        metadata={key: np.asarray(value)[indices] for key, value in original.metadata.items()},
+    )
+    task = FacialExpressionClassificationTask(checkpoint_path=tmp_path / "best.keras")
+    config = Dict(
+        runtime_training_batch_size=3,
+        validation_loss="equal_source_soft_crossentropy",
+        report_validation_macro_f1=False,
+    )
+    spec = task.build_target_spec(bundle, config)
+    plan = task.build_fit_plan(bundle, config, spec, mode="search", combine_train_val=False)
+    batches = list(plan.fit_kwargs["validation_data"].as_numpy_iterator())
+    assert [len(batch[0]) for batch in batches] == [3, 1]
+    targets = np.concatenate([batch[1] for batch in batches])
+    weights = np.concatenate([batch[2] for batch in batches])
+    np.testing.assert_allclose(targets[0], [0.75, 0.25, 0, 0, 0])
+    np.testing.assert_array_equal(targets[-1], [0, 1, 0, 0, 0])
+    np.testing.assert_allclose(weights[:3].sum(), weights[3:].sum())
+    assert plan.monitor_metric == "val_prediction_loss"
+    for callback in plan.callbacks:
+        if isinstance(callback, (
+            tf.keras.callbacks.ModelCheckpoint,
+            tf.keras.callbacks.EarlyStopping,
+            tf.keras.callbacks.ReduceLROnPlateau,
+        )):
+            assert callback.monitor == "val_prediction_loss"
+
+    inputs = tf.keras.Input((64, 64))
+    flat = tf.keras.layers.Flatten()(inputs)
+    output = tf.keras.layers.Dense(
+        5, activation="softmax", name="probabilities",
+        kernel_initializer=tf.keras.initializers.Constant(0.001),
+        bias_initializer=tf.keras.initializers.Constant([1, 0, -1, -1, -1]),
+        kernel_regularizer=tf.keras.regularizers.l2(0.1),
+    )(flat)
+    model = tf.keras.Model(inputs, output)
+    task.compile_model(model, config, spec)
+    predictions = np.asarray(model(bundle.val.inputs, training=False))
+    row_losses = -np.sum(targets * np.log(predictions), axis=1)
+    expected = 0.5 * (row_losses[:3].mean() + row_losses[3:].mean())
+    assert not np.isclose(expected, row_losses.mean())
+    hard_loss = -np.log(predictions[np.arange(4), bundle.val.targets]).mean()
+    assert not np.isclose(expected, hard_loss)
+    results = model.evaluate(plan.fit_kwargs["validation_data"], return_dict=True, verbose=0)
+    assert results["prediction_loss"] == pytest.approx(expected, abs=1e-6)
+    regularization = float(tf.add_n(model.losses))
+    assert regularization > 0
+    assert results["loss"] == pytest.approx(expected + regularization, abs=1e-6)
+
+    # Checkpoint decisions follow prediction loss even when total loss worsens.
+    checkpoint = next(c for c in plan.callbacks if isinstance(c, tf.keras.callbacks.ModelCheckpoint))
+    checkpoint.set_model(model)
+    checkpoint.on_epoch_end(0, {"val_prediction_loss": 2.0, "val_loss": 3.0})
+    bias = model.layers[-1].bias
+    bias.assign_add(tf.ones_like(bias))
+    selected_bias = bias.numpy().copy()
+    checkpoint.on_epoch_end(1, {"val_prediction_loss": 1.0, "val_loss": 4.0})
+    bias.assign_add(tf.ones_like(bias))
+    checkpoint.on_epoch_end(2, {"val_prediction_loss": 1.5, "val_loss": 2.0})
+    restored = tf.keras.models.load_model(task.checkpoint_path)
+    np.testing.assert_array_equal(restored.layers[-1].bias.numpy(), selected_bias)
+    restored_results = restored.evaluate(plan.fit_kwargs["validation_data"], return_dict=True, verbose=0)
+    assert restored_results["prediction_loss"] == pytest.approx(expected, abs=1e-6)
+
+    # Reporting continues using hard labels, not the new checkpoint criterion.
+    report = task.evaluate_predictions(predictions, bundle.val, config, spec)
+    assert report.metrics["loss"] == pytest.approx(hard_loss, abs=1e-6)
+    assert report.metrics["accuracy"] == pytest.approx(0.75)
+
+    # Final fitting preserves soft targets when merging the same validation split.
+    _, combined_targets, combined_weights, sources = task._fit_arrays(
+        bundle, combine_train_val=True, soft_validation_targets=True
+    )
+    np.testing.assert_array_equal(combined_targets[-4:], targets)
+    np.testing.assert_allclose(
+        combined_weights[sources == "ferplus"].sum(),
+        combined_weights[sources == "raf"].sum(),
+    )
+
+
+def test_soft_validation_requires_metadata_and_both_sources(tmp_path: Path) -> None:
+    data_dir = tmp_path / "mixed"
+    _write_dataset(data_dir)
+    bundle = FERPlusRAFDBMixedDataset().load(_config(data_dir))
+    task = FacialExpressionClassificationTask(checkpoint_path=tmp_path / "best.keras")
+    config = Dict(runtime_training_batch_size=3, validation_loss="equal_source_soft_crossentropy")
+    spec = task.build_target_spec(bundle, config)
+    targets = bundle.val.metadata.pop("training_targets")
+    with pytest.raises(ValueError, match="Soft validation"):
+        task.build_fit_plan(bundle, config, spec, mode="search", combine_train_val=False)
+    bundle.val.metadata["training_targets"] = targets
+    bundle.val.metadata["sources"] = np.repeat("ferplus", len(bundle.val.targets))
+    with pytest.raises(ValueError, match="Both FER"):
+        task.build_fit_plan(bundle, config, spec, mode="search", combine_train_val=False)

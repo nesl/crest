@@ -47,6 +47,32 @@ def _positive_number(value: Any, *, field_name: str) -> float:
     return result
 
 
+def _validation_loss_policy(task_config: Any) -> str:
+    """Resolve the task-local checkpoint policy, preserving legacy configs."""
+    policy = _cfg_get(task_config, "validation_loss", "legacy_hard_crossentropy")
+    if not isinstance(policy, str) or policy not in {
+        "legacy_hard_crossentropy", "equal_source_soft_crossentropy"
+    }:
+        raise ValueError(
+            "task.params.validation_loss must be legacy_hard_crossentropy "
+            "or equal_source_soft_crossentropy."
+        )
+    return policy
+
+
+def _soft_targets(split: DataSplit) -> np.ndarray:
+    """Read the loader's verified probability targets without hard-label fallback."""
+    targets = np.asarray(split.metadata.get("training_targets"), dtype=np.float32)
+    if (
+        targets.shape != (len(split.targets), len(CLASS_NAMES))
+        or not np.isfinite(targets).all()
+        or np.any(targets < 0)
+        or not np.allclose(targets.sum(axis=1), 1.0, atol=1e-6)
+    ):
+        raise ValueError("Soft validation requires aligned probability targets from the FER loader.")
+    return targets
+
+
 def build_augmentation(seed: int) -> tf.keras.Sequential:
     """Build the reference pixel-space augmentation pipeline."""
     return tf.keras.Sequential(
@@ -198,6 +224,7 @@ class FacialExpressionClassificationTask(TaskABC):
             "lr_patience",
             "augmentation_seed",
             "report_validation_macro_f1",
+            "validation_loss",
             "evaluation",
             RUNTIME_TRAINING_BATCH_SIZE_KEY,
         }
@@ -220,6 +247,7 @@ class FacialExpressionClassificationTask(TaskABC):
         seed = _cfg_get(task_config, "augmentation_seed", 2026)
         if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
             raise ValueError("task.params.augmentation_seed must be a nonnegative integer.")
+        _validation_loss_policy(task_config)
         report = _cfg_get(task_config, "report_validation_macro_f1", True)
         if not isinstance(report, bool):
             raise ValueError("task.params.report_validation_macro_f1 must be a real boolean.")
@@ -283,6 +311,11 @@ class FacialExpressionClassificationTask(TaskABC):
             ),
             loss=tf.keras.losses.CategoricalCrossentropy(from_logits=False),
             metrics=[tf.keras.metrics.CategoricalAccuracy(name="accuracy")],
+            weighted_metrics=(
+                [tf.keras.metrics.CategoricalCrossentropy(name="prediction_loss", from_logits=False)]
+                if _validation_loss_policy(task_config) == "equal_source_soft_crossentropy"
+                else []
+            ),
         )
 
     @staticmethod
@@ -290,6 +323,7 @@ class FacialExpressionClassificationTask(TaskABC):
         bundle: DatasetBundle,
         *,
         combine_train_val: bool,
+        soft_validation_targets: bool = False,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Resolve external inputs, training targets, weights, and source membership."""
         train_inputs = np.asarray(bundle.train.inputs)
@@ -302,9 +336,12 @@ class FacialExpressionClassificationTask(TaskABC):
             raise ValueError("Final combined facial-expression training requires validation data.")
         val_labels = np.asarray(bundle.val.targets, dtype=np.int64)
         inputs = np.concatenate([train_inputs, np.asarray(bundle.val.inputs)], axis=0)
-        targets = np.concatenate(
-            [train_targets, np.eye(5, dtype=np.float32)[val_labels]], axis=0
+        val_targets = (
+            _soft_targets(bundle.val)
+            if soft_validation_targets
+            else np.eye(5, dtype=np.float32)[val_labels]
         )
+        targets = np.concatenate([train_targets, val_targets], axis=0)
         sources = np.concatenate([train_sources, np.asarray(bundle.val.metadata["sources"])])
         return inputs, targets, equal_source_weights(sources), sources
 
@@ -325,8 +362,10 @@ class FacialExpressionClassificationTask(TaskABC):
             _cfg_get(task_config, RUNTIME_TRAINING_BATCH_SIZE_KEY, None),
             field_name=RUNTIME_TRAINING_BATCH_SIZE_KEY,
         )
+        soft_validation = _validation_loss_policy(task_config) == "equal_source_soft_crossentropy"
         inputs, targets, weights, _ = self._fit_arrays(
-            bundle, combine_train_val=combine_train_val
+            bundle, combine_train_val=combine_train_val,
+            soft_validation_targets=soft_validation,
         )
         augmentation = build_augmentation(int(_cfg_get(task_config, "augmentation_seed", 2026)))
         training = tf.data.Dataset.from_tensor_slices((inputs, targets, weights))
@@ -340,7 +379,9 @@ class FacialExpressionClassificationTask(TaskABC):
             return restored, batch_targets, batch_weights
 
         training = training.map(augment_batch, num_parallel_calls=1, deterministic=True).prefetch(1)
-        monitor = "loss" if combine_train_val else "val_loss"
+        monitor = "loss" if combine_train_val else (
+            "val_prediction_loss" if soft_validation else "val_loss"
+        )
         callbacks: list[Any] = [
             tf.keras.callbacks.ModelCheckpoint(
                 filepath=str(self.checkpoint_path),
@@ -371,8 +412,14 @@ class FacialExpressionClassificationTask(TaskABC):
         if not combine_train_val:
             if bundle.val is None:
                 raise ValueError("Facial-expression search training requires validation data.")
-            val_targets = np.eye(5, dtype=np.float32)[np.asarray(bundle.val.targets, dtype=np.int64)]
-            validation = tf.data.Dataset.from_tensor_slices((bundle.val.inputs, val_targets))
+            if soft_validation:
+                val_targets = _soft_targets(bundle.val)
+                val_weights = equal_source_weights(np.asarray(bundle.val.metadata["sources"]))
+                validation_arrays = (bundle.val.inputs, val_targets, val_weights)
+            else:
+                val_targets = np.eye(5, dtype=np.float32)[np.asarray(bundle.val.targets, dtype=np.int64)]
+                validation_arrays = (bundle.val.inputs, val_targets)
+            validation = tf.data.Dataset.from_tensor_slices(validation_arrays)
             validation = validation.batch(batch_size, drop_remainder=False).prefetch(1)
             fit_kwargs["validation_data"] = validation
             if bool(_cfg_get(task_config, "report_validation_macro_f1", True)):

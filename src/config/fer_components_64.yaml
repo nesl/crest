@@ -20,6 +20,7 @@ task:
     lr_patience: 8
     augmentation_seed: 2026
     report_validation_macro_f1: true
+    validation_loss: equal_source_soft_crossentropy
 
 model:
   family: fer_mini_xception
