@@ -56,6 +56,13 @@ bool ReadStart() {
   return false;
 }
 
+[[noreturn]] void ReportFatalOnStart(const char *message) {
+  while (true) {
+    puts("DUT READY");
+    if (ReadStart()) puts(message);
+  }
+}
+
 long long Aggregate(long long *values, size_t count) {
 #if CREST_AGGREGATE_MEDIAN
   std::sort(values, values + count);
@@ -81,9 +88,9 @@ extern "C" void app_main() {
 
   auto *arena = static_cast<uint8_t *>(heap_caps_aligned_alloc(
       16, CREST_TENSOR_ARENA_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (!arena) { puts("tensor arena allocation failed"); return; }
+  if (!arena) ReportFatalOnStart("failed to allocate tensor arena");
   const tflite::Model *model = tflite::GetModel(g_model);
-  if (model->version() != TFLITE_SCHEMA_VERSION) { puts("ML_ERROR schema"); return; }
+  if (model->version() != TFLITE_SCHEMA_VERSION) ReportFatalOnStart("ML_ERROR schema");
   tflite::MicroMutableOpResolver<17> ops;
   ops.AddAdd(); ops.AddAveragePool2D(); ops.AddConv2D(); ops.AddDepthwiseConv2D();
   ops.AddMaxPool2D(); ops.AddReshape(); ops.AddSoftmax(); ops.AddMul();
@@ -91,7 +98,9 @@ extern "C" void app_main() {
   ops.AddConcatenation(); ops.AddQuantize(); ops.AddShape();
   ops.AddStridedSlice(); ops.AddPack();
   tflite::MicroInterpreter interpreter(model, ops, arena, CREST_TENSOR_ARENA_BYTES);
-  if (interpreter.AllocateTensors() != kTfLiteOk) { puts("tensor arena AllocateTensors failed"); return; }
+  if (interpreter.AllocateTensors() != kTfLiteOk) {
+    ReportFatalOnStart("failed to allocate tensor arena: AllocateTensors failed");
+  }
   if (interpreter.input(0)->type != kTfLiteInt8 ||
       interpreter.input(0)->bytes != kCrestFixtureBytes) {
     puts("ML_ERROR input_tensor"); return;

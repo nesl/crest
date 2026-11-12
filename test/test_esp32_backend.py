@@ -382,6 +382,21 @@ class ESP32MeasurementEvidenceTests(unittest.TestCase):
         self.assertTrue(diagnostics["valid"])
         self.assertEqual(evidence["measurement_sample_count"], 4)
 
+    def test_esp32_allocatetensors_boot_error_is_arena_failure(self) -> None:
+        device = ESP32IDFDevice(serial_port="/dev/fake")
+        device._active_manifest = self._manifest()
+        failed = MeasureResult(
+            None, None, ["Failed to resize buffer. Requested: 345488, available 47952",
+                         "failed to allocate tensor arena: AllocateTensors failed"], {},
+        )
+        with patch("crest.devices.ArduinoDevice.measure", return_value=failed):
+            measured = device.measure(
+                serial_port="/dev/fake", baud_rate=115200, serial_timeout_s=10
+            )
+        self.assertIsNone(measured.latency_s)
+        self.assertIn("Failed to resize buffer", measured.arena_error_line)
+        self.assertFalse(measured.power_metrics["measurement_instrumentation_valid"])
+
     def test_measurement_record_write_failure_invalidates_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             device = ESP32IDFDevice(serial_port="/dev/fake")

@@ -499,6 +499,13 @@ class ESP32IDFDevice(ArduinoDevice):
                 serial_log=[f"ESP32_SERIAL_ERROR: {exc}"],
                 power_metrics={"measurement_instrumentation_valid": False},
             )
+        arena_error_line = result.arena_error_line
+        if result.latency_s is None and arena_error_line is None:
+            for line in result.serial_log:
+                lowered = line.lower()
+                if "failed to resize buffer" in lowered or "allocatetensors failed" in lowered:
+                    arena_error_line = line
+                    break
         from .esp32_measurement import validate_measurement_log
         validated, diagnostics = validate_measurement_log(
             lines=result.serial_log,
@@ -521,7 +528,7 @@ class ESP32IDFDevice(ArduinoDevice):
                 evidence["measurement_record_error"] = str(exc)
         return MeasureResult(
             latency_s=result.latency_s,
-            arena_error_line=result.arena_error_line,
+            arena_error_line=arena_error_line,
             serial_log=result.serial_log,
             power_metrics=evidence,
         )
