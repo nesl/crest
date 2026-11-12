@@ -4,7 +4,15 @@
 
 from pathlib import Path
 
+from addict import Dict
 import yaml
+
+from crest.component_selection import (
+    RUNTIME_TRAINING_BATCH_SIZE_KEY,
+    resolve_component_selection,
+    resolve_training_batch_size,
+)
+from crest.model import evaluate_feasibility_rules, evaluate_score_config
 
 
 CONFIG_ROOT = Path(__file__).resolve().parents[1] / "src" / "config"
@@ -52,49 +60,41 @@ def test_fer_esp32_evaluation_fragment_is_resolution_and_budget_neutral() -> Non
         assert composed["training"]["quantization"]["mode"] == "int8_ptq"
 
 
-def test_fer_esp32_evaluation_fragment_matches_reviewed_hci_policy() -> None:
-    """The fragment keeps the latency ceiling solely in constrained feasibility."""
-    config = _load("fer_esp32_evaluation.yaml")
-    device = config["device"]
-    esp32 = device["esp32"]
-    training = config["training"]
-    nas = config["nas"]
-    network = config["network"]
+def test_composed_fer_policy_resolves_batch_and_preserves_boundary_objectives() -> None:
+    """Composition retains batch 64 and treats only latency above 3000 as infeasible."""
+    component = _load("fer_components_64.yaml")
+    policy = _load("fer_esp32_evaluation.yaml")
+    config = Dict(_deep_merge(component, policy))
 
-    assert device["name"] == "FREENOVE_ESP32_S3_WROOM"
-    assert device["serial_port"].startswith("/dev/serial/by-id/")
-    assert device["runtime_mode"] == "back_to_back"
-    assert device["measured_inference_runs"] == 10
-    assert device["serial_timeout_s"] == 1200.0
-    assert device["dut_ready_timeout_s"] == 30.0
-    assert esp32["arena_sizes_kb"] == [2048]
-    assert esp32["warmup_runs"] == 1
-    assert esp32["latency_aggregation"] == "median"
-    assert esp32["build_timeout_s"] == 900.0
-    assert esp32["upload_timeout_s"] == 120.0
-    assert training["energy_aware"] is False
-    assert training["quantization"] == {
-        "mode": "int8_ptq",
-        "search": False,
-        "choices": ["int8_ptq"],
-    }
-    assert nas["hil_first"] is False
-    assert nas["prune"]["rules"] == []
-    assert nas["score"]["type"] == "multi-objective"
-    assert nas["score"]["params"]["objectives"] == [
-        {"metric": "macro_f1", "direction": "maximize"},
-        {"metric": "latency_ms", "direction": "minimize"},
-    ]
-    assert nas["feasibility"]["rules"] == [
-        {
-            "rule": "classifier_latency_ceiling",
-            "metric": "latency_ms",
-            "condition": "gt",
-            "reference": {"type": "literal", "value": 3000.0},
-            "reason": "Classifier inference exceeds the provisional 3000 ms ceiling",
-        }
-    ]
-    assert "latency_budget_ms" not in device
-    assert network["recv_timeout_sec"] == 2400
-    assert network["send_timeout_sec"] == 30
-    assert network["hil_probe_timeout_sec"] == 5.0
+    selection = resolve_component_selection(config)
+    assert resolve_training_batch_size(config.training) == 64
+    assert selection["task_config"][RUNTIME_TRAINING_BATCH_SIZE_KEY] == 64
+    assert config.device.serial_port.startswith("/dev/serial/by-id/")
+    assert config.nas.prune.rules == []
+    assert "latency_budget_ms" not in config.device
+
+    for latency_ms, expected_feasible, expected_constraint in (
+        (2999.0, True, -1.0),
+        (3000.0, True, 0.0),
+        (3001.0, False, 1.0),
+    ):
+        metrics = {"macro_f1": 0.72, "latency_ms": latency_ms}
+        feasibility = evaluate_feasibility_rules(
+            metrics=metrics,
+            hyperparams=Dict(flops=1),
+            score_config=config.nas.score,
+            feasibility_config=config.nas.feasibility,
+            task_nonnegative_metric_names={"macro_f1"},
+        )
+        score = evaluate_score_config(
+            metrics=metrics,
+            hyperparams=Dict(flops=1),
+            score_config=config.nas.score,
+            task_nonnegative_metric_names={"macro_f1"},
+        )
+
+        assert feasibility.feasible is expected_feasible
+        assert feasibility.constraints == [expected_constraint]
+        assert score.objective_names == ["macro_f1", "latency_ms"]
+        assert score.objective_values == [0.72, latency_ms]
+        assert score.objective_directions == ["maximize", "minimize"]

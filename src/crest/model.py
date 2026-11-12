@@ -2251,7 +2251,7 @@ def evaluate_feasibility_rules(
     Parameters
     ----------
     metrics : dict[str, Any]
-        Runtime and compile metrics available before task training.
+        Runtime, compile, and task metrics available at the configured stage.
     hyperparams : addict.Dict
         Trial hyperparameters, including ``flops``.
     score_config : addict.Dict
