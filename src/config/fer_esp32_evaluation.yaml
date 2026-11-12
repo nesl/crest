@@ -1,0 +1,64 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
+# Resolution-neutral FER/HCI evaluation fragment. Merge with exactly one of
+# fer_components_64.yaml or fer_components_96.yaml, then supply outputs and
+# separately reviewed epoch/trial budgets. This fragment is not runnable alone.
+# Board/toolchain setup: ../crest/microcontrollers/README.md#freenove-esp32-s3-backend
+
+device:
+  name: FREENOVE_ESP32_S3_WROOM
+  hil: true
+  compile_when_hil_disabled: auto
+  runtime_mode: back_to_back
+  serial_port: "/dev/ttyACM0"
+  measured_inference_runs: 10  # Per representative image.
+  serial_timeout_s: 1200.0
+  dut_ready_timeout_s: 30.0
+  esp32:
+    # Replace both paths with the fixture pair generated for the chosen resolution.
+    fixture_npz_path: "/path/to/representative_fixture.npz"
+    fixture_manifest_path: "/path/to/representative_fixture.manifest.json"
+    warmup_runs: 1
+    latency_aggregation: median
+    build_timeout_s: 900.0
+    upload_timeout_s: 120.0
+    arena_sizes_kb: [2048]
+
+training:
+  train: true
+  energy_aware: false
+  quantization:
+    mode: int8_ptq
+    search: false
+    choices: [int8_ptq]
+
+nas:
+  hil_first: false
+  # Multi-objective selection uses CREST's existing NSGA-II sampler path.
+  score:
+    type: multi-objective
+    params:
+      objectives:
+        - metric: macro_f1
+          direction: maximize
+        - metric: latency_ms
+          direction: minimize
+  prune:
+    rules: []
+  feasibility:
+    train_if_infeasible: false
+    rules:
+      - rule: classifier_latency_ceiling
+        metric: latency_ms
+        condition: gt
+        reference:
+          type: literal
+          value: 3000.0
+        reason: "Classifier inference exceeds the provisional 3000 ms ceiling"
+
+network:
+  host: "127.0.0.1"
+  port: 6001
+  recv_timeout_sec: 2400
+  send_timeout_sec: 30
+  hil_probe_timeout_sec: 5.0

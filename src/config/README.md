@@ -20,9 +20,18 @@ Case-study reproducibility configs live under [`case_study_configs/`](case_study
 | Run Arduino OxIOD HIL experiments | [`nas_config_ble.yaml`](nas_config_ble.yaml) or [`nas_config_portenta.yaml`](nas_config_portenta.yaml) | Target board required. HIL harness required for energy measurement |
 | Run UrbanSound8K audio HIL experiments | [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml) or [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml) | Target board and HIL harness required as shipped. Use these as templates with HIL/measured scoring disabled for hardware-free training |
 | Configure the fixed-resolution FER workload | [`fer_components_64.yaml`](fer_components_64.yaml) or [`fer_components_96.yaml`](fer_components_96.yaml) | Component fragments only; hardware is not needed for loading/building, and campaign epoch/trial budgets remain intentionally unspecified |
+| Configure FER training-first ESP32 evaluation | [`fer_esp32_evaluation.yaml`](fer_esp32_evaluation.yaml) plus one FER component fragment | Freenove ESP32-S3 and the reviewed backend setup are required for HIL; this remains a fragment until outputs and epoch/trial budgets are supplied |
 
 The STM32 example is the most complete commented score/prune reference.
 [`nas_config_memory_proxy.yaml`](nas_config_memory_proxy.yaml) adds a desktop RMSE/static-memory-traffic example.
+
+The FER evaluation fragment is resolution-neutral. Compose it with exactly one
+of the 64- or 96-pixel component fragments, replace its paired representative
+fixture paths, and separately supply output, epoch, and trial-budget settings.
+The selected component fragment supplies the single `training.batch_size: 64`
+setting. Do not duplicate that batch setting in an additional overlay. See the
+[Freenove ESP32-S3 backend guide](../crest/microcontrollers/README.md#freenove-esp32-s3-backend)
+for the fixed toolchain and board profile.
 
 ## Supporting files
 
