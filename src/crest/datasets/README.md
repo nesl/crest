@@ -32,6 +32,8 @@ Datasets do not own target semantics, model outputs, losses, scores, HIL request
 - [`urbansound8k_mel.py`](urbansound8k_mel.py) Registered as `urbansound8k_mel`.
   Loads deterministic cached UrbanSound8K log-mel tensors, validates cache metadata, supports fixed-split and fold-rotation cache loading, and exposes audio metadata to the task/model layers.
 - [`urbansound8k_common.py`](urbansound8k_common.py) Shared UrbanSound8K cache constants and split metadata used by the adapter and preparation path.
+- [`ferplus_rafdb_mixed.py`](ferplus_rafdb_mixed.py) Registered as `ferplus_rafdb_mixed`.
+  Verifies and loads the prepared native-resolution FER+/RAF-DB cache, preserves source and stable-ID metadata, performs the deployed nearest-floor grayscale preprocessing, and selects deterministic training-only calibration and representative fixtures.
 
 ## Key Files
 

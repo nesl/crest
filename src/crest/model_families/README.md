@@ -33,6 +33,8 @@ Model families do not own dataset loading, task metrics, score policies, candida
   Implements the built-in odometry TCN family and odometry-specific export/materialization variants.
 - [`audio_dscnn/family.py`](audio_dscnn/family.py) Registered as `audio_dscnn`.
   Implements the built-in audio DS-CNN family for cached UrbanSound8K log-mel inputs.
+- [`fer_mini_xception/family.py`](fer_mini_xception/family.py) Registered as `fer_mini_xception`.
+  Implements the five-class residual separable CNN search family, including the selected SE reference architecture, logical image reshape, pure structural decoder, and retained upstream license.
 
 ## Key Files
 

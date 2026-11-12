@@ -11,6 +11,8 @@ doubles.
 import json
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +20,7 @@ from unittest.mock import MagicMock, patch, sentinel
 
 import numpy as np
 import optuna
+import tensorflow as tf
 import zmq
 from addict import Dict
 from optuna.trial import TrialState
@@ -29,8 +32,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 # The NASModelClient is the unit under test for this module.
+import nas_model_client  # noqa: E402
 from nas_model_client import (NASModelClient, MeasurementInfrastructureError,
-                              MeasurementInfrastructureStop, _ConsecutiveMeasurementFailureGuard)  # noqa: E402
+                              MeasurementInfrastructureStop, _ConsecutiveMeasurementFailureGuard,
+                              _runner_fit_kwargs)  # noqa: E402
+from crest.component_selection import RUNTIME_TRAINING_BATCH_SIZE_KEY  # noqa: E402
 from crest.hardware import (
     HIL_MASTER_DEVICE_NOT_FOUND,
     HIL_MASTER_FLASH_OVERFLOW,
@@ -213,7 +219,7 @@ def _build_test_client(base_dir: Path | None = None) -> NASModelClient:
     # Artifact, socket, and config defaults: mirror the production config shape
     # without paying the cost of real I/O-heavy initialization.
     client.config = SimpleNamespace(
-        network=SimpleNamespace(host="localhost", port=5555, recv_timeout_sec=5, send_timeout_sec=5),
+        network=SimpleNamespace(host="localhost", port=5555, recv_timeout_sec=5, send_timeout_sec=5, hil_request_retries=0),
         training=SimpleNamespace(
             drop_rate_choices=[0.1, 0.2],
             train=True,
@@ -389,6 +395,149 @@ def _sign_test_study(client, study):
 class HILRequestTests(unittest.TestCase):
     """Validate the ZeroMQ request/response helper."""
 
+    @staticmethod
+    def artifact_capabilities():
+        return {
+            "request_type": "capabilities",
+            "protocol_version": 1,
+            "artifact_transport_versions": [1],
+            "backend": {"name": "TEST_DEVICE", "supports_tflite_artifact": True},
+            "limits": {"max_artifact_bytes": 4096},
+        }
+
+    def test_delayed_real_zmq_reply_recovers_with_same_payload(self) -> None:
+        context = zmq.Context()
+        server_socket = context.socket(zmq.REP)
+        port = server_socket.bind_to_random_port("tcp://127.0.0.1")
+        received = []
+
+        def serve() -> None:
+            received.append(server_socket.recv_json())
+            time.sleep(1.1)
+            server_socket.send_json({"late": True})
+            received.append(server_socket.recv_json())
+            server_socket.send_json({"ram_bytes": 2048})
+
+        thread = threading.Thread(target=serve)
+        thread.start()
+        client = _build_test_client()
+        client.config.network = SimpleNamespace(host="127.0.0.1", port=port, recv_timeout_sec=1, send_timeout_sec=1, hil_request_retries=1)
+        client.socket = None
+        client.context = None
+        payload = {"family_hparams": {"nb_filters": 4}, "runtime_metadata": {"flops": 1}}
+        try:
+            self.assertEqual(client._hil_request(payload), {"ram_bytes": 2048})
+            thread.join(timeout=2)
+            self.assertEqual(received, [payload, payload])
+        finally:
+            client._reset_hil_socket()
+            server_socket.close(linger=0)
+            context.term()
+
+    @patch("nas_model_client.read_tflite_artifact")
+    def test_real_zmq_artifact_retry_preserves_identity_and_renegotiates(self, read_mock) -> None:
+        artifact_bytes = b"exact-tflite-bytes"
+        read_mock.return_value = (artifact_bytes, {"inputs": [], "outputs": []})
+        capabilities = self.artifact_capabilities()
+        context = zmq.Context()
+        server_socket = context.socket(zmq.REP)
+        server_socket.setsockopt(zmq.RCVTIMEO, 5000)
+        server_socket.setsockopt(zmq.SNDTIMEO, 5000)
+        port = server_socket.bind_to_random_port("tcp://127.0.0.1")
+        artifact_frames = []
+        worker_errors = []
+
+        def success_reply(metadata):
+            artifact = metadata["artifact"]
+            return {
+                "error_code": HIL_MASTER_SUCCESS, "request_id": metadata["request_id"],
+                "artifact_sha256": artifact["sha256"],
+                "artifact_byte_length": artifact["byte_length"],
+            }
+
+        def serve_requests() -> None:
+            self.assertEqual(server_socket.recv_json()["request_type"], "capabilities")
+            server_socket.send_json(capabilities)
+            frames = server_socket.recv_multipart()
+            artifact_frames.append(frames)
+            first_metadata = json.loads(frames[0])
+            time.sleep(1.1)
+            server_socket.send_json(success_reply(first_metadata))
+            self.assertEqual(server_socket.recv_json()["request_type"], "capabilities")
+            server_socket.send_json(capabilities)
+            frames = server_socket.recv_multipart()
+            artifact_frames.append(frames)
+            server_socket.send_json(success_reply(json.loads(frames[0])))
+            frames = server_socket.recv_multipart()
+            artifact_frames.append(frames)
+            server_socket.send_json(success_reply(json.loads(frames[0])))
+
+        def serve() -> None:
+            try:
+                serve_requests()
+            except BaseException as exc:
+                worker_errors.append(exc)
+
+        thread = threading.Thread(target=serve)
+        thread.start()
+        client = _build_test_client()
+        client.config.network = SimpleNamespace(host="127.0.0.1", port=port, recv_timeout_sec=1, send_timeout_sec=1, hil_request_retries=1, max_artifact_bytes=4096)
+        client.socket = None
+        client.context = None
+        payload = {"family_hparams": {}, "runtime_metadata": {}}
+        try:
+            client._hil_request(payload, artifact_path=Path("model.tflite"))
+            client._hil_request(payload, artifact_path=Path("next.tflite"))
+            thread.join(timeout=3)
+            self.assertFalse(thread.is_alive())
+            if worker_errors:
+                raise worker_errors[0]
+            first, retry, next_request = artifact_frames
+            self.assertEqual(first[1], artifact_bytes)
+            self.assertEqual(retry[1], artifact_bytes)
+            self.assertEqual(json.loads(first[0])["request_id"], json.loads(retry[0])["request_id"])
+            self.assertEqual(json.loads(first[0])["artifact"], json.loads(retry[0])["artifact"])
+            self.assertNotEqual(json.loads(retry[0])["request_id"], json.loads(next_request[0])["request_id"])
+        finally:
+            client._reset_hil_socket()
+            server_socket.close(linger=0)
+            context.term()
+
+    def test_artifact_capability_preflight_and_refresh(self) -> None:
+        client = _build_test_client()
+        client.socket.recv_json.return_value = self.artifact_capabilities()
+        client.context.socket.return_value = client.socket
+        with patch("nas_model_client.zmq.Context.instance", return_value=client.context):
+            result = client._ensure_hil_artifact_support(refresh=True)
+        self.assertEqual(result["artifact_transport_versions"], [1])
+        self.assertEqual(client.socket.send_json.call_args.args[0]["request_type"], "capabilities")
+
+    def test_legacy_addict_network_uses_transport_defaults(self) -> None:
+        client = _build_test_client()
+        client.config.network = Dict(host="localhost", port=5555, recv_timeout_sec=5, send_timeout_sec=5)
+        self.assertEqual(client._hil_retry_count(), 1)
+        self.assertEqual(client._max_artifact_bytes(), 16 * 1024 * 1024)
+
+    def test_malformed_capability_is_compatibility_error(self) -> None:
+        client = _build_test_client()
+        client.socket.recv_json.return_value = {"error_code": 1}
+        with self.assertRaises(nas_model_client.HILArtifactCompatibilityError):
+            client._ensure_hil_artifact_support()
+
+    @patch("nas_model_client.read_tflite_artifact")
+    def test_tampered_successful_artifact_reply_is_transport_error(self, read_mock) -> None:
+        client = _build_test_client()
+        client._hil_artifact_capabilities = self.artifact_capabilities()
+        client._hil_artifact_capability_endpoint = "tcp://localhost:5555"
+        read_mock.return_value = (b"TFL3-bytes", {"inputs": [], "outputs": []})
+        client.socket.recv_json.return_value = {
+            "error_code": HIL_MASTER_SUCCESS, "request_id": "wrong",
+            "artifact_sha256": "wrong", "artifact_byte_length": 0,
+        }
+        with self.assertRaises(nas_model_client.HILTransportError) as raised:
+            client._hil_request({"family_hparams": {}, "runtime_metadata": {}}, artifact_path=Path("model.tflite"))
+        self.assertEqual(raised.exception.phase, "integrity")
+
     def test_hil_request_success(self) -> None:
         """A successful round-trip should log debug I/O and return metrics.
 
@@ -426,13 +575,14 @@ class HILRequestTests(unittest.TestCase):
         # Socket timeouts should surface as errors so stalled HIL servers do not look like valid trial failures.
         client = _build_test_client()
         client.socket.recv_json.side_effect = zmq.error.Again()
+        attempted_socket = client.socket
 
         with self.assertLogs("nas_model_client", level="WARNING") as captured:
             with self.assertRaises(RuntimeError):
                 client._hil_request({"family_hparams": {"nb_filters": 8}, "runtime_metadata": {"flops": 1, "timesteps": 16, "input_dim": 3}})
 
-        client.socket.send_json.assert_called_once()
-        self.assertIn("Timed out waiting for metrics", "\n".join(captured.output))
+        attempted_socket.send_json.assert_called_once()
+        self.assertIn("HIL receive failed", "\n".join(captured.output))
 
     def test_hil_request_opens_socket_lazily(self) -> None:
         """The HIL socket should connect only when a HIL request is sent."""
@@ -494,11 +644,34 @@ class InitializationTests(unittest.TestCase):
         self.assertEqual(selection["dataset_config"].root, "custom")
         self.assertEqual(selection["task_name"], "custom_task")
         self.assertEqual(selection["task_config"].alpha, 3)
+        self.assertEqual(selection["task_config"][RUNTIME_TRAINING_BATCH_SIZE_KEY], 256)
         self.assertEqual(selection["model_family_name"], "custom_family")
         self.assertEqual(selection["model_config"]["family"], "custom_family")
         self.assertEqual(selection["model_config"]["params"].width, 8)
         self.assertEqual(selection["model_config"]["params"].export_variant, "untrained")
         self.assertEqual(selection["model_config"]["search"].depth, [2, 3])
+
+    def test_resolve_component_selection_derives_batch_without_mutating_source(self) -> None:
+        """Repeated selection should derive the current batch on copied task config."""
+        client = _build_test_client()
+        client.config.training.batch_size = 64
+        client.config.task.params = Dict(alpha=3)
+
+        first = client._resolve_component_selection(client.config)
+        second = client._resolve_component_selection(client.config)
+
+        self.assertEqual(first["task_config"][RUNTIME_TRAINING_BATCH_SIZE_KEY], 64)
+        self.assertEqual(second["task_config"][RUNTIME_TRAINING_BATCH_SIZE_KEY], 64)
+        self.assertEqual(client.config.task.params, Dict(alpha=3))
+        self.assertIsNot(first["task_config"], second["task_config"])
+
+    def test_resolve_component_selection_rejects_reserved_batch_key(self) -> None:
+        """Users cannot supply the runtime-derived task batch entry."""
+        client = _build_test_client()
+        client.config.task.params[RUNTIME_TRAINING_BATCH_SIZE_KEY] = 256
+
+        with self.assertRaisesRegex(ValueError, "reserved"):
+            client._resolve_component_selection(client.config)
 
     def test_resolve_component_selection_accepts_null_optional_task_and_search_blocks(self) -> None:
         # Optional task params and model search blocks should treat explicit null the same as omission.
@@ -514,7 +687,10 @@ class InitializationTests(unittest.TestCase):
 
         selection = client._resolve_component_selection(client.config)
 
-        self.assertEqual(selection["task_config"], Dict())
+        self.assertEqual(
+            selection["task_config"],
+            Dict({RUNTIME_TRAINING_BATCH_SIZE_KEY: 256}),
+        )
         self.assertEqual(selection["model_config"]["params"].export_variant, "untrained")
         self.assertEqual(selection["model_config"]["search"], Dict())
 
@@ -817,6 +993,7 @@ class ObjectiveTests(unittest.TestCase):
             "latency_ms": 10.0,
         }
         self.client._hil_request = MagicMock(return_value=metrics)
+        self.client.config.training.batch_size = 64
         trial = DummyTrial()
 
         result = self.client.objective(trial)
@@ -833,10 +1010,13 @@ class ObjectiveTests(unittest.TestCase):
             quantization_mode="float",
         )
         logged_hparams = self.mock_log.call_args.kwargs["trial_outcome"].hyperparams
+        self.assertEqual(logged_hparams["batch_size"], 64)
         self.assertEqual(logged_hparams["memory_traffic_bytes"], 46)
+        fit_task_config = self.client.task.build_fit_plan.call_args.args[1]
+        self.assertEqual(fit_task_config[RUNTIME_TRAINING_BATCH_SIZE_KEY], 64)
         self.client.task.build_fit_plan.assert_called_once_with(
             self.client.dataset_bundle,
-            self.client.task_config,
+            fit_task_config,
             self.client.target_spec,
             mode="search",
             combine_train_val=False,
@@ -855,6 +1035,19 @@ class ObjectiveTests(unittest.TestCase):
         logged_outcome = self.mock_log.call_args.kwargs["trial_outcome"]
         self.assertEqual(logged_outcome.task_metrics["rmse_total"], 0.3)
         self.assertEqual(logged_outcome.task_metrics["keras_rmse_total"], 0.3)
+        fit_kwargs = self.client.model_family.build_model.return_value.fit.call_args.kwargs
+        self.assertEqual(fit_kwargs["batch_size"], 64)
+
+    def test_runner_fit_kwargs_omits_batch_size_for_prebatched_dataset(self) -> None:
+        """Keras should receive no ineffective batch argument for dataset input."""
+        dataset = tf.data.Dataset.from_tensor_slices(([1.0, 2.0], [0.0, 1.0])).batch(2)
+        plan = FitPlan(fit_kwargs={"x": dataset, "batch_size": 999}, callbacks=["callback"])
+
+        fit_kwargs = _runner_fit_kwargs(plan, epochs=3, batch_size=64)
+
+        self.assertNotIn("batch_size", fit_kwargs)
+        self.assertEqual(fit_kwargs["epochs"], 3)
+        self.assertEqual(fit_kwargs["callbacks"], ["callback"])
 
     def test_objective_multiobjective_tflite_failure_returns_penalty_tuple(self) -> None:
         """Multi-objective TFLite worker failures should return direction penalties."""
@@ -1265,9 +1458,11 @@ class ObjectiveTests(unittest.TestCase):
 
         result = self.client.objective(trial)
 
+        runtime_task_config = self.client.task.build_fit_plan.call_args.args[1]
+        self.assertEqual(runtime_task_config[RUNTIME_TRAINING_BATCH_SIZE_KEY], 256)
         self.client.task.build_fit_plan.assert_called_once_with(
             self.client.dataset_bundle,
-            self.client.task_config,
+            runtime_task_config,
             self.client.target_spec,
             mode="search",
             combine_train_val=False,
@@ -2904,6 +3099,7 @@ class TrainBestTrialTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             client = _build_test_client(base_dir=base)
+            client.config.training.batch_size = 64
             built_model = client.model_family.build_model.return_value
             built_model.fit.return_value = SimpleNamespace(history={"loss": [1.0], "val_loss": [0.5]})
             fit_task = MagicMock()
@@ -2945,16 +3141,18 @@ class TrainBestTrialTests(unittest.TestCase):
                     history_path=base / "history.json",
                 )
 
+            runtime_task_config = instantiate_mock.call_args.args[2]
+            self.assertEqual(runtime_task_config[RUNTIME_TRAINING_BATCH_SIZE_KEY], 64)
             instantiate_mock.assert_called_once_with(
                 client.task_name,
                 client.config,
-                client.task_config,
+                runtime_task_config,
                 checkpoint_path=base / "best.keras",
                 early_stopping_patience=7,
             )
             fit_task.build_fit_plan.assert_called_once_with(
                 client.dataset_bundle,
-                client.task_config,
+                runtime_task_config,
                 client.target_spec,
                 mode="final",
                 combine_train_val=False,
@@ -2975,8 +3173,48 @@ class TrainBestTrialTests(unittest.TestCase):
             fit_call = built_model.fit.call_args.kwargs
             self.assertEqual(fit_call["callbacks"], ["task-callback"])
             self.assertEqual(fit_call["epochs"], client.config.training.model_epochs)
-            self.assertEqual(fit_call["batch_size"], 256)
+            self.assertEqual(fit_call["batch_size"], 64)
             self.assertEqual(history["loss"], [1.0])
+            metadata = json.loads((base / "history.training.json").read_text())
+            self.assertEqual(metadata, {
+                "batch_size": 64,
+                "input_is_batched": False,
+                "epochs": client.config.training.model_epochs,
+                "mode": "final",
+            })
+
+    def test_final_training_prebatched_dataset_omits_keras_batch_argument(self) -> None:
+        """Final training records dataset batching and does not pass batch_size."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            client = _build_test_client(base_dir=base)
+            client.config.training.batch_size = 64
+            built_model = client.model_family.build_model.return_value
+            built_model.fit.return_value = SimpleNamespace(history={"loss": [1.0]})
+            fit_task = MagicMock()
+            dataset = tf.data.Dataset.from_tensor_slices(([1.0, 2.0], [0.0, 1.0])).batch(64)
+            fit_task.build_fit_plan.return_value = FitPlan(
+                fit_kwargs={"x": dataset}, callbacks=["task-callback"]
+            )
+
+            with patch.object(client, "_instantiate_task", return_value=fit_task):
+                client._train_with_decoded_hparams(
+                    {},
+                    bundle=client.dataset_bundle,
+                    target_spec=client.target_spec,
+                    model_build_context=client.model_build_context,
+                    model_config=client.model_config,
+                    task_config=Dict(),
+                    checkpoint_path=base / "best.keras",
+                    history_path=base / "history.json",
+                    patience=7,
+                    combine_train_val=False,
+                )
+
+            self.assertNotIn("batch_size", built_model.fit.call_args.kwargs)
+            metadata = json.loads((base / "history.training.json").read_text())
+            self.assertEqual(metadata["batch_size"], 64)
+            self.assertTrue(metadata["input_is_batched"])
 
 
 class PlotTrainingHistoryTests(unittest.TestCase):

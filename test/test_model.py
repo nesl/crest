@@ -1869,6 +1869,46 @@ class LoadSettingsTests(unittest.TestCase):
                 settings.outputs.models_dir / settings.outputs.checkpoint_name,
             )
             self.assertEqual(settings.training.drop_rate_choices, DROP_RATE_CHOICES)  
+            self.assertEqual(settings.training.batch_size, 256)
+            self.assertTrue(settings.nas.hil_first)
+
+    def test_load_settings_validates_training_batch_size_and_hil_order(self) -> None:
+        """Batch size and evaluation order should use strict normalized types."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+
+            def write_config(*, batch_value: str, hil_first_value: str) -> Path:
+                score_lines = self._score_lines()
+                score_lines.insert(score_lines.index("  score:"), f"  hil_first: {hil_first_value}")
+                config_path = tmp_path / f"config_{batch_value}_{hil_first_value}.yaml"
+                config_path.write_text("\n".join([
+                    "device:",
+                    "  name: TEST_DEVICE",
+                    "training:",
+                    "  nas_trials: 5",
+                    f"  batch_size: {batch_value}",
+                    *score_lines,
+                    "outputs:",
+                    f"  models_dir: \"{tmp_path / 'models'}\"",
+                    f"  candidate_dir: \"{tmp_path / 'candidate'}\"",
+                    "  artifact_stem: \"CREST_Test\"",
+                ]))
+                return config_path
+
+            settings = load_config(write_config(batch_value="64", hil_first_value="false"))
+            self.assertEqual(settings.training.batch_size, 64)
+            self.assertFalse(settings.nas.hil_first)
+
+            for batch_value in ("true", "\"64\"", "0", "-1"):
+                with self.subTest(batch_value=batch_value), self.assertRaisesRegex(
+                    ValueError, "training.batch_size"
+                ):
+                    load_config(write_config(batch_value=batch_value, hil_first_value="true"))
+            for hil_first_value in ("\"false\"", "1", "null"):
+                with self.subTest(hil_first_value=hil_first_value), self.assertRaisesRegex(
+                    ValueError, "nas.hil_first"
+                ):
+                    load_config(write_config(batch_value="64", hil_first_value=hil_first_value))
 
     def test_load_settings_accepts_fixed_int8_quantization(self) -> None:
         """A fixed int8 PTQ quantization block should normalize cleanly."""
