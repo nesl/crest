@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from crest.devices import (
-    CandidatePrepareRequest, CompileResult, DeviceMetrics, MeasureResult, UploadResult,
+    CandidatePrepareRequest, CandidatePreparationError, CompileResult, DeviceMetrics, MeasureResult, UploadResult,
 )
 from crest.errors import (
     HIL_ERROR_INTEGRITY, HIL_ERROR_LATENCY, HIL_ERROR_OK, HIL_ERROR_UNDER_SIZED,
@@ -28,6 +28,7 @@ from crest.errors import (
 from crest.microcontrollers import get_device, list_device_specs
 from crest.microcontrollers.esp32_idf import (
     ESP32IDFDevice,
+    _validate_source_tflite_description,
     classify_idf_build_failure,
     parse_idf_size_output,
     resolve_esp32_idf_options,
@@ -128,6 +129,10 @@ class ESP32BackendTests(unittest.TestCase):
             cases = (
                 (MeasureResult(None, None, [], {}), HIL_ERROR_LATENCY),
                 (MeasureResult(None, "tensor arena AllocateTensors failed", [], {}), HIL_ERROR_UNDER_SIZED),
+                (MeasureResult(None, None, [], {
+                    "measurement_instrumentation_valid": False,
+                    "measurement_failure_kind": "serial_io",
+                }), HIL_ERROR_INTEGRITY),
             )
             for measured, expected in cases:
                 with self.subTest(expected=expected), \
@@ -373,6 +378,31 @@ class ESP32MeasurementEvidenceTests(unittest.TestCase):
             "timer output: 3.550000000",
         ]
 
+    def test_serial_disconnect_maps_to_controller_infrastructure_then_recovers(self) -> None:
+        from crest.errors import HIL_MASTER_INFRASTRUCTURE, HIL_MASTER_SUCCESS
+        from crest.hardware import HIL_controller
+        device = ESP32IDFDevice()
+        disconnected = DeviceMetrics(100, 200, -1.0, 2048 * 1024, HIL_ERROR_INTEGRITY, {
+            "measurement_instrumentation_valid": False,
+            "measurement_failure_kind": "serial_io",
+        })
+        recovered = DeviceMetrics(100, 200, 3.55, 2048 * 1024, HIL_ERROR_OK, {
+            "measurement_instrumentation_valid": True,
+        })
+        with tempfile.TemporaryDirectory() as tempdir:
+            with patch.object(device, "evaluate", side_effect=[disconnected, recovered]):
+                failed_result = HIL_controller(
+                    dirpath=tempdir, chosen_device="FREENOVE_ESP32_S3_WROOM",
+                    window_size=96, number_of_channels=96, run_hil=True, device=device,
+                )
+                recovered_result = HIL_controller(
+                    dirpath=tempdir, chosen_device="FREENOVE_ESP32_S3_WROOM",
+                    window_size=96, number_of_channels=96, run_hil=True, device=device,
+                )
+        self.assertEqual(failed_result[4], HIL_MASTER_INFRASTRUCTURE)
+        self.assertEqual(recovered_result[4], HIL_MASTER_SUCCESS)
+        self.assertEqual(recovered_result[2], 3.55)
+
     def test_valid_over_budget_measurement_remains_instrumented(self) -> None:
         from crest.microcontrollers.esp32_measurement import validate_measurement_log
         evidence, diagnostics = validate_measurement_log(
@@ -446,6 +476,91 @@ class ESP32MeasurementEvidenceTests(unittest.TestCase):
         self.assertIn("sample_order", diagnostics["reasons"])
 
 
+class ESP32SourceArtifactTests(unittest.TestCase):
+    def _request(self, root: Path, source: Path, **overrides) -> CandidatePrepareRequest:
+        values = {
+            "config": SimpleNamespace(device=SimpleNamespace(measured_inference_runs=2)),
+            "model": None, "model_variant": "supplied_tflite",
+            "artifact_root": root / "artifacts", "tflite_model_path": root / "unused.tflite",
+            "calibration_split": None, "quantization_mode": "int8_ptq",
+            "input_shape": (96, 96), "checkpoint_path": None, "source_tflite_path": source,
+        }
+        values.update(overrides)
+        return CandidatePrepareRequest(**values)
+
+    def test_source_artifact_preserves_exact_bytes_without_export(self) -> None:
+        source_root = Path("/tmp/crest-fer-fixtures-m202")
+        source = source_root / "reference96_compile_fixture_untrained_int8.tflite"
+        if not source.is_file():
+            self.skipTest("reference96 component artifact is unavailable")
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            project = root / "project"
+            project.mkdir(); (project / "CMakeLists.txt").write_text("project(fake)\n")
+            device = ESP32IDFDevice(device_options={
+                "project_root": project,
+                "fixture_npz_path": source_root / "representative_96.npz",
+                "fixture_manifest_path": source_root / "representative_96.json",
+            })
+            with patch("crest.hardware.convert_to_tflite_model", side_effect=AssertionError("export called")) as export:
+                staged = device.prepare_candidate(request=self._request(root, source))
+            self.assertFalse(export.called)
+            self.assertTrue(device.supports_tflite_artifact())
+            self.assertEqual((staged / "main" / "crest_candidate.tflite").read_bytes(), source.read_bytes())
+            manifest = json.loads((staged / "main" / "crest_model_manifest.json").read_text())
+            self.assertEqual(manifest["preparation_mode"], "supplied_tflite")
+            self.assertEqual(manifest["tflite_sha256"], hashlib.sha256(source.read_bytes()).hexdigest())
+
+    def test_source_conflicts_are_request_errors(self) -> None:
+        source = Path("/tmp/crest-fer-fixtures-m202/reference96_compile_fixture_untrained_int8.tflite")
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            project = root / "project"; project.mkdir(); (project / "CMakeLists.txt").write_text("project(fake)\n")
+            device = ESP32IDFDevice(device_options={"project_root": project})
+            for conflict in (
+                {"model": object()}, {"calibration_split": object()}, {"checkpoint_path": "x"},
+                {"quantization_mode": "float32"}, {"input_shape": (64, 64)},
+            ):
+                with self.subTest(conflict=next(iter(conflict))), self.assertRaises(CandidatePreparationError) as caught:
+                    device.prepare_candidate(request=self._request(root, source, **conflict))
+                self.assertEqual(caught.exception.error_kind, "request")
+
+    def test_malformed_source_then_valid_source_recovers(self) -> None:
+        source_root = Path("/tmp/crest-fer-fixtures-m202")
+        valid = source_root / "reference96_compile_fixture_untrained_int8.tflite"
+        if not valid.is_file():
+            self.skipTest("reference96 component artifact is unavailable")
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir); malformed = root / "bad.tflite"; malformed.write_bytes(b"not-tflite")
+            project = root / "project"; project.mkdir(); (project / "CMakeLists.txt").write_text("project(fake)\n")
+            device = ESP32IDFDevice(device_options={
+                "project_root": project, "fixture_npz_path": source_root / "representative_96.npz",
+                "fixture_manifest_path": source_root / "representative_96.json",
+            })
+            with self.assertRaises(CandidatePreparationError) as caught:
+                device.prepare_candidate(request=self._request(root, malformed))
+            self.assertEqual(caught.exception.error_kind, "request")
+            staged = device.prepare_candidate(request=self._request(root, valid))
+            self.assertEqual((staged / "main" / "crest_candidate.tflite").read_bytes(), valid.read_bytes())
+
+    def test_source_tensor_contract_requires_batch_one(self) -> None:
+        base = {
+            "inputs": [{"shape": [1, 96, 96], "dtype": "int8",
+                        "quantization": {"scales": [0.1], "zero_points": [0], "quantized_dimension": 0}}],
+            "outputs": [{"shape": [1, 5], "dtype": "int8",
+                         "quantization": {"scales": [0.1], "zero_points": [0], "quantized_dimension": 0}}],
+        }
+        _validate_source_tflite_description(base)
+        for field, shape in (("inputs", [2, 96, 96]), ("outputs", [2, 5])):
+            malformed = json.loads(json.dumps(base)); malformed[field][0]["shape"] = shape
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                _validate_source_tflite_description(malformed)
+        malformed = json.loads(json.dumps(base))
+        malformed["outputs"][0]["quantization"]["scales"] = []
+        with self.assertRaises(ValueError):
+            _validate_source_tflite_description(malformed)
+
+
 class ESP32FixtureTests(unittest.TestCase):
     def test_fixture_staging_preserves_logical_shape_and_order(self) -> None:
         from crest.microcontrollers.esp32_fixtures import stage_fixture_header
@@ -453,14 +568,16 @@ class ESP32FixtureTests(unittest.TestCase):
         del _quantize_tflite_tensor
 
         class FakeInterpreter:
+            input_shape = [1, 2, 2]
+            output_shape = [1, 3]
             def __init__(self, *, model_path: str) -> None:
                 self.model_path = model_path
             def allocate_tensors(self) -> None:
                 pass
             def get_input_details(self):
-                return [{"shape": np.array([1, 2, 2]), "dtype": np.int8, "quantization": (0.5, -1)}]
+                return [{"shape": np.array(self.input_shape), "dtype": np.int8, "quantization": (0.5, -1)}]
             def get_output_details(self):
-                return [{"shape": np.array([1, 3]), "dtype": np.int8}]
+                return [{"shape": np.array(self.output_shape), "dtype": np.int8}]
 
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -490,6 +607,16 @@ class ESP32FixtureTests(unittest.TestCase):
             self.assertIn("kCrestFixtureCount = 2", generated)
             self.assertIn("{-1,0,1,-2}", generated)
             self.assertIn("b64:Zmlyc3Q", generated)
+            for attr, shape in (("input_shape", [2, 2, 2]), ("output_shape", [2, 3])):
+                FakeInterpreter.input_shape = [1, 2, 2]
+                FakeInterpreter.output_shape = [1, 3]
+                setattr(FakeInterpreter, attr, shape)
+                with self.subTest(attr=attr), patch.dict(sys.modules, {"tensorflow": fake_tf}), \
+                     self.assertRaises(ValueError):
+                    stage_fixture_header(
+                        fixture_npz_path=npz, fixture_manifest_path=manifest,
+                        tflite_model_path=model, output_path=header,
+                    )
 
 
 class ESP32ArtifactIdentityTests(unittest.TestCase):

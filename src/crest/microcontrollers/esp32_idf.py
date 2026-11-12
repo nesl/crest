@@ -23,6 +23,7 @@ from ..errors import HIL_ERROR_INTEGRITY
 from ..devices import (
     ArduinoDevice,
     CandidatePrepareRequest,
+    CandidatePreparationError,
     CompileResult,
     DeviceSpec,
     DeviceMetrics,
@@ -292,6 +293,35 @@ def classify_idf_build_failure(output: str) -> str | None:
     return None
 
 
+def _validate_source_tflite_description(description: Mapping[str, Any]) -> None:
+    """Validate ESP32 standalone source-artifact tensor requirements."""
+
+    inputs = description.get("inputs", [])
+    outputs = description.get("outputs", [])
+    if len(inputs) != 1 or len(outputs) != 1:
+        raise ValueError("ESP32 source artifacts require exactly one input and one output tensor.")
+    input_detail = inputs[0]
+    output_detail = outputs[0]
+    input_shape = input_detail.get("shape")
+    output_shape = output_detail.get("shape")
+    if not isinstance(input_shape, list) or len(input_shape) != 3 or input_shape[0] != 1:
+        raise ValueError("ESP32 source artifact input shape must be [1,H,W].")
+    if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in input_shape):
+        raise ValueError("ESP32 source artifact input dimensions must be positive integers.")
+    if not isinstance(output_shape, list) or not output_shape or output_shape[0] != 1:
+        raise ValueError("ESP32 source artifact output batch dimension must be 1.")
+    if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in output_shape):
+        raise ValueError("ESP32 source artifact output dimensions must be positive integers.")
+    if input_detail.get("dtype") != "int8" or output_detail.get("dtype") != "int8":
+        raise ValueError("ESP32 source artifacts require int8 input and output tensors.")
+    input_scales = input_detail.get("quantization", {}).get("scales", [])
+    output_scales = output_detail.get("quantization", {}).get("scales", [])
+    if len(input_scales) != 1 or not math.isfinite(float(input_scales[0])) or float(input_scales[0]) <= 0:
+        raise ValueError("ESP32 source artifact input requires one finite positive quantization scale.")
+    if len(output_scales) != 1 or not math.isfinite(float(output_scales[0])) or float(output_scales[0]) <= 0:
+        raise ValueError("ESP32 source artifact output requires one finite positive quantization scale.")
+
+
 class ESP32IDFDevice(ArduinoDevice):
     """Concrete ESP32-S3 backend using an incremental ESP-IDF workspace."""
 
@@ -313,6 +343,9 @@ class ESP32IDFDevice(ArduinoDevice):
     def spec(self) -> DeviceSpec:
         return self._spec
 
+    def supports_tflite_artifact(self) -> bool:
+        return True
+
     def supports_energy_measurement(self) -> bool:
         return False
 
@@ -323,70 +356,121 @@ class ESP32IDFDevice(ArduinoDevice):
         }
 
     def prepare_candidate(self, *, request: CandidatePrepareRequest) -> Path:
-        """Export and embed a candidate in the reusable ESP-IDF workspace."""
+        """Export or copy exact TFLite bytes and stage one ESP-IDF candidate."""
 
-        if request.model is None:
-            raise ValueError("ESP32 candidate preparation requires a built Keras model.")
-        if request.quantization_mode == "int8_ptq" and request.calibration_split is None:
-            raise ValueError("ESP32 candidate preparation requires calibration data for int8_ptq.")
+        source_path = request.source_tflite_path
+        source_mode = source_path is not None
+        if source_mode:
+            if request.quantization_mode != "int8_ptq":
+                raise CandidatePreparationError(
+                    "request", "ESP32 supplied TFLite artifacts require quantization_mode int8_ptq."
+                )
+            conflicts = (request.model, request.calibration_split, request.checkpoint_path)
+            if any(value is not None for value in conflicts):
+                raise CandidatePreparationError(
+                    "request",
+                    "ESP32 supplied TFLite artifacts cannot include model, calibration, or checkpoint inputs.",
+                )
+        else:
+            if request.model is None:
+                raise CandidatePreparationError(
+                    "request", "ESP32 candidate preparation requires a built Keras model."
+                )
+            if request.quantization_mode == "int8_ptq" and request.calibration_split is None:
+                raise CandidatePreparationError(
+                    "config", "ESP32 candidate preparation requires calibration data for int8_ptq."
+                )
         project_root = self._options.project_root.resolve()
         if not (project_root / "CMakeLists.txt").is_file():
-            raise ValueError(
-                f"ESP32 ESP-IDF project was not found at {project_root}; "
-                "configure device.esp32.project_root."
-            )
-        from ..hardware import convert_to_cpp_model, convert_to_tflite_model
+            error = f"ESP32 ESP-IDF project was not found at {project_root}; configure device.esp32.project_root."
+            raise CandidatePreparationError("config", error)
 
-        request.tflite_model_path.parent.mkdir(parents=True, exist_ok=True)
-        convert_to_tflite_model(
-            model=request.model,
-            training_data=(
-                None
-                if request.calibration_split is None
-                else request.calibration_split.inputs
-            ),
-            quantization_mode=request.quantization_mode,
-            output_name=request.tflite_model_path,
-        )
-        model_bytes = request.tflite_model_path.read_bytes()
+        from ..hardware import convert_to_cpp_model, convert_to_tflite_model
+        if source_mode:
+            from ..hil.artifact_transport import read_tflite_artifact
+            try:
+                model_bytes, description = read_tflite_artifact(
+                    Path(source_path), max_bytes=self._options.max_flash_bytes
+                )
+                _validate_source_tflite_description(description)
+                actual_shape = tuple(int(value) for value in description["inputs"][0]["shape"][1:])
+                if request.input_shape is None or tuple(request.input_shape) != actual_shape:
+                    raise ValueError(
+                        f"ESP32 request input_shape {request.input_shape} does not match artifact {actual_shape}."
+                    )
+            except (OSError, ValueError) as exc:
+                raise CandidatePreparationError("request", str(exc)) from exc
+        else:
+            try:
+                request.tflite_model_path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise CandidatePreparationError("runtime", str(exc)) from exc
+            try:
+                convert_to_tflite_model(
+                    model=request.model,
+                    training_data=(
+                        None if request.calibration_split is None else request.calibration_split.inputs
+                    ),
+                    quantization_mode=request.quantization_mode,
+                    output_name=request.tflite_model_path,
+                )
+                model_bytes = request.tflite_model_path.read_bytes()
+            except OSError as exc:
+                raise CandidatePreparationError("runtime", str(exc)) from exc
+            except ValueError as exc:
+                raise CandidatePreparationError("request", str(exc)) from exc
         model_sha256 = hashlib.sha256(model_bytes).hexdigest()
         candidate_label = re.sub(r"[^A-Za-z0-9_.-]+", "-", request.model_variant).strip(".-")
         if not candidate_label:
-            raise ValueError("ESP32 model_variant must contain a filename-safe character.")
-        candidate_parent = request.artifact_root.resolve() / "esp32"
-        candidate_parent.mkdir(parents=True, exist_ok=True)
-        candidate_root = Path(tempfile.mkdtemp(prefix=f"{candidate_label}-", dir=candidate_parent))
-        generated_dir = candidate_root / self._options.model_output_dir
-        generated_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(request.tflite_model_path, generated_dir / "crest_candidate.tflite")
-        convert_to_cpp_model(
-            request.tflite_model_path,
-            generated_dir,
-            array_name=self._options.model_array_name,
-            source_name=self._options.model_source_name,
-            header_name=self._options.model_header_name,
-        )
+            error = "ESP32 model_variant must contain a filename-safe character."
+            raise CandidatePreparationError("request", error)
+        try:
+            candidate_parent = request.artifact_root.resolve() / "esp32"
+            candidate_parent.mkdir(parents=True, exist_ok=True)
+            candidate_root = Path(tempfile.mkdtemp(prefix=f"{candidate_label}-", dir=candidate_parent))
+            generated_dir = candidate_root / self._options.model_output_dir
+            generated_dir.mkdir(parents=True, exist_ok=True)
+            staged_model_path = generated_dir / "crest_candidate.tflite"
+            staged_model_path.write_bytes(model_bytes)
+            convert_to_cpp_model(
+                staged_model_path, generated_dir, array_name=self._options.model_array_name,
+                source_name=self._options.model_source_name, header_name=self._options.model_header_name,
+            )
+        except OSError as exc:
+            raise CandidatePreparationError("runtime", str(exc)) from exc
+        except ValueError as exc:
+            raise CandidatePreparationError("request", str(exc)) from exc
         if self._options.fixture_npz_path is None or self._options.fixture_manifest_path is None:
-            raise ValueError("ESP32 prepared fixtures must be configured for candidate measurement.")
+            raise CandidatePreparationError(
+                "config", "ESP32 prepared fixtures must be configured for candidate measurement."
+            )
         from .esp32_fixtures import stage_fixture_header
-        fixture_evidence = stage_fixture_header(
-            fixture_npz_path=self._options.fixture_npz_path,
-            fixture_manifest_path=self._options.fixture_manifest_path,
-            tflite_model_path=request.tflite_model_path,
-            output_path=generated_dir / "fixtures.h",
-        )
+        try:
+            fixture_evidence = stage_fixture_header(
+                fixture_npz_path=self._options.fixture_npz_path,
+                fixture_manifest_path=self._options.fixture_manifest_path,
+                tflite_model_path=staged_model_path, output_path=generated_dir / "fixtures.h",
+            )
+        except OSError as exc:
+            raise CandidatePreparationError("runtime", str(exc)) from exc
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise CandidatePreparationError("config", str(exc)) from exc
         device_config = request.config.device
         if isinstance(device_config, Mapping):
             measured_runs_raw = device_config.get("measured_inference_runs", 10)
         else:
             measured_runs_raw = vars(device_config).get("measured_inference_runs", 10)
-        measured_runs = _positive_int(
-            measured_runs_raw, field="device.measured_inference_runs"
-        )
+        try:
+            measured_runs = _positive_int(
+                measured_runs_raw, field="device.measured_inference_runs"
+            )
+        except ValueError as exc:
+            raise CandidatePreparationError("config", str(exc)) from exc
         manifest = {
             "tflite_sha256": model_sha256,
             "tflite_size_bytes": len(model_bytes),
             "array_name": self._options.model_array_name,
+            "preparation_mode": "supplied_tflite" if source_mode else "exported_model",
             "warmup_runs_per_fixture": self._options.warmup_runs,
             "measured_runs_per_fixture": measured_runs,
             "latency_aggregation": self._options.latency_aggregation,
@@ -397,11 +481,13 @@ class ESP32IDFDevice(ArduinoDevice):
             f"static constexpr const char *kCrestModelSha256 = \"{model_sha256}\";\n"
             f"static constexpr const char *kCrestFixtureSha256 = \"{fixture_evidence['fixture_sha256']}\";\n"
         )
-        (generated_dir / "crest_manifest.h").write_text(manifest_header, encoding="utf-8")
-        (generated_dir / "crest_model_manifest.json").write_text(
-            json.dumps(manifest, sort_keys=True, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        try:
+            (generated_dir / "crest_manifest.h").write_text(manifest_header, encoding="utf-8")
+            (generated_dir / "crest_model_manifest.json").write_text(
+                json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8",
+            )
+        except OSError as exc:
+            raise CandidatePreparationError("runtime", str(exc)) from exc
         self._staged_model_sha256 = model_sha256
         self._prepared_roots.add(candidate_root.resolve())
         return candidate_root
@@ -474,10 +560,13 @@ class ESP32IDFDevice(ArduinoDevice):
                         shutil.copy2(generated_source / filename, generated_target / filename)
                     setup_complete = True
                     metrics = super().evaluate(dirpath=project_root, **kwargs)
+                    measurement_evidence = metrics.power_metrics or {}
                     instrumentation_valid = bool(
-                        (metrics.power_metrics or {}).get("measurement_instrumentation_valid", False)
+                        measurement_evidence.get("measurement_instrumentation_valid", False)
                     )
-                    if run_hil and metrics.latency_s >= 0.0 and not instrumentation_valid:
+                    if run_hil and measurement_evidence.get("measurement_failure_kind") == "serial_io":
+                        metrics = replace(metrics, error_code=HIL_ERROR_INTEGRITY)
+                    elif run_hil and metrics.latency_s >= 0.0 and not instrumentation_valid:
                         metrics = replace(metrics, error_code=HIL_ERROR_INTEGRITY)
                     return metrics
                 finally:
@@ -497,7 +586,11 @@ class ESP32IDFDevice(ArduinoDevice):
             return MeasureResult(
                 latency_s=None, arena_error_line=None,
                 serial_log=[f"ESP32_SERIAL_ERROR: {exc}"],
-                power_metrics={"measurement_instrumentation_valid": False},
+                power_metrics={
+                    "measurement_instrumentation_valid": False,
+                    "measurement_failure_kind": "serial_io",
+                    "measurement_failure_detail": str(exc),
+                },
             )
         arena_error_line = result.arena_error_line
         if result.latency_s is None and arena_error_line is None:

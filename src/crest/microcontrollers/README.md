@@ -478,6 +478,13 @@ DIO/40 MHz flash, 8 MiB octal/40 MHz PSRAM, debug optimization with ESP-NN,
 and a 4 MiB factory application partition. Unsupported target, clock, runtime,
 optimization, or hardware-capacity overrides are rejected.
 
+The backend accepts either the legacy model-plus-calibration export path or an
+exact supplied TFLite artifact. Supplied artifacts bypass model materialization,
+calibration, and export; their bytes are copied unchanged and must expose one
+int8 `[1,H,W]` input and one batch-one int8 output with finite positive
+per-tensor quantization. The request logical input shape must match `(H,W)`.
+Conflicting model, calibration, or checkpoint inputs are rejected.
+
 The backend consumes prepared representative tensors without performing FER
 image preprocessing. Configure both `device.esp32.fixture_npz_path` and
 `device.esp32.fixture_manifest_path`. The NPZ contains exactly float32

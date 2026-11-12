@@ -65,3 +65,27 @@ contained the exact TFLite bytes once. The resolved sdkconfig SHA-256 was
 `d065c95d6f38504fbb3f49d25793923097902752f9b3acedb8aee82428935150`.
 This is a compile and artifact-identity result; it is not an on-board timing or
 correctness result.
+
+## Physical acceptance, 2026-11-11
+
+The firmware content committed at `1275021acfa858751397530ecac9c0b1f49264bb`
+was tested on the attached ESP32-S3 revision 0.2 using application-only flashes.
+Read-only inspection reported an 8 MiB flash, 8 MiB embedded PSRAM, 40 MHz
+crystal, disabled secure boot and flash encryption, and the expected 4 MiB
+factory application partition at `0x10000`.
+
+The untrained reference96 artifact and the ten ordered representative96 inputs
+used the hashes recorded above. With one warmup and two measured invokes per
+input, the first 2 MiB-arena run produced 20 ordered samples, ten output
+vectors, valid identity evidence, 363,212 arena bytes used, and a median invoke
+latency of 1.5600605 seconds. All ten raw int8 output vectors exactly matched
+host TFLite execution.
+
+A separate 64 KiB-arena run failed as expected: TFLite Micro requested 345,488
+bytes with 47,952 available and reported 297,536 missing. The failure-state
+handshake re-emitted the allocation error after `START`, and the controller
+classified the singleton attempt as arena exhausted. A final separate 2 MiB
+run restored the board to good firmware and again produced 20 valid samples,
+a 1.560188 second median, and exact raw int8 output parity for all ten inputs.
+The harness GPIOs carried activity signaling during these runs; no harness
+energy result or campaign timing claim was produced.

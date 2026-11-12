@@ -63,6 +63,8 @@ def stage_fixture_header(
         raise ValueError("ESP32 backend requires one TFLite input tensor.")
     detail = details[0]
     expected_shape = tuple(int(value) for value in detail["shape"])
+    if len(expected_shape) != 3 or expected_shape[0] != 1:
+        raise ValueError("ESP32 backend requires model input shape [1,H,W].")
     if tuple(inputs.shape[1:]) != expected_shape[1:]:
         raise ValueError(
             f"ESP32 fixture shape {tuple(inputs.shape[1:])} does not match model input {expected_shape[1:]}."
@@ -70,7 +72,10 @@ def stage_fixture_header(
     output_details = interpreter.get_output_details()
     if len(output_details) != 1 or output_details[0].get("dtype") != np.int8:
         raise ValueError("ESP32 backend requires one int8 output tensor.")
-    output_elements = int(np.prod(output_details[0]["shape"], dtype=np.int64))
+    output_shape = tuple(int(value) for value in output_details[0]["shape"])
+    if not output_shape or output_shape[0] != 1:
+        raise ValueError("ESP32 backend requires output batch dimension 1.")
+    output_elements = int(np.prod(output_shape, dtype=np.int64))
     if output_elements <= 0:
         raise ValueError("ESP32 output tensor must contain at least one element.")
     scale, zero_point = detail["quantization"]
