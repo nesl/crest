@@ -5,6 +5,7 @@
 from pathlib import Path
 import hashlib
 import json
+import os
 import sys
 import types
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from unittest.mock import patch
 import serial
 
 import numpy as np
+from addict import Dict
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -25,7 +27,7 @@ from crest.devices import (
 from crest.errors import (
     HIL_ERROR_INTEGRITY, HIL_ERROR_LATENCY, HIL_ERROR_OK, HIL_ERROR_UNDER_SIZED,
 )
-from crest.microcontrollers import get_device, list_device_specs
+from crest.microcontrollers import get_device, list_device_specs, resolve_device_options
 from crest.microcontrollers.esp32_idf import (
     ESP32IDFDevice,
     _validate_source_tflite_description,
@@ -60,6 +62,43 @@ class ESP32BackendTests(unittest.TestCase):
                 resolve_esp32_idf_options({"build_timeout_s": timeout})
         with self.assertRaises(ValueError):
             resolve_esp32_idf_options({"model_array_name": "other"})
+
+    def test_config_options_can_be_passed_to_backend_without_internal_names(self) -> None:
+        device_config = SimpleNamespace(
+            runtime_mode="back_to_back",
+            esp32=SimpleNamespace(arena_sizes_kb=[2048], warmup_runs=1),
+        )
+        options = resolve_device_options("FREENOVE_ESP32_S3_WROOM", device_config)
+        for internal_name in (
+            "model_output_dir", "model_source_name", "model_header_name", "model_array_name",
+        ):
+            self.assertNotIn(internal_name, options)
+        device = get_device("FREENOVE_ESP32_S3_WROOM", device_options=options)
+        self.assertIsInstance(device, ESP32IDFDevice)
+        self.assertTrue(device.supports_tflite_artifact())
+
+    def test_real_hil_capabilities_constructs_esp32_backend(self) -> None:
+        from hil_server import HILServer
+        with tempfile.TemporaryDirectory() as tempdir:
+            config = Dict({
+                "device": {"name": "FREENOVE_ESP32_S3_WROOM", "hil": True,
+                           "runtime_mode": "back_to_back", "esp32": {"arena_sizes_kb": [2048]}},
+                "dataset": {"name": "ferplus_rafdb_mixed", "params": {}},
+                "task": {"name": "facial_expression_classification", "params": {}},
+                "model": {"family": "fer_mini_xception",
+                          "params": {"export_variant": "trained"}, "search": {}},
+                "training": {"energy_aware": False},
+                "outputs": {"models_dir": tempdir, "candidate_dir": tempdir},
+                "network": {"max_artifact_bytes": 4194304},
+            })
+            server = HILServer(config=config)
+            try:
+                capabilities = server._artifact_capabilities()
+            finally:
+                server.socket.close(linger=0)
+                server.context.term()
+        self.assertEqual(capabilities["backend"]["name"], "FREENOVE_ESP32_S3_WROOM")
+        self.assertTrue(capabilities["backend"]["supports_tflite_artifact"])
 
     def test_options_reject_capacities_beyond_verified_hardware(self) -> None:
         for options in (
@@ -477,6 +516,15 @@ class ESP32MeasurementEvidenceTests(unittest.TestCase):
 
 
 class ESP32SourceArtifactTests(unittest.TestCase):
+    def _reference_root(self) -> Path:
+        configured = os.environ.get("CREST_ESP32_REFERENCE_FIXTURES")
+        if not configured:
+            self.skipTest("CREST_ESP32_REFERENCE_FIXTURES is not configured")
+        root = Path(configured)
+        if not (root / "reference96_compile_fixture_untrained_int8.tflite").is_file():
+            self.skipTest("ESP32 reference component artifact is unavailable")
+        return root
+
     def _request(self, root: Path, source: Path, **overrides) -> CandidatePrepareRequest:
         values = {
             "config": SimpleNamespace(device=SimpleNamespace(measured_inference_runs=2)),
@@ -489,7 +537,7 @@ class ESP32SourceArtifactTests(unittest.TestCase):
         return CandidatePrepareRequest(**values)
 
     def test_source_artifact_preserves_exact_bytes_without_export(self) -> None:
-        source_root = Path("/tmp/crest-fer-fixtures-m202")
+        source_root = self._reference_root()
         source = source_root / "reference96_compile_fixture_untrained_int8.tflite"
         if not source.is_file():
             self.skipTest("reference96 component artifact is unavailable")
@@ -512,7 +560,7 @@ class ESP32SourceArtifactTests(unittest.TestCase):
             self.assertEqual(manifest["tflite_sha256"], hashlib.sha256(source.read_bytes()).hexdigest())
 
     def test_source_conflicts_are_request_errors(self) -> None:
-        source = Path("/tmp/crest-fer-fixtures-m202/reference96_compile_fixture_untrained_int8.tflite")
+        source = self._reference_root() / "reference96_compile_fixture_untrained_int8.tflite"
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
             project = root / "project"; project.mkdir(); (project / "CMakeLists.txt").write_text("project(fake)\n")
@@ -526,7 +574,7 @@ class ESP32SourceArtifactTests(unittest.TestCase):
                 self.assertEqual(caught.exception.error_kind, "request")
 
     def test_malformed_source_then_valid_source_recovers(self) -> None:
-        source_root = Path("/tmp/crest-fer-fixtures-m202")
+        source_root = self._reference_root()
         valid = source_root / "reference96_compile_fixture_untrained_int8.tflite"
         if not valid.is_file():
             self.skipTest("reference96 component artifact is unavailable")
