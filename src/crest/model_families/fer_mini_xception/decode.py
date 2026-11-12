@@ -52,12 +52,16 @@ def validate_raw_hparams(hparams: Mapping[str, Any]) -> dict[str, Any]:
     """Validate and normalize one complete raw FER search payload."""
     expected = set(FER_MINI_XCEPTION_SEARCH_CHOICES)
     missing = sorted(expected - set(hparams))
-    extra = sorted(set(hparams) - expected)
+    extra = sorted(set(hparams) - expected - {"resolution"})
     if missing:
         raise ValueError(f"FER Mini-Xception hyperparameters missing keys: {', '.join(missing)}.")
     if extra:
         raise ValueError(f"FER Mini-Xception hyperparameters contain extra keys: {', '.join(extra)}.")
     normalized = dict(hparams)
+    if "resolution" in normalized:
+        resolution = normalized["resolution"]
+        if isinstance(resolution, bool) or not isinstance(resolution, int) or resolution not in (64, 96):
+            raise ValueError("resolution must be 64 or 96.")
     normalized["channel_growth"] = _normalize_growth(normalized["channel_growth"])
     integer_names = {
         "stem_channels",
@@ -118,11 +122,11 @@ def decoded_architecture_identity(
     """Return a canonical identity derived from the actual training graph.
 
     Redundant raw growth/cap combinations collapse when they produce the same
-    widths. CREST's current optimizer duplicate policies do not consume this
-    family helper, so redundant raw combinations may still be sampled.
+    widths. The optional FER unique NSGA-II sampler consumes this identity.
     """
     values = validate_raw_hparams(hparams)
     return {
+        **({"resolution": values["resolution"]} if "resolution" in values else {}),
         "schema_version": "fer-mini-xception-training-v1",
         "logical_input_adapter": "reshape_h_w_to_h_w_1",
         "stem_channels": values["stem_channels"],

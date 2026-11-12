@@ -69,10 +69,13 @@ def _fixed_settings(config: Any) -> dict[str, Any]:
             "separable_convolutions_per_block",
             "se_reduction_ratio",
             "l2",
+            "avoid_duplicate_architectures",
         }
     )
     if unknown:
         raise ValueError(f"FER Mini-Xception model.params has unsupported keys: {', '.join(unknown)}.")
+    if not isinstance(params.get("avoid_duplicate_architectures", False), bool):
+        raise ValueError("avoid_duplicate_architectures must be a boolean.")
     export_variant = params.get("export_variant")
     if not isinstance(export_variant, str) or not export_variant.strip():
         raise ValueError("FER Mini-Xception model.params.export_variant must be nonempty.")
@@ -131,7 +134,7 @@ class FERMiniXceptionFamily(ModelFamilyABC):
         """Validate fixed settings and exact categorical search overrides."""
         _fixed_settings(model_config)
         _, search = _sections(model_config)
-        unknown = sorted(set(search) - set(FER_MINI_XCEPTION_SEARCH_CHOICES))
+        unknown = sorted(set(search) - set(FER_MINI_XCEPTION_SEARCH_CHOICES) - {"resolution"})
         if unknown:
             raise ValueError(f"FER Mini-Xception model.search has unsupported keys: {', '.join(unknown)}.")
         for name, values in search.items():
@@ -166,9 +169,9 @@ class FERMiniXceptionFamily(ModelFamilyABC):
                 name,
                 "categorical",
                 choices=self._choices_for(name, config),
-                **FER_MINI_XCEPTION_SEARCH_SEMANTICS[name],
+                **({"description": "Square input image resolution.", "units": "pixels"} if name == "resolution" else FER_MINI_XCEPTION_SEARCH_SEMANTICS[name]),
             )
-            for name in FER_MINI_XCEPTION_SEARCH_CHOICES
+            for name in (*FER_MINI_XCEPTION_SEARCH_CHOICES, *(["resolution"] if "resolution" in _sections(config)[1] else []))
         ]
 
     def sample_hparams(self, trial: Any, ctx: ModelBuildContext, config: Any) -> dict[str, Any]:
@@ -190,7 +193,10 @@ class FERMiniXceptionFamily(ModelFamilyABC):
         """Return the selected 96-pixel SE architecture's raw parameters."""
         self.validate_config(config)
         self._validate_context(ctx)
-        return dict(DEFAULT_FER_MINI_XCEPTION_SEED)
+        seed = dict(DEFAULT_FER_MINI_XCEPTION_SEED)
+        if "resolution" in _sections(config)[1]:
+            seed["resolution"] = 96 if 96 in self._choices_for("resolution", config) else self._choices_for("resolution", config)[0]
+        return seed
 
     def validate_hparams(
         self,
@@ -202,6 +208,8 @@ class FERMiniXceptionFamily(ModelFamilyABC):
         validate_raw_hparams(hparams)
         self.validate_config(config)
         self._validate_context(ctx)
+        if "resolution" in hparams and tuple(ctx.input_shape) != (hparams["resolution"],) * 2:
+            raise ValueError("FER resolution must match the active dataset context.")
 
     def architecture_identity(
         self,

@@ -294,6 +294,16 @@ class HILServer:
         self.model_config = pipeline.selection["model_config"]
         self._pipeline_bootstrapped = True
 
+    def _select_candidate_resolution(self, family_hparams):
+        from crest.model_families.fer_mini_xception.runtime import resolution_pipeline, attach_pipeline
+        pipeline = resolution_pipeline(self, family_hparams)
+        if pipeline is not None:
+            if self.dataset_bundle is not pipeline.bundle:
+                self.calibration_split = None
+                self._calibration_split_resolved = False
+            attach_pipeline(self, pipeline)
+            self._pipeline_bootstrapped = True
+
     def _resolve_component_selection(self, config: Any) -> dict[str, Any]:
         """Resolve active dataset, task, and model-family selections.
 
@@ -1062,6 +1072,7 @@ class HILServer:
         runtime_device = self._artifact_device()
         if not runtime_device.supports_tflite_artifact():
             raise ValueError("Configured backend does not support supplied TFLite artifacts.")
+        self._select_candidate_resolution(family_hparams)
         self._ensure_pipeline_bootstrapped()
         expected_input_shape = tuple(self.model_build_context.input_shape or ())
         actual_inputs = validated["inputs"]
@@ -1288,6 +1299,7 @@ class HILServer:
                 error_detail=str(exc),
             )
         try:
+            self._select_candidate_resolution(family_hparams)
             self._ensure_pipeline_bootstrapped()
             latency_budget_ms = self._effective_latency_budget_ms()
             if source_tflite_path is None:
@@ -1342,6 +1354,11 @@ class HILServer:
             **filtered_device_options_overrides,
         }
         merged_device_options["latency_budget_ms"] = float(latency_budget_ms)
+        if self.model_family_name == "fer_mini_xception":
+            resolution = int(self.model_build_context.input_shape[0])
+            for key in ("fixture_npz_path", "fixture_manifest_path"):
+                if merged_device_options.get(key):
+                    merged_device_options[key] = str(merged_device_options[key]).replace("{resolution}", str(resolution))
         if self._normalized_device_name() == STM32_BOARD_NAME:
             merged_device_options["measurement_records_dir"] = str(
                 (Path(getattr(self.config.outputs, "models_dir", "outputs")) / "hil_measurements").resolve())

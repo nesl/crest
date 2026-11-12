@@ -39,8 +39,7 @@ CREST retains those learned computations behind a logical
 `(height, width)` input and an explicit Keras reshape to a singleton channel.
 
 Dataset loading, training orchestration, TFLite conversion, host inference,
-and device measurement remain in their existing CREST owners. This package
-contains only architecture decoding and model construction.
+and device measurement remain in their existing CREST owners. The optional FER search utilities reuse those owners for resolution selection and decoded duplicate avoidance.
 
 ## Active export-stack evidence
 
@@ -55,3 +54,37 @@ flatbuffer operation and is excluded from the recorded operator set.
 This is host conversion/interpretation evidence only. It does not claim that
 the artifact has compiled or run on a microcontroller. Device backends must
 check the actual artifact's operator versions and resolver registrations.
+
+## Joint-resolution NAS
+
+`src/config/fer_components_joint.yaml` enables `model.search.resolution: [64, 96]`
+and `model.params.avoid_duplicate_architectures: true`. The eight architecture
+parameters retain the structured shared-block search space. Fixed-resolution
+configs remain valid and unchanged. `dataset.params.image_size` is the initial
+bootstrap resolution; each sampled resolution selects a cached pipeline through
+`bootstrap_pipeline`, including matching training, validation and calibration data.
+No resize operation is inserted into the deployed network.
+
+Use the joint fragment on both client and HIL server. The existing
+`family_hparams` map carries resolution; the server checks the supplied artifact
+against that resolution's context. No shared ABC, dataclass, wire-schema or
+backend-contract changes are required. Server fixture path strings can contain
+`{resolution}`, e.g. `fixtures/representative_{resolution}.npz` and `.json`.
+Generate both with the existing `write_representative_fixture` function using the
+same representative training IDs. Fixed paths continue to work for fixed studies.
+
+The optional `UniqueFERNSGAIISampler` subclasses Optuna NSGA-II, preserving its
+selection, crossover, mutation and constraint handling. It checks decoded
+identities before returning a relative proposal; duplicates are replaced using
+the existing independent sampler. After bounded random refill it enumerates
+remaining candidates, or reports exhaustion through `OptimizerBudgetExhausted`.
+Identity includes resolution, actual capped block widths, strides, stem, kernel,
+attention and the fixed topology. Persisted trial parameters supply the history
+on resume. This mechanism supports the current sequential native Optuna runner;
+it is not a concurrency lock for multiple workers. Manually enqueued parameter
+sets bypass Optuna sampling and must not contain duplicates.
+
+Use a fresh study name when enabling this policy. Sampler identity records the
+resolved choices and bootstrap resolution, preventing silent resume into a
+changed search space. Population size and training/trial budgets remain explicit
+campaign settings; this fragment does not choose them.

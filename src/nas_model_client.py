@@ -913,6 +913,14 @@ class NASModelClient:
         else:
             sampler_class = optuna.samplers.TPESampler
             kwargs = {"n_startup_trials": 15, "multivariate": True}
+        if (getattr(self, "model_family_name", None) == "fer_mini_xception"
+                and self._cfg_get(self.model_config.params, "avoid_duplicate_architectures", False)):
+            if not self._score_is_multiobjective():
+                raise ValueError("FER duplicate avoidance currently requires NSGA-II.")
+            from crest.model_families.fer_mini_xception.sampler import UniqueFERNSGAIISampler
+            sampler_class = UniqueFERNSGAIISampler
+            kwargs["choices"] = {p.name: list(p.choices) for p in self.model_family.trial_search_space(self.model_build_context, self.model_config)}
+            kwargs["fixed_resolution"] = int(self.config.dataset.params.image_size)
         if constraints_func is not None:
             kwargs["constraints_func"] = constraints_func
         return sampler_class, kwargs
@@ -2141,6 +2149,11 @@ class NASModelClient:
             self.model_build_context,
             self.model_config,
         )
+        from crest.model_families.fer_mini_xception.runtime import resolution_pipeline
+        selected_pipeline = resolution_pipeline(self, family_hparams)
+        if selected_pipeline is not None:
+            self._attach_bootstrapped_pipeline(selected_pipeline)
+            task_config = derive_runtime_task_config(self.task_config, self.config.training)
         training_policy = reset_training_randomness(self.config.training)
         if training_policy is not None:
             trial.set_user_attr("training_randomness", training_policy)
@@ -3335,6 +3348,11 @@ class NASModelClient:
         history_path = Path(history_path)
         history_path.parent.mkdir(parents=True, exist_ok=True)
         ckpt_path = Path(checkpoint_path)
+        from crest.model_families.fer_mini_xception.runtime import resolution_pipeline
+        selected_pipeline = resolution_pipeline(self, family_hparams)
+        if selected_pipeline is not None:
+            self._attach_bootstrapped_pipeline(selected_pipeline)
+            task_config = derive_runtime_task_config(self.task_config, self.config.training)
         training_policy = reset_training_randomness(self.config.training)
         if training_policy is not None:
             history_path.with_suffix(".randomness.json").write_text(
@@ -3605,6 +3623,10 @@ class NASModelClient:
         history_path.parent.mkdir(parents=True, exist_ok=True)
 
         best_params = self._best_trial_params(study_storage, study_name)
+        from crest.model_families.fer_mini_xception.runtime import resolution_pipeline
+        selected_pipeline = resolution_pipeline(self, best_params)
+        if selected_pipeline is not None:
+            self._attach_bootstrapped_pipeline(selected_pipeline)
         family_hparams = self.model_family.decode_trial_hparams(
             dict(best_params),
             self.model_build_context,
@@ -3956,6 +3978,10 @@ class NASModelClient:
             return {}
         requested_folds = self._fold_rotation_test_folds()
         best_params = self._best_trial_params(study_storage, study_name)
+        from crest.model_families.fer_mini_xception.runtime import resolution_pipeline
+        selected_pipeline = resolution_pipeline(self, best_params)
+        if selected_pipeline is not None:
+            self._attach_bootstrapped_pipeline(selected_pipeline)
         default_quantization_mode = configured_quantization_mode(self.config)
         output_dir = Path(output_dir)
         per_fold: list[dict[str, Any]] = []

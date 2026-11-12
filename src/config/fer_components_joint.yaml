@@ -1,0 +1,47 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
+# Joint-resolution workload fragment. Merge with device, NAS, output, and
+# separately selected epoch/trial-budget settings. Use on client AND server.
+# device.esp32 fixture paths may contain {resolution}.
+
+dataset:
+  name: ferplus_rafdb_mixed
+  params:
+    data_dir: "/path/to/mixed_ferplus_raf_v1"
+    image_size: 96
+    crop_mode: provided_aligned
+    calibration_examples_per_source_class: 50
+    calibration_seed: 42
+
+task:
+  name: facial_expression_classification
+  params:
+    early_stopping_patience: 30
+    learning_rate: 0.001
+    lr_patience: 8
+    augmentation_seed: 2026
+    report_validation_macro_f1: true
+    validation_loss: equal_source_soft_crossentropy
+
+model:
+  family: fer_mini_xception
+  params:
+    export_variant: trained
+    stem_convolutions: 2
+    separable_convolutions_per_block: 2
+    se_reduction_ratio: 8
+    l2: 0.001
+    avoid_duplicate_architectures: true
+  search:
+    resolution: [64, 96]
+    stem_channels: [4, 8, 12, 16]
+    num_blocks: [3, 4]
+    first_block_channels: [8, 16, 24, 32]
+    channel_growth: [1, 1.5, 2]
+    channel_cap: [64, 96, 128]
+    kernel_size: [3, 5]
+    attention_placement: [none, last, last_two]
+    downsampling: [every_block, preserve_first]
+
+training:
+  batch_size: 64
