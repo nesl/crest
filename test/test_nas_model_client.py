@@ -33,9 +33,15 @@ if str(SRC_DIR) not in sys.path:
 
 # The NASModelClient is the unit under test for this module.
 import nas_model_client  # noqa: E402
-from nas_model_client import (NASModelClient, MeasurementInfrastructureError,
-                              MeasurementInfrastructureStop, _ConsecutiveMeasurementFailureGuard,
-                              _runner_fit_kwargs, _sha256_file)  # noqa: E402
+from nas_model_client import (  # noqa: E402
+    HILTransportError,
+    MeasurementInfrastructureError,
+    MeasurementInfrastructureStop,
+    NASModelClient,
+    _ConsecutiveMeasurementFailureGuard,
+    _runner_fit_kwargs,
+    _sha256_file,
+)
 from crest.component_selection import RUNTIME_TRAINING_BATCH_SIZE_KEY  # noqa: E402
 from crest.hardware import (
     HIL_MASTER_ARENA_EXHAUSTED,
@@ -1304,22 +1310,17 @@ class ObjectiveTests(unittest.TestCase):
     def test_training_first_transport_exhaustion_retains_evidence_and_exception(self) -> None:
         """Typed pre-response exhaustion is logged and remains visible to the guard."""
         self.client.config.nas.hil_first = False
-
-        class FakeTransportError(MeasurementInfrastructureError):
-            """Transport-owned failure shape used before its implementation lands."""
-
-            def __init__(self) -> None:
-                super().__init__("bounded receive recovery exhausted")
-                self.endpoint = "tcp://hil:5555"
-                self.request_id = "request-7"
-                self.attempts = 2
-                self.phase = "receive"
-
-        transport_error = FakeTransportError()
+        transport_error = HILTransportError(
+            endpoint="tcp://hil:5555",
+            request_id="request-7",
+            attempts=2,
+            phase="receive",
+            cause=TimeoutError("bounded receive recovery exhausted"),
+        )
         self.client._hil_request = MagicMock(side_effect=transport_error)
         trial = DummyTrial()
 
-        with self.assertRaises(FakeTransportError) as raised:
+        with self.assertRaises(HILTransportError) as raised:
             self.client.objective(trial)
 
         self.assertIs(raised.exception, transport_error)
@@ -2451,6 +2452,19 @@ class TrainingFirstPreflightTests(unittest.TestCase):
         client._probe_hil_endpoint.assert_not_called()
         client._ensure_hil_artifact_support.assert_not_called()
 
+    def test_invalid_local_artifact_limit_fails_before_probe_or_fit(self) -> None:
+        """Local transfer limits are validated before any expensive or remote work."""
+        with tempfile.TemporaryDirectory() as directory:
+            client = self._training_first_client(Path(directory))
+            client.config.network.max_artifact_bytes = 0
+
+            with self.assertRaisesRegex(ValueError, "max_artifact_bytes"):
+                client._preflight_training_first_hil()
+
+            client._probe_hil_endpoint.assert_not_called()
+            client._ensure_hil_artifact_support.assert_not_called()
+            client.model_family.build_model.return_value.fit.assert_not_called()
+
     def test_smoke_refreshes_preflight_for_each_invocation(self) -> None:
         """Smoke tests also renegotiate on every call, including reuse."""
         with tempfile.TemporaryDirectory() as directory:
@@ -2941,16 +2955,6 @@ class MeasurementFailureGuardTests(unittest.TestCase):
         """Real trial logging retains host evidence and valid HIL resets the streak."""
         import csv
 
-        class FakeTransportError(MeasurementInfrastructureError):
-            """Contract-shaped stand-in until the transport implementation merges."""
-
-            def __init__(self, request_id: str) -> None:
-                super().__init__("bounded receive recovery exhausted")
-                self.endpoint = "tcp://hil:5555"
-                self.request_id = request_id
-                self.attempts = 2
-                self.phase = "receive"
-
         with tempfile.TemporaryDirectory() as directory:
             client = _build_test_client(Path(directory))
             client.config.nas.hil_first = False
@@ -2976,7 +2980,13 @@ class MeasurementFailureGuardTests(unittest.TestCase):
                         "bus_voltage_v": 5.0,
                         "measurement_instrumentation_valid": True,
                     }
-                raise FakeTransportError(f"request-{request_index}")
+                raise HILTransportError(
+                    endpoint="tcp://hil:5555",
+                    request_id=f"request-{request_index}",
+                    attempts=2,
+                    phase="receive",
+                    cause=TimeoutError("bounded receive recovery exhausted"),
+                )
 
             client._hil_request = MagicMock(side_effect=hil_request)
             study = optuna.create_study(direction="maximize")
