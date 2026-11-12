@@ -1242,6 +1242,7 @@ class NASModelClient:
 
     def _ensure_hil_artifact_support(self, *, refresh: bool = False) -> dict:
         """Negotiate artifact protocol/backend support before expensive training."""
+        self._max_artifact_bytes()
         if refresh:
             self._reset_hil_socket()
         cached = getattr(self, "_hil_artifact_capabilities", None)
@@ -1339,7 +1340,17 @@ class NASModelClient:
             phase = "send"
             try:
                 if artifact_bytes is not None and attempt > 1:
-                    retry_capabilities = self._ensure_hil_artifact_support()
+                    try:
+                        retry_capabilities = self._ensure_hil_artifact_support()
+                    except HILTransportError as exc:
+                        error = HILTransportError(
+                            endpoint=endpoint,
+                            request_id=request_id,
+                            attempts=attempt,
+                            phase="capability",
+                            cause=exc,
+                        )
+                        raise error from exc
                     if len(artifact_bytes) > retry_capabilities["limits"]["max_artifact_bytes"]:
                         raise HILArtifactCompatibilityError(
                             endpoint=endpoint, advertised_versions=retry_capabilities.get("artifact_transport_versions"),
