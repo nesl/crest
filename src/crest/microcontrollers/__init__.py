@@ -312,7 +312,15 @@ def resolve_device_options(
         }
         if shared_runtime_mode not in (None, ""):
             raw_options["runtime_mode"] = shared_runtime_mode
-        return asdict(resolve_esp32_idf_options(raw_options))
+        resolved_options = asdict(resolve_esp32_idf_options(raw_options))
+        # Generated source names are backend implementation details. Omitting
+        # them keeps the config-to-device path safe to normalize a second time
+        # while direct attempts to configure them remain rejected.
+        for internal_name in (
+            "model_output_dir", "model_source_name", "model_header_name", "model_array_name",
+        ):
+            resolved_options.pop(internal_name)
+        return resolved_options
 
     return None
 

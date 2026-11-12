@@ -534,7 +534,7 @@ class ESP32IDFDevice(ArduinoDevice):
         run_hil = bool(kwargs.get("run_hil", True))
         serial_value = kwargs.get("serial_port") or self._serial_port or "compile-only"
         serial_identity = str(Path(str(serial_value)).resolve()) if run_hil else "compile-only"
-        board_lock_path = Path("/tmp") / (
+        board_lock_path = Path(tempfile.gettempdir()) / (
             "crest-esp32-board-" + hashlib.sha256(serial_identity.encode("utf-8")).hexdigest()[:16] + ".lock"
         )
         setup_complete = False
