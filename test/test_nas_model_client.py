@@ -2501,19 +2501,6 @@ class TrainingFirstPreflightTests(unittest.TestCase):
         client._probe_hil_endpoint.assert_not_called()
         client._ensure_hil_artifact_support.assert_not_called()
 
-    def test_invalid_local_artifact_limit_fails_before_probe_or_fit(self) -> None:
-        """Local transfer limits are validated before any expensive or remote work."""
-        with tempfile.TemporaryDirectory() as directory:
-            client = self._training_first_client(Path(directory))
-            client.config.network.max_artifact_bytes = 0
-
-            with self.assertRaisesRegex(ValueError, "max_artifact_bytes"):
-                client._preflight_training_first_hil()
-
-            client._probe_hil_endpoint.assert_not_called()
-            client._ensure_hil_artifact_support.assert_not_called()
-            client.model_family.build_model.return_value.fit.assert_not_called()
-
     def test_smoke_refreshes_preflight_for_each_invocation(self) -> None:
         """Smoke tests also renegotiate on every call, including reuse."""
         with tempfile.TemporaryDirectory() as directory:

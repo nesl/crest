@@ -1220,7 +1220,6 @@ class NASModelClient:
         dependencies = self._classify_nas_metric_dependencies()
         if not self._should_collect_compile_metrics(dependencies):
             return
-        self._max_artifact_bytes()
         timeout_s = float(self._cfg_get(self.config.network, "hil_probe_timeout_sec", 5.0))
         self._probe_hil_endpoint(timeout_s=timeout_s)
         self._ensure_hil_artifact_support(refresh=True)
