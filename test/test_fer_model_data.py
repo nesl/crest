@@ -23,8 +23,10 @@ from crest.datasets.ferplus_rafdb_mixed import (
     preprocess_grayscale,
     write_representative_fixture,
 )
+from crest.model import load_config
 from crest.pipeline_types import DataSplit
 from crest.registry import dataset_registry, model_family_registry, task_registry
+from crest.runtime_bootstrap import bootstrap_pipeline
 from crest.tasks.facial_expression_classification import FacialExpressionClassificationTask
 
 
@@ -132,6 +134,85 @@ def test_builtin_registration_and_fixed_resolution_fragments() -> None:
         assert selection["dataset_config"].image_size == size
         assert selection["task_config"].runtime_training_batch_size == 64
         assert "runtime_training_batch_size" not in raw["task"]["params"]
+
+
+@pytest.mark.parametrize("explicit_fixed_split", [False, True])
+def test_loaded_composed_hci_config_bootstraps_fixed_split_probability_pipeline(
+    tmp_path: Path,
+    explicit_fixed_split: bool,
+) -> None:
+    data_dir = tmp_path / "mixed"
+    _write_dataset(data_dir)
+    config_dir = Path(__file__).resolve().parents[1] / "src" / "config"
+    raw = yaml.safe_load((config_dir / "fer_components_96.yaml").read_text())
+    raw["dataset"]["params"].update(
+        data_dir=str(data_dir),
+        calibration_examples_per_source_class=1,
+    )
+    if explicit_fixed_split:
+        raw["task"]["params"]["evaluation"] = {"protocol": "fixed_split"}
+    raw["device"] = {
+        "name": "FREENOVE_ESP32_S3_WROOM",
+        "hil": True,
+        "compile_when_hil_disabled": "auto",
+        "runtime_mode": "back_to_back",
+        "measured_inference_runs": 10,
+    }
+    raw["training"].update(
+        nas_trials=1,
+        train=True,
+        energy_aware=False,
+        quantization={"mode": "int8_ptq", "search": False, "choices": ["int8_ptq"]},
+    )
+    raw["nas"] = {
+        "hil_first": False,
+        "score": {
+            "type": "scoring-function",
+            "params": {
+                "terms": [{"type": "weighted", "metric": "macro_f1", "weight": 1.0}]
+            },
+        },
+        "prune": {"rules": []},
+        "feasibility": {"train_if_infeasible": False, "rules": []},
+    }
+    raw["outputs"] = {
+        "models_dir": str(tmp_path / "models"),
+        "candidate_dir": str(tmp_path / "candidates"),
+        "artifact_stem": "CREST_FER96_Test",
+    }
+    config_path = tmp_path / "composed_fer96.yaml"
+    config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    loaded = load_config(config_path)
+    assert loaded.task.params.evaluation.protocol == "fixed_split"
+    assert loaded.task.params.evaluation.fold_rotation.test_folds == list(range(1, 11))
+    ensure_fer_components_registered()
+    pipeline = bootstrap_pipeline(loaded)
+    task_config = pipeline.selection["task_config"]
+    assert task_config.runtime_training_batch_size == 64
+    assert task_config.evaluation.protocol == "fixed_split"
+    assert pipeline.target_spec.output_names == ["probabilities"]
+    assert pipeline.target_spec.metadata["from_logits"] is False
+    assert pipeline.model_build_context.input_shape == (96, 96)
+
+    plan = pipeline.task.build_fit_plan(
+        pipeline.bundle,
+        task_config,
+        pipeline.target_spec,
+        mode="search",
+        combine_train_val=False,
+    )
+    batches = list(plan.fit_kwargs["x"].as_numpy_iterator())
+    assert len(batches) == 1
+    assert batches[0][0].shape == (10, 96, 96)
+    assert batches[0][1].shape == (10, 5)
+    assert plan.monitor_metric == "val_loss"
+
+
+def test_facial_expression_task_explicitly_rejects_fold_rotation(tmp_path: Path) -> None:
+    task = FacialExpressionClassificationTask(checkpoint_path=tmp_path / "best.keras")
+    with pytest.raises(ValueError, match="only supports fixed_split"):
+        task.validate_config(Dict(evaluation=Dict(protocol="fold_rotation")))
 
 
 def test_loader_preserves_source_order_soft_targets_weights_and_resolution_identity(tmp_path: Path) -> None:

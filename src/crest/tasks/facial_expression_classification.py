@@ -198,6 +198,7 @@ class FacialExpressionClassificationTask(TaskABC):
             "lr_patience",
             "augmentation_seed",
             "report_validation_macro_f1",
+            "evaluation",
             RUNTIME_TRAINING_BATCH_SIZE_KEY,
         }
         unknown = sorted(_config_keys(task_config) - allowed)
@@ -222,6 +223,17 @@ class FacialExpressionClassificationTask(TaskABC):
         report = _cfg_get(task_config, "report_validation_macro_f1", True)
         if not isinstance(report, bool):
             raise ValueError("task.params.report_validation_macro_f1 must be a real boolean.")
+        evaluation = _cfg_get(task_config, "evaluation", None)
+        if evaluation is not None:
+            if not isinstance(evaluation, Mapping) and not callable(
+                getattr(evaluation, "items", None)
+            ):
+                raise ValueError("task.params.evaluation must be a mapping.")
+            protocol = str(_cfg_get(evaluation, "protocol", "fixed_split")).strip().lower()
+            if protocol != "fixed_split":
+                raise ValueError(
+                    "Facial-expression task.params.evaluation.protocol only supports fixed_split."
+                )
         runtime_batch = _cfg_get(task_config, RUNTIME_TRAINING_BATCH_SIZE_KEY, None)
         if runtime_batch is not None:
             _positive_integer(runtime_batch, field_name=RUNTIME_TRAINING_BATCH_SIZE_KEY)
