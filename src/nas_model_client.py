@@ -2071,26 +2071,18 @@ class NASModelClient:
     def objective(self, trial: optuna.Trial) -> float | tuple:
         """Optimize CREST architecture and training hyperparameters.
 
-        This objective samples model hyperparameters (e.g., filters, kernel size,
-        dilations) via Optuna, builds the corresponding TCN model to estimate
-        FLOPs, queries a hardware-in-the-loop (HIL) server for resource/latency
-        metrics, and—when the candidate passes resource and configured
-        feasibility gates—trains and scores the model on the OXIOD dataset.
-        Trials are pruned on HIL errors or resource violations. The returned
-        objective is either a single score or a multi-objective tuple depending
-        on configuration.
+        This objective asks the active model-family component to sample, validate,
+        and build a candidate for the active task. It collects the configured
+        host and hardware metrics, evaluates pruning and feasibility policy, and
+        returns either a scalar score or a multi-objective tuple. Hardware-first
+        evaluation remains the default; training-first evaluation measures the
+        exact selected-checkpoint artifact already evaluated on the host.
 
         Parameters
         ----------
         trial : optuna.Trial
-            The Optuna trial object used to sample hyperparameters and report
-            intermediate results. Hyperparameters include:
-            - ``nb_filters`` (int): number of convolution filters.
-            - ``kernel_size`` (int): convolution kernel size.
-            - ``dropout_rate`` (float): dropout probability.
-            - ``use_skip_connections`` (bool): enable residual/skip connections.
-            - ``norm_flag`` (bool): enable normalization layers.
-            - ``dilations_index`` (int): index into predefined dilation patterns.
+            Optuna trial used by the selected model family and runner-owned
+            deployment choices to sample hyperparameters and report results.
 
         Returns
         -------
@@ -2110,21 +2102,19 @@ class NASModelClient:
 
         Notes
         -----
-        The trial phases are:
-        1. sample/build the model family hyperparameters
-        2. optionally train/evaluate/export before HIL when configured
-        3. request HIL metrics for the candidate
-        4. apply hardware limits, arena checks, prune rules, and feasibility
-        5. train/evaluate after HIL when that work has not already completed
-        6. validate objective values and log the trial
+        With ``nas.hil_first: true`` (the backward-compatible default), hardware
+        evaluation and gates precede optional task training. With
+        ``nas.hil_first: false`` and training enabled, the task is trained first,
+        the selected checkpoint is snapshotted, one TFLite artifact is exported
+        and host-evaluated, and those same bytes are supplied for HIL measurement.
+        Both orders then reuse the same hardware checks, feasibility, scoring,
+        and logging paths.
 
-        Single-objective runs prune by raising ``optuna.TrialPruned``.
-        Multi-objective HIL errors, resource failures, and feasibility gates
-        instead log ``pruned=True`` and return direction-aware penalty tuples
-        so Optuna records a complete trial with the configured objective shape.
-        Sentinel conventions such as ``-1`` and ``10000.0`` are used to
-        preserve legacy logging/scoring expectations when hardware or training
-        metrics are unavailable.
+        A valid measurement that violates feasibility retains its real metrics,
+        task results, objectives, and signed constraints. Compile, allocation,
+        runtime, or transport failures retain any completed host evidence but
+        follow the existing prune/penalty or infrastructure-FAIL policy when a
+        hardware objective is unavailable.
         """
         artifacts_dir = self._artifacts_dir()
         log_path = artifacts_dir / self.config.outputs.log_file_name

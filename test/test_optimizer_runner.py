@@ -262,10 +262,23 @@ def test_prefit_failure_then_viable_candidate_trains_once_and_logs_real_csv(tmp_
 
 
 def test_fixed_candidate_shared_objective_matches_prior_enqueued_execution(tmp_path):
+    def normalize_run_root(value, run_root):
+        """Replace only the run-specific directory prefix in nested provenance."""
+        if isinstance(value, str):
+            return value.replace(str(run_root), "<RUN_ROOT>")
+        if isinstance(value, dict):
+            return {key: normalize_run_root(item, run_root) for key, item in value.items()}
+        if isinstance(value, list):
+            return [normalize_run_root(item, run_root) for item in value]
+        if isinstance(value, tuple):
+            return tuple(normalize_run_root(item, run_root) for item in value)
+        return value
+
     candidates=[{"width":3},{"width":4}]
     outcomes=[]
     for shared in [False,True]:
-        c=real_objective_client(tmp_path/str(shared))
+        run_root=tmp_path/str(shared)
+        c=real_objective_client(run_root)
         c.study_name="parity"
         c._hil_request=MagicMock(side_effect=[hil_metrics() for _ in candidates])
         study=optuna.create_study(direction="maximize")
@@ -277,7 +290,11 @@ def test_fixed_candidate_shared_objective_matches_prior_enqueued_execution(tmp_p
                 for params in candidates: study.enqueue_trial(params)
                 study.optimize(c.objective,n_trials=2)
         trials=[(t.params,t.values,{k:v for k,v in t.user_attrs.items() if k!=PROPOSAL_ATTR},t.intermediate_values,t.system_attrs) for t in study.trials]
-        csv_text=(c._artifacts_dir()/c.config.outputs.log_file_name).read_text()
+        trials=normalize_run_root(trials,run_root)
+        csv_text=normalize_run_root(
+            (c._artifacts_dir()/c.config.outputs.log_file_name).read_text(),
+            run_root,
+        )
         inputs=[call.args[0] for call in c._hil_request.call_args_list]
         outcomes.append((trials,csv_text,inputs))
     assert outcomes[0]==outcomes[1]
