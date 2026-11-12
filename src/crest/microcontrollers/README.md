@@ -467,3 +467,55 @@ Keep board/toolchain code in the backend, architecture/search logic in model fam
 - Energy-aware and harness-only checks confirm the configured harness pins and settings.
 - `evaluate(...)` returns normalized `DeviceMetrics` accepted by the shared HIL controller.
 - This README and the root README describe required setup and platform caveats, and NumPy-style docstrings match changed functions, classes, dataclasses, and tests.
+
+## Freenove ESP32-S3 backend
+
+Select `device.name: FREENOVE_ESP32_S3_WROOM`. The backend builds the tracked
+ESP-IDF project in `firmware/esp32/crest_esp32_tflm`, preserves its incremental
+build cache, and programs only the application partition with `app-flash`.
+The verified profile is ESP-IDF 5.5.1, ESP-TFLM 1.3.3~1, a 240 MHz CPU, 8 MiB
+DIO/40 MHz flash, 8 MiB octal/40 MHz PSRAM, debug optimization with ESP-NN,
+and a 4 MiB factory application partition. Unsupported target, clock, runtime,
+optimization, or hardware-capacity overrides are rejected.
+
+The backend accepts either the legacy model-plus-calibration export path or an
+exact supplied TFLite artifact. Supplied artifacts bypass model materialization,
+calibration, and export; their bytes are copied unchanged and must expose one
+int8 `[1,H,W]` input and one batch-one int8 output with finite positive
+per-tensor quantization. The request logical input shape must match `(H,W)`.
+Conflicting model, calibration, or checkpoint inputs are rejected.
+
+The backend consumes prepared representative tensors without performing FER
+image preprocessing. Configure both `device.esp32.fixture_npz_path` and
+`device.esp32.fixture_manifest_path`. The NPZ contains exactly float32
+`inputs` with shape `(N,H,W)` and an ordered Unicode `ids` vector. The manifest
+binds `npz_sha256`, `inputs_shape`, `inputs_dtype`, and `ids` to those bytes.
+Each artifact's actual int8 input scale and zero point are used for
+quantization. `device.esp32.warmup_runs` and the shared
+`device.measured_inference_runs` are counts per image; the total timed invokes
+are `N * measured_inference_runs`. `device.esp32.latency_aggregation` is
+`median` by default and may be set to `mean`.
+
+Only `MicroInterpreter::Invoke()` is timed. Input bytes are recopied before
+every warmup and measured invoke, and the 20 ms scheduler yield occurs after
+timing. Runtime telemetry is accepted only when the model and fixture hashes,
+settings, ordered samples, output vector sizes, arena accounting, sample count,
+and recomputed aggregate all agree. A completed run with incomplete evidence is
+reported as `HIL_ERROR_INTEGRITY`. Build evidence also checks that the generated
+C array and built application contain the exact staged TFLite bytes. Each request
+uses a unique retained staging directory, including repeated model-variant names,
+so later builds cannot overwrite earlier application and measurement evidence.
+
+The saved harness contract uses GPIO 21 as a DUT output to harness D2 trigger
+(input pulldown; rising begins activity and falling ends it) and GPIO 47 as a
+DUT output to harness D3 arm (input pullup; active low). This mapping comes from
+the repository harness firmware and saved deployment sources; it does not prove
+what is currently flashed. The GPIO interval is activity signaling only.
+Classifier latency comes exclusively from invoke samples, and this backend does
+not currently report energy or cadenced measurements.
+
+Runtime measurement requires explicit serial and network timeouts large enough
+for every warmup and measured invoke. The HCI profile uses a 1200 second DUT
+serial timeout, 30 second DUT-ready timeout, 2400 second network receive timeout,
+900 second build timeout, and 120 second upload timeout. Compile-only operation
+requires the IDF toolchain but no connected board.

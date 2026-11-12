@@ -1089,7 +1089,8 @@ class HILServer:
             staging_root.mkdir(parents=True, exist_ok=True)
             staged_root = Path(tempfile.mkdtemp(prefix="request-", dir=staging_root))
             staged_path = staged_root / "model.tflite"
-            staged_path.write_bytes(artifact_bytes)
+            with staged_path.open("xb") as handle:
+                handle.write(artifact_bytes)
             if staged_path.read_bytes() != artifact_bytes:
                 raise OSError("Staged artifact bytes changed after writing.")
             artifact_io_phase = None

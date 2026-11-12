@@ -38,6 +38,11 @@ def _registry_entries() -> dict[str, tuple[str, str, str]]:
             "STM32NucleoN657X0QDevice",
             "BOARD_DEFAULT_SPEC",
         ),
+        "FREENOVE_ESP32_S3_WROOM": (
+            "crest.microcontrollers.esp32_idf",
+            "ESP32IDFDevice",
+            "BOARD_DEFAULT_SPEC",
+        ),
     }
 
 
@@ -289,6 +294,26 @@ def resolve_device_options(
         )
         return asdict(resolved)
 
+    if normalized_name == "FREENOVE_ESP32_S3_WROOM":
+        from .esp32_idf import resolve_esp32_idf_options
+
+        esp32_cfg = _cfg_get(device_config, "esp32", None)
+        option_names = (
+            "project_root", "build_dir", "idf_py", "target", "arena_sizes_kb", "max_internal_ram_bytes",
+            "max_flash_bytes", "psram_bytes", "harness_trigger_gpio",
+            "harness_arm_gpio", "optimization_profile", "esp_nn_enabled", "build_timeout_s", "upload_timeout_s",
+            "cpu_clock_mhz", "fixture_npz_path", "fixture_manifest_path",
+            "warmup_runs", "latency_aggregation",
+        )
+        raw_options = {
+            name: _cfg_get(esp32_cfg, name, None)
+            for name in option_names
+            if esp32_cfg is not None and _cfg_get(esp32_cfg, name, None) not in (None, "")
+        }
+        if shared_runtime_mode not in (None, ""):
+            raw_options["runtime_mode"] = shared_runtime_mode
+        return asdict(resolve_esp32_idf_options(raw_options))
+
     return None
 
 
@@ -325,6 +350,11 @@ def __getattr__(name: str) -> Any:
             "crest.microcontrollers.stm32_nucleo_n657x0",
             "STM32NucleoN657X0QDevice",
         )
+    if name == "ESP32IDFDevice":
+        return _load_symbol(
+            "crest.microcontrollers.esp32_idf",
+            "ESP32IDFDevice",
+        )
     raise AttributeError(name)
 
 
@@ -332,6 +362,7 @@ __all__ = [
     "ArduinoBLE33Device",
     "ArduinoPortentaH7Device",
     "STM32NucleoN657X0QDevice",
+    "ESP32IDFDevice",
     "get_device",
     "list_device_specs",
     "resolve_device_options",

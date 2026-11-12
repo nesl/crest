@@ -537,6 +537,15 @@ class HILRequestTests(unittest.TestCase):
         self.assertEqual(result["artifact_transport_versions"], [1])
         self.assertEqual(client.socket.send_json.call_args.args[0]["request_type"], "capabilities")
 
+    def test_artifact_preflight_rejects_invalid_local_size_limit_even_when_cached(self) -> None:
+        client = _build_test_client()
+        client.config.network.max_artifact_bytes = 0
+        client._hil_artifact_capabilities = self.artifact_capabilities()
+        client._hil_artifact_capability_endpoint = "tcp://localhost:5555"
+        with self.assertRaisesRegex(ValueError, "max_artifact_bytes"):
+            client._ensure_hil_artifact_support()
+        client.socket.send_json.assert_not_called()
+
     def test_legacy_addict_network_uses_transport_defaults(self) -> None:
         client = _build_test_client()
         client.config.network = Dict(host="localhost", port=5555, recv_timeout_sec=5, send_timeout_sec=5)
@@ -548,6 +557,46 @@ class HILRequestTests(unittest.TestCase):
         client.socket.recv_json.return_value = {"error_code": 1}
         with self.assertRaises(nas_model_client.HILArtifactCompatibilityError):
             client._ensure_hil_artifact_support()
+
+    @patch("nas_model_client.read_tflite_artifact")
+    def test_retry_capability_timeout_preserves_artifact_request_id(self, read_mock) -> None:
+        client = _build_test_client()
+        client.config.network.hil_request_retries = 1
+        read_mock.return_value = (b"TFL3-bytes", {"inputs": [], "outputs": []})
+        capability_timeout = nas_model_client.HILTransportError(
+            endpoint="tcp://localhost:5555",
+            request_id=None,
+            attempts=2,
+            phase="capability",
+            cause=zmq.error.Again(),
+        )
+        client._ensure_hil_artifact_support = MagicMock(
+            side_effect=[self.artifact_capabilities(), capability_timeout]
+        )
+        client.socket.recv_json.side_effect = zmq.error.Again()
+        attempted_socket = client.socket
+
+        with self.assertRaises(nas_model_client.HILTransportError) as raised:
+            client._hil_request(
+                {"family_hparams": {}, "runtime_metadata": {}},
+                artifact_path=Path("model.tflite"),
+            )
+
+        error = raised.exception
+        self.assertIsInstance(error.request_id, str)
+        self.assertTrue(error.request_id)
+        self.assertEqual(error.attempts, 2)
+        self.assertEqual(error.phase, "capability")
+        self.assertIs(error.cause, capability_timeout)
+        self.assertIs(error.__cause__, capability_timeout)
+        attempted_socket.send_multipart.assert_called_once()
+
+    def test_non_mapping_hil_reply_is_integrity_error(self) -> None:
+        client = _build_test_client()
+        client.socket.recv_json.return_value = []
+        with self.assertRaises(nas_model_client.HILTransportError) as raised:
+            client._hil_request({"family_hparams": {}, "runtime_metadata": {}})
+        self.assertEqual(raised.exception.phase, "integrity")
 
     @patch("nas_model_client.read_tflite_artifact")
     def test_tampered_successful_artifact_reply_is_transport_error(self, read_mock) -> None:
