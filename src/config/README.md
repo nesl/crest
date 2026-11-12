@@ -25,11 +25,14 @@ Case-study reproducibility configs live under [`case_study_configs/`](case_study
 The STM32 example is the most complete commented score/prune reference.
 [`nas_config_memory_proxy.yaml`](nas_config_memory_proxy.yaml) adds a desktop RMSE/static-memory-traffic example.
 
-The FER evaluation fragment is resolution-neutral. Compose it with exactly one
-of the 64- or 96-pixel component fragments, replace its paired representative
+The FER evaluation fragment is resolution-neutral. Recursively merge keys
+inside shared blocks with exactly one of the 64- or 96-pixel component
+fragments, replace the DUT serial-port placeholder and paired representative
 fixture paths, and separately supply output, epoch, and trial-budget settings.
-The selected component fragment supplies the single `training.batch_size: 64`
-setting. Do not duplicate that batch setting in an additional overlay. See the
+A shallow top-level overlay would replace the component's `training` block and
+silently lose its batch setting. The selected component fragment supplies the
+single `training.batch_size: 64` setting; do not duplicate it in another
+overlay. See the
 [Freenove ESP32-S3 backend guide](../crest/microcontrollers/README.md#freenove-esp32-s3-backend)
 for the fixed toolchain and board profile.
 

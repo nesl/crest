@@ -15,6 +15,17 @@ def _load(name: str) -> dict:
     return yaml.safe_load((CONFIG_ROOT / name).read_text(encoding="utf-8"))
 
 
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge mapping keys in the documented composition order."""
+    merged = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def test_fer_esp32_evaluation_fragment_is_resolution_and_budget_neutral() -> None:
     """Resolution, campaign budgets, outputs, and duplicate batch knobs stay external."""
     config = _load("fer_esp32_evaluation.yaml")
@@ -35,6 +46,10 @@ def test_fer_esp32_evaluation_fragment_is_resolution_and_budget_neutral() -> Non
     for resolution in (64, 96):
         component = _load(f"fer_components_{resolution}.yaml")
         assert component["training"] == {"batch_size": 64}
+        composed = _deep_merge(component, config)
+        assert composed["dataset"]["params"]["image_size"] == resolution
+        assert composed["training"]["batch_size"] == 64
+        assert composed["training"]["quantization"]["mode"] == "int8_ptq"
 
 
 def test_fer_esp32_evaluation_fragment_matches_reviewed_hci_policy() -> None:
@@ -47,6 +62,7 @@ def test_fer_esp32_evaluation_fragment_matches_reviewed_hci_policy() -> None:
     network = config["network"]
 
     assert device["name"] == "FREENOVE_ESP32_S3_WROOM"
+    assert device["serial_port"].startswith("/dev/serial/by-id/")
     assert device["runtime_mode"] == "back_to_back"
     assert device["measured_inference_runs"] == 10
     assert device["serial_timeout_s"] == 1200.0

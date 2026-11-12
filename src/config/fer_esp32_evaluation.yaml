@@ -1,8 +1,10 @@
 # Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
 # SPDX-License-Identifier: BSD-3-Clause
-# Resolution-neutral FER/HCI evaluation fragment. Merge with exactly one of
-# fer_components_64.yaml or fer_components_96.yaml, then supply outputs and
-# separately reviewed epoch/trial budgets. This fragment is not runnable alone.
+# Resolution-neutral FER/HCI evaluation fragment. Recursively merge keys inside
+# shared blocks with exactly one of fer_components_64.yaml or
+# fer_components_96.yaml; a shallow top-level overlay would lose batch_size: 64.
+# Then supply outputs and separately reviewed epoch/trial budgets. This fragment
+# is not runnable alone.
 # Board/toolchain setup: ../crest/microcontrollers/README.md#freenove-esp32-s3-backend
 
 device:
@@ -10,7 +12,7 @@ device:
   hil: true
   compile_when_hil_disabled: auto
   runtime_mode: back_to_back
-  serial_port: "/dev/ttyACM0"
+  serial_port: "/dev/serial/by-id/replace-with-freenove-esp32-s3"
   measured_inference_runs: 10  # Per representative image.
   serial_timeout_s: 1200.0
   dut_ready_timeout_s: 30.0
