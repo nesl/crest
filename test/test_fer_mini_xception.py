@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.util
 import itertools
+import os
 from pathlib import Path
 
 import numpy as np
@@ -27,7 +28,18 @@ from crest.model_families.fer_mini_xception import (
 from crest.optimizers.search_space import SearchParam
 from crest.pipeline_types import ModelBuildContext, TargetSpec
 
-HCI_MODEL_SOURCE = Path("/home/joseph/Projects/HCI-final-project/training/hci_fer/model.py")
+
+def _hci_model_source() -> Path:
+    """Resolve the optional audited HCI source without embedding a host path."""
+    configured = os.environ.get("CREST_HCI_FER_MODEL_SOURCE")
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home().joinpath(
+        "Projects", "HCI-final-project", "training", "hci_fer", "model.py"
+    )
+
+
+HCI_MODEL_SOURCE = _hci_model_source()
 
 
 def _context(image_size: int = 96) -> ModelBuildContext:
