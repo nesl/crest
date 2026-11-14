@@ -92,13 +92,16 @@ def test_windowed_handshake_failure_never_falls_back_or_flashes(monkeypatch):
     fallback.assert_not_called()
 
 
-def test_esp32_requires_energy_after_shared_helper(monkeypatch):
+@pytest.mark.parametrize("flash_policy", ["never", "once", "always"])
+def test_esp32_requires_energy_after_shared_helper(monkeypatch, flash_policy):
     """Esp32 requires energy after shared helper.
 
     Parameters
     ----------
     monkeypatch : object
         Test fixture or parameter for this regression.
+    flash_policy : str
+        Configured harness installation policy forwarded to the shared helper.
     """
     from crest.devices import MeasureResult
     helper = Mock(return_value=MeasureResult(0.2, None, [], None))
@@ -106,9 +109,9 @@ def test_esp32_requires_energy_after_shared_helper(monkeypatch):
     device = ESP32IDFDevice()
     device._active_manifest = {'fixture_count': 10, 'measured_runs_per_fixture': 2}
     result = device.measure(serial_port='dut', baud_rate=115200, serial_timeout_s=1,
-                            harness_serial_port='harness', harness_auto_flash='always')
+                            harness_serial_port='harness', harness_auto_flash=flash_policy)
     assert helper.call_args.kwargs['measured_inference_runs'] == 20
-    assert helper.call_args.kwargs['harness_auto_flash'] == 'never'
+    assert helper.call_args.kwargs['harness_auto_flash'] == flash_policy
     assert not result.power_metrics['measurement_energy_valid']
     assert not result.power_metrics['measurement_instrumentation_valid']
 

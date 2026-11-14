@@ -614,8 +614,7 @@ class ESP32IDFDevice(ArduinoDevice):
                 options = {key: value for key, value in kwargs.items() if value is not None}
                 options.setdefault("serial_port", self._serial_port)
                 options["measured_inference_runs"] = int(manifest.get("fixture_count", 0)) * int(manifest.get("measured_runs_per_fixture", 0))
-                # Firmware/calibration installation is an explicit operator action.
-                options["harness_auto_flash"] = "never"
+                # Honor the shared configured harness installation policy.
                 result = measure_serial(**options, windowed_energy=True)
             else:
                 result = super().measure(**kwargs)
