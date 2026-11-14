@@ -58,7 +58,9 @@ bool ReadStart() {
 
 [[noreturn]] void ReportFatalOnStart(const char *message) {
   while (true) {
-    puts("DUT READY");
+    // End any partial boot/upload output before the exact readiness token.
+    puts("\nDUT READY");
+    std::fflush(stdout);
     if (ReadStart()) puts(message);
   }
 }
@@ -113,7 +115,9 @@ extern "C" void app_main() {
          CREST_AGGREGATE_MEDIAN ? "median" : "mean");
 
   while (true) {
-    puts("DUT READY");
+    // End any partial boot/upload output before the exact readiness token.
+    puts("\nDUT READY");
+    std::fflush(stdout);
     if (!ReadStart()) continue;
     printf("ML_READY model_sha256=%s fixture_sha256=%s arena_used=%u arena_reserved=%u fixtures=%u warmups=%u repetitions=%u aggregation=%s\n",
            kCrestModelSha256, kCrestFixtureSha256,
