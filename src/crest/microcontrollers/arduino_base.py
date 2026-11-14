@@ -866,13 +866,19 @@ def upload_sketch(
         Upload success flag and captured output.
     """
     _log_arduino_cli_path()
+    # Arduino discovery and bootloader tracking use the kernel device name.
+    # Keep stable by-id paths in configuration and serial measurement.
+    upload_port = serial_port
+    port_path = Path(serial_port)
+    if port_path.is_symlink():
+        upload_port = str(port_path.resolve(strict=True))
     upload_cmd = [
         ARDUINO_CLI_BIN,
         "--config-file",
         ARDUINO_CLI_CONFIG,
         "upload",
         "-p",
-        serial_port,
+        upload_port,
         "--fqbn",
         fqbn,
         "--build-path",
@@ -939,7 +945,7 @@ def ensure_harness_firmware(
         build_defines=build_defines,
     )
     if not compile_result.success or compile_result.build_dir is None:
-        raise RuntimeError("Harness compile failed.")
+        raise RuntimeError(f"Harness compile failed.\n{compile_result.log}")
     upload_result = upload_harness_sketch(
         sketch_path=None,
         fqbn=harness_fqbn,
@@ -947,7 +953,7 @@ def ensure_harness_firmware(
         serial_port=harness_serial_port,
     )
     if not upload_result.success:
-        raise RuntimeError("Harness upload failed.")
+        raise RuntimeError(f"Harness upload failed.\n{upload_result.log}")
 
     _HARNESS_FLASHED_SIGNATURES[harness_serial_port] = flashed_signature
     time.sleep(0.5)
