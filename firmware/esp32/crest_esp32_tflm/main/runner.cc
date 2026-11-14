@@ -123,7 +123,6 @@ extern "C" void app_main() {
            CREST_AGGREGATE_MEDIAN ? "median" : "mean");
     gpio_set_level(static_cast<gpio_num_t>(CREST_HARNESS_ARM_PIN), 0);
     vTaskDelay(pdMS_TO_TICKS(CREST_DUT_ARM_HOLD_MS));
-    gpio_set_level(static_cast<gpio_num_t>(CREST_HARNESS_TRIGGER_PIN), 1);
     constexpr size_t kSamples = kCrestFixtureCount * CREST_INFERENCE_RUNS;
     auto *timings = static_cast<long long *>(heap_caps_malloc(
         kSamples * sizeof(long long), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -142,9 +141,12 @@ extern "C" void app_main() {
       }
       for (size_t repetition = 0; repetition < CREST_INFERENCE_RUNS && !failed; ++repetition) {
         std::memcpy(interpreter.input(0)->data.int8, kCrestFixtureInputs[fixture], kCrestFixtureBytes);
+        gpio_set_level(static_cast<gpio_num_t>(CREST_HARNESS_TRIGGER_PIN), 1);
         const int64_t start = esp_timer_get_time();
         const TfLiteStatus result = interpreter.Invoke();
-        timings[sample] = esp_timer_get_time() - start;
+        const int64_t elapsed = esp_timer_get_time() - start;
+        gpio_set_level(static_cast<gpio_num_t>(CREST_HARNESS_TRIGGER_PIN), 0);
+        timings[sample] = elapsed;
         if (result != kTfLiteOk) { failed = true; break; }
         printf("ML_SAMPLE fixture=%u id=%s repetition=%u invoke_us=%lld\n",
                static_cast<unsigned>(fixture), kCrestFixtureIds[fixture],

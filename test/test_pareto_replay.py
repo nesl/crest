@@ -704,6 +704,7 @@ def test_dry_run_writes_manifest_requests_and_results_without_server(
     assert manifest["entrypoint"] == "src/pareto_hil_replay.py"
     assert manifest["scheduled_candidates"] == 1
     assert manifest["args"] == {
+        "artifact_manifest": None,
         "source_run_dir": str(source_dir),
         "target_run_dir": None,
         "target_config": str(target_config),
@@ -723,6 +724,10 @@ def test_dry_run_writes_manifest_requests_and_results_without_server(
     assert (output_dir / "replay_results.csv").exists()
     assert results[0]["replay_status"] == "dry_run"
     assert requests[0] == {
+        "source_study": None,
+        "source_trial": None,
+        "artifact_sha256": None,
+        "source_tflite_path": None,
         "ordinal": 1,
         "source_row_index": 0,
         "payload_key": requests[0]["payload_key"],

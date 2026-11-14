@@ -85,6 +85,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Explicit target HIL YAML config path. Use this or --target-run-dir, not both.",
     )
+    parser.add_argument("--artifact-manifest", default=None, help="Verified saved-artifact manifest; enables exact replay of training-first studies.")
     parser.add_argument("--source-csv", default=None, help="Explicit source NAS log CSV path.")
     parser.add_argument("--source-config", default=None, help="Explicit source NAS config YAML path.")
     parser.add_argument(
@@ -147,6 +148,7 @@ def namespace_to_replay_config(args: argparse.Namespace) -> ReplayRunConfig:
         target_run_dir=optional_path(args.target_run_dir),
         target_config=optional_path(args.target_config),
         source_csv=optional_path(args.source_csv),
+        artifact_manifest=optional_path(args.artifact_manifest),
         source_config=optional_path(args.source_config),
         objectives=args.objectives,
         output_dir=optional_path(args.output_dir),

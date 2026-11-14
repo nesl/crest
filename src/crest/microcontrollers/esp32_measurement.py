@@ -29,7 +29,24 @@ def validate_measurement_log(
     latency_s: float | None,
     psram_bytes: int,
 ) -> tuple[dict[str, object], dict[str, object]]:
-    """Validate identities, ordered samples, outputs, arena, and aggregate."""
+    """Validate identities, ordered samples, outputs, arena, and aggregate.
+
+    Parameters
+    ----------
+    lines : Sequence[str]
+        DUT telemetry, optionally prefixed by the shared harness logger.
+    manifest : dict[str, Any]
+        Expected model and fixture identity and invocation workload.
+    latency_s : float | None
+        Reported aggregate latency in seconds.
+    psram_bytes : int
+        Configured maximum arena capacity.
+
+    Returns
+    -------
+    tuple[dict[str, object], dict[str, object]]
+        Evidence metrics and detailed validation diagnostics.
+    """
 
     ids = [str(value) for value in manifest.get("fixture_ids", [])]
     wire_ids = [str(value) for value in manifest.get("fixture_wire_ids", ids)]
@@ -46,7 +63,7 @@ def validate_measurement_log(
     samples: list[dict[str, object]] = []
     outputs: list[dict[str, object]] = []
     for raw in lines:
-        line = raw.strip()
+        line = raw.removeprefix("DUT: ").strip()
         ready_match = _READY_RE.match(line)
         if ready_match:
             ready = ready_match.groups()
@@ -135,3 +152,63 @@ def validate_measurement_log(
         "computed_latency_s": computed_latency_s,
     }
     return evidence, diagnostics
+
+
+def validate_energy_log(
+    *, lines: Sequence[str], metrics: dict[str, Any], expected_runs: int, invocation_us: int,
+) -> tuple[dict[str, object], list[str]]:
+    """Validate observed invocation windows and aggregate harness energy.
+
+    Parameters
+    ----------
+    lines : Sequence[str]
+        Merged DUT/harness serial telemetry.
+    metrics : dict[str, Any]
+        Energy values parsed by the shared CREST logger.
+    expected_runs : int
+        Fixture count multiplied by measured repetitions per fixture.
+    invocation_us : int
+        Sum of validated DUT invocation timings, excluding warmups.
+
+    Returns
+    -------
+    tuple[dict[str, object], list[str]]
+        Energy provenance and failure reasons. Energy includes board overhead
+        on the monitored rail and is not idle-subtracted.
+    """
+    harness = [line.removeprefix("HARNESS: ") for line in lines if line.startswith("HARNESS: ")]
+    reasons = []
+    windows = [re.fullmatch(r"energy windows: (\d+) elapsed_us: (\d+)", line) for line in harness]
+    windows = [match for match in windows if match]
+    if "WINDOWS READY 1" not in harness or "DONE" not in harness:
+        reasons.append("energy_protocol")
+    if any("error" in line.lower() for line in lines):
+        reasons.append("energy_logger_error")
+    count = elapsed = 0
+    if len(windows) == 1:
+        count, elapsed = map(int, windows[0].groups())
+    if count != expected_runs or expected_runs <= 0:
+        reasons.append("energy_window_count")
+    # A gross alignment check, not a substitute for oscilloscope validation.
+    if invocation_us <= 0 or abs(elapsed - invocation_us) > max(2000 * expected_runs, invocation_us * 0.02):
+        reasons.append("energy_window_timing")
+    for key in ("energy_mj_per_inference", "avg_power_mw", "bus_voltage_v", "harness_latency_s"):
+        value = metrics.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            reasons.append("invalid_" + key)
+    if harness.count(f"runs: {expected_runs}") != 1:
+        reasons.append("energy_runs")
+    energy = metrics.get("energy_mj_per_inference")
+    evidence = {
+        "measurement_energy_valid": not reasons,
+        "measurement_energy_kind": "measured",
+        "measurement_energy_scope": "monitored_board_rail_invoke_windows",
+        "measurement_energy_idle_subtracted": False,
+        "measurement_energy_board_overhead_included": True,
+        "measurement_energy_window_count": count,
+        "measurement_energy_window_us": elapsed,
+        "measurement_energy_total_mj": float(energy) * count if not reasons else None,
+        "measurement_energy_raw_trace_available": False,
+        "measurement_energy_protocol": "windows_v1",
+    }
+    return evidence, reasons

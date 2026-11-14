@@ -14,11 +14,13 @@ PSRAM, debug optimization with ESP-NN, and the 4 MiB factory partition in
 `partitions-4m.csv`. CREST uses `app-flash`; it does not rewrite the bootloader
 or partition table during candidate evaluation.
 
-GPIO 21 drives the harness D2 trigger high during the activity interval. GPIO
-47 drives harness D3 arm low before the trigger and high afterward. Harness
-firmware defines D2 as an input pulldown and D3 as an active-low input pullup.
-The activity interval includes control work and must not be used as classifier
-latency; `Invoke()` samples in serial telemetry are authoritative.
+GPIO 21 drives harness D2 high around each measured `Invoke()` only. GPIO 47
+holds harness D3 low for the session and high afterward. Warmups, input copies,
+UART output and watchdog yields occur with D2 low. Harness firmware defines D2
+as an input pulldown and D3 as an active-low input pullup. Energy runs require
+the opt-in `WINDOWS 1` harness protocol and physical calibration; see
+[the saved-artifact energy contract](../../../docs/saved-artifact-energy-replay.md).
+`Invoke()` samples in serial telemetry remain authoritative for latency.
 
 The Freenove documentation reviewed for the target was pinned at upstream
 revision `3563960643987e327a9213c90566fca1e8c5ab67`: `Start Here.pdf`, relevant

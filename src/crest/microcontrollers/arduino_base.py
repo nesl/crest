@@ -1220,6 +1220,7 @@ def measure_serial(
     harness_arm_timeout_s: float = 5.0,
     harness_active_timeout_s: float = 30.0,
     harness_done_timeout_s: float = 5.0,
+    windowed_energy: bool = False,
 ) -> MeasureResult:
     """Capture latency and power metrics from a device serial log.
 
@@ -1260,6 +1261,9 @@ def measure_serial(
         (`CREST_HARNESS_ACTIVE_TIMEOUT_MS`).
     harness_done_timeout_s : float
         Timeout waiting for harness ``DONE`` after the active window completes.
+
+    windowed_energy : bool, optional
+        Require multi-window harness protocol and fail without latency-only recovery.
 
     Returns
     -------
@@ -1339,6 +1343,7 @@ def measure_serial(
             harness_ready_timeout_s=harness_ready_timeout_s,
             harness_active_timeout_s=harness_active_timeout_s,
             harness_done_timeout_s=harness_done_timeout_s,
+            windowed_energy=windowed_energy,
         )
 
     try:
@@ -1346,6 +1351,11 @@ def measure_serial(
         # Normal path: ensure harness firmware is ready, then capture both DUT
         # and harness telemetry in the same coordinated session.
         result = _run_handshake()
+        if result.error and windowed_energy:
+            return MeasureResult(None, None,
+                [f"HANDSHAKE_ERROR: {result.error}"] +
+                [f"HARNESS: {line}" for line in result.harness_log] +
+                [f"DUT: {line}" for line in result.dut_log], None)
         if result.error:
             logger.warning("Harness handshake failed: %s", result.error)
             logger.info(
@@ -1406,6 +1416,8 @@ def measure_serial(
             power_metrics=power_metrics,
         )
     except (RuntimeError, serial.SerialException) as exc:  # type: ignore[attr-defined]
+        if windowed_energy:
+            return MeasureResult(None, None, [f"HARNESS_ERROR: {exc}"], None)
         logger.warning("Harness measurement failed: %s", exc)
         if isinstance(exc, serial.SerialException):
             try:

@@ -347,7 +347,14 @@ class ESP32IDFDevice(ArduinoDevice):
         return True
 
     def supports_energy_measurement(self) -> bool:
-        return False
+        """Report support for negotiated harness energy measurements.
+
+        Returns
+        -------
+        bool
+            True; valid multi-window evidence is required at measurement time.
+        """
+        return True
 
     def runtime_mode_build_defines(self) -> dict[str, int]:
         return {
@@ -507,7 +514,20 @@ class ESP32IDFDevice(ArduinoDevice):
         return None
 
     def evaluate(self, *, dirpath: str | Path, **kwargs: Any) -> DeviceMetrics:
-        """Serialize staging, incremental build, app upload, and measurement."""
+        """Serialize staging, incremental build, app upload, and measurement.
+
+        Parameters
+        ----------
+        dirpath : str | pathlib.Path
+            Staged exact candidate workspace.
+        **kwargs : Any
+            Shared device evaluation options.
+
+        Returns
+        -------
+        DeviceMetrics
+            Metrics with integrity failure for invalid runtime evidence.
+        """
 
         def _integrity_failure(detail: str) -> DeviceMetrics:
             arena_kb = kwargs.get("arena_kb")
@@ -521,10 +541,6 @@ class ESP32IDFDevice(ArduinoDevice):
                 },
             )
 
-        if kwargs.get("harness_serial_port") not in (None, ""):
-            return _integrity_failure(
-                "ESP32 classifier measurement is DUT-serial only; harness energy measurement is unsupported."
-            )
         staged_root = Path(dirpath).resolve()
         manifest_path = staged_root / self._options.model_output_dir / "crest_model_manifest.json"
         project_root = self._options.project_root.resolve()
@@ -564,7 +580,7 @@ class ESP32IDFDevice(ArduinoDevice):
                     instrumentation_valid = bool(
                         measurement_evidence.get("measurement_instrumentation_valid", False)
                     )
-                    if run_hil and measurement_evidence.get("measurement_failure_kind") == "serial_io":
+                    if run_hil and measurement_evidence.get("measurement_failure_kind") in {"serial_io", "energy"}:
                         metrics = replace(metrics, error_code=HIL_ERROR_INTEGRITY)
                     elif run_hil and metrics.latency_s >= 0.0 and not instrumentation_valid:
                         metrics = replace(metrics, error_code=HIL_ERROR_INTEGRITY)
@@ -578,10 +594,31 @@ class ESP32IDFDevice(ArduinoDevice):
             return _integrity_failure(f"ESP32 staging/lock failure: {exc}")
 
     def measure(self, **kwargs: Any) -> MeasureResult:
-        """Validate runtime identity and sample evidence from serial telemetry."""
+        """Validate runtime identity, sample counts and required harness energy.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Shared serial measurement options.
+
+        Returns
+        -------
+        MeasureResult
+            Serial telemetry and validated evidence, including failures.
+        """
         manifest = self._active_manifest or {}
+        energy_required = bool(kwargs.get("harness_serial_port"))
         try:
-            result = super().measure(**kwargs)
+            if energy_required:
+                from .arduino_base import measure_serial
+                options = {key: value for key, value in kwargs.items() if value is not None}
+                options.setdefault("serial_port", self._serial_port)
+                options["measured_inference_runs"] = int(manifest.get("fixture_count", 0)) * int(manifest.get("measured_runs_per_fixture", 0))
+                # Firmware/calibration installation is an explicit operator action.
+                options["harness_auto_flash"] = "never"
+                result = measure_serial(**options, windowed_energy=True)
+            else:
+                result = super().measure(**kwargs)
         except (serial.SerialException, OSError) as exc:
             return MeasureResult(
                 latency_s=None, arena_error_line=None,
@@ -608,6 +645,21 @@ class ESP32IDFDevice(ArduinoDevice):
         )
         evidence = dict(result.power_metrics or {})
         evidence.update(validated)
+        if energy_required:
+            from .esp32_measurement import validate_energy_log
+            energy_evidence, energy_reasons = validate_energy_log(
+                lines=result.serial_log, metrics=result.power_metrics or {},
+                expected_runs=int(manifest.get("fixture_count", 0)) * int(manifest.get("measured_runs_per_fixture", 0)),
+                invocation_us=sum(int(sample["invoke_us"]) for sample in diagnostics["samples"]),
+            )
+            evidence.update(energy_evidence)
+            diagnostics["reasons"].extend(energy_reasons)
+            diagnostics["valid"] = diagnostics["valid"] and not energy_reasons
+            evidence["measurement_instrumentation_valid"] = diagnostics["valid"]
+            diagnostics["energy"] = energy_evidence
+            if energy_reasons:
+                evidence["measurement_failure_kind"] = "energy"
+                evidence["measurement_failure_detail"] = ", ".join(energy_reasons)
         if self._active_staged_root is not None:
             diagnostics["serial_log"] = list(result.serial_log)
             measurement_record = self._active_staged_root / "esp32_measurement.json"
