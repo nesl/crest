@@ -2397,6 +2397,11 @@ def load_config(
         if section not in config:
             raise KeyError(f"Missing '{section}' section in {cfg_path}")
 
+    final_retraining = config.training.get("final_retraining", True)
+    if not isinstance(final_retraining, bool):
+        raise ValueError("training.final_retraining must be a boolean.")
+    config.training.final_retraining = final_retraining
+
     device_name = config.device.get("name")
     if not device_name:
         raise KeyError("Expected 'device.name' to be set in the configuration.")

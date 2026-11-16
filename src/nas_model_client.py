@@ -912,13 +912,14 @@ class NASModelClient:
             kwargs = {"population_size": self.config.training.nas_multiobjective_population_size, "seed": 42}
         else:
             sampler_class = optuna.samplers.TPESampler
-            kwargs = {"n_startup_trials": 15, "multivariate": True}
+            startup = self._cfg_get(self.config.training, "nas_tpe_startup_trials", 15)
+            if isinstance(startup, bool) or not isinstance(startup, int) or startup < 0:
+                raise ValueError("training.nas_tpe_startup_trials must be a nonnegative integer.")
+            kwargs = {"n_startup_trials": startup, "multivariate": True, "seed": 42}
         if (getattr(self, "model_family_name", None) == "fer_mini_xception"
                 and self._cfg_get(self.model_config.params, "avoid_duplicate_architectures", False)):
-            if not self._score_is_multiobjective():
-                raise ValueError("FER duplicate avoidance currently requires NSGA-II.")
-            from crest.model_families.fer_mini_xception.sampler import UniqueFERNSGAIISampler
-            sampler_class = UniqueFERNSGAIISampler
+            from crest.model_families.fer_mini_xception.sampler import UniqueFERNSGAIISampler, UniqueFERTPESampler
+            sampler_class = UniqueFERNSGAIISampler if self._score_is_multiobjective() else UniqueFERTPESampler
             kwargs["choices"] = {p.name: list(p.choices) for p in self.model_family.trial_search_space(self.model_build_context, self.model_config)}
             kwargs["fixed_resolution"] = int(self.config.dataset.params.image_size)
         if constraints_func is not None:
@@ -3128,6 +3129,10 @@ class NASModelClient:
             pareto_df.to_csv(pareto_csv, index=False)
             logger.info("[run_scoring_nas] Saved Pareto front to %s", pareto_csv)
             logger.info("[run_scoring_nas] Pareto front size: %s", len(pareto_trials))
+            return
+
+        if not self._cfg_get(self.config.training, "final_retraining", True):
+            logger.info("[run_scoring_nas] Saved search results; final retraining and downstream final evaluation disabled.")
             return
 
         best_trial = self._best_trial_for_finalization(study)

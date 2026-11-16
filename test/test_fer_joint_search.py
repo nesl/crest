@@ -146,3 +146,22 @@ def test_joint_client_server_real_bootstrap_and_fixture_identity(tmp_path):
     finally:
         client.close()
         server.socket.close(linger=0)
+
+
+@pytest.mark.parametrize("startup", [0, 1, 25])
+def test_tpe_decoded_duplicates_and_resume(tmp_path, startup):
+    from crest.model_families.fer_mini_xception.sampler import UniqueFERTPESampler
+    storage = 'sqlite:///' + str(tmp_path / 'tpe.db')
+    def sampler():
+        return UniqueFERTPESampler(choices=space(), fixed_resolution=96,
+                                  n_startup_trials=startup, multivariate=True, seed=42)
+    study = optuna.create_study(study_name='tpe', direction='maximize', storage=storage, sampler=sampler())
+    def objective(trial):
+        params = {k: trial.suggest_categorical(k, v) for k, v in space().items()}
+        return params['resolution'] / 100
+    study.optimize(objective, n_trials=1)
+    study = optuna.load_study(study_name='tpe', storage=storage, sampler=sampler())
+    study.optimize(objective, n_trials=1)
+    assert {t.params['resolution'] for t in study.trials} == {64, 96}
+    with pytest.raises(OptimizerBudgetExhausted):
+        study.optimize(objective, n_trials=1)

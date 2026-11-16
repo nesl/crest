@@ -4054,6 +4054,25 @@ class FoldRotationReportingTests(unittest.TestCase):
                 "fold_rotation/fold_rotation_summary.json",
             )
 
+    def test_run_scoring_nas_can_skip_final_retraining(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = _build_test_client(base_dir=Path(tmpdir))
+            client.config.training.final_retraining = False
+            frame = MagicMock()
+            study = SimpleNamespace(trials=[object()], trials_dataframe=MagicMock(return_value=frame))
+            with patch.object(client, "run_nas", return_value=study) as search, patch.object(
+                client, "train_best_trial"
+            ) as train, patch.object(client, "evaluate_checkpoint") as evaluate, patch.object(
+                client, "write_summary_bundle"
+            ) as summary:
+                client.run_scoring_nas(study_name="existing-study")
+            search.assert_called_once()
+            self.assertEqual(search.call_args.kwargs["study_name"], "existing-study")
+            frame.to_csv.assert_called_once()
+            train.assert_not_called()
+            evaluate.assert_not_called()
+            summary.assert_not_called()
+
     def test_run_scoring_nas_requires_feasible_trial_before_final_training(self) -> None:
         """Single-objective closeout should not retrain infeasible penalty trials."""
         with tempfile.TemporaryDirectory() as tmpdir:

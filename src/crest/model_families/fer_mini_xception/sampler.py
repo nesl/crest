@@ -1,4 +1,4 @@
-"""NSGA-II with decoded FER duplicate rejection before trial evaluation."""
+"""Shared decoded FER duplicate rejection for native Optuna samplers."""
 from itertools import product
 import json
 import optuna
@@ -6,8 +6,8 @@ from .decode import decoded_architecture_identity
 from crest.interfaces import OptimizerBudgetExhausted
 
 
-class UniqueFERNSGAIISampler(optuna.samplers.NSGAIISampler):
-    """Keep NSGA-II selection/crossover; replace duplicate proposals only.
+class _UniqueFERMixin:
+    """Keep the underlying sampler proposal; replace duplicates only.
 
     Supports CREST's sequential native Optuna runner. This is not an atomic
     reservation mechanism for concurrent workers sharing the same study.
@@ -31,16 +31,16 @@ class UniqueFERNSGAIISampler(optuna.samplers.NSGAIISampler):
             self._identity(t.params) for t in study.get_trials(deepcopy=False)
             if t.number != trial.number and all(k in t.params for k in self._fer_space)
         }
-        # Preserve Optuna's NSGA-II child proposal, including mutation, first.
+        # Preserve the underlying Optuna proposal first.
         candidate = super().sample_relative(study, trial, search_space)
         for name, distribution in search_space.items():
             if name not in candidate:
                 candidate[name] = super().sample_independent(study, trial, name, distribution)
         if self._identity(candidate) not in seen:
             return candidate
-        # Reuse the sampler's independent random sampling for duplicate refill.
+        # Reuse the sampler's independent sampling for duplicate refill.
         for _ in range(64):
-            candidate = {name: super(UniqueFERNSGAIISampler, self).sample_independent(study, trial, name, dist)
+            candidate = {name: super(_UniqueFERMixin, self).sample_independent(study, trial, name, dist)
                          for name, dist in search_space.items()}
             if self._identity(candidate) not in seen:
                 return candidate
@@ -51,3 +51,11 @@ class UniqueFERNSGAIISampler(optuna.samplers.NSGAIISampler):
             if self._identity(candidate) not in seen:
                 return candidate
         raise OptimizerBudgetExhausted("All decoded FER architectures in the configured space have been attempted.")
+
+
+class UniqueFERNSGAIISampler(_UniqueFERMixin, optuna.samplers.NSGAIISampler):
+    """NSGA-II proposals with shared decoded-architecture uniqueness."""
+
+
+class UniqueFERTPESampler(_UniqueFERMixin, optuna.samplers.TPESampler):
+    """TPE proposals with shared decoded-architecture uniqueness."""
