@@ -181,6 +181,15 @@ If task bring-up fails, check these layers in order.
 5. Evaluation.
    Does the task handle model predictions and split targets in the same order used during training?
 
+### FER training weights
+
+`task.params.training_weighting` defaults to `equal_source`, which gives FER+
+and RAF-DB equal total training weight. Trials 50 and 52 use
+`equal_source_class` to give each emotion equal weight within each source.
+This uses the full label probabilities, including fractional FER+ votes.
+The setting applies when fitting the training split alone. Combined
+train+validation fitting always uses equal source weights.
+
 ### FER validation-loss policy
 
 The 64px and 96px FER example configs select

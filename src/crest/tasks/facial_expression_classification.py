@@ -60,6 +60,33 @@ def _validation_loss_policy(task_config: Any) -> str:
     return policy
 
 
+def _training_weighting_policy(task_config: Any) -> str:
+    """Resolve the training-split weighting policy."""
+    policy = _cfg_get(task_config, "training_weighting", "equal_source")
+    if not isinstance(policy, str) or policy not in {"equal_source", "equal_source_class"}:
+        raise ValueError("task.params.training_weighting must be equal_source or equal_source_class.")
+    return policy
+
+
+def _equal_source_class_targets(
+    targets: np.ndarray, sources: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Give each source/class pair equal mass in weighted cross-entropy."""
+    balanced = np.empty_like(targets)
+    weights = np.empty(len(targets), dtype=np.float32)
+    desired_mass = len(targets) / (len(SOURCES) * targets.shape[1])
+    for source in SOURCES:
+        mask = sources == source
+        votes = targets[mask].astype(np.float64)
+        mass = votes.sum(axis=0)
+        if not np.all(mass > 0):
+            raise ValueError(f"Missing training class in {source} for equal_source_class weighting.")
+        terms = votes * (desired_mass / mass)
+        weights[mask] = terms.sum(axis=1)
+        balanced[mask] = terms / weights[mask, None]
+    return balanced, weights
+
+
 def _soft_targets(split: DataSplit) -> np.ndarray:
     """Read the loader's verified probability targets without hard-label fallback."""
     targets = np.asarray(split.metadata.get("training_targets"), dtype=np.float32)
@@ -224,6 +251,7 @@ class FacialExpressionClassificationTask(TaskABC):
             "lr_patience",
             "augmentation_seed",
             "report_validation_macro_f1",
+            "training_weighting",
             "validation_loss",
             "evaluation",
             RUNTIME_TRAINING_BATCH_SIZE_KEY,
@@ -248,6 +276,7 @@ class FacialExpressionClassificationTask(TaskABC):
         if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
             raise ValueError("task.params.augmentation_seed must be a nonnegative integer.")
         _validation_loss_policy(task_config)
+        _training_weighting_policy(task_config)
         report = _cfg_get(task_config, "report_validation_macro_f1", True)
         if not isinstance(report, bool):
             raise ValueError("task.params.report_validation_macro_f1 must be a real boolean.")
@@ -324,6 +353,7 @@ class FacialExpressionClassificationTask(TaskABC):
         *,
         combine_train_val: bool,
         soft_validation_targets: bool = False,
+        training_weighting: str = "equal_source",
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Resolve external inputs, training targets, weights, and source membership."""
         train_inputs = np.asarray(bundle.train.inputs)
@@ -331,6 +361,8 @@ class FacialExpressionClassificationTask(TaskABC):
         train_sources = np.asarray(bundle.train.metadata["sources"])
         train_weights = np.asarray(bundle.train.sample_weights, dtype=np.float32)
         if not combine_train_val:
+            if training_weighting == "equal_source_class":
+                train_targets, train_weights = _equal_source_class_targets(train_targets, train_sources)
             return train_inputs, train_targets, train_weights, train_sources
         if bundle.val is None:
             raise ValueError("Final combined facial-expression training requires validation data.")
@@ -366,6 +398,7 @@ class FacialExpressionClassificationTask(TaskABC):
         inputs, targets, weights, _ = self._fit_arrays(
             bundle, combine_train_val=combine_train_val,
             soft_validation_targets=soft_validation,
+            training_weighting=_training_weighting_policy(task_config),
         )
         augmentation = build_augmentation(int(_cfg_get(task_config, "augmentation_seed", 2026)))
         training = tf.data.Dataset.from_tensor_slices((inputs, targets, weights))

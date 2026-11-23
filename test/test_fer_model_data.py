@@ -408,6 +408,59 @@ def test_task_final_combines_soft_train_hard_val_and_reweights_sources(tmp_path:
     assert "validation_data" not in plan.fit_kwargs
 
 
+def test_training_weighting_balances_soft_class_mass_within_each_source(tmp_path: Path) -> None:
+    data_dir = tmp_path / "mixed"
+    _write_dataset(data_dir)
+    bundle = FERPlusRAFDBMixedDataset().load(_config(data_dir))
+    original = bundle.train
+    indices = np.asarray([0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 9])
+    sources = original.metadata["sources"][indices]
+    votes = original.metadata["training_targets"][indices]
+    legacy_weights = equal_source_weights(sources)
+    bundle.train = DataSplit(
+        inputs=original.inputs[indices],
+        targets=original.targets[indices],
+        sample_weights=legacy_weights,
+        metadata={"sources": sources, "training_targets": votes},
+    )
+    task = FacialExpressionClassificationTask(checkpoint_path=tmp_path / "best.keras")
+
+    for policy in ({}, {"training_weighting": "equal_source"}):
+        _, targets, weights, _ = task._fit_arrays(bundle, combine_train_val=False, **policy)
+        np.testing.assert_array_equal(targets, votes)
+        np.testing.assert_array_equal(weights, legacy_weights)
+
+    policy = {"training_weighting": "equal_source_class"}
+    _, balanced_targets, weights, _ = task._fit_arrays(bundle, combine_train_val=False, **policy)
+    np.testing.assert_allclose(balanced_targets.sum(axis=1), 1.0)
+    weighted_targets = balanced_targets * weights[:, None]
+    target_mass = len(indices) / (2 * len(CLASS_NAMES))
+    for source in np.unique(sources):
+        selected = sources == source
+        np.testing.assert_allclose(weighted_targets[selected].sum(axis=0), target_mass)
+        # Every vote for a given source and class receives the same multiplier.
+        expected = votes[selected] * (target_mass / votes[selected].sum(axis=0))
+        np.testing.assert_allclose(weighted_targets[selected], expected)
+
+    config = Dict(runtime_training_batch_size=64, report_validation_macro_f1=False, **policy)
+    task.validate_config(config)
+    spec = task.build_target_spec(bundle, config)
+    plan = task.build_fit_plan(bundle, config, spec, mode="search", combine_train_val=False)
+    _, batch_targets, batch_weights = next(iter(plan.fit_kwargs["x"].as_numpy_iterator()))
+    np.testing.assert_allclose((batch_targets * batch_weights[:, None]).sum(axis=0), 2 * target_mass)
+
+    default_combined = task._fit_arrays(bundle, combine_train_val=True)
+    configured_combined = task._fit_arrays(bundle, combine_train_val=True, **policy)
+    for actual, expected in zip(configured_combined, default_combined, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+
+
+def test_training_weighting_rejects_invalid_policy(tmp_path: Path) -> None:
+    task = FacialExpressionClassificationTask(checkpoint_path=tmp_path / "best.keras")
+    with pytest.raises(ValueError, match="training_weighting"):
+        task.validate_config(Dict(training_weighting="class_only"))
+
+
 def test_task_accepts_dequantized_softmax_rounding_and_source_subsets(tmp_path: Path) -> None:
     task = FacialExpressionClassificationTask(checkpoint_path=tmp_path / "best.keras")
     inputs = np.zeros((2, 64, 64), np.float32)

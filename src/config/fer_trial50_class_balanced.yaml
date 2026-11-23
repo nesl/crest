@@ -1,0 +1,144 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
+# Fixed 64 px FER trial 50 with 150 epochs and training-only class balancing.
+# Set dataset.params.data_dir to the mixed FERPlus/RAF-DB dataset before running.
+# Run from the repository root to resolve relative artifact paths.
+
+device:
+  name: FREENOVE_ESP32_S3_WROOM
+  hil: false
+  compile_when_hil_disabled: false
+  runtime_mode: back_to_back
+  serial_port: "/dev/serial/by-id/replace-with-freenove-esp32-s3"
+  measured_inference_runs: 2
+  dut_ready_timeout_s: 30.0
+  serial_timeout_s: 1200.0
+  latency_budget_ms: 3000.0
+  esp32:
+    project_root: "/path/to/esp32/firmware"
+    build_dir: "/path/to/esp32/idf-build"
+    idf_py: idf.py
+    target: esp32s3
+    arena_sizes_kb:
+    - 2048
+    max_internal_ram_bytes: 524288
+    max_flash_bytes: 4194304
+    psram_bytes: 8388608
+    harness_trigger_gpio: 21
+    harness_arm_gpio: 47
+    optimization_profile: debug
+    esp_nn_enabled: true
+    build_timeout_s: 900.0
+    upload_timeout_s: 120.0
+    cpu_clock_mhz: 240
+    fixture_npz_path: "/path/to/fixtures/representative_{resolution}.npz"
+    fixture_manifest_path: "/path/to/fixtures/representative_{resolution}.json"
+    warmup_runs: 1
+    latency_aggregation: median
+dataset:
+  name: ferplus_rafdb_mixed
+  params:
+    data_dir: "/path/to/mixed_ferplus_raf_v1"
+    image_size: 64
+    crop_mode: provided_aligned
+    calibration_examples_per_source_class: 50
+    calibration_seed: 42
+    representative_ids:
+    - ferplus:6835
+    - ferplus:19527
+    - ferplus:1018
+    - ferplus:15811
+    - ferplus:11045
+    - raf:train_06199_aligned.jpg
+    - raf:train_07191_aligned.jpg
+    - raf:train_06063_aligned.jpg
+    - raf:train_03960_aligned.jpg
+    - raf:train_12144_aligned.jpg
+task:
+  name: facial_expression_classification
+  params:
+    early_stopping_patience: 30
+    learning_rate: 0.001
+    lr_patience: 8
+    augmentation_seed: 2026
+    report_validation_macro_f1: true
+    training_weighting: equal_source_class
+    validation_loss: equal_source_soft_crossentropy
+model:
+  family: fer_mini_xception
+  params:
+    export_variant: trained
+    stem_convolutions: 2
+    separable_convolutions_per_block: 2
+    se_reduction_ratio: 8
+    l2: 0.001
+    avoid_duplicate_architectures: false
+  search:
+    attention_placement:
+    - last
+    channel_cap:
+    - 96
+    channel_growth:
+    - 2.0
+    downsampling:
+    - every_block
+    first_block_channels:
+    - 32
+    kernel_size:
+    - 5
+    num_blocks:
+    - 4
+    resolution:
+    - 64
+    stem_channels:
+    - 8
+training:
+  batch_size: 64
+  nas_epochs: 150
+  model_epochs: 150
+  nas_trials: 1
+  max_total_trials: 1
+  train: true
+  energy_aware: false
+  input_mode: uniform
+  quantization:
+    mode: int8_ptq
+    search: false
+    choices:
+    - int8_ptq
+  random_seed: 2026
+  nas_multiobjective_population_size: 25
+  final_retraining: false
+nas:
+  hil_first: false
+  score:
+    type: multi-objective
+    params:
+      objectives:
+      - metric: macro_f1
+        direction: maximize
+      - metric: loss
+        direction: minimize
+  prune:
+    rules: []
+  feasibility:
+    train_if_infeasible: false
+    rules: []
+outputs:
+  models_dir: artifacts/fer_trial50_class_balanced/models
+  candidate_dir: artifacts/fer_trial50_class_balanced/candidates
+  artifact_stem: FER_TRIAL50_CLASS_BALANCED
+  log_file_name: "trials.csv"
+network:
+  host: 127.0.0.1
+  port: 6001
+  recv_timeout_sec: 2400
+  send_timeout_sec: 30
+  max_artifact_bytes: 4194304
+  artifact_staging_dir: artifacts/fer_trial50_class_balanced/staging
+  hil_request_retries: 0
+  hil_probe_timeout_sec: 5.0
+logging:
+  level: INFO
+optimizer:
+  type: optuna
