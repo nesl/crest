@@ -18,6 +18,12 @@ from ..interfaces import TaskABC
 from ..pipeline_types import DataSplit, DatasetBundle, EvaluationResult, FitPlan, TargetSpec, TaskMetricContract
 
 
+def _velocity_rmse(targets, predictions) -> float:
+    """Average per-output RMSE, as in the original scikit-learn metric."""
+    per_output_mse = mean_squared_error(targets, predictions, multioutput="raw_values")
+    return float(np.sqrt(per_output_mse).mean())
+
+
 class OdometryRegressionTask(TaskABC):
     """Two-head velocity-regression task matching the current CREST behavior.
 
@@ -559,8 +565,8 @@ class OdometryRegressionTask(TaskABC):
         del task_config, target_spec
         # Preserve the legacy output-index contract from the current CREST
         # model: predictions[0] is velx and predictions[1] is vely.
-        rmse_vel_x = mean_squared_error(split.targets["velx"], predictions[0], squared=False)
-        rmse_vel_y = mean_squared_error(split.targets["vely"], predictions[1], squared=False)
+        rmse_vel_x = _velocity_rmse(split.targets["velx"], predictions[0])
+        rmse_vel_y = _velocity_rmse(split.targets["vely"], predictions[1])
         return EvaluationResult(
             metrics={
                 "rmse_vel_x": float(rmse_vel_x),

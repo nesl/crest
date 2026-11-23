@@ -1,0 +1,54 @@
+name: CREST tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Rebuild weekly to catch changes in unpinned dependencies.
+    - cron: "17 9 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test ${{ matrix.suite }} (Linux)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: search
+            selection: "llm or optimizer"
+          - suite: core
+            selection: "not (llm or optimizer)"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb # v4.1.0
+        with:
+          miniforge-version: "26.9.4-2"
+          environment-file: environment.yml
+          activate-environment: crest
+      - name: Verify the environment
+        shell: bash -el {0}
+        run: |
+          make install
+          python -m pip check
+          python - <<'PY'
+          import json
+          import subprocess
+
+          import soundfile
+
+          packages = json.loads(subprocess.check_output(["conda", "list", "--json", "^libsndfile$"]))
+          expected = packages[0]["version"]
+          actual = soundfile.__libsndfile_version__
+          if actual != expected:
+              raise SystemExit(f"SoundFile loads libsndfile {actual}, but Conda installed {expected}")
+          PY
+      - name: Run tests
+        shell: bash -el {0}
+        env:
+          PYTEST_ADDOPTS: '-k "${{ matrix.selection }}"'
+        run: make test

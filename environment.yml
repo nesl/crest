@@ -8,6 +8,7 @@ dependencies:
   - python=3.11
   - numpy>=1.20
   - pandas
+  - scipy                # statistical analyses and plotting tests
   - scikit-learn        # sklearn.metrics + preprocessing in notebooks
   - matplotlib          # src/data_visualization.ipynb animations/plots
   - tqdm                # progress bars in dataset preparation and loaders
@@ -15,6 +16,7 @@ dependencies:
   - ipywidgets          # interactive widgets in notebooks (optional but lightweight)
   - pytest              # ensure test runner shares interpreter with installed deps
   - pyserial==3.5       # serial communication with microcontroller
+  - pyzmq               # HIL server and search client messaging
   - libsndfile=1.2.2    # exact native audio backend for pip-pinned soundfile
   - pip
   - pip:
@@ -26,6 +28,7 @@ dependencies:
       - keras-flops==0.1.2
       - tf-keras==2.20.1
       - optuna==4.6.0
+      - absl-py==1.4.0   # logging in the server and client
       - addict==2.4.0
       - pyyaml==6.0.2
       - pydantic>=2,<3

@@ -24,9 +24,12 @@ The base environment supports CPU execution.
 On a compatible NVIDIA GPU host, install the TensorFlow CUDA dependencies and verify GPU detection.
 
 ```bash
-pip install --upgrade pip
-pip install 'tensorflow[and-cuda]==2.20.0'
-python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
+if tf_version=$(python -c 'from importlib.metadata import version; print(version("tensorflow"))' 2>/dev/null); then
+  python -m pip install "tensorflow[and-cuda]==${tf_version}" &&
+    python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
+else
+  echo "TensorFlow is missing from this Python environment. Create and activate the crest environment as shown above." >&2
+fi
 ```
 
 Repeat the CUDA installation after recreating the environment.

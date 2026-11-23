@@ -1,0 +1,31 @@
+version: 2
+updates:
+  - package-ecosystem: "conda"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      tensorflow-stack:
+        patterns:
+          - "tensorflow*"
+          - "tf-keras"
+          - "keras-*"
+    ignore:
+      # Upgrade the interpreter and the native audio backend deliberately.
+      - dependency-name: "python"
+      # Review SoundFile and its bundled native library together.
+      - dependency-name: "libsndfile"
+      - dependency-name: "soundfile"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+  # Monitor pyproject.toml constraints; compatible releases may require no edit.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
