@@ -23,7 +23,7 @@ def ensure_audio_components_registered() -> None:
     Notes
     -----
     This intentionally avoids importing OxIOD so audio-only preparation and
-    smoke paths do not pull in unrelated pandas/giotto dependencies.
+    smoke paths do not pull in unrelated OxIOD preprocessing dependencies.
     """
     if "urbansound8k_mel" not in dataset_registry:
         from .datasets.urbansound8k_mel import UrbanSound8KMelDataset

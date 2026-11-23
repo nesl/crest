@@ -6,7 +6,7 @@ channels:
 dependencies:
   # Core runtime shared by CREST data, hardware, notebooks, and tests
   - python=3.11
-  - numpy
+  - numpy>=1.20
   - pandas
   - scikit-learn        # sklearn.metrics + preprocessing in notebooks
   - matplotlib          # src/data_visualization.ipynb animations/plots
@@ -30,7 +30,6 @@ dependencies:
       - pyyaml==6.0.2
       - pydantic>=2,<3
       # Dataset utilities
-      - giotto-tda==0.6.2         # SlidingWindow in src/crest/data.py
       - numpy-quaternion==2024.0.12
       - pydometer==2019.2.8
       - soundata==1.0.1
