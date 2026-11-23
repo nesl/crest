@@ -18,6 +18,7 @@ dependencies = [
     "optuna",
     "pyserial",
     "pyzmq",
+    "absl-py",
     "addict",
     "pyyaml",
     "keras-tcn",
