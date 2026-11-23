@@ -6,3 +6,5 @@ Small, reusable helpers independent of dataset, search, and hardware policies.
 - `windowing.py`: NumPy sliding windows aligned to the final input sample.
 
 Keep domain-specific logic in its owning package.
+
+Use `crest.utils.geometry` in new code; existing `crest.geometry` imports still work.

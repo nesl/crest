@@ -58,3 +58,38 @@ for prefix in ('crest.hil.runtime', 'crest.hardware', 'crest.microcontrollers',
         capture_output=True,
         text=True,
     )
+
+
+def test_geometry_import_paths_share_the_utility_implementation():
+    """Preserve legacy geometry imports alongside the canonical utility path.
+
+    Notes
+    -----
+    A fresh interpreter exercises package-level, submodule, and direct function
+    imports without relying on modules cached by other tests. Both module paths
+    must expose the same six conversion functions without loading ML runtimes.
+    """
+    subprocess.run(
+        [sys.executable, '-c', '''
+import sys
+import crest
+from crest import geometry as package_geometry
+import crest.geometry as legacy_geometry
+from crest.geometry import euler2mat
+from crest.utils import geometry
+from crest.utils.geometry import euler2mat as utility_euler2mat
+assert "geometry" in crest.__all__
+assert package_geometry is legacy_geometry
+assert euler2mat is utility_euler2mat
+for name in ("quat2mat", "mat2quat", "euler2mat", "mat2euler", "euler2quat", "quat2euler"):
+    assert getattr(legacy_geometry, name) is getattr(geometry, name)
+    assert getattr(geometry, name).__module__ == "crest.utils.geometry"
+for prefix in ("tensorflow", "keras", "crest.data", "crest.hardware"):
+    assert not any(name == prefix or name.startswith(prefix + ".")
+                   for name in sys.modules), prefix
+'''],
+        env=_checkout_env(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )

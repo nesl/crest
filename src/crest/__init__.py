@@ -16,6 +16,7 @@ __all__ = [
     "hardware",
     "model",
     "data",
+    "geometry",
     "utils",
     "devices",
     "errors",
