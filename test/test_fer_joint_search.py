@@ -96,18 +96,16 @@ def test_125_proposals_are_unique_across_nsga_generations():
 
 def test_joint_client_server_real_bootstrap_and_fixture_identity(tmp_path):
     import json
-    from pathlib import Path
     import yaml
     from unittest.mock import MagicMock
-    from test.test_fer_model_data import _write_dataset
+    from test.test_fer_model_data import _fer_test_config, _write_dataset
     from nas_model_client import NASModelClient
     from hil_server import HILServer
     from crest.model_families.fer_mini_xception.runtime import attach_pipeline
     from crest.datasets.ferplus_rafdb_mixed import write_representative_fixture
     data = tmp_path / 'data'
     _write_dataset(data)
-    raw = yaml.safe_load((Path(__file__).parents[1]/'src/config/fer_components_96.yaml').read_text())
-    raw['dataset']['params'].update(data_dir=str(data),calibration_examples_per_source_class=1)
+    raw = _fer_test_config(data)
     raw['model']['search']['resolution']=[64,96]
     raw['model']['params']['avoid_duplicate_architectures']=True
     raw['device']={'name':'FREENOVE_ESP32_S3_WROOM','hil':True,'runtime_mode':'back_to_back'}

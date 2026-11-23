@@ -34,8 +34,6 @@ Tasks do not own dataset loading, architecture search spaces, export materializa
   Defines the two-output OxIOD velocity regression contract, task-owned fit wiring, RMSE metrics, and odometry closeout artifacts.
 - [`sound_classification.py`](sound_classification.py) Registered as `sound_classification`.
   Defines the single-output logits classification contract for cached audio features, classification metrics, fixed-split reporting, and optional fold-rotation evaluation.
-- [`facial_expression_classification.py`](facial_expression_classification.py) Registered as `facial_expression_classification`.
-  Defines five-class probability outputs, conditional FER+ targets, configurable validation-loss selection, equal-source weighting, prebatched channel-safe augmentation, validation-loss checkpointing, and pooled/source diagnostic metrics.
 
 ## Key Files
 
@@ -180,45 +178,3 @@ If task bring-up fails, check these layers in order.
    Are inputs, targets, validation data, callbacks, and monitor keys valid for both search and final modes?
 5. Evaluation.
    Does the task handle model predictions and split targets in the same order used during training?
-
-### FER training weights
-
-`task.params.training_weighting` defaults to `equal_source`, which gives FER+
-and RAF-DB equal total training weight. Trials 50 and 52 use
-`equal_source_class` to give each emotion equal weight within each source.
-This uses the full label probabilities, including fractional FER+ votes.
-The setting applies when fitting the training split alone. Combined
-train+validation fitting always uses equal source weights.
-
-### FER validation-loss policy
-
-The 64px and 96px FER example configs select
-task.params.validation_loss: equal_source_soft_crossentropy.
-Validation preserves FER+ conditional vote distributions and RAF one-hot targets.
-The existing equal_source_weights helper gives each source half the total mass.
-Keras's built-in weighted CategoricalCrossentropy metric reports
-val_prediction_loss, the mean of the two source mean cross-entropies, excluding
-L2. Checkpointing, early stopping, and learning-rate reduction all monitor that
-metric. It remains available when report_validation_macro_f1 is false.
-
-val_loss is still Keras's total weighted validation loss including regularization;
-it is not the checkpoint metric in this mode. Training retains its existing
-weighted loss and L2 penalties. Hard-label accuracy/macro-F1, exported-model
-evaluation loss, and NAS objective names/semantics are unchanged.
-
-Omitting validation_loss, or explicitly selecting legacy_hard_crossentropy,
-preserves pooled hard-label validation and val_loss checkpoint selection.
-Combined train+validation final fitting preserves the validation soft targets in
-the new mode, reweights the combined sources, and retains the training loss
-monitor because no held-out split remains.
-
-Use a fresh study when changing this recipe: existing study identity does not
-fingerprint this task setting. Do not append new-policy trials to old studies.
-Completed smoke artifacts and saved configurations are not migrated.
-
-Implementation rationale: the loader already verifies native probability targets
-but previously discarded them for validation. Retaining them in the existing
-split metadata avoids reloading or reconstructing labels. Built-in weighted
-metrics reuse the validation pass, require no extra prediction callback, and
-serialize normally. This adds a task-local config option and validation metadata;
-it changes no DatasetABC, TaskABC, FitPlan, result record, or NAS metric contract.

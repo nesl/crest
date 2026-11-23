@@ -19,22 +19,9 @@ Case-study reproducibility configs live under [`case_study_configs/`](case_study
 | Run STM32 OxIOD HIL experiments | [`nas_config_stm32.yaml`](nas_config_stm32.yaml) | NUCLEO-N657X0-Q board required. HIL harness required for energy measurement |
 | Run Arduino OxIOD HIL experiments | [`nas_config_ble.yaml`](nas_config_ble.yaml) or [`nas_config_portenta.yaml`](nas_config_portenta.yaml) | Target board required. HIL harness required for energy measurement |
 | Run UrbanSound8K audio HIL experiments | [`nas_config_audio_stm32.yaml`](nas_config_audio_stm32.yaml) or [`nas_config_audio_portenta.yaml`](nas_config_audio_portenta.yaml) | Target board and HIL harness required as shipped. Use these as templates with HIL/measured scoring disabled for hardware-free training |
-| Configure the fixed-resolution FER workload | [`fer_components_64.yaml`](fer_components_64.yaml) or [`fer_components_96.yaml`](fer_components_96.yaml) | Component fragments only; hardware is not needed for loading/building, and campaign epoch/trial budgets remain intentionally unspecified |
-| Configure FER training-first ESP32 evaluation | [`fer_esp32_evaluation.yaml`](fer_esp32_evaluation.yaml) plus one FER component fragment | Freenove ESP32-S3 and the reviewed backend setup are required for HIL; this remains a fragment until outputs and epoch/trial budgets are supplied |
 
 The STM32 example is the most complete commented score/prune reference.
 [`nas_config_memory_proxy.yaml`](nas_config_memory_proxy.yaml) adds a desktop RMSE/static-memory-traffic example.
-
-The FER evaluation fragment is resolution-neutral. Recursively merge keys
-inside shared blocks with exactly one of the 64- or 96-pixel component
-fragments, replace the DUT serial-port placeholder and paired representative
-fixture paths, and separately supply output, epoch, and trial-budget settings.
-A shallow top-level overlay would replace the component's `training` block and
-silently lose its batch setting. The selected component fragment supplies the
-single `training.batch_size: 64` setting; do not duplicate it in another
-overlay. See the
-[Freenove ESP32-S3 backend guide](../crest/microcontrollers/README.md#freenove-esp32-s3-backend)
-for the fixed toolchain and board profile.
 
 ## Supporting files
 
@@ -553,13 +540,3 @@ Use these files together.
 - [Optimizer system guide](../crest/optimizers/README.md) for the full proposal, evaluation, budget, and resume contract
 - [`../crest/model_families/README.md`](../crest/model_families/README.md) for model-family selection and extension
 - [`../crest/microcontrollers/README.md`](../crest/microcontrollers/README.md) for backend-owned hardware options
-
-### Optional final retraining
-
-`training.final_retraining` is a boolean, defaulting to `true` for backward
-compatibility. Set it to `false` to have the official CLI save single-objective
-NAS results and return before final winner retraining, held-out test evaluation,
-and downstream final reporting. Per-trial training/export/validation is unchanged;
-keep `training.train: true` for trained-model NAS. Multi-objective searches keep
-their existing Pareto-export behavior. This post-search setting does not change
-the search/resume identity or trial budget.

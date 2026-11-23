@@ -15,7 +15,6 @@ import yaml
 from addict import Dict
 
 from crest.builtin_components import ensure_fer_components_registered
-from crest.component_selection import resolve_component_selection
 from crest.datasets.ferplus_rafdb_mixed import (
     CLASS_NAMES,
     FERPlusRAFDBMixedDataset,
@@ -122,18 +121,23 @@ def _config(path: Path, image_size: int = 64) -> Dict:
     )
 
 
-def test_builtin_registration_and_fixed_resolution_fragments() -> None:
+def _fer_test_config(data_dir: Path) -> dict:
+    return {
+        "dataset": {"name": "ferplus_rafdb_mixed", "params": _config(data_dir, 96).to_dict()},
+        "task": {
+            "name": "facial_expression_classification",
+            "params": {"validation_loss": "equal_source_soft_crossentropy"},
+        },
+        "model": {"family": "fer_mini_xception", "params": {"export_variant": "trained"}, "search": {}},
+        "training": {"batch_size": 64},
+    }
+
+
+def test_builtin_registration() -> None:
     ensure_fer_components_registered()
     assert dataset_registry.get("ferplus_rafdb_mixed") is FERPlusRAFDBMixedDataset
     assert task_registry.get("facial_expression_classification") is FacialExpressionClassificationTask
     assert model_family_registry.get("fer_mini_xception").__name__ == "FERMiniXceptionFamily"
-    config_dir = Path(__file__).resolve().parents[1] / "src" / "config"
-    for size in (64, 96):
-        raw = yaml.safe_load((config_dir / f"fer_components_{size}.yaml").read_text())
-        selection = resolve_component_selection(Dict(raw))
-        assert selection["dataset_config"].image_size == size
-        assert selection["task_config"].runtime_training_batch_size == 64
-        assert "runtime_training_batch_size" not in raw["task"]["params"]
 
 
 @pytest.mark.parametrize("explicit_fixed_split", [False, True])
@@ -143,12 +147,7 @@ def test_loaded_composed_hci_config_bootstraps_fixed_split_probability_pipeline(
 ) -> None:
     data_dir = tmp_path / "mixed"
     _write_dataset(data_dir)
-    config_dir = Path(__file__).resolve().parents[1] / "src" / "config"
-    raw = yaml.safe_load((config_dir / "fer_components_96.yaml").read_text())
-    raw["dataset"]["params"].update(
-        data_dir=str(data_dir),
-        calibration_examples_per_source_class=1,
-    )
+    raw = _fer_test_config(data_dir)
     if explicit_fixed_split:
         raw["task"]["params"]["evaluation"] = {"protocol": "fixed_split"}
     raw["device"] = {
