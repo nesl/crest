@@ -28,51 +28,6 @@ assert PREPARE_OXIOD_SPEC.loader is not None
 PREPARE_OXIOD_SPEC.loader.exec_module(prepare_oxiod)
 
 
-class FakeSlidingWindow:
-    """Minimal sliding-window transform used to isolate loader behavior.
-
-    Parameters
-    ----------
-    size : int
-        Width of each extracted window.
-    stride : int
-        Step between consecutive windows.
-    """
-
-    def __init__(self, size, stride):
-        """Initialize the instance.
-
-        Parameters
-        ----------
-        size : object
-            Window size used by the dataset helper.
-        stride : object
-            Window stride used by the dataset helper.
-        """
-        self.size = size
-        self.stride = stride
-
-    def fit_transform(self, signal):
-        """Return overlapping windows using the same contract as the real helper.
-
-        Parameters
-        ----------
-        signal : array-like
-            One-dimensional signal to segment into windows.
-
-        Returns
-        -------
-        numpy.ndarray
-            Array of shape ``(num_windows, size)``. Empty inputs return an empty
-            array with the correct window width.
-        """
-        arr = np.asarray(signal).reshape(-1)
-        windows = [arr[start:start + self.size] for start in range(0, arr.shape[0] - self.size + 1, self.stride)]
-        if not windows:
-            return np.empty((0, self.size))
-        return np.stack(windows, axis=0)
-
-
 def _identity_tqdm(iterable, *_, **__):
     """Return the iterable unchanged for deterministic, silent tests.
 
@@ -97,8 +52,7 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
     """Tests for OxIOD max-window import handling."""
 
     def setUp(self):
-        # Patch the three moving pieces together so the loader exercises its own
-        # window-capping logic without touching disk-heavy pandas/tqdm helpers.
+        # Keep CSV/progress fixtures lightweight while using real windowing.
         """Prepare test fixtures."""
         self.tempdir = tempfile.TemporaryDirectory()
         self.dataset_root = Path(self.tempdir.name)
@@ -117,10 +71,8 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
         self.stride = 2
         self.expected_windows = ((self.num_samples - self.window_size) // self.stride) + 1
         self.read_csv_patcher = patch('crest.data.pd.read_csv', side_effect=self.fake_read_csv)
-        self.sliding_patcher = patch('crest.data.SlidingWindow', FakeSlidingWindow)
         self.tqdm_patcher = patch('crest.data.tqdm', _identity_tqdm)
         self.read_csv_patcher.start()
-        self.sliding_patcher.start()
         self.tqdm_patcher.start()
 
     def tearDown(self):
@@ -218,6 +170,101 @@ class ImportOxIODDatasetMaxWindowsTests(unittest.TestCase):
 
         self.assertEqual(subset.inputs.shape[0], 1)
         self.assertIn("Processing for (file and ground truth): mock/imu.csv", "\n".join(captured.output))
+
+    def test_sensor_and_position_windows_share_end_alignment(self):
+        """Keep sensor samples and displacement labels aligned at remainders.
+
+        Returns
+        -------
+        None
+            Asserts exact windows for a recording whose stride leaves a prefix.
+        """
+        self.num_samples = 11
+        self.stride = 3
+        subset = self.call_loader()
+        samples = np.array([[1, 2, 3, 4], [4, 5, 6, 7], [7, 8, 9, 10]])
+        samples = np.concatenate([samples, samples])
+        np.testing.assert_array_equal(subset.inputs[:, :, :3],
+                                      np.repeat((2 * samples)[:, :, None], 3, axis=2))
+        np.testing.assert_array_equal(subset.inputs[:, :, 3:],
+                                      np.repeat(samples[:, :, None], 3, axis=2))
+        np.testing.assert_array_equal(subset.position,
+                                      np.repeat(samples[:, :, None], 2, axis=2))
+        np.testing.assert_array_equal(subset.x_vel, np.full(6, 3))
+        np.testing.assert_array_equal(subset.y_vel, np.full(6, 3))
+        np.testing.assert_allclose(subset.disp, np.full(6, np.sqrt(18)))
+        self.assertEqual(subset.size_of_each, [3, 3])
+
+    def test_optional_channels_and_caps_preserve_multichannel_windows(self):
+        """Keep optional sensor channels and step indicators aligned under caps.
+
+        Returns
+        -------
+        None
+            Asserts sensor channel order, labels, and step flags for all
+            magnetometer/step-counter combinations, with and without a cap.
+
+        Notes
+        -----
+        CSV columns have distinct offsets to detect accidental channel swaps.
+        Step detection is mocked; actual multichannel windowing is exercised.
+        """
+        self.num_samples = 11
+        self.stride = 3
+        samples = np.array([[1, 2, 3, 4], [4, 5, 6, 7], [7, 8, 9, 10]])
+        samples = np.concatenate([samples, samples])
+        imu_offsets = {name: 100 * i for i, name in enumerate(self.default_channels)}
+        gt_offsets = {name: 100 * i for i, name in enumerate(self.default_gt_channels)}
+
+        def distinct_channel_csv(path, header=None):
+            """Return synthetic CSV data with distinct values per channel.
+
+            Parameters
+            ----------
+            path : str
+                Requested IMU or ground-truth CSV path.
+            header : object, optional
+                Unused pandas-compatible argument.
+
+            Returns
+            -------
+            pandas.DataFrame
+                Original sample ramp plus a channel-specific constant.
+            """
+            frame = self.fake_read_csv(path, header=header)
+            offsets = imu_offsets if 'imu' in path else gt_offsets
+            return frame + pd.Series(offsets)
+
+        for magnetometer in (False, True):
+            for step_counter in (False, True):
+                for cap in (None, 1):
+                    with self.subTest(magnetometer=magnetometer, step_counter=step_counter, cap=cap):
+                        with patch.object(crest_data.pd, 'read_csv', side_effect=distinct_channel_csv), patch.object(
+                            crest_data, 'Pedometer'
+                        ) as pedometer:
+                            pedometer.return_value.get_steps.return_value = (3, np.array([0, 2, 10]))
+                            result = crest_data.import_oxiod_dataset(
+                                type_flag=2, dataset_folder=str(self.dataset_root) + os.sep,
+                                sub_folders=self.sub_folders, sampling_rate=100,
+                                window_size=4, stride=self.stride, verbose=False,
+                                useMagnetometer=magnetometer, useStepCounter=step_counter,
+                                max_windows=cap,
+                            )
+                        selected = samples if cap is None else samples[:cap]
+                        expected_channels = [
+                            2 * selected + imu_offsets[f'Lin_Acc_{axis}'] + imu_offsets[f'Grav_{axis}']
+                            for axis in 'XYZ'
+                        ]
+                        expected_channels.extend(selected + imu_offsets[f'Gyro_{axis}'] for axis in 'XYZ')
+                        if magnetometer:
+                            expected_channels.extend(selected + imu_offsets[f'Mag_{axis}'] for axis in 'XYZ')
+                        if step_counter:
+                            expected_channels.append(np.isin(selected, [0, 2, 10]).astype(float))
+                        np.testing.assert_array_equal(result.inputs, np.stack(expected_channels, axis=-1))
+                        np.testing.assert_array_equal(result.position, np.stack([
+                            selected + gt_offsets['Pose_X'], selected + gt_offsets['Pose_Y']
+                        ], axis=-1))
+                        np.testing.assert_allclose(result.disp, np.full(len(selected), np.sqrt(18)))
 
 
 class PrepareOxIODTests(unittest.TestCase):

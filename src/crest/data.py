@@ -133,7 +133,9 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
     listing IMU CSV paths whose paired ground-truth files are obtained via
     ``path.replace('imu', 'vi')``. ``inputs`` contains 6 channels without the
     magnetometer, 9 channels with the magnetometer before step augmentation,
-    and one additional channel when ``useStepCounter=True``.
+    and one additional channel when ``useStepCounter=True``. Sensor and
+    ground-truth channels are windowed together along the time axis, preserving
+    channel order and aligning each recording's final window to its last sample.
 
     Raises
     ------
@@ -235,18 +237,12 @@ def import_oxiod_dataset(type_flag = 2, useMagnetometer = True, useStepCounter =
             cur_GT = cur_GT.to_numpy()
 
             windows = SlidingWindow(size=window_size, stride=stride)
-            cur_train_3D = windows.fit_transform(cur_train[:,0])
-            for i in range(1,cur_train.shape[1]):
-                X_windows = windows.fit_transform(cur_train[:,i])
-                cur_train_3D = np.dstack((cur_train_3D,X_windows))
+            cur_train_3D = windows.fit_transform(cur_train)
 
             if(useStepCounter):   
                 loc_3D = windows.fit_transform(loc)
 
-            cur_GT_3D = windows.fit_transform(cur_GT[:,0])
-            for i in range(1,cur_GT.shape[1]):
-                X_windows = windows.fit_transform(cur_GT[:,i])
-                cur_GT_3D = np.dstack((cur_GT_3D,X_windows))  
+            cur_GT_3D = windows.fit_transform(cur_GT)
 
             vx = np.zeros((cur_GT_3D.shape[0]))
             vy = np.zeros((cur_GT_3D.shape[0]))
