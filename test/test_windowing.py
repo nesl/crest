@@ -5,7 +5,7 @@
 import numpy as np
 import pytest
 
-from crest.windowing import SlidingWindow
+from crest.utils.windowing import SlidingWindow
 
 
 @pytest.mark.parametrize("length,size,stride,expected", [

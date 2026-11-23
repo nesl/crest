@@ -13,7 +13,7 @@ from math import atan2, sqrt  #, sin, cos, radians
 import numpy as np
 import pandas as pd
 import quaternion
-from .windowing import SlidingWindow
+from .utils.windowing import SlidingWindow
 
 # import os
 from pydometer import Pedometer
