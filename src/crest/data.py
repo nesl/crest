@@ -13,7 +13,7 @@ from math import atan2, sqrt  #, sin, cos, radians
 import numpy as np
 import pandas as pd
 import quaternion
-from gtda.time_series import SlidingWindow
+from .windowing import SlidingWindow
 
 # import os
 from pydometer import Pedometer
