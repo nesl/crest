@@ -21,12 +21,12 @@ dependencies:
   - pip
   - pip:
       # Embedded ML / HPO stack. See README.md for optional GPU TensorFlow setup.
-      - tensorflow==2.20.0
+      - tensorflow==2.21.0
       - tensorflow-io-gcs-filesystem==0.37.1
-      - tensorflow-model-optimization==0.8.0
-      - keras-tcn==3.5.6
+      - tensorflow-model-optimization==0.8.1
+      - keras-tcn==3.5.7
       - keras-flops==0.1.2
-      - tf-keras==2.20.1
+      - tf-keras==2.21.0
       - optuna==4.6.0
       - absl-py==1.4.0   # logging in the server and client
       - addict==2.4.0
