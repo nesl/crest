@@ -13,7 +13,14 @@ updates:
     ignore:
       # Upgrade the interpreter and the native audio backend deliberately.
       - dependency-name: "python"
+      # Review SoundFile and its bundled native library together.
       - dependency-name: "libsndfile"
+      - dependency-name: "soundfile"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+  # Monitor pyproject.toml constraints; compatible releases may require no edit.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
