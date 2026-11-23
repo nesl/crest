@@ -30,7 +30,7 @@ dependencies = [
     "tqdm",
     "pydantic>=2,<3",
     "soundata>=1.0.1",
-    "librosa>=0.11.0",
+    "librosa>=1.0.1",
     "soundfile>=0.13.1"
 ]
 
