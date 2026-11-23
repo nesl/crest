@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from test import test_data as loader_tests
+from . import test_data as loader_tests
 from crest import data as crest_data
 from crest.windowing import SlidingWindow
 

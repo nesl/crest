@@ -108,6 +108,9 @@ def test_invalid_data_rejected(signal, error):
     (0, 1, ValueError), (-1, 1, ValueError), (1, 0, ValueError),
     (1, -1, ValueError), (1.5, 1, TypeError), (1, 1.5, TypeError),
     ("2", 1, TypeError), (1, None, TypeError),
+    (True, 1, TypeError), (1, True, TypeError),
+    (False, 1, TypeError), (1, False, TypeError),
+    (np.bool_(True), 1, TypeError), (1, np.bool_(False), TypeError),
 ])
 def test_invalid_parameters_rejected(size, stride, error):
     """Reject nonpositive or noninteger window parameters.
@@ -164,3 +167,29 @@ def test_numeric_object_input():
     actual = SlidingWindow(2, 1).fit_transform(np.array([1, 2, 3], dtype=object))
     np.testing.assert_array_equal(actual, [[1, 2], [2, 3]])
     assert actual.dtype == np.float64
+
+
+@pytest.mark.parametrize("integer_type", [np.int32, np.int64, np.uint32, np.uint64])
+def test_numpy_integer_parameters(integer_type):
+    """Accept signed and unsigned NumPy integer window parameters.
+
+    Parameters
+    ----------
+    integer_type : type of numpy.integer
+        Scalar type used for both size and stride.
+    """
+    actual = SlidingWindow(integer_type(3), integer_type(3)).fit_transform(np.arange(10))
+    np.testing.assert_array_equal(actual, [[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+
+
+@pytest.mark.parametrize("value", [1 + 2j, np.complex128(1 + 2j), object(), "invalid"])
+def test_invalid_object_values_raise_value_error(value):
+    """Reject complex and nonnumeric objects with the documented error type.
+
+    Parameters
+    ----------
+    value : object
+        Invalid element in an otherwise numeric object array.
+    """
+    with pytest.raises(ValueError, match="real numeric"):
+        SlidingWindow(1, 1).fit_transform(np.array([1, value, 3], dtype=object))
