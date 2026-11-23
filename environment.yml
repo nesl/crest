@@ -30,7 +30,7 @@ dependencies:
       - optuna==4.6.0
       - absl-py==1.4.0   # logging in the server and client
       - addict==2.4.0
-      - pyyaml==6.0.2
+      - pyyaml==6.0.4
       - pydantic>=2,<3
       # Dataset utilities
       - numpy-quaternion==2024.0.12
