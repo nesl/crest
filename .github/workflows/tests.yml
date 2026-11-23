@@ -7,7 +7,16 @@ permissions:
 
 jobs:
   test:
-    runs-on: macos-15
+    name: Test ${{ matrix.suite }} (Linux)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: search
+            selection: "llm or optimizer"
+          - suite: core
+            selection: "not (llm or optimizer)"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb # v4.1.0
@@ -15,7 +24,7 @@ jobs:
           miniforge-version: latest
           environment-file: environment.yml
           activate-environment: crest
-      - name: Install CREST and run the default test suite
+      - name: Verify the environment
         shell: bash -el {0}
         run: |
           make install
@@ -32,4 +41,8 @@ jobs:
           if actual != expected:
               raise SystemExit(f"SoundFile loads libsndfile {actual}, but Conda installed {expected}")
           PY
-          make test
+      - name: Run tests
+        shell: bash -el {0}
+        env:
+          PYTEST_ADDOPTS: '-k "${{ matrix.selection }}"'
+        run: make test
