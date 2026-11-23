@@ -28,7 +28,7 @@ dependencies = [
     "numpy-quaternion",
     "pydometer",
     "tqdm",
-    "pydantic>=2,<3",
+    "pydantic>=2.14.4,<3",
     "soundata>=1.0.1",
     "librosa>=0.11.0",
     "soundfile>=0.13.1"
