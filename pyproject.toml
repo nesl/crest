@@ -29,9 +29,9 @@ dependencies = [
     "pydometer",
     "tqdm",
     "pydantic>=2,<3",
-    "soundata==1.0.1",
-    "librosa==0.11.0",
-    "soundfile==0.13.1"
+    "soundata>=1.0.1",
+    "librosa>=0.11.0",
+    "soundfile>=0.13.1"
 ]
 
 [tool.setuptools.packages.find]

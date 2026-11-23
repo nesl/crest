@@ -1,0 +1,35 @@
+name: CREST tests
+
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb # v4.1.0
+        with:
+          miniforge-version: latest
+          environment-file: environment.yml
+          activate-environment: crest
+      - name: Install CREST and run the default test suite
+        shell: bash -el {0}
+        run: |
+          make install
+          python -m pip check
+          python - <<'PY'
+          import json
+          import subprocess
+
+          import soundfile
+
+          packages = json.loads(subprocess.check_output(["conda", "list", "--json", "^libsndfile$"]))
+          expected = packages[0]["version"]
+          actual = soundfile.__libsndfile_version__
+          if actual != expected:
+              raise SystemExit(f"SoundFile loads libsndfile {actual}, but Conda installed {expected}")
+          PY
+          make test

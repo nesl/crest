@@ -28,7 +28,7 @@ dependencies:
       - keras-flops==0.1.2
       - tf-keras==2.20.1
       - optuna==4.6.0
-      - absl-py          # logging in the server and client
+      - absl-py==1.4.0   # logging in the server and client
       - addict==2.4.0
       - pyyaml==6.0.2
       - pydantic>=2,<3

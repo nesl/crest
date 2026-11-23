@@ -4,7 +4,21 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      tensorflow-stack:
+        patterns:
+          - "tensorflow*"
+          - "tf-keras"
+          - "keras-*"
+    ignore:
+      # Upgrade the interpreter and the native audio backend deliberately.
+      - dependency-name: "python"
+      - dependency-name: "libsndfile"
   - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"

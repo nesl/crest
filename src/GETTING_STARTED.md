@@ -25,7 +25,8 @@ On a compatible NVIDIA GPU host, install the TensorFlow CUDA dependencies and ve
 
 ```bash
 pip install --upgrade pip
-pip install 'tensorflow[and-cuda]==2.20.0'
+tf_version=$(python -c 'from importlib.metadata import version; print(version("tensorflow"))')
+python -m pip install "tensorflow[and-cuda]==${tf_version}"
 python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
 ```
 
