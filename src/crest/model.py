@@ -30,6 +30,7 @@ from tcn import TCN
 from tensorflow.keras import Input, Model
 from tensorflow.keras.layers import Dense, Flatten, MaxPooling1D, Reshape
 
+from .component_selection import resolve_training_batch_size
 from .model_metrics import count_flops_keras
 from .hardware import (
     HIL_controller,
@@ -187,6 +188,7 @@ TRIAL_LOG_STABLE_COLUMNS = (
     "timestamp_readable",
     "score",
     "quantization_mode",
+    "hil_first",
     "ram_bytes",
     "flash_bytes",
     "external_flash_bytes",
@@ -2045,6 +2047,10 @@ def _validate_nas_config(
         raise KeyError("Missing required top-level 'nas' section in the configuration.")
 
     nas_config = Dict(config.nas)
+    raw_hil_first = nas_config.get("hil_first", True)
+    if not isinstance(raw_hil_first, bool):
+        raise ValueError("nas.hil_first must be a boolean.")
+    nas_config.hil_first = raw_hil_first
     allowed_base_metric_names, effective_training_only_metric_names = _resolve_validation_metric_sets(
         task_metric_names=task_metric_names,
         training_only_task_metric_names=training_only_task_metric_names,
@@ -2240,12 +2246,12 @@ def evaluate_feasibility_rules(
     feasibility_config: Dict,
     task_nonnegative_metric_names: set[str] | None = None,
 ) -> FeasibilityEvaluation:
-    """Evaluate NAS feasibility rules against the current pre-training context.
+    """Evaluate NAS feasibility rules against metrics available at this stage.
 
     Parameters
     ----------
     metrics : dict[str, Any]
-        Runtime and compile metrics available before task training.
+        Runtime, compile, and task metrics available at the configured stage.
     hyperparams : addict.Dict
         Trial hyperparameters, including ``flops``.
     score_config : addict.Dict
@@ -2391,6 +2397,11 @@ def load_config(
         if section not in config:
             raise KeyError(f"Missing '{section}' section in {cfg_path}")
 
+    final_retraining = config.training.get("final_retraining", True)
+    if not isinstance(final_retraining, bool):
+        raise ValueError("training.final_retraining must be a boolean.")
+    config.training.final_retraining = final_retraining
+
     device_name = config.device.get("name")
     if not device_name:
         raise KeyError("Expected 'device.name' to be set in the configuration.")
@@ -2438,12 +2449,24 @@ def load_config(
     if "max_total_trials" not in training:
         # Allow pruned/failed runs without risking an infinite loop.
         training.max_total_trials = int(training.nas_trials * 2)
+    training.batch_size = resolve_training_batch_size(training)
     # If not explicitly set, disable training by default for faster debugging.
     training.energy_aware = bool(training.get("energy_aware", False))
     training.quantization = _normalize_quantization_config(
         training,
         normalized_device_name,
     )
+    network = Dict(config.get("network", {}))
+    raw_hil_probe_timeout = network.get("hil_probe_timeout_sec", 5.0)
+    if (
+        isinstance(raw_hil_probe_timeout, bool)
+        or not isinstance(raw_hil_probe_timeout, (int, float))
+        or not np.isfinite(raw_hil_probe_timeout)
+        or float(raw_hil_probe_timeout) <= 0.0
+    ):
+        raise ValueError("network.hil_probe_timeout_sec must be a positive finite number.")
+    network.hil_probe_timeout_sec = float(raw_hil_probe_timeout)
+    config.network = network
     # Custom tariffs travel with the experiment YAML, independent of launch cwd.
     raw_optimizer = config.get("optimizer", {})
     raw_llm = raw_optimizer.get("llm", {}) if isinstance(raw_optimizer, dict) else {}
@@ -2842,6 +2865,7 @@ def _trial_log_row_mapping(
         "timestamp_readable": time.strftime("%m-%d-%Y %H:%M:%S"),
         "score": "" if trial_outcome.score is None else trial_outcome.score,
         "quantization_mode": trial_outcome.quantization_mode,
+        "hil_first": metrics.get("hil_first", 1),
         "ram_bytes": metrics["ram_bytes"],
         "flash_bytes": metrics["flash_bytes"],
         "external_flash_bytes": metrics.get("external_flash_bytes", -1),
@@ -3138,6 +3162,7 @@ def log_trial(
 
     trial.set_user_attr("ram_bytes", metrics["ram_bytes"])
     trial.set_user_attr("quantization_mode", trial_outcome.quantization_mode)
+    trial.set_user_attr("hil_first", bool(metrics.get("hil_first", 1)))
     trial.set_user_attr("flash_bytes", metrics["flash_bytes"])
     trial.set_user_attr("external_flash_bytes", metrics.get("external_flash_bytes", -1))
     trial.set_user_attr("weight_storage_mode", metrics.get("weight_storage_mode", "embedded"))

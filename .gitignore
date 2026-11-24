@@ -151,3 +151,17 @@ firmware/stm32/crest_stm32_lrun/**
 
 # Shared fixed candidates required by the CS3 campaign configs.
 !src/config/case_study_configs/cs3/warmup_params.json
+
+# ESP-IDF backend incremental workspace outputs.
+firmware/esp32/crest_esp32_tflm/.crest-workspace.lock
+firmware/esp32/crest_esp32_tflm/sdkconfig
+firmware/esp32/crest_esp32_tflm/sdkconfig.old
+firmware/esp32/crest_esp32_tflm/dependencies.lock
+firmware/esp32/crest_esp32_tflm/managed_components/
+firmware/esp32/crest_esp32_tflm/main/model_data.cc
+firmware/esp32/crest_esp32_tflm/main/model_data.h
+firmware/esp32/crest_esp32_tflm/main/fixtures.h
+firmware/esp32/crest_esp32_tflm/main/crest_manifest.h
+firmware/esp32/crest_esp32_tflm/main/crest_model_manifest.json
+firmware/esp32/crest_esp32_tflm/main/crest_candidate.tflite
+!firmware/esp32/crest_esp32_tflm/partitions-4m.csv

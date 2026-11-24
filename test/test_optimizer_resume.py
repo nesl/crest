@@ -220,6 +220,109 @@ def test_signed_resume_preserves_matching_feasibility_policy(campaign):
     assert result.user_attrs[OPTIMIZER_SIGNATURE_ATTR]["sampler"]["options"]["constraints_func"] == "crest.persisted_feasibility_constraints.v1"
 
 
+@pytest.mark.parametrize("feasibility_enabled", [False, True])
+def test_historical_evaluation_policy_defaults_resume_without_rewriting(campaign, feasibility_enabled):
+    """Missing historical order/batch identity normalizes to true/256 only."""
+    client, storage = campaign
+    if feasibility_enabled:
+        client.config.nas.feasibility = Dict(train_if_infeasible=False, rules=[{
+            "rule": "latency_budget", "metric": "latency_ms", "condition": "<=",
+            "reference": {"type": "literal", "value": 10},
+        }])
+    study = optuna.create_study(study_name="campaign", storage=storage, direction="maximize")
+    *_, signature = client._select_optimizer(study, client._build_sampler())
+    historical = copy.deepcopy(signature)
+    historical.pop("evaluation_policy")
+    study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, historical)
+
+    client._select_optimizer(study, client._build_sampler())
+
+    assert study.user_attrs[OPTIMIZER_SIGNATURE_ATTR] == historical
+
+
+@pytest.mark.parametrize("field,value", [("hil_first", False), ("training_batch_size", 64)])
+def test_historical_evaluation_policy_rejects_nonlegacy_active_values(campaign, field, value):
+    """An unsigned historical policy cannot be adopted as a changed policy."""
+    client, storage = campaign
+    study = optuna.create_study(study_name="campaign", storage=storage, direction="maximize")
+    *_, signature = client._select_optimizer(study, client._build_sampler())
+    historical = copy.deepcopy(signature)
+    historical.pop("evaluation_policy")
+    study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, historical)
+    if field == "hil_first":
+        client.config.nas.hil_first = value
+    else:
+        client.config.training.batch_size = value
+
+    with pytest.raises(RuntimeError, match="optimizer signature"):
+        client._select_optimizer(study, client._build_sampler())
+    assert study.user_attrs[OPTIMIZER_SIGNATURE_ATTR] == historical
+
+
+@pytest.mark.parametrize("hil_first", ["false", 0, None])
+def test_optimizer_identity_rejects_nonboolean_hil_first_when_loader_is_bypassed(campaign, hil_first):
+    """Programmatic configs cannot coerce ambiguous order values in identity."""
+    client, storage = campaign
+    client.config.nas.hil_first = hil_first
+    study = optuna.create_study(study_name="campaign", storage=storage, direction="maximize")
+
+    with pytest.raises(ValueError, match="nas.hil_first"):
+        client._select_optimizer(study, client._build_sampler())
+
+
+def test_nonempty_historical_default_policy_resumes_without_rewriting(campaign):
+    """A signed legacy study resumes under true/256 without metadata adoption."""
+    client, storage = campaign
+    study = signed_study(client, storage)
+    historical = copy.deepcopy(study.user_attrs[OPTIMIZER_SIGNATURE_ATTR])
+    historical.pop("evaluation_policy")
+    study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, historical)
+    before = study.trials
+    client.objective = MagicMock()
+
+    resumed = client.run_nas("campaign", storage)
+
+    client.objective.assert_not_called()
+    assert resumed.trials == before
+    assert resumed.user_attrs[OPTIMIZER_SIGNATURE_ATTR] == historical
+
+
+@pytest.mark.parametrize("feasibility_enabled", [False, True])
+@pytest.mark.parametrize("field,value", [("hil_first", False), ("training_batch_size", 64)])
+@pytest.mark.parametrize("stored_policy", ["missing", "explicit_changed"])
+def test_run_nas_rejects_changed_evaluation_policy_before_objective(
+    campaign, feasibility_enabled, field, value, stored_policy
+):
+    """Order and batch identity stay unconditional and strict on real resume."""
+    client, storage = campaign
+    if feasibility_enabled:
+        client.config.nas.feasibility = Dict(train_if_infeasible=False, rules=[{
+            "rule": "latency_budget", "metric": "latency_ms", "condition": "<=",
+            "reference": {"type": "literal", "value": 10},
+        }])
+    study = signed_study(client, storage)
+    stored = copy.deepcopy(study.user_attrs[OPTIMIZER_SIGNATURE_ATTR])
+    if stored_policy == "missing":
+        stored.pop("evaluation_policy")
+        if field == "hil_first":
+            client.config.nas.hil_first = value
+        else:
+            client.config.training.batch_size = value
+    else:
+        stored["evaluation_policy"][field] = value
+    study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, stored)
+    before, attrs = study.trials, study.user_attrs
+    client.objective = MagicMock()
+
+    with patch.object(client, "_initialize_optimizer") as initialize:
+        with pytest.raises(RuntimeError, match="optimizer signature"):
+            client.run_nas("campaign", storage)
+
+    initialize.assert_not_called()
+    client.objective.assert_not_called()
+    assert_unchanged(storage, before, attrs)
+
+
 def test_signed_waiting_identity_mismatch_rejected(campaign):
     client, storage = campaign
     study = optuna.create_study(study_name="campaign", storage=storage, direction="maximize")

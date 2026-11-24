@@ -27,7 +27,15 @@ ORPHAN_TRIAL_RECOVERY_ATTR = "crest_orphan_trial_recovery"
 PROPOSAL_ATTR = "crest_proposal"
 
 
-def build_optimizer_signature(name, optimizer, config, sampler, sampler_options, training_config):
+def build_optimizer_signature(
+    name,
+    optimizer,
+    config,
+    sampler,
+    sampler_options,
+    training_config,
+    evaluation_policy=None,
+):
     """Describe effective settings as detached JSON data for strict resume checks."""
     options = dict(sampler_options)
     if "constraints_func" in options:
@@ -48,6 +56,8 @@ def build_optimizer_signature(name, optimizer, config, sampler, sampler_options,
     training_policy = training_randomness_policy(training_config)
     if training_policy is not None:
         signature["training_randomness"] = training_policy
+    if evaluation_policy is not None:
+        signature["evaluation_policy"] = dict(evaluation_policy)
     signature = json.loads(json.dumps(signature, sort_keys=True, allow_nan=False))
     return signature
 
@@ -77,6 +87,18 @@ def validate_optimizer_identity(study, signature, optimizer):
             comparable = {**stored, "sampler": {
                 **stored_sampler, "class": legacy_sampler_names[old_name],
             }}
+    if (
+        isinstance(comparable, dict)
+        and isinstance(signature.get("evaluation_policy"), dict)
+        and "evaluation_policy" not in comparable
+    ):
+        comparable = {
+            **comparable,
+            "evaluation_policy": {
+                "hil_first": True,
+                "training_batch_size": 256,
+            },
+        }
     comparable = optimizer.normalize_stored_identity(comparable, signature)
     if comparable != signature:
         raise RuntimeError(

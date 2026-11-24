@@ -11,11 +11,13 @@ import copy
 from collections.abc import Mapping
 import csv
 from dataclasses import dataclass, replace
+import hashlib
 import json
 import logging
 import shutil
 import socket
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -42,12 +44,22 @@ from crest.hardware import (
     predict_tflite_model_subprocess,
     return_hardware_specs,
 )
+from crest.hil.artifact_transport import (
+    ARTIFACT_FORMAT, ARTIFACT_PROTOCOL_VERSION, DEFAULT_HIL_REQUEST_RETRIES,
+    DEFAULT_MAX_ARTIFACT_BYTES, read_tflite_artifact, sha256_bytes,
+)
 from crest.microcontrollers import (
     get_device as get_microcontroller_device,
     resolve_device_options,
 )
 from crest.builtin_components import ensure_builtin_components_registered
-from crest.component_selection import cfg_get, resolve_component_selection, resolve_optimizer_selection
+from crest.component_selection import (
+    cfg_get,
+    derive_runtime_task_config,
+    resolve_component_selection,
+    resolve_optimizer_selection,
+    resolve_training_batch_size,
+)
 from crest.cadence import resolve_batch_period_ms
 from crest.model import (
     NONNEGATIVE_METRICS,
@@ -84,7 +96,7 @@ from crest.optimizers.study_state import (
 from crest.interfaces import OptimizerBudgetExhausted
 from crest.pipeline_types import (
     BudgetSnapshot, DataSplit, DatasetBundle,
-    ModelBuildContext, SearchContext,
+    EvaluationResult, ModelBuildContext, SearchContext,
 )
 from crest.registry import dataset_registry, model_family_registry
 from crest.runtime_bootstrap import bootstrap_pipeline
@@ -100,6 +112,24 @@ logger = logging.getLogger(__name__)
 
 class MeasurementInfrastructureError(RuntimeError):
     """A bounded HIL recovery failed; consume this NAS attempt without a score."""
+
+
+class HILTransportError(MeasurementInfrastructureError):
+    """Bounded HIL recovery or reply-integrity validation was exhausted."""
+
+    def __init__(self, *, endpoint, request_id, attempts, phase, cause):
+        self.endpoint, self.request_id = endpoint, request_id
+        self.attempts, self.phase, self.cause = attempts, phase, cause
+        super().__init__(f"HIL transport failed during {phase} after {attempts} attempt(s) at {endpoint}: {cause}")
+
+
+class HILArtifactCompatibilityError(RuntimeError):
+    """The configured endpoint/backend cannot consume TFLite artifacts."""
+
+    def __init__(self, *, endpoint, advertised_versions, backend, reason):
+        self.endpoint, self.advertised_versions = endpoint, advertised_versions
+        self.backend, self.reason = backend, reason
+        super().__init__(f"HIL artifact transport is unsupported at {endpoint}: {reason}")
 
 
 class MeasurementInfrastructureStop(RuntimeError):
@@ -209,6 +239,18 @@ class NASMetricDependencies:
     runtime_only: frozenset[str]
 
 
+@dataclass(frozen=True)
+class CompletedTrialTraining:
+    """Objective-local stage state; this does not extend shared trial records."""
+
+    task_metrics: dict[str, Any]
+    evaluation_result: EvaluationResult
+    checkpoint_path: Path
+    tflite_path: Path
+    tflite_sha256: str
+    artifact_summary: dict[str, Any]
+
+
 def _family_trial_params(params: Mapping[str, Any]) -> dict[str, Any]:
     """Return Optuna parameters that belong to model-family decoding.
 
@@ -224,6 +266,27 @@ def _family_trial_params(params: Mapping[str, Any]) -> dict[str, Any]:
         Parameters safe to pass to ``ModelFamilyABC.decode_trial_hparams``.
     """
     return {key: value for key, value in params.items() if key not in RUNNER_OWNED_TRIAL_PARAM_KEYS}
+
+
+def _runner_fit_kwargs(fit_plan: Any, *, epochs: int, batch_size: int) -> dict[str, Any]:
+    """Combine task-owned fit wiring with runner-owned schedule settings."""
+    fit_kwargs = dict(fit_plan.fit_kwargs)
+    fit_kwargs["callbacks"] = list(fit_plan.callbacks)
+    fit_kwargs["epochs"] = int(epochs)
+    if isinstance(fit_kwargs.get("x"), tf.data.Dataset):
+        fit_kwargs.pop("batch_size", None)
+    else:
+        fit_kwargs["batch_size"] = int(batch_size)
+    return fit_kwargs
+
+
+def _sha256_file(path: Path) -> str:
+    """Return the SHA-256 identity of one local artifact file."""
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class NASModelClient:
@@ -323,6 +386,9 @@ class NASModelClient:
 
         self.context = None
         self.socket = None
+        self._hil_socket_endpoint = None
+        self._hil_artifact_capabilities = None
+        self._hil_artifact_capability_endpoint = None
 
         self.study_name = "default_study"
 
@@ -846,7 +912,16 @@ class NASModelClient:
             kwargs = {"population_size": self.config.training.nas_multiobjective_population_size, "seed": 42}
         else:
             sampler_class = optuna.samplers.TPESampler
-            kwargs = {"n_startup_trials": 15, "multivariate": True}
+            startup = self._cfg_get(self.config.training, "nas_tpe_startup_trials", 15)
+            if isinstance(startup, bool) or not isinstance(startup, int) or startup < 0:
+                raise ValueError("training.nas_tpe_startup_trials must be a nonnegative integer.")
+            kwargs = {"n_startup_trials": startup, "multivariate": True, "seed": 42}
+        if (getattr(self, "model_family_name", None) == "fer_mini_xception"
+                and self._cfg_get(self.model_config.params, "avoid_duplicate_architectures", False)):
+            from crest.model_families.fer_mini_xception.sampler import UniqueFERNSGAIISampler, UniqueFERTPESampler
+            sampler_class = UniqueFERNSGAIISampler if self._score_is_multiobjective() else UniqueFERTPESampler
+            kwargs["choices"] = {p.name: list(p.choices) for p in self.model_family.trial_search_space(self.model_build_context, self.model_config)}
+            kwargs["fixed_resolution"] = int(self.config.dataset.params.image_size)
         if constraints_func is not None:
             kwargs["constraints_func"] = constraints_func
         return sampler_class, kwargs
@@ -863,8 +938,15 @@ class NASModelClient:
         optimizer = component_cls()
         optimizer.validate_config(config)
         _, sampler_options = self._sampler_setup()
+        raw_hil_first = self._cfg_get(self.config.nas, "hil_first", True)
+        if not isinstance(raw_hil_first, bool):
+            raise ValueError("nas.hil_first must be a boolean.")
         signature = build_optimizer_signature(
             name, optimizer, config, sampler, sampler_options, self.config.training,
+            evaluation_policy={
+                "hil_first": raw_hil_first,
+                "training_batch_size": resolve_training_batch_size(self.config.training),
+            },
         )
         validate_optimizer_identity(study, signature, optimizer)
         return name, optimizer, config, signature
@@ -1137,6 +1219,20 @@ class NASModelClient:
                 "Is the board connected and is hil_server.py running?"
             ) from exc
 
+    def _preflight_training_first_hil(self) -> None:
+        """Check reachability and artifact capability before expensive fitting."""
+        hil_first = self._cfg_get(self.config.nas, "hil_first", True)
+        if not isinstance(hil_first, bool):
+            raise ValueError("nas.hil_first must be a boolean.")
+        if hil_first or not bool(self.config.training.train):
+            return
+        dependencies = self._classify_nas_metric_dependencies()
+        if not self._should_collect_compile_metrics(dependencies):
+            return
+        timeout_s = float(self._cfg_get(self.config.network, "hil_probe_timeout_sec", 5.0))
+        self._probe_hil_endpoint(timeout_s=timeout_s)
+        self._ensure_hil_artifact_support(refresh=True)
+
     def _ensure_hil_socket(self) -> None:
         """Open the ZeroMQ REQ socket on first real HIL request.
 
@@ -1151,17 +1247,87 @@ class NASModelClient:
         connection retries when ``device.hil`` and compile proxy collection are
         disabled.
         """
+        endpoint = f"tcp://{self.config.network.host}:{self.config.network.port}"
+        connected_endpoint = getattr(self, "_hil_socket_endpoint", None)
         if self.socket is not None:
-            return
+            if connected_endpoint is None or connected_endpoint == endpoint:
+                return
+            self._reset_hil_socket()
         self.context = zmq.Context.instance()
         self.socket = self.context.socket(zmq.REQ)
         self.socket.RCVTIMEO = self.config.network.recv_timeout_sec * 1000
         self.socket.SNDTIMEO = self.config.network.send_timeout_sec * 1000
-        endpoint = f"tcp://{self.config.network.host}:{self.config.network.port}"
         self.socket.connect(endpoint)
+        self._hil_socket_endpoint = endpoint
         logger.info("[REQ] Connected to HIL server at %s", endpoint)
 
-    def _hil_request(self, payload):
+    def _reset_hil_socket(self) -> None:
+        """Discard a REQ socket whose request/reply state cannot be reused."""
+        if self.socket is not None:
+            self.socket.close(linger=0)
+        self.socket = None
+        self._hil_socket_endpoint = None
+        self._hil_artifact_capabilities = None
+        self._hil_artifact_capability_endpoint = None
+
+    def _hil_endpoint(self) -> str:
+        return f"tcp://{self.config.network.host}:{self.config.network.port}"
+
+    def _hil_retry_count(self) -> int:
+        value = cfg_get(self.config.network, "hil_request_retries", DEFAULT_HIL_REQUEST_RETRIES)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("network.hil_request_retries must be a non-negative integer.")
+        return value
+
+    def _max_artifact_bytes(self) -> int:
+        value = cfg_get(self.config.network, "max_artifact_bytes", DEFAULT_MAX_ARTIFACT_BYTES)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError("network.max_artifact_bytes must be a positive integer.")
+        return value
+
+    def _ensure_hil_artifact_support(self, *, refresh: bool = False) -> dict:
+        """Negotiate artifact protocol/backend support before expensive training."""
+        self._max_artifact_bytes()
+        if refresh:
+            self._reset_hil_socket()
+        cached = getattr(self, "_hil_artifact_capabilities", None)
+        endpoint = self._hil_endpoint()
+        if cached is not None and getattr(self, "_hil_artifact_capability_endpoint", None) == endpoint:
+            return cached
+        attempts = self._hil_retry_count() + 1
+        query = {"request_type": "capabilities", "protocol_version": ARTIFACT_PROTOCOL_VERSION}
+        last_error = None
+        for _attempt in range(1, attempts + 1):
+            try:
+                self._ensure_hil_socket()
+                self.socket.send_json(query)
+                response = self.socket.recv_json()
+            except (zmq.error.Again, zmq.error.ZMQError) as exc:
+                last_error = exc
+                self._reset_hil_socket()
+                continue
+            except (ValueError, TypeError) as exc:
+                self._reset_hil_socket()
+                raise HILArtifactCompatibilityError(endpoint=endpoint, advertised_versions=None, backend=None, reason="malformed capability reply") from exc
+            if not isinstance(response, Mapping):
+                self._reset_hil_socket()
+                raise HILArtifactCompatibilityError(endpoint=endpoint, advertised_versions=None, backend=None, reason="malformed capability reply")
+            versions = response.get("artifact_transport_versions")
+            backend = response.get("backend")
+            limit_block = response.get("limits")
+            limit = limit_block.get("max_artifact_bytes") if isinstance(limit_block, Mapping) else None
+            response_version = response.get("protocol_version")
+            valid = (response.get("request_type") == "capabilities" and isinstance(response_version, int) and not isinstance(response_version, bool) and response_version == ARTIFACT_PROTOCOL_VERSION and isinstance(versions, list) and any(isinstance(item, int) and not isinstance(item, bool) and item == ARTIFACT_PROTOCOL_VERSION for item in versions) and isinstance(backend, Mapping) and backend.get("supports_tflite_artifact") is True and isinstance(limit, int) and not isinstance(limit, bool) and limit > 0)
+            if not valid:
+                self._reset_hil_socket()
+                raise HILArtifactCompatibilityError(endpoint=endpoint, advertised_versions=versions, backend=backend, reason="protocol version, backend support, or payload limit was not advertised")
+            self._hil_artifact_capabilities = dict(response)
+            self._hil_artifact_capability_endpoint = endpoint
+            return self._hil_artifact_capabilities
+        error = HILTransportError(endpoint=endpoint, request_id=None, attempts=attempts, phase="capability", cause=last_error)
+        raise error from last_error
+
+    def _hil_request(self, payload, *, artifact_path: Path | None = None):
         """Send a HIL request payload to the HIL server and receive metrics.
 
         Parameters
@@ -1188,26 +1354,88 @@ class NASModelClient:
             payload,
         )
 
-        try:
-            self._ensure_hil_socket()
-            self.socket.send_json(payload)
-            metrics = self.socket.recv_json()
-            logger.debug("[REQ] Received metrics: %s", metrics)
-            return metrics
-        except zmq.error.Again as ex:
-            logger.warning(
-                "[REQ] Timed out waiting for metrics after %s seconds",
-                self.config.network.recv_timeout_sec,
+        request_id = None
+        artifact_bytes = None
+        wire_payload = payload
+        if artifact_path is not None:
+            capabilities = self._ensure_hil_artifact_support()
+            server_limit = capabilities["limits"]["max_artifact_bytes"]
+            artifact_bytes, tensor_metadata = read_tflite_artifact(
+                Path(artifact_path), max_bytes=min(self._max_artifact_bytes(), server_limit)
             )
-            # TODO: This is probably bad and should be handled more gracefully.
-            raise RuntimeError("Timeout waiting for metrics from HIL server") from ex
-        except zmq.error.ZMQError as ex:
-            raise RuntimeError(
-                f"Failed to reach HIL server at {self.config.network.host}:{self.config.network.port}"
-            ) from ex
-        finally:
-            # Give stdout time to flush before tearing the socket down.
-            time.sleep(0.1)
+            request_id = uuid.uuid4().hex
+            wire_payload = dict(payload)
+            wire_payload.update(
+                request_type="candidate_artifact",
+                protocol_version=ARTIFACT_PROTOCOL_VERSION,
+                request_id=request_id,
+                artifact={
+                    "format": ARTIFACT_FORMAT,
+                    "byte_length": len(artifact_bytes),
+                    "sha256": sha256_bytes(artifact_bytes),
+                    **tensor_metadata,
+                },
+            )
+
+        endpoint = self._hil_endpoint()
+        attempts = self._hil_retry_count() + 1
+        last_error = None
+        phase = "send"
+        for attempt in range(1, attempts + 1):
+            phase = "send"
+            try:
+                if artifact_bytes is not None and attempt > 1:
+                    try:
+                        retry_capabilities = self._ensure_hil_artifact_support()
+                    except HILTransportError as exc:
+                        error = HILTransportError(
+                            endpoint=endpoint,
+                            request_id=request_id,
+                            attempts=attempt,
+                            phase="capability",
+                            cause=exc,
+                        )
+                        raise error from exc
+                    if len(artifact_bytes) > retry_capabilities["limits"]["max_artifact_bytes"]:
+                        raise HILArtifactCompatibilityError(
+                            endpoint=endpoint, advertised_versions=retry_capabilities.get("artifact_transport_versions"),
+                            backend=retry_capabilities.get("backend"),
+                            reason="artifact exceeds the server limit advertised after reconnect",
+                        )
+                self._ensure_hil_socket()
+                if artifact_bytes is None:
+                    self.socket.send_json(wire_payload)
+                else:
+                    frames = [json.dumps(wire_payload).encode("utf-8"), artifact_bytes]
+                    self.socket.send_multipart(frames)
+                phase = "receive"
+                metrics = self.socket.recv_json()
+                if not isinstance(metrics, Mapping):
+                    raise ValueError("HIL reply must be a JSON object.")
+                if artifact_bytes is not None and metrics.get("error_code") == HIL_MASTER_SUCCESS:
+                    expected = wire_payload["artifact"]
+                    response_length = metrics.get("artifact_byte_length")
+                    identity_matches = (
+                        metrics.get("request_id") == request_id
+                        and metrics.get("artifact_sha256") == expected["sha256"]
+                        and isinstance(response_length, int)
+                        and not isinstance(response_length, bool)
+                        and response_length == expected["byte_length"]
+                    )
+                    if not identity_matches:
+                        raise ValueError("HIL artifact reply identity does not match the request.")
+                logger.debug("[REQ] Received metrics: %s", metrics)
+                return metrics
+            except (zmq.error.Again, zmq.error.ZMQError, ValueError) as exc:
+                last_error = exc
+                if isinstance(exc, ValueError):
+                    phase = "integrity"
+                logger.warning("[REQ] HIL %s failed on attempt %s/%s: %s", phase, attempt, attempts, exc)
+                self._reset_hil_socket()
+        error = HILTransportError(
+            endpoint=endpoint, request_id=request_id, attempts=attempts, phase=phase, cause=last_error
+        )
+        raise error from last_error
 
     def _build_runtime_metadata(
         self,
@@ -1501,6 +1729,124 @@ class NASModelClient:
         )
         return output_path
 
+    def _evaluate_tflite_path(
+        self,
+        *,
+        tflite_path: Path,
+        split: DataSplit,
+        inference_diagnostics: dict | None = None,
+    ) -> EvaluationResult:
+        """Evaluate an existing TFLite artifact without exporting it again."""
+        tflite_path = Path(tflite_path)
+        diagnostics = inference_diagnostics if inference_diagnostics is not None else {}
+        predictions = predict_tflite_model_subprocess(
+            tflite_path,
+            split.inputs,
+            diagnostics=diagnostics,
+        )
+        tflite_path.with_suffix(".evaluation.json").write_text(
+            json.dumps(diagnostics, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return self.task.evaluate_predictions(
+            predictions,
+            split,
+            self.task_config,
+            self.target_spec,
+        )
+
+    def _snapshot_trial_checkpoint(self, trial_number: int) -> Path:
+        """Copy the selected checkpoint to a unique per-trial artifact path."""
+        source = Path(self.config.outputs.checkpoint_path)
+        if not source.is_file():
+            raise FileNotFoundError(f"Selected trial checkpoint does not exist: {source}")
+        suffix = source.suffix or ".keras"
+        destination = (
+            self._artifacts_dir()
+            / f"{self.study_name}_trial_{int(trial_number)}_selected{suffix}"
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        return destination
+
+    def _train_and_evaluate_trial(
+        self,
+        *,
+        model: Any,
+        trial: optuna.Trial,
+        task_config: Any,
+        batch_size: int,
+        quantization_mode: str,
+        hil_first: bool,
+    ) -> CompletedTrialTraining:
+        """Fit one trial and retain its selected checkpoint and exact flatbuffer."""
+        reset_training_randomness(self.config.training)
+        fit_plan = self.task.build_fit_plan(
+            self.dataset_bundle,
+            task_config,
+            self.target_spec,
+            mode="search",
+            combine_train_val=False,
+        )
+        model.fit(**_runner_fit_kwargs(
+            fit_plan,
+            epochs=self.config.training.nas_epochs,
+            batch_size=batch_size,
+        ))
+        checkpoint_path = self._snapshot_trial_checkpoint(trial.number)
+        selected_model = self.model_family.load_model(
+            checkpoint_path,
+            self.model_build_context,
+            self.model_config,
+        )
+        split_name = f"validation_trial_{trial.number}"
+        tflite_path = self._export_tflite_for_evaluation(
+            model=selected_model,
+            split_name=split_name,
+            quantization_mode=quantization_mode,
+        )
+        inference_diagnostics: dict[str, Any] = {}
+        evaluation_result = self._evaluate_tflite_path(
+            tflite_path=tflite_path,
+            split=self.dataset_bundle.val,
+            inference_diagnostics=inference_diagnostics,
+        )
+        trial.set_user_attr(
+            "tflite_evaluation",
+            {"status": "passed", **inference_diagnostics},
+        )
+        task_metrics = dict(evaluation_result.metrics)
+        keras_evaluation_result = self._evaluate_model_with_backend(
+            model=selected_model,
+            split=self.dataset_bundle.val,
+            split_name="validation_keras",
+            quantization_mode=quantization_mode,
+            evaluation_backend="keras",
+        )
+        task_metrics.update({
+            f"keras_{metric_name}": metric_value
+            for metric_name, metric_value in keras_evaluation_result.metrics.items()
+        })
+        tflite_sha256 = _sha256_file(tflite_path)
+        artifact_summary = dict(evaluation_result.artifacts or {})
+        artifact_summary.update({
+            "hil_first": hil_first,
+            "checkpoint_snapshot": str(checkpoint_path),
+            "tflite_path": str(tflite_path),
+            "tflite_sha256": tflite_sha256,
+        })
+        trial.set_user_attr("checkpoint_snapshot", str(checkpoint_path))
+        trial.set_user_attr("tflite_path", str(tflite_path))
+        trial.set_user_attr("tflite_sha256", tflite_sha256)
+        return CompletedTrialTraining(
+            task_metrics=task_metrics,
+            evaluation_result=evaluation_result,
+            checkpoint_path=checkpoint_path,
+            tflite_path=tflite_path,
+            tflite_sha256=tflite_sha256,
+            artifact_summary=artifact_summary,
+        )
+
     def _evaluate_model_with_backend(
         self,
         *,
@@ -1547,14 +1893,10 @@ class NASModelClient:
             split_name=split_name,
             quantization_mode=quantization_mode,
         )
-        diagnostics = inference_diagnostics if inference_diagnostics is not None else {}
-        predictions = predict_tflite_model_subprocess(tflite_path, split.inputs, diagnostics=diagnostics)
-        tflite_path.with_suffix(".evaluation.json").write_text(json.dumps(diagnostics, indent=2) + "\n")
-        return self.task.evaluate_predictions(
-            predictions,
-            split,
-            self.task_config,
-            self.target_spec,
+        return self._evaluate_tflite_path(
+            tflite_path=tflite_path,
+            split=split,
+            inference_diagnostics=inference_diagnostics,
         )
 
     @staticmethod
@@ -1748,26 +2090,18 @@ class NASModelClient:
     def objective(self, trial: optuna.Trial) -> float | tuple:
         """Optimize CREST architecture and training hyperparameters.
 
-        This objective samples model hyperparameters (e.g., filters, kernel size,
-        dilations) via Optuna, builds the corresponding TCN model to estimate
-        FLOPs, queries a hardware-in-the-loop (HIL) server for resource/latency
-        metrics, and—when the candidate passes resource and configured
-        feasibility gates—trains and scores the model on the OXIOD dataset.
-        Trials are pruned on HIL errors or resource violations. The returned
-        objective is either a single score or a multi-objective tuple depending
-        on configuration.
+        This objective asks the active model-family component to sample, validate,
+        and build a candidate for the active task. It collects the configured
+        host and hardware metrics, evaluates pruning and feasibility policy, and
+        returns either a scalar score or a multi-objective tuple. Hardware-first
+        evaluation remains the default; training-first evaluation measures the
+        exact selected-checkpoint artifact already evaluated on the host.
 
         Parameters
         ----------
         trial : optuna.Trial
-            The Optuna trial object used to sample hyperparameters and report
-            intermediate results. Hyperparameters include:
-            - ``nb_filters`` (int): number of convolution filters.
-            - ``kernel_size`` (int): convolution kernel size.
-            - ``dropout_rate`` (float): dropout probability.
-            - ``use_skip_connections`` (bool): enable residual/skip connections.
-            - ``norm_flag`` (bool): enable normalization layers.
-            - ``dilations_index`` (int): index into predefined dilation patterns.
+            Optuna trial used by the selected model family and runner-owned
+            deployment choices to sample hyperparameters and report results.
 
         Returns
         -------
@@ -1787,25 +2121,28 @@ class NASModelClient:
 
         Notes
         -----
-        The trial phases are:
-        1. sample/build the model family hyperparameters
-        2. request HIL metrics for the candidate
-        3. apply hardware limit and arena checks
-        4. evaluate post-build/pre-fit prune rules
-        5. either train/evaluate the task or synthesize task-metric sentinels
-        6. validate objective values and log the trial
+        With ``nas.hil_first: true`` (the backward-compatible default), hardware
+        evaluation and gates precede optional task training. With
+        ``nas.hil_first: false`` and training enabled, the task is trained first,
+        the selected checkpoint is snapshotted, one TFLite artifact is exported
+        and host-evaluated, and those same bytes are supplied for HIL measurement.
+        Both orders then reuse the same hardware checks, feasibility, scoring,
+        and logging paths.
 
-        Single-objective runs prune by raising ``optuna.TrialPruned``.
-        Multi-objective HIL errors, resource failures, and feasibility gates
-        instead log ``pruned=True`` and return direction-aware penalty tuples
-        so Optuna records a complete trial with the configured objective shape.
-        Sentinel conventions such as ``-1`` and ``10000.0`` are used to
-        preserve legacy logging/scoring expectations when hardware or training
-        metrics are unavailable.
+        A valid measurement that violates feasibility retains its real metrics,
+        task results, objectives, and signed constraints. Compile, allocation,
+        runtime, or transport failures retain any completed host evidence but
+        follow the existing prune/penalty or infrastructure-FAIL policy when a
+        hardware objective is unavailable.
         """
         artifacts_dir = self._artifacts_dir()
         log_path = artifacts_dir / self.config.outputs.log_file_name
-        batch_size = 256
+        batch_size = resolve_training_batch_size(self.config.training)
+        task_config = derive_runtime_task_config(self.task_config, self.config.training)
+        hil_first = self._cfg_get(self.config.nas, "hil_first", True)
+        if not isinstance(hil_first, bool):
+            raise ValueError("nas.hil_first must be a boolean.")
+        trial.set_user_attr("hil_first", hil_first)
         metric_dependencies = self._classify_nas_metric_dependencies()
         collect_compile_metrics = self._should_collect_compile_metrics(metric_dependencies)
         family_hparams = self.model_family.sample_hparams(
@@ -1813,6 +2150,11 @@ class NASModelClient:
             self.model_build_context,
             self.model_config,
         )
+        from crest.model_families.fer_mini_xception.runtime import resolution_pipeline
+        selected_pipeline = resolution_pipeline(self, family_hparams)
+        if selected_pipeline is not None:
+            self._attach_bootstrapped_pipeline(selected_pipeline)
+            task_config = derive_runtime_task_config(self.task_config, self.config.training)
         training_policy = reset_training_randomness(self.config.training)
         if training_policy is not None:
             trial.set_user_attr("training_randomness", training_policy)
@@ -1889,12 +2231,176 @@ class NASModelClient:
         }
         if device_options_overrides is not None:
             request_payload["device_options_overrides"] = device_options_overrides
+        metrics: dict[str, Any] = {
+            "hil_first": 1 if hil_first else 0,
+            "ram_bytes": -1,
+            "flash_bytes": -1,
+            "external_flash_bytes": -1,
+            "arena_bytes": -1,
+            "error_code": HIL_MASTER_FATAL,
+        }
+        available_task_metrics: dict[str, Any] = {}
+        available_artifact_summary: dict[str, Any] | None = None
+        penalty_acc = -100.0
+
+        def _report_if_supported(value: float) -> None:
+            """Report scalar failures only when Optuna supports reporting."""
+            if not self._score_is_multiobjective():
+                trial.report(value, step=0)
+
+        def _fail_with_penalty(
+            prune_reason: str,
+            prune_rule: str = "",
+            *,
+            infrastructure_failure: bool = False,
+            infrastructure_error: MeasurementInfrastructureError | None = None,
+            task_metrics: Mapping[str, Any] | None = None,
+            artifact_summary: Mapping[str, Any] | None = None,
+            terminal_error: Exception | None = None,
+        ):
+            """Log a rejected attempt while retaining any completed work."""
+            unavailable_runtime_value = -1.0 if completed_training is not None else 10000.0
+            metrics.setdefault("latency_ms", unavailable_runtime_value)
+            metrics.setdefault("energy_mj_per_inference", unavailable_runtime_value)
+            metrics.setdefault("avg_power_mw", -1.0)
+            metrics.setdefault("avg_current_ma", -1.0)
+            metrics.setdefault("bus_voltage_v", -1.0)
+            metrics.setdefault("latency_budget_ms", -1.0)
+            metrics.setdefault("arena_bytes", -1)
+            apply_cadenced_metric_defaults(metrics, metrics)
+            self._mark_feasibility_not_evaluated(metrics)
+            directions = self._study_directions()
+            retained_task_metrics = dict(
+                available_task_metrics if task_metrics is None else task_metrics
+            )
+            retained_artifact_summary_source = (
+                available_artifact_summary if artifact_summary is None else artifact_summary
+            )
+            retained_artifact_summary = (
+                None
+                if retained_artifact_summary_source is None
+                else dict(retained_artifact_summary_source)
+            )
+            if self._score_is_multiobjective():
+                objective_names = [
+                    str(obj.metric) for obj in self.config.nas.score.params.objectives
+                ]
+                objective_values = self._direction_penalty_values()
+                trial_outcome = TrialOutcome(
+                    score=None,
+                    objective_names=objective_names,
+                    objective_values=objective_values,
+                    objective_directions=directions,
+                    task_metrics=retained_task_metrics,
+                    hyperparams=dict(hyperparams),
+                    artifact_summary=retained_artifact_summary,
+                    quantization_mode=quantization_mode,
+                )
+            else:
+                trial_outcome = TrialOutcome(
+                    score=penalty_acc,
+                    objective_names=["score"],
+                    objective_values=[penalty_acc],
+                    objective_directions=["maximize"],
+                    task_metrics=retained_task_metrics,
+                    hyperparams=dict(hyperparams),
+                    artifact_summary=retained_artifact_summary,
+                    quantization_mode=quantization_mode,
+                )
+
+            if infrastructure_failure or terminal_error is not None:
+                trial_outcome = replace(
+                    trial_outcome,
+                    score=None,
+                    objective_values=[None] * len(trial_outcome.objective_names),
+                )
+                metrics["trial_outcome"] = (
+                    "FAIL_infrastructure" if infrastructure_failure else "FAIL_terminal"
+                )
+                metrics["score_type"] = (
+                    "multi-objective" if self._score_is_multiobjective() else "scoring-function"
+                )
+
+            log_trial(
+                trial_outcome=trial_outcome,
+                metrics=metrics,
+                trial=trial,
+                log_file_name=str(log_path),
+                study_name=self.study_name,
+                pruned=not (infrastructure_failure or terminal_error is not None),
+                prune_reason=prune_reason,
+                prune_rule=prune_rule,
+            )
+
+            if infrastructure_failure:
+                if infrastructure_error is not None:
+                    raise infrastructure_error
+                raise MeasurementInfrastructureError(prune_reason)
+            if terminal_error is not None:
+                raise terminal_error
+            if self._score_is_multiobjective():
+                return tuple(trial_outcome.objective_values)
+
+            _report_if_supported(-float("inf"))
+            raise optuna.TrialPruned(prune_reason)
+
+        completed_training: CompletedTrialTraining | None = None
+        if not hil_first and bool(self.config.training.train):
+            try:
+                completed_training = self._train_and_evaluate_trial(
+                    model=model,
+                    trial=trial,
+                    task_config=task_config,
+                    batch_size=batch_size,
+                    quantization_mode=quantization_mode,
+                    hil_first=hil_first,
+                )
+            except TFLiteSubprocessError as exc:
+                trial.set_user_attr(
+                    "tflite_evaluation",
+                    {"status": "failed", "error": str(exc)},
+                )
+                prune_reason = "TFLite evaluation failed"
+                if not self._score_is_multiobjective():
+                    prune_reason = f"{prune_reason}: {exc}"
+                return _fail_with_penalty(prune_reason)
+            available_task_metrics.update(completed_training.task_metrics)
+            available_artifact_summary = dict(completed_training.artifact_summary)
+            self._sync_task_metrics(metrics, completed_training.task_metrics)
+
         if collect_compile_metrics:
-            metrics = self._hil_request(request_payload)
+            try:
+                if completed_training is None:
+                    metrics.update(self._hil_request(request_payload))
+                else:
+                    metrics.update(self._hil_request(
+                        request_payload,
+                        artifact_path=completed_training.tflite_path,
+                    ))
+            except MeasurementInfrastructureError as exc:
+                set_error_code(metrics, HIL_MASTER_INFRASTRUCTURE)
+                metrics["measurement_failure_class"] = "infrastructure"
+                trial.set_user_attr("measurement_failure_class", "infrastructure")
+                for attr_name in ("endpoint", "request_id", "attempts", "phase"):
+                    attr_value = getattr(exc, attr_name, None)
+                    if attr_value is not None:
+                        metric_name = f"measurement_{attr_name}"
+                        metrics[metric_name] = attr_value
+                        trial.set_user_attr(metric_name, attr_value)
+                return _fail_with_penalty(
+                    str(exc),
+                    prune_rule="measurement_transport",
+                    infrastructure_failure=True,
+                    infrastructure_error=exc,
+                )
             metrics.setdefault("hil_enabled", bool(self.config.device.hil))
             metrics.setdefault("energy_aware", bool(self.config.training.energy_aware))
         else:
-            metrics = self._synthesize_desktop_success_metrics()
+            metrics.update(self._synthesize_desktop_success_metrics())
+        for response_name in ("request_id", "artifact_sha256", "artifact_byte_length"):
+            if response_name in metrics:
+                metrics[f"measurement_{response_name}"] = metrics[response_name]
+        metrics["hil_first"] = 1 if hil_first else 0
         metrics.update(
             {
                 "weight_bytes": int(runtime_metadata.weight_bytes),
@@ -1932,7 +2438,6 @@ class NASModelClient:
             except ValueError:
                 runtime_device = None
 
-        penalty_acc = -100.0
         task_nonnegative_metric_names = set(self.metric_contract.nonnegative_metric_names)
         effective_nonnegative_metric_names = set(NONNEGATIVE_METRICS) | task_nonnegative_metric_names
         # If no error code present (or timeout), treat as fatal error
@@ -1940,116 +2445,17 @@ class NASModelClient:
 
         if error_code == HIL_MASTER_DEVICE_NOT_FOUND:
             serial_hint = self.config.device.serial_port or "<unset port>"
-            raise RuntimeError(
+            terminal_error = RuntimeError(
                 f"Upload failed: target device not found on {serial_hint}. "
                 "Stopping NAS run so the board/serial port can be fixed."
             )
-
-        def _report_if_supported(value: float) -> None:
-            """Optuna trial.report is unsupported for multi-objective studies.
-
-            Parameters
-            ----------
-            value : float
-                Scalar objective value to report to Optuna when reporting is
-                supported.
-            """
-            if not self._score_is_multiobjective():
-                trial.report(value, step=0)
-
-        def _fail_with_penalty(
-            prune_reason: str,
-            prune_rule: str = "",
-            *,
-            infrastructure_failure: bool = False,
-        ):
-            """Log a rejected attempt; infrastructure failures raise a typed error.
-
-            Parameters
-            ----------
-            prune_reason : str
-                Reason text attached to the pruning decision.
-            prune_rule : str
-                Rule name attached to the pruning decision.
-            infrastructure_failure : bool
-                Log evidence, then raise a typed infrastructure error instead
-                of returning a score or pruning. Optuna records this as FAIL.
-
-            Returns
-            -------
-            object
-                Penalty score or multi-objective penalty tuple used to record
-                the failed trial.
-
-            Raises
-            ------
-            TrialPruned
-                If existing validation or execution checks fail.
-            MeasurementInfrastructureError
-                If bounded measurement recovery was exhausted.
-            """
-            # Normalize missing metrics, build a loggable TrialOutcome, and
-            # then diverge between scalar Optuna pruning and multi-objective
-            # penalty returns.
-            metrics.setdefault("latency_ms", 10000.0)
-            metrics.setdefault("energy_mj_per_inference", 10000.0)
-            metrics.setdefault("avg_power_mw", -1.0)
-            metrics.setdefault("avg_current_ma", -1.0)
-            metrics.setdefault("bus_voltage_v", -1.0)
-            metrics.setdefault("latency_budget_ms", -1.0)
-            metrics.setdefault("arena_bytes", -1)
-            apply_cadenced_metric_defaults(metrics, metrics)
-            self._mark_feasibility_not_evaluated(metrics)
-            directions = self._study_directions()
-            if self._score_is_multiobjective():
-                objective_names = [str(obj.metric) for obj in self.config.nas.score.params.objectives]
-                objective_values = self._direction_penalty_values()
-                trial_outcome = TrialOutcome(
-                    score=None,
-                    objective_names=objective_names,
-                    objective_values=objective_values,
-                    objective_directions=directions,
-                    task_metrics={},
-                    hyperparams=dict(hyperparams),
-                    artifact_summary=None,
-                    quantization_mode=quantization_mode,
+            if completed_training is not None:
+                return _fail_with_penalty(
+                    str(terminal_error),
+                    prune_rule="device_not_found",
+                    terminal_error=terminal_error,
                 )
-            else:
-                trial_outcome = TrialOutcome(
-                    score=penalty_acc,
-                    objective_names=["score"],
-                    objective_values=[penalty_acc],
-                    objective_directions=["maximize"],
-                    task_metrics={},
-                    hyperparams=dict(hyperparams),
-                    artifact_summary=None,
-                    quantization_mode=quantization_mode,
-                )
-
-            if infrastructure_failure:
-                trial_outcome = replace(trial_outcome, score=None,
-                    objective_values=[None] * len(trial_outcome.objective_names))
-                metrics["trial_outcome"] = "FAIL_infrastructure"
-                metrics["score_type"] = "multi-objective" if self._score_is_multiobjective() else "scoring-function"
-
-            log_trial(
-                trial_outcome=trial_outcome,
-                metrics=metrics,
-                trial=trial,
-                log_file_name=str(log_path),
-                study_name=self.study_name,
-                pruned=not infrastructure_failure,
-                prune_reason=prune_reason,
-                prune_rule=prune_rule,
-            )
-
-            if infrastructure_failure:
-                raise MeasurementInfrastructureError(prune_reason)
-            if self._score_is_multiobjective():
-                return tuple(trial_outcome.objective_values)
-
-            _report_if_supported(-float("inf"))
-            raise optuna.TrialPruned(prune_reason)
+            raise terminal_error
 
         # Exhausted measurement retries are infrastructure failures, not deadline
         # infeasibility. Optuna records FAIL; only this typed exception is caught
@@ -2133,6 +2539,7 @@ class NASModelClient:
             if (
                 not feasibility_evaluation.feasible
                 and not bool(feasibility_config.train_if_infeasible)
+                and completed_training is None
             ):
                 directions = self._study_directions()
                 if self._score_is_multiobjective():
@@ -2202,56 +2609,28 @@ class NASModelClient:
                     quantization_mode=quantization_mode,
                 )
             else:
-                reset_training_randomness(self.config.training)
-                fit_plan = self.task.build_fit_plan(
-                    self.dataset_bundle,
-                    self.task_config,
-                    self.target_spec,
-                    mode="search",
-                    combine_train_val=False,
-                )
-                model.fit(
-                    **fit_plan.fit_kwargs,
-                    callbacks=fit_plan.callbacks,
-                    epochs=self.config.training.nas_epochs,
-                    batch_size=batch_size,
-                )
-                model = self.model_family.load_model(
-                    self.config.outputs.checkpoint_path,
-                    self.model_build_context,
-                    self.model_config,
-                )
-                inference_diagnostics = {}
-                try:
-                    evaluation_result = self._evaluate_model_with_backend(
-                        model=model,
-                        split=self.dataset_bundle.val,
-                        split_name=f"validation_trial_{trial.number}",
-                        quantization_mode=quantization_mode,
-                        evaluation_backend="tflite",
-                        inference_diagnostics=inference_diagnostics,
-                    )
-                except TFLiteSubprocessError as exc:
-                    trial.set_user_attr("tflite_evaluation", {"status": "failed", "error": str(exc)})
-                    prune_reason = "TFLite evaluation failed"
-                    if not self._score_is_multiobjective():
-                        prune_reason = f"{prune_reason}: {exc}"
-                    return _fail_with_penalty(prune_reason)
-                trial.set_user_attr("tflite_evaluation", {"status": "passed", **inference_diagnostics})
-                task_metrics = dict(evaluation_result.metrics)
-                keras_evaluation_result = self._evaluate_model_with_backend(
-                    model=model,
-                    split=self.dataset_bundle.val,
-                    split_name="validation_keras",
-                    quantization_mode=quantization_mode,
-                    evaluation_backend="keras",
-                )
-                task_metrics.update(
-                    {
-                        f"keras_{metric_name}": metric_value
-                        for metric_name, metric_value in keras_evaluation_result.metrics.items()
-                    }
-                )
+                if completed_training is None:
+                    try:
+                        completed_training = self._train_and_evaluate_trial(
+                            model=model,
+                            trial=trial,
+                            task_config=task_config,
+                            batch_size=batch_size,
+                            quantization_mode=quantization_mode,
+                            hil_first=hil_first,
+                        )
+                    except TFLiteSubprocessError as exc:
+                        trial.set_user_attr(
+                            "tflite_evaluation",
+                            {"status": "failed", "error": str(exc)},
+                        )
+                        prune_reason = "TFLite evaluation failed"
+                        if not self._score_is_multiobjective():
+                            prune_reason = f"{prune_reason}: {exc}"
+                        return _fail_with_penalty(prune_reason)
+                    available_task_metrics.update(completed_training.task_metrics)
+                    available_artifact_summary = dict(completed_training.artifact_summary)
+                task_metrics = dict(completed_training.task_metrics)
                 self._sync_task_metrics(metrics, task_metrics)
                 self._apply_non_hil_success_sentinels(metrics)
                 score_result = evaluate_score_config(
@@ -2264,7 +2643,7 @@ class NASModelClient:
                     score_result=score_result,
                     task_metrics=task_metrics,
                     hyperparams=dict(hyperparams),
-                    artifact_summary=evaluation_result.artifacts,
+                    artifact_summary=completed_training.artifact_summary,
                     quantization_mode=quantization_mode,
                 )
         except ScoreConfigEvaluationError:
@@ -2387,6 +2766,15 @@ class NASModelClient:
             measurement_failure_guard = _ConsecutiveMeasurementFailureGuard()
             optimizer_name, optimizer, optimizer_config, signature = self._select_optimizer(single_trial_study, sampler)
             self._validate_or_store_feasibility_signature(single_trial_study, store=False)
+            preflight_complete = False
+
+            def _ensure_invocation_preflight() -> None:
+                """Run the training-first preflight once before this invocation's first trial."""
+                nonlocal preflight_complete
+                if not preflight_complete:
+                    self._preflight_training_first_hil()
+                    preflight_complete = True
+
             try:
                 descriptor = self._initialize_optimizer(optimizer, optimizer_config)
                 self._validate_or_store_feasibility_signature(single_trial_study)
@@ -2402,9 +2790,11 @@ class NASModelClient:
                     waiting_size = self._waiting_round_size(single_trial_study)
                     if waiting_size:
                         size = min(waiting_size, remaining)
+                        _ensure_invocation_preflight()
                         single_trial_study.optimize(self.objective, n_trials=size, callbacks=[self._refresh_progress, measurement_failure_guard], catch=(MeasurementInfrastructureError,))
                     else:
                         completed = self._qualifying_complete_count(single_trial_study.trials)
+                        _ensure_invocation_preflight()
                         size = self._execute_search_round(
                             single_trial_study, optimizer, optimizer_name, descriptor,
                             BudgetSnapshot(len(single_trial_study.trials), completed,
@@ -2533,6 +2923,14 @@ class NASModelClient:
         self._validate_or_store_feasibility_signature(study, store=False)
         # Make sure we never shrink the total budget when resuming an existing study.
         max_total_trials = max(max_total_trials, len(study.trials))
+        preflight_complete = False
+
+        def _ensure_invocation_preflight() -> None:
+            """Run the training-first preflight once before this invocation's first trial."""
+            nonlocal preflight_complete
+            if not preflight_complete:
+                self._preflight_training_first_hil()
+                preflight_complete = True
 
         def _trial_counts():
             """Count complete/pruned/failed trials plus feasibility outcomes.
@@ -2595,6 +2993,7 @@ class NASModelClient:
 
                 waiting_size = self._waiting_round_size(study)
                 if waiting_size:
+                    _ensure_invocation_preflight()
                     study.optimize(self.objective, n_trials=waiting_size, callbacks=[self._refresh_progress, measurement_failure_guard], catch=(MeasurementInfrastructureError,))
                     continue
 
@@ -2617,6 +3016,7 @@ class NASModelClient:
                 else:
                     next_batch = min(remaining_needed, remaining_budget)
                 logger.info("[NAS] Launching round %s for %s additional trial(s).", round_idx, next_batch)
+                _ensure_invocation_preflight()
                 self._execute_search_round(
                     study, optimizer, optimizer_name, descriptor,
                     BudgetSnapshot(total, feasible, target_completions, max_total_trials, next_batch),
@@ -2729,6 +3129,10 @@ class NASModelClient:
             pareto_df.to_csv(pareto_csv, index=False)
             logger.info("[run_scoring_nas] Saved Pareto front to %s", pareto_csv)
             logger.info("[run_scoring_nas] Pareto front size: %s", len(pareto_trials))
+            return
+
+        if not self._cfg_get(self.config.training, "final_retraining", True):
+            logger.info("[run_scoring_nas] Saved search results; final retraining and downstream final evaluation disabled.")
             return
 
         best_trial = self._best_trial_for_finalization(study)
@@ -2949,11 +3353,17 @@ class NASModelClient:
         history_path = Path(history_path)
         history_path.parent.mkdir(parents=True, exist_ok=True)
         ckpt_path = Path(checkpoint_path)
+        from crest.model_families.fer_mini_xception.runtime import resolution_pipeline
+        selected_pipeline = resolution_pipeline(self, family_hparams)
+        if selected_pipeline is not None:
+            self._attach_bootstrapped_pipeline(selected_pipeline)
+            task_config = derive_runtime_task_config(self.task_config, self.config.training)
         training_policy = reset_training_randomness(self.config.training)
         if training_policy is not None:
             history_path.with_suffix(".randomness.json").write_text(
                 json.dumps(training_policy, indent=2) + "\n", encoding="utf-8")
-        batch_size = 256
+        batch_size = resolve_training_batch_size(self.config.training)
+        task_config = derive_runtime_task_config(task_config, self.config.training)
         fit_task = self._instantiate_task(
             self.task_name,
             self.config,
@@ -2976,11 +3386,23 @@ class NASModelClient:
             mode="final",
             combine_train_val=combine_train_val,
         )
-        fit_kwargs = dict(fit_plan.fit_kwargs)
-        fit_kwargs["callbacks"] = list(fit_plan.callbacks)
-        fit_kwargs["epochs"] = self.config.training.model_epochs
-        fit_kwargs["batch_size"] = batch_size
+        fit_kwargs = _runner_fit_kwargs(
+            fit_plan,
+            epochs=self.config.training.model_epochs,
+            batch_size=batch_size,
+        )
         history = model.fit(**fit_kwargs)
+
+        training_metadata = {
+            "batch_size": batch_size,
+            "input_is_batched": isinstance(fit_plan.fit_kwargs.get("x"), tf.data.Dataset),
+            "epochs": int(self.config.training.model_epochs),
+            "mode": "final",
+        }
+        history_path.with_suffix(".training.json").write_text(
+            json.dumps(training_metadata, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
         history_dict = {k: [float(v) for v in values] for k, values in history.history.items()}
         with open(history_path, "w") as f:
@@ -3206,6 +3628,10 @@ class NASModelClient:
         history_path.parent.mkdir(parents=True, exist_ok=True)
 
         best_params = self._best_trial_params(study_storage, study_name)
+        from crest.model_families.fer_mini_xception.runtime import resolution_pipeline
+        selected_pipeline = resolution_pipeline(self, best_params)
+        if selected_pipeline is not None:
+            self._attach_bootstrapped_pipeline(selected_pipeline)
         family_hparams = self.model_family.decode_trial_hparams(
             dict(best_params),
             self.model_build_context,
@@ -3557,6 +3983,10 @@ class NASModelClient:
             return {}
         requested_folds = self._fold_rotation_test_folds()
         best_params = self._best_trial_params(study_storage, study_name)
+        from crest.model_families.fer_mini_xception.runtime import resolution_pipeline
+        selected_pipeline = resolution_pipeline(self, best_params)
+        if selected_pipeline is not None:
+            self._attach_bootstrapped_pipeline(selected_pipeline)
         default_quantization_mode = configured_quantization_mode(self.config)
         output_dir = Path(output_dir)
         per_fold: list[dict[str, Any]] = []

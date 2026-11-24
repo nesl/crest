@@ -98,6 +98,40 @@ inline bool InitializePowerMonitor() {
   return true;
 }
 
+// Opt-in pulse windows use one conversion per update and stop immediately at
+// the falling edge. Legacy averaging/flush behavior remains unchanged. Sensor
+// conversion and I2C edge latency must be characterized on the physical setup.
+inline void ConfigureInvocationWindows(bool enabled) {
+  if (!power_monitor_ready) return;
+  power_monitor.setAveragingCount(enabled ? INA228_COUNT_1 : kAveragingCount);
+  power_monitor.setMode(enabled ? static_cast<decltype(INA228_MODE_CONTINUOUS)>(0)
+                                : INA228_MODE_CONTINUOUS);
+}
+
+inline void EmitInvocationWindowSettings() {
+  Serial.print("energy settings: INA228 shunt_ohms=");
+  Serial.print(kShuntResistanceOhms, 6);
+  Serial.print(" max_current_A=");
+  Serial.print(kMaxExpectedCurrentAmps, 6);
+  Serial.print(" current_conversion_code=");
+  Serial.print(static_cast<int>(kCurrentConversionTime));
+  Serial.print(" voltage_conversion_code=");
+  Serial.print(static_cast<int>(kVoltageConversionTime));
+  Serial.println(" temperature_us=150 averages=1 adc_range_mV=40.96 total_not_idle_subtracted raw_trace=0");
+}
+
+inline void BeginInvocationWindow() {
+  if (!power_monitor_ready) return;
+  power_monitor.resetAccumulators();
+  power_monitor.setMode(INA228_MODE_CONTINUOUS);
+}
+
+inline float EndInvocationWindow() {
+  if (!power_monitor_ready) return kInvalidTelemetryValue;
+  power_monitor.setMode(static_cast<decltype(INA228_MODE_CONTINUOUS)>(0));
+  return SanitizeFloat(power_monitor.readEnergy());
+}
+
 // Freeze accumulation long enough to read a stable energy total, then restore
 // continuous sampling for the next run.
 inline float FlushEnergyWindow() {

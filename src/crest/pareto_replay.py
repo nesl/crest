@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import logging
 import math
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -85,6 +86,14 @@ class ReplayCandidate:
         Legacy stable JSON key preserved for artifact compatibility.
     replay_payload_key : str
         Runtime-option-aware stable JSON key used for new dedupe/resume checks.
+    source_tflite_path : pathlib.Path | None
+        Saved artifact supplied directly to HIL; no model reconstruction.
+    artifact_sha256 : str | None
+        SHA-256 binding saved bytes to the source evidence.
+    source_study : str | None
+        Original study identity from the artifact manifest.
+    source_trial : int | None
+        Original trial ID, never inferred from CSV row position.
 
     Attributes
     ----------
@@ -110,6 +119,14 @@ class ReplayCandidate:
         Legacy stable JSON key preserved for artifact compatibility.
     replay_payload_key : str
         Runtime-option-aware stable JSON key used for new dedupe/resume checks.
+    source_tflite_path : pathlib.Path | None
+        Saved artifact supplied directly to HIL; no model reconstruction.
+    artifact_sha256 : str | None
+        SHA-256 binding saved bytes to the source evidence.
+    source_study : str | None
+        Original study identity from the artifact manifest.
+    source_trial : int | None
+        Original trial ID, never inferred from CSV row position.
     """
 
     source_row_index: int
@@ -123,6 +140,10 @@ class ReplayCandidate:
     objective_values: dict[str, float]
     payload_key: str
     replay_payload_key: str
+    source_tflite_path: Path | None = None
+    artifact_sha256: str | None = None
+    source_study: str | None = None
+    source_trial: int | None = None
 
 
 @dataclass(frozen=True)
@@ -164,7 +185,7 @@ class CompletedReplayKeys:
         """
         return (
             candidate.replay_payload_key in self.replay_payload_keys
-            or candidate.payload_key in self.legacy_payload_keys
+            or (candidate.source_tflite_path is None and candidate.payload_key in self.legacy_payload_keys)
         )
 
 
@@ -202,6 +223,8 @@ class ReplayRunConfig:
         Optional model variant forwarded to HIL.
     checkpoint_path : str | None
         Optional checkpoint path forwarded to HIL.
+    artifact_manifest : pathlib.Path | None
+        Optional manifest enabling validated saved-artifact replay.
 
     Attributes
     ----------
@@ -233,6 +256,8 @@ class ReplayRunConfig:
         Optional model variant forwarded to HIL.
     checkpoint_path : str | None
         Optional checkpoint path forwarded to HIL.
+    artifact_manifest : pathlib.Path | None
+        Optional manifest enabling validated saved-artifact replay.
     """
 
     source_run_dir: Path
@@ -249,6 +274,8 @@ class ReplayRunConfig:
     device_option_policy: str
     model_variant: str | None
     checkpoint_path: str | None
+
+    artifact_manifest: Path | None = None
 
     def __post_init__(self) -> None:
         """Validate direct-library replay configuration.
@@ -693,6 +720,8 @@ def is_source_row_valid(row: Mapping[str, Any], objectives: Sequence[ObjectiveSp
     bool
         ``True`` when the row can be considered for Pareto selection.
     """
+    if row.get("feasible") not in (None, "") and not parse_bool(row["feasible"]):
+        return False
     if parse_bool(row.get("pruned")):
         return False
     error_code = parse_finite_float(row.get("error_code"))
@@ -1141,6 +1170,7 @@ def replay_config_to_manifest_args(config: ReplayRunConfig) -> dict[str, Any]:
         "device_option_policy": config.device_option_policy,
         "model_variant": config.model_variant,
         "checkpoint_path": config.checkpoint_path,
+        "artifact_manifest": str(config.artifact_manifest) if config.artifact_manifest else None,
     }
 
 
@@ -1250,6 +1280,9 @@ def flatten_result_row(
     """
     row: dict[str, Any] = {
         "source_run": source_run_dir.name,
+        "source_study": candidate.source_study or source_run_dir.name,
+        "source_trial": candidate.source_trial,
+        "artifact_sha256": candidate.artifact_sha256,
         "source_row_index": candidate.source_row_index,
         "target_config": str(target_config_path),
         "replay_status": replay_status,
@@ -1402,6 +1435,7 @@ def prepare_candidates(
     device_option_policy: str = "preserve-source",
     model_variant: str | None = None,
     checkpoint_path: str | None = None,
+    artifact_manifest: Path | None = None,
 ) -> tuple[list[ReplayCandidate], tuple[ObjectiveSpec, ...], Path, Path | None, int, int]:
     """Load source data and reconstruct deduplicated Pareto candidates.
 
@@ -1422,6 +1456,9 @@ def prepare_candidates(
     checkpoint_path : str | None, optional
         Optional checkpoint path forwarded to HIL.
 
+    artifact_manifest : pathlib.Path | None, optional
+        Manifest linking exact saved bytes to source studies and trial IDs.
+
     Returns
     -------
     tuple
@@ -1430,8 +1467,12 @@ def prepare_candidates(
     """
     resolved_source_config_path = source_config_path or find_config_path(source_run_dir)
     source_config = load_yaml_config(resolved_source_config_path)
+    if artifact_manifest is None:
+        require_replayable_source_order(source_config)
     resolved_source_csv_path = source_csv_path or find_csv_path(source_run_dir, source_config)
     rows, columns = read_csv_rows(resolved_source_csv_path)
+    if artifact_manifest is None:
+        require_replayable_source_rows(rows, source_config=source_config)
     objectives = resolve_objective_specs(
         config=source_config,
         rows=rows,
@@ -1450,6 +1491,8 @@ def prepare_candidates(
         )
         for index in selected_indices
     ]
+    if artifact_manifest is not None:
+        candidates = bind_saved_artifacts(candidates, artifact_manifest, source_run_dir.name)
     return (
         dedupe_candidates(candidates),
         objectives,
@@ -1458,6 +1501,72 @@ def prepare_candidates(
         len(rows),
         len(selected_indices),
     )
+
+
+def require_replayable_source_order(source_config: Mapping[str, Any]) -> None:
+    """Reject source studies whose exact trained flatbuffers cannot be replayed."""
+    nas_config = source_config.get("nas", {})
+    if not isinstance(nas_config, Mapping):
+        raise ValueError("Source config nas section must be a mapping.")
+    hil_first = nas_config.get("hil_first", True)
+    if not isinstance(hil_first, bool):
+        raise ValueError("Source config nas.hil_first must be a boolean when provided.")
+    if hil_first:
+        return
+    training_config = source_config.get("training", {})
+    if not isinstance(training_config, Mapping):
+        raise ValueError("Source config training section must be a mapping.")
+    training_enabled = training_config.get("train", False)
+    if not isinstance(training_enabled, bool):
+        raise ValueError("Source config training.train must be a boolean when provided.")
+    if training_enabled:
+        raise ValueError(
+            "Pareto replay of a training-first study requires each saved exact TFLite artifact; "
+            "checkpoint/model reconstruction is not an exact-artifact replay."
+        )
+
+
+def require_replayable_source_rows(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    source_config: Mapping[str, Any],
+) -> None:
+    """Reject row evidence that identifies a training-first source trial."""
+    training_config = source_config.get("training", {})
+    training_enabled = (
+        training_config.get("train", False) is True
+        if isinstance(training_config, Mapping)
+        else False
+    )
+    for row_index, row in enumerate(rows):
+        row_order = parse_cell_value(row.get("hil_first"))
+        artifact_summary = parse_cell_value(row.get("artifact_summary_json"))
+        artifact_order = (
+            artifact_summary.get("hil_first")
+            if isinstance(artifact_summary, Mapping)
+            else None
+        )
+        explicit_trained_artifact = (
+            isinstance(artifact_summary, Mapping)
+            and any(
+                artifact_summary.get(key) not in (None, "")
+                for key in ("tflite_sha256", "tflite_path", "checkpoint_snapshot")
+            )
+        )
+        row_is_training_first = (
+            training_enabled
+            and (
+                row_order is False
+                or row_order == 0
+                or artifact_order is False
+                or artifact_order == 0
+            )
+        )
+        if row_is_training_first or (explicit_trained_artifact and artifact_order is False):
+            raise ValueError(
+                f"Source row {row_index} is training-first and requires its saved exact TFLite artifact; "
+                "checkpoint/model reconstruction is not an exact-artifact replay."
+            )
 
 
 def create_hil_server(config_path: Path) -> Any:
@@ -1501,6 +1610,10 @@ def determine_candidate_metrics(
         Metric mapping returned by the replay backend.
     """
     determine_metrics = metrics_callback if metrics_callback is not None else server.determine_metrics
+    artifact_kwargs = {}
+    if candidate.source_tflite_path is not None:
+        verify_saved_artifact(candidate)
+        artifact_kwargs["source_tflite_path"] = candidate.source_tflite_path
     return determine_metrics(
         candidate.family_hparams,
         candidate.runtime_metadata,
@@ -1508,6 +1621,7 @@ def determine_candidate_metrics(
         device_options_overrides=candidate.device_options_overrides,
         checkpoint_path=candidate.checkpoint_path,
         model_variant=candidate.model_variant,
+        **artifact_kwargs,
     )
 
 
@@ -1528,6 +1642,10 @@ def request_record_for_candidate(candidate: ReplayCandidate, ordinal: int) -> di
     """
     return {
         "ordinal": ordinal,
+        "source_study": candidate.source_study,
+        "source_trial": candidate.source_trial,
+        "artifact_sha256": candidate.artifact_sha256,
+        "source_tflite_path": str(candidate.source_tflite_path) if candidate.source_tflite_path else None,
         "source_row_index": candidate.source_row_index,
         "payload_key": candidate.payload_key,
         "replay_payload_key": candidate.replay_payload_key,
@@ -1582,7 +1700,16 @@ def run_replay(
         device_option_policy=config.device_option_policy,
         model_variant=config.model_variant,
         checkpoint_path=config.checkpoint_path,
+        artifact_manifest=config.artifact_manifest,
     )
+    if config.artifact_manifest is not None:
+        # Bind exact replay to config contents, fixtures and firmware, not paths alone.
+        target = load_yaml_config(target_config_path)
+        for index, candidate in enumerate(candidates):
+            measurement = measurement_identity(target, candidate)
+            key = json.loads(candidate.replay_payload_key)
+            key.update(measurement=measurement, dry_run=config.dry_run)
+            candidates[index] = replace(candidate, replay_payload_key=json.dumps(key, sort_keys=True))
     if config.max_candidates is not None:
         candidates = candidates[: config.max_candidates]
 
@@ -1624,6 +1751,7 @@ def run_replay(
             factory = server_factory or create_hil_server
             server = factory(target_config_path)
 
+    failed = False
     for ordinal, candidate in enumerate(candidates, start=1):
         append_jsonl(requests_path, request_record_for_candidate(candidate, ordinal))
         if config.dry_run:
@@ -1642,14 +1770,20 @@ def run_replay(
                 server=server,
                 metrics_callback=metrics_callback,
             )
+            valid = config.artifact_manifest is None or parse_finite_float(metrics.get("error_code")) == SUCCESS_ERROR_CODE
+            if config.artifact_manifest is not None and load_yaml_config(target_config_path).get("training", {}).get("energy_aware"):
+                energy = parse_finite_float(metrics.get("energy_mj_per_inference"))
+                valid = valid and energy is not None and energy > 0
+            failed = failed or not valid
             row = flatten_result_row(
                 candidate=candidate,
                 source_run_dir=source_run_dir,
                 target_config_path=target_config_path,
-                replay_status="completed",
+                replay_status="completed" if valid else "measurement_error",
                 metrics=metrics,
             )
         except Exception as exc:  # pragma: no cover - hardware failure boundary
+            failed = True
             row = flatten_result_row(
                 candidate=candidate,
                 source_run_dir=source_run_dir,
@@ -1664,4 +1798,114 @@ def run_replay(
     logger.info("Selected Pareto rows: %s", selected_rows)
     logger.info("Scheduled replay candidates: %s", len(candidates))
     logger.info("Wrote replay outputs: %s", output_dir)
-    return 0
+    return 1 if failed and config.artifact_manifest is not None else 0
+
+
+def verify_saved_artifact(candidate: ReplayCandidate) -> None:
+    """Revalidate exact bytes immediately before supplied-artifact execution.
+
+    Parameters
+    ----------
+    candidate : ReplayCandidate
+        Candidate with a verified source identity.
+
+    Raises
+    ------
+    ValueError
+        If the saved bytes no longer match their source hash.
+    """
+    from .hil.artifact_transport import read_tflite_artifact, DEFAULT_MAX_ARTIFACT_BYTES
+
+    data, _ = read_tflite_artifact(candidate.source_tflite_path, max_bytes=DEFAULT_MAX_ARTIFACT_BYTES)
+    if hashlib.sha256(data).hexdigest() != candidate.artifact_sha256:
+        raise ValueError("Saved TFLite artifact hash mismatch.")
+
+
+def bind_saved_artifacts(
+    candidates: Sequence[ReplayCandidate], manifest_path: Path, source_study: str,
+) -> list[ReplayCandidate]:
+    """Bind selected source rows to verified saved artifacts without reconstruction.
+
+    Parameters
+    ----------
+    candidates : Sequence[ReplayCandidate]
+        Selected source Pareto rows.
+    manifest_path : pathlib.Path
+        JSON manifest containing candidate study/trial IDs, paths and hashes.
+    source_study : str
+        Expected source study when a row has no study_name field.
+
+    Returns
+    -------
+    list[ReplayCandidate]
+        Candidates linked to exact executable TFLite files.
+    """
+    manifest = json.loads(manifest_path.read_text())
+    entries = manifest["candidates"]
+    identities = [(entry["source_study"], entry["source_trial"]) for entry in entries]
+    if len(identities) != len(set(identities)):
+        raise ValueError("Duplicate source study/trial in artifact manifest.")
+    bound = []
+    for candidate in candidates:
+        if candidate.model_variant is not None or candidate.checkpoint_path is not None:
+            raise ValueError("Saved artifact replay cannot reconstruct a model or checkpoint.")
+        row = candidate.source_row
+        summary = parse_cell_value(row.get("artifact_summary_json")) or {}
+        digest = summary.get("tflite_sha256") or row.get("tflite_sha256")
+        study = row.get("study_name") or source_study
+        trial = parse_cell_value(row.get("trial_number"))
+        matches = [entry for entry in entries if entry["source_study"] == study
+                   and entry["tflite_sha256"] == digest
+                   and (trial is None or entry["source_trial"] == trial)]
+        if len(matches) != 1:
+            raise ValueError(f"Missing or ambiguous exact artifact for source row {candidate.source_row_index}.")
+        entry = matches[0]
+        path = Path(entry["staged_tflite_path"]).expanduser()
+        if not path.is_absolute():
+            path = manifest_path.parent / path
+        if path.stat().st_size != entry["byte_length"]:
+            raise ValueError("Saved TFLite artifact byte length mismatch.")
+        if "resolution" in entry and candidate.family_hparams.get("resolution") != entry["resolution"]:
+            raise ValueError("Saved artifact resolution disagrees with source row.")
+        key = json.loads(candidate.replay_payload_key)
+        key.update(artifact_sha256=digest, source_study=study, source_trial=entry["source_trial"])
+        candidate = replace(candidate, source_tflite_path=path.resolve(), artifact_sha256=digest,
+                            source_study=study, source_trial=entry["source_trial"],
+                            replay_payload_key=json.dumps(key, sort_keys=True))
+        verify_saved_artifact(candidate)
+        bound.append(candidate)
+    return bound
+
+
+def measurement_identity(target: Mapping[str, Any], candidate: ReplayCandidate) -> dict[str, Any]:
+    """Fingerprint measurement configuration and referenced fixtures/firmware.
+
+    Parameters
+    ----------
+    target : Mapping[str, Any]
+        Parsed target configuration.
+    candidate : ReplayCandidate
+        Candidate whose resolution selects the fixture paths.
+
+    Returns
+    -------
+    dict[str, Any]
+        Stable configuration and file-content identity for resume.
+    """
+    device = target.get("device", {})
+    options = device.get("esp32", {})
+    files = {}
+    for name in ("fixture_npz_path", "fixture_manifest_path"):
+        if options.get(name):
+            path = Path(str(options[name]).format(resolution=candidate.family_hparams.get("resolution")))
+            files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if options.get("project_root"):
+        root = Path(options["project_root"])
+        for name in ("main/runner.cc", "main/CMakeLists.txt", "main/idf_component.yml", "sdkconfig.defaults", "CMakeLists.txt"):
+            files[name] = hashlib.sha256((root / name).read_bytes()).hexdigest()
+        for name in ("sdkconfig", "dependencies.lock"):
+            if (root / name).is_file():
+                files[name] = hashlib.sha256((root / name).read_bytes()).hexdigest()
+    for name in ("firmware/harness/harness.ino", "firmware/common/crest_power.h"):
+        files[name] = hashlib.sha256((REPO_ROOT / name).read_bytes()).hexdigest()
+    return {"config": target, "files": files}

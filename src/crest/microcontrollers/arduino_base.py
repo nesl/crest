@@ -866,13 +866,19 @@ def upload_sketch(
         Upload success flag and captured output.
     """
     _log_arduino_cli_path()
+    # Arduino discovery and bootloader tracking use the kernel device name.
+    # Keep stable by-id paths in configuration and serial measurement.
+    upload_port = serial_port
+    port_path = Path(serial_port)
+    if port_path.is_symlink():
+        upload_port = str(port_path.resolve(strict=True))
     upload_cmd = [
         ARDUINO_CLI_BIN,
         "--config-file",
         ARDUINO_CLI_CONFIG,
         "upload",
         "-p",
-        serial_port,
+        upload_port,
         "--fqbn",
         fqbn,
         "--build-path",
@@ -939,7 +945,7 @@ def ensure_harness_firmware(
         build_defines=build_defines,
     )
     if not compile_result.success or compile_result.build_dir is None:
-        raise RuntimeError("Harness compile failed.")
+        raise RuntimeError(f"Harness compile failed.\n{compile_result.log}")
     upload_result = upload_harness_sketch(
         sketch_path=None,
         fqbn=harness_fqbn,
@@ -947,7 +953,7 @@ def ensure_harness_firmware(
         serial_port=harness_serial_port,
     )
     if not upload_result.success:
-        raise RuntimeError("Harness upload failed.")
+        raise RuntimeError(f"Harness upload failed.\n{upload_result.log}")
 
     _HARNESS_FLASHED_SIGNATURES[harness_serial_port] = flashed_signature
     time.sleep(0.5)
@@ -1220,6 +1226,7 @@ def measure_serial(
     harness_arm_timeout_s: float = 5.0,
     harness_active_timeout_s: float = 30.0,
     harness_done_timeout_s: float = 5.0,
+    windowed_energy: bool = False,
 ) -> MeasureResult:
     """Capture latency and power metrics from a device serial log.
 
@@ -1260,6 +1267,9 @@ def measure_serial(
         (`CREST_HARNESS_ACTIVE_TIMEOUT_MS`).
     harness_done_timeout_s : float
         Timeout waiting for harness ``DONE`` after the active window completes.
+
+    windowed_energy : bool, optional
+        Require multi-window harness protocol and fail without latency-only recovery.
 
     Returns
     -------
@@ -1339,6 +1349,7 @@ def measure_serial(
             harness_ready_timeout_s=harness_ready_timeout_s,
             harness_active_timeout_s=harness_active_timeout_s,
             harness_done_timeout_s=harness_done_timeout_s,
+            windowed_energy=windowed_energy,
         )
 
     try:
@@ -1346,6 +1357,11 @@ def measure_serial(
         # Normal path: ensure harness firmware is ready, then capture both DUT
         # and harness telemetry in the same coordinated session.
         result = _run_handshake()
+        if result.error and windowed_energy:
+            return MeasureResult(None, None,
+                [f"HANDSHAKE_ERROR: {result.error}"] +
+                [f"HARNESS: {line}" for line in result.harness_log] +
+                [f"DUT: {line}" for line in result.dut_log], None)
         if result.error:
             logger.warning("Harness handshake failed: %s", result.error)
             logger.info(
@@ -1406,6 +1422,8 @@ def measure_serial(
             power_metrics=power_metrics,
         )
     except (RuntimeError, serial.SerialException) as exc:  # type: ignore[attr-defined]
+        if windowed_energy:
+            return MeasureResult(None, None, [f"HARNESS_ERROR: {exc}"], None)
         logger.warning("Harness measurement failed: %s", exc)
         if isinstance(exc, serial.SerialException):
             try:

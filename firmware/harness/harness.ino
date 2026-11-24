@@ -27,6 +27,11 @@ uint32_t active_start_ms = 0;
 uint32_t active_start_us = 0;
 uint32_t stable_low_start_ms = 0;
 int last_pin_state = LOW;
+bool invocation_windows = false;
+uint32_t window_count = 0;
+uint64_t window_us = 0;
+float window_energy_j = 0.0f;
+bool window_error = false;
 
 // Non-blocking serial read helper (empty string if nothing available).
 String ReadLineIfAvailable() {
@@ -54,6 +59,10 @@ void EnterIdle() {
 void EnterArmed() {
   state = HarnessState::kArmed;
   ResetArmState();
+  window_count = 0;
+  window_us = 0;
+  window_energy_j = 0.0f;
+  window_error = false;
   Serial.println(CREST_RESP_ARMED);
 }
 
@@ -62,7 +71,8 @@ void EnterActive() {
   state = HarnessState::kActive;
   active_start_ms = millis();
   active_start_us = micros();
-  crest_power::ResetAccumulators();
+  if (invocation_windows) crest_power::BeginInvocationWindow();
+  else crest_power::ResetAccumulators();
 }
 
 // Emit run count, energy telemetry, harness timing, and DONE marker.
@@ -101,7 +111,18 @@ void loop() {
   const String line = ReadLineIfAvailable();
   if (line.length() > 0) {
     if (line.equalsIgnoreCase(CREST_CMD_PING)) {
+      if (digitalRead(CREST_HARNESS_ARM_PIN) == HIGH) {
+        invocation_windows = false;
+        crest_power::ConfigureInvocationWindows(false);
+        EnterIdle();
+      }
       Serial.println(CREST_HARNESS_READY);
+    } else if (line == "WINDOWS 1" && digitalRead(CREST_HARNESS_ARM_PIN) == HIGH) {
+      invocation_windows = true;
+      crest_power::ConfigureInvocationWindows(true);
+      EnterIdle();
+      Serial.println("WINDOWS READY 1");
+      crest_power::EmitInvocationWindowSettings();
     }
   }
 
@@ -121,6 +142,45 @@ void loop() {
     } else {
       stable_low_start_ms = 0;
     }
+  }
+
+  // Opt-in protocol: count each completed trigger pulse and finish on arm HIGH.
+  // No UART output or deliberate delay occurs while a pulse is active.
+  if (invocation_windows && (state == HarnessState::kArmed || state == HarnessState::kActive)) {
+    if (state == HarnessState::kActive) {
+      if (pin_state == LOW) {
+        const uint32_t elapsed_us = micros() - active_start_us;
+        const float energy_j = crest_power::EndInvocationWindow();
+        window_error = window_error || energy_j < 0.0f || !isfinite(energy_j);
+        window_energy_j += energy_j;
+        window_us += elapsed_us;
+        ++window_count;
+        state = HarnessState::kArmed;
+        arm_start_ms = millis();
+      } else if (kActiveTimeoutMs > 0 && millis() - active_start_ms > kActiveTimeoutMs) {
+        crest_power::EndInvocationWindow();
+        Serial.println("harness error: active_timeout");
+        state = HarnessState::kWaitDisarmHigh;
+      }
+    }
+    if (state == HarnessState::kArmed) {
+      if (arm_pin_state == HIGH) {
+        Serial.print("energy windows: ");
+        Serial.print(window_count);
+        Serial.print(" elapsed_us: ");
+        Serial.println(static_cast<unsigned long>(window_us));
+        const float latency_s = window_count ? static_cast<float>(window_us) / window_count / 1000000.0f : -1.0f;
+        EmitHarnessTelemetry(window_count, latency_s, window_error ? -1.0f : window_energy_j);
+        EnterIdle();
+      } else if (pin_state == HIGH && last_pin_state == LOW) {
+        EnterActive();
+      } else if (kArmTimeoutMs > 0 && millis() - arm_start_ms > kArmTimeoutMs) {
+        Serial.println("harness error: arm_timeout");
+        state = HarnessState::kWaitDisarmHigh;
+      }
+    }
+    last_pin_state = pin_state;
+    return;
   }
 
   // ARMED: enforce stable-low then wait for rising edge.

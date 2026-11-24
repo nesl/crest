@@ -532,6 +532,7 @@ def run_handshake(
     harness_ready_timeout_s: float,
     harness_active_timeout_s: float,
     harness_done_timeout_s: float,
+    windowed_energy: bool = False,
 ) -> HandshakeResult:
     """Run the full DUT+harness handshake and collect logs.
 
@@ -556,6 +557,9 @@ def run_handshake(
         (<= 0 disables the timeout). This timeout applies only to the final
         DONE read phase and does not include harness arming time before START.
 
+    windowed_energy : bool, optional
+        Require negotiated per-invocation windows; unsupported firmware fails before START.
+
     Returns
     -------
     HandshakeResult
@@ -564,7 +568,8 @@ def run_handshake(
     dut_log: List[str] = []
     harness_log: List[str] = []
 
-    with serial.Serial(harness_port, baudrate=baud_rate, timeout=0.1) as harness:
+    serial_options = {"exclusive": True} if windowed_energy else {}
+    with serial.Serial(harness_port, baudrate=baud_rate, timeout=0.1, **serial_options) as harness:
         _flush_input(harness)
         logger.info("hil_protocol: sending PING to harness (%s)", harness_port)
         _send_line(harness, CMD_PING)
@@ -585,8 +590,18 @@ def run_handshake(
                 error="harness_ready_timeout",
             )
 
-        with serial.Serial(dut_port, baudrate=baud_rate, timeout=0.1) as dut:
+        if windowed_energy:
+            _send_line(harness, "WINDOWS 1")
+            if not _wait_for_token(harness, "WINDOWS READY 1", harness_ready_timeout_s, harness_log):
+                return HandshakeResult(dut_log, harness_log, False, False, None, None,
+                                       "harness_window_protocol_unsupported")
+
+        with serial.Serial(dut_port, baudrate=baud_rate, timeout=0.1, **serial_options) as dut:
             _flush_input(dut)
+            if windowed_energy:
+                # ESP32 answers non-START commands with a fresh DUT READY.
+                # Recover readiness discarded when opening/flushing after flash.
+                _send_line(dut, CMD_PING)
             if not _wait_for_token(
                 dut,
                 DUT_READY,
