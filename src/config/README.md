@@ -167,7 +167,7 @@ Common keys in the shipped config
 
 Runtime behavior
 
-- Older configs may contain `nas_multiobjective_population_size`; TPE has no generation size and the search loop uses the remaining trial budget.
+- `nas_multiobjective_population_size` sets the NSGA-II population size (default 50, minimum 2). TPE ignores this setting. Both samplers use the remaining trial budget to size each search round.
 - `training.energy_aware` defaults to `false` when omitted
 - `training.quantization` is required and must use the mapping shape with `mode`, `search`, and non-empty `choices`.
   The main measured-board configs search `choices: [float, int8_ptq]` so float32 and int8 PTQ exports can be compared on the same backend.
@@ -222,7 +222,10 @@ The YAML blocks below are merge snippets for a complete experiment configuration
 ```yaml
 optimizer:
   type: optuna
+  sampler: nsga2
 ```
+
+Native Optuna accepts `tpe` (the default) and `nsga2` (NSGA-II). Omitting the sampler selects multivariate TPE for both scalar and multi-objective searches. Use a new study name when switching samplers.
 
 See [training budgets](#training) for completion targets and attempt caps.
 To extend a study, retain its name, database, and original experiment configuration and raise these totals.

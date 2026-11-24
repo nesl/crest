@@ -84,6 +84,23 @@ def test_signed_sqlite_repeated_extension_preserves_old_evidence(campaign):
     assert resumed.user_attrs[OPTIMIZER_SIGNATURE_ATTR] == signature
 
 
+def test_nsga2_selection_changes_study_identity(campaign):
+    client, storage = campaign
+    study = signed_study(client, storage)
+    client.config.optimizer.sampler = "nsga2"
+    client.config.training.nas_multiobjective_population_size = 12
+    cls, options = client._sampler_setup()
+    assert cls is optuna.samplers.NSGAIISampler
+    assert options == {"population_size": 12, "seed": 42}
+    with pytest.raises(RuntimeError, match="sampler settings"):
+        client._select_optimizer(study, client._build_sampler())
+
+
+def test_unknown_native_sampler_is_rejected():
+    with pytest.raises(ValueError, match="optimizer.sampler"):
+        _normalize_optimizer_config(Dict(optimizer={"sampler": "typo"}))
+
+
 def test_signed_running_trial_keeps_consuming_attempt_cap(campaign):
     client, storage = campaign
     study = signed_study(client, storage)

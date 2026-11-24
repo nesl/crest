@@ -141,7 +141,7 @@ python src/nas_model_client.py \
 ```
 
 For a full run, omit `--smoke-test` and use a fresh study name.
-Native Optuna uses multivariate TPE for both single-objective and multi-objective searches.
+Native Optuna defaults to multivariate TPE for both single-objective and multi-objective searches. Set `optimizer.sampler: nsga2` in the experiment YAML to use NSGA-II.
 Start a new study when moving a v0.2.0 campaign from NSGA-II to TPE so the archived study retains its original sampler identity.
 For LLM generation, follow the [LLM guide](crest/optimizers/llm/README.md) for configuration and credentials.
 

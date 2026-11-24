@@ -52,6 +52,7 @@ from crest.cadence import resolve_batch_period_ms
 from crest.model import (
     NONNEGATIVE_METRICS,
     _normalize_optimizer_config,
+    OptunaSampler,
     ScoreConfigEvaluationError,
     configured_quantization_mode,
     build_trial_outcome,
@@ -267,7 +268,7 @@ class NASModelClient:
 
     Notes
     -----
-    - Multi-objective NAS is enabled via ``config.nas.score.type``. Multivariate TPE
+    - Multi-objective NAS is enabled via ``config.nas.score.type``. The selected sampler
       uses the configured objective directions for Pareto searches.
     - Device resource caps (RAM/flash) are checked against board specs returned
       by ``return_hardware_specs``. Trials exceeding limits are pruned.
@@ -787,12 +788,19 @@ class NASModelClient:
                 )
 
     def _build_sampler(self):
-        """Build TPE with the same options used for study identity."""
+        """Build the sampler with the same options used for study identity."""
         sampler_class, kwargs = self._sampler_setup()
         return sampler_class(**kwargs)
 
     def _sampler_setup(self):
-        """Use multivariate TPE for scalar and Pareto searches."""
+        """Resolve the configured native sampler and its study identity options."""
+        optimizer = self._cfg_get(self.config, "optimizer", {})
+        native = self._cfg_get(optimizer, "type", "optuna") == "optuna"
+        if native and self._cfg_get(optimizer, "sampler") == OptunaSampler.NSGA2:
+            population_size = self._cfg_get(self.config.training, "nas_multiobjective_population_size", 50)
+            if isinstance(population_size, bool) or not isinstance(population_size, int) or population_size < 2:
+                raise ValueError("training.nas_multiobjective_population_size must be an integer of at least 2 for NSGA-II.")
+            return optuna.samplers.NSGAIISampler, {"population_size": population_size, "seed": 42}
         kwargs = {"n_startup_trials": 15, "multivariate": True, "constant_liar": True}
         if self._score_is_multiobjective():
             kwargs["seed"] = 42

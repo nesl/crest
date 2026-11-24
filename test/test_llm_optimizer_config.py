@@ -26,6 +26,7 @@ class OptimizerConfigTests(unittest.TestCase):
             with self.subTest(config=config):
                 optimizer = _normalize_optimizer_config(config)
                 self.assertEqual(optimizer.type, "optuna")
+                self.assertEqual(optimizer.sampler, "tpe")
                 self.assertEqual(optimizer.recover_orphaned_trials, [])
 
     def test_llm_generator_config_is_normalized(self) -> None:
