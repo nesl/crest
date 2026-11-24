@@ -52,6 +52,7 @@ from crest.cadence import resolve_batch_period_ms
 from crest.model import (
     NONNEGATIVE_METRICS,
     _normalize_optimizer_config,
+    OptunaSampler,
     ScoreConfigEvaluationError,
     configured_quantization_mode,
     build_trial_outcome,
@@ -267,9 +268,8 @@ class NASModelClient:
 
     Notes
     -----
-    - Multi-objective NAS is enabled via ``config.nas.score.type``. When true,
-      NSGA-II is used with the configured objective directions. Otherwise, a
-      single-objective TPE sampler is used.
+    - Multi-objective NAS is enabled via ``config.nas.score.type``. The selected sampler
+      uses the configured objective directions for Pareto searches.
     - Device resource caps (RAM/flash) are checked against board specs returned
       by ``return_hardware_specs``. Trials exceeding limits are pruned.
     - Artifacts (trials CSV, training history, plots, metrics, optional TFLite)
@@ -725,46 +725,14 @@ class NASModelClient:
             ],
         }
 
-    def _feasibility_rule_count(self) -> int:
-        """Return the number of active feasibility constraints.
-
-        Returns
-        -------
-        int
-            Length of ``nas.feasibility.rules`` for the active config.
-        """
-        return len(self._feasibility_config().rules)
-
-    def _constraints_func(self, frozen_trial: optuna.trial.FrozenTrial) -> tuple[float, ...]:
-        """Return persisted feasibility constraints for Optuna samplers.
-
-        Parameters
-        ----------
-        frozen_trial : optuna.trial.FrozenTrial
-            Completed trial whose user attributes carry feasibility metadata.
-
-        Returns
-        -------
-        tuple[float, ...]
-            Signed constraints in policy order. Empty when feasibility is
-            disabled.
-
-        Notes
-        -----
-        The sampler callback must never re-evaluate the current config against
-        old trial metrics. It reads only persisted trial attributes; hard
-        failures and prune-rule exits use a positive persisted status-derived
-        sentinel so constrained samplers rank them infeasible.
-        """
-        if not self._feasibility_enabled():
-            return ()
-        raw_constraints = frozen_trial.user_attrs.get("feasibility_constraints")
-        if raw_constraints not in (None, ""):
-            return tuple(float(value) for value in raw_constraints)
-        status = str(frozen_trial.user_attrs.get("feasibility_status", "")).strip()
-        if status == "not_evaluated":
-            return tuple(FEASIBILITY_NOT_EVALUATED_CONSTRAINT for _ in range(self._feasibility_rule_count()))
-        return tuple(FEASIBILITY_NOT_EVALUATED_CONSTRAINT for _ in range(self._feasibility_rule_count()))
+    def _record_trial_constraints(self, trial: optuna.Trial, metrics: dict[str, Any]) -> None:
+        """Record signed residuals by rule on the live trial before it finishes."""
+        rules = self._feasibility_config().rules
+        values = metrics.get("feasibility_constraints")
+        if values is None:
+            values = [FEASIBILITY_NOT_EVALUATED_CONSTRAINT] * len(rules)
+        for index, (rule, value) in enumerate(zip(rules, values, strict=True)):
+            trial.set_constraint(f"{index}:{rule.rule}", float(value))
 
     def _validate_or_store_feasibility_signature(self, study: optuna.Study, *, store: bool = True) -> None:
         """Validate persisted feasibility policy metadata for a study.
@@ -820,36 +788,23 @@ class NASModelClient:
                 )
 
     def _build_sampler(self):
-        """Build an Optuna sampler matching the active score and constraints.
-
-        Returns
-        -------
-        optuna.samplers.BaseSampler
-            NSGA-II or TPE sampler with feasibility constraints enabled when
-            configured.
-        """
+        """Build the sampler with the same options used for study identity."""
         sampler_class, kwargs = self._sampler_setup()
         return sampler_class(**kwargs)
 
     def _sampler_setup(self):
-        """Resolve the sampler declaration used for construction and identity.
-
-        Returns
-        -------
-        tuple[type[optuna.samplers.BaseSampler], dict[str, Any]]
-            Sampler class and constructor options, including the constraint
-            callback when feasibility is enabled.
-        """
-        constraints_func = self._constraints_func if self._feasibility_enabled() else None
+        """Resolve the configured native sampler and its study identity options."""
+        optimizer = self._cfg_get(self.config, "optimizer", {})
+        native = self._cfg_get(optimizer, "type", "optuna") == "optuna"
+        if native and self._cfg_get(optimizer, "sampler") == OptunaSampler.NSGA2:
+            population_size = self._cfg_get(self.config.training, "nas_multiobjective_population_size", 50)
+            if isinstance(population_size, bool) or not isinstance(population_size, int) or population_size < 2:
+                raise ValueError("training.nas_multiobjective_population_size must be an integer of at least 2 for NSGA-II.")
+            return optuna.samplers.NSGAIISampler, {"population_size": population_size, "seed": 42}
+        kwargs = {"n_startup_trials": 15, "multivariate": True, "constant_liar": True}
         if self._score_is_multiobjective():
-            sampler_class = optuna.samplers.NSGAIISampler
-            kwargs = {"population_size": self.config.training.nas_multiobjective_population_size, "seed": 42}
-        else:
-            sampler_class = optuna.samplers.TPESampler
-            kwargs = {"n_startup_trials": 15, "multivariate": True}
-        if constraints_func is not None:
-            kwargs["constraints_func"] = constraints_func
-        return sampler_class, kwargs
+            kwargs["seed"] = 42
+        return optuna.samplers.TPESampler, kwargs
 
     def _select_optimizer(self, study: optuna.Study, sampler: Any):
         """Resolve the component and validate its identity before initialization.
@@ -2000,6 +1955,8 @@ class NASModelClient:
             metrics.setdefault("arena_bytes", -1)
             apply_cadenced_metric_defaults(metrics, metrics)
             self._mark_feasibility_not_evaluated(metrics)
+            if "feasibility_constraints" not in metrics:
+                self._record_trial_constraints(trial, metrics)
             directions = self._study_directions()
             if self._score_is_multiobjective():
                 objective_names = [str(obj.metric) for obj in self.config.nas.score.params.objectives]
@@ -2130,6 +2087,7 @@ class NASModelClient:
                 task_nonnegative_metric_names=task_nonnegative_metric_names,
             )
             self._apply_feasibility_evaluation(metrics, feasibility_evaluation)
+            self._record_trial_constraints(trial, metrics)
             if (
                 not feasibility_evaluation.feasible
                 and not bool(feasibility_config.train_if_infeasible)
@@ -2611,11 +2569,7 @@ class NASModelClient:
                     break
 
                 round_idx += 1
-                if self._score_is_multiobjective():
-                    population_size = int(self.config.training.nas_multiobjective_population_size)
-                    next_batch = min(max(remaining_needed, population_size), remaining_budget)
-                else:
-                    next_batch = min(remaining_needed, remaining_budget)
+                next_batch = min(remaining_needed, remaining_budget)
                 logger.info("[NAS] Launching round %s for %s additional trial(s).", round_idx, next_batch)
                 self._execute_search_round(
                     study, optimizer, optimizer_name, descriptor,

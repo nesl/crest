@@ -17,6 +17,7 @@ import tempfile
 import time
 from collections import deque
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
@@ -1004,6 +1005,13 @@ def configured_quantization_mode(config_or_training: Any) -> str:
     return normalized
 
 
+class OptunaSampler(str, Enum):
+    """Sampler names accepted in the native optimizer configuration."""
+
+    TPE = "tpe"
+    NSGA2 = "nsga2"
+
+
 def _normalize_optimizer_config(config: Dict) -> Dict:
     """Resolve a registered optimizer and validate explicit recovery targets.
 
@@ -1063,6 +1071,10 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
 
         optimizer = normalize_llm_config(optimizer)
     elif optimizer_type == "optuna":
+        try:
+            optimizer.sampler = OptunaSampler(optimizer.get("sampler", OptunaSampler.TPE)).value
+        except ValueError as exc:
+            raise ValueError("optimizer.sampler must be one of: tpe, nsga2.") from exc
         # Preserve the optional compatibility field without invoking LLM rules.
         optimizer.llm = Dict(optimizer.get("llm", {}))
     component_cls().validate_config(optimizer)
