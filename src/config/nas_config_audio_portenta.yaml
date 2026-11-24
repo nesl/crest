@@ -50,7 +50,6 @@ training:
   nas_epochs: 55
   model_epochs: 990
   nas_trials: 200
-  nas_multiobjective_population_size: 50
   max_total_trials: 300
   quantization:
     mode: int8_ptq

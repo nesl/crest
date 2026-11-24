@@ -40,6 +40,10 @@ def test_campaign_loads_without_data_credentials_or_hardware(path, monkeypatch):
     selection = resolve_component_selection(config)
     assert selection
     assert config.training.nas_epochs == 55
+    paper_population_sizes = {'cs1': 64, 'cs2': 50}
+    if path.parent.name in paper_population_sizes:
+        assert config.optimizer.sampler == 'nsga2'
+        assert config.training.nas_multiobjective_population_size == paper_population_sizes[path.parent.name]
     if config.device.name == 'STM32_NUCLEO_N657X0_Q':
         assert (ROOT / config.device.stm32.project_root / 'Appli/Src/crest_dut_runner.c').is_file()
         assert (ROOT / config.device.stm32.weights_memory_pool).is_file()

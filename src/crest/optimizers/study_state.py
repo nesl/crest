@@ -79,7 +79,8 @@ def validate_optimizer_identity(study, signature, optimizer):
     if comparable != signature:
         raise RuntimeError(
             "Active optimizer or sampler settings do not match the existing study optimizer signature. "
-            "Restore the original configuration or select a new study name."
+            "Restore the original configuration or select a new study name. For a pre-Optuna 5.1 "
+            "study, use the original CREST revision and environment to extend it in place."
         )
 
 
@@ -103,7 +104,7 @@ def store_optimizer_signature(study: optuna.Study, signature: dict[str, Any]) ->
     study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, signature)
 
 
-def recover_orphaned_trials(study: optuna.Study, config: Any) -> None:
+def recover_orphaned_trials(study: optuna.Study, config: Any, *, constraint_keys=()) -> None:
     """Fail explicitly listed RUNNING trials after workers have stopped.
 
     Parameters
@@ -113,6 +114,8 @@ def recover_orphaned_trials(study: optuna.Study, config: Any) -> None:
     config : Any
         Normalized optimizer config. ``recover_orphaned_trials: [12]``
         attests that the workers for those exact trial numbers have stopped.
+    constraint_keys : sequence of str
+        Expected rule keys used to audit missing measurements.
 
     Returns
     -------
@@ -156,6 +159,9 @@ def recover_orphaned_trials(study: optuna.Study, config: Any) -> None:
                        "expected_trial_numbers": expected_numbers,
                        "attestation": "listed_trial_workers_stopped",
                        "recorded_at_unix": time.time(), "target_state": "FAIL"})
+        if constraint_keys:
+            recorded = trial.constraints
+            events[-1]["unevaluated_constraints"] = [key for key in constraint_keys if key not in recorded]
         study.set_user_attr(ORPHAN_TRIAL_RECOVERY_ATTR, events)
         study.tell(trial.number, state=TrialState.FAIL)
         logger.warning("[NAS] Explicit orphan recovery marked trial %s FAIL.", trial.number)

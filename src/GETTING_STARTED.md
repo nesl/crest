@@ -154,6 +154,8 @@ LLM runs also write request and proposal records under `llm_optimizer/`.
 
 ## Continue an experiment
 
+For a study created before the Optuna 5.1 upgrade, use its original CREST revision and environment for an in-place extension. Even single-objective TPE settings changed. To use the new defaults, start a separate study and retain the original database.
+
 To extend a study, keep its name, database, and original experiment configuration, then raise `training.nas_trials` and `training.max_total_trials` to the desired **total** completion target and attempt cap.
 Use a new study when changing the optimizer or other identity-bearing settings.
 See the [resume reference](config/README.md#optimizer) for compatibility requirements.

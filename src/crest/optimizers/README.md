@@ -20,6 +20,8 @@ Choose a task below.
 ## Budgets and resume
 
 `training.nas_trials` and `training.max_total_trials` are study totals.
+For a study created before the Optuna 5.1 upgrade, use its original CREST revision and environment for an in-place extension. Even single-objective TPE settings changed. To use the new defaults, start a separate study and retain the original database.
+
 To extend 250 completions to 300, keep the same study name, database, artifact directory, and original experiment configuration, then raise the total target and cap.
 Optimizer identity checks do not fingerprint the whole experiment.
 Retain the original dataset, model, device, training, and score settings yourself.
@@ -36,6 +38,7 @@ An already satisfied target leaves WAITING work untouched.
 `--smoke-test N` instead runs N additional attempts in a separate smoke-study database.
 
 RUNNING trials are never recovered automatically.
+The recovery audit lists configured constraints that the stopped worker never recorded. Previously recorded measurements remain on the failed trial.
 After confirming their workers have stopped, set `optimizer.recover_orphaned_trials: [12]` to the exact orphan trial numbers and resume.
 Listed RUNNING trials become FAIL and still consume attempts.
 Unknown or WAITING numbers are rejected.

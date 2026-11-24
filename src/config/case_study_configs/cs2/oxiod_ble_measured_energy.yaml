@@ -39,6 +39,10 @@ model:
   params:
     export_variant: approx_trained
   search: {}
+optimizer:
+  type: optuna
+  sampler: nsga2
+
 training:
   nas_epochs: 55
   model_epochs: 990

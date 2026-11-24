@@ -2176,7 +2176,8 @@ class LoadSettingsTests(unittest.TestCase):
                 self.assertEqual(settings.training["nas_epochs"], 55)
                 self.assertEqual(settings.training["model_epochs"], 990)
                 self.assertEqual(settings.training["nas_trials"], expected_trials)
-                self.assertEqual(settings.training["nas_multiobjective_population_size"], 50)
+                self.assertEqual(settings.optimizer.sampler, "tpe")
+                self.assertNotIn("nas_multiobjective_population_size", settings.training)
                 self.assertEqual(settings.training["max_total_trials"], 300)
                 if filename.startswith("nas_config_audio"):
                     self.assertEqual(settings.model.search, {})

@@ -1365,11 +1365,16 @@ class ObjectiveTests(unittest.TestCase):
             ]
         )
         self.client._hil_request = MagicMock(return_value=metrics)
-        trial = DummyTrial()
-
-        result = self.client.objective(trial)
-
-        self.assertEqual(result, (1e12, -1e12))
+        self.client.config.nas.feasibility = Dict(rules=[Dict(
+            rule="latency_budget", metric="latency_ms", condition="gt",
+            reference=Dict(type="metric", metric="latency_budget_ms"), reason="Latency exceeds budget",
+        )])
+        study = optuna.create_study(directions=["minimize", "maximize"])
+        study.optimize(self.client.objective, n_trials=1)
+        trial = study.trials[0]
+        self.assertEqual(trial.state, TrialState.COMPLETE)
+        self.assertEqual(trial.values, [1e12, -1e12])
+        self.assertGreater(trial.constraints["0:latency_budget"], 0)
         self.client.model_family.build_model.assert_called_once()
         self.client.task.compile_model.assert_called_once()
         self.client.model_family.count_flops.assert_called_once()

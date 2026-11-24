@@ -1064,6 +1064,8 @@ def _normalize_optimizer_config(config: Dict) -> Dict:
         )
     optimizer.recover_orphaned_trials = list(recover)
     if optimizer_type == "llm_generator":
+        if "sampler" in optimizer:
+            raise ValueError("optimizer.sampler is only supported by optimizer.type: optuna.")
         # Apply proposal/provider defaults before the component validates its
         # contract. This only normalizes settings; it does not read credentials
         # or construct a provider, so loading a config cannot make API calls.

@@ -728,9 +728,7 @@ class NASModelClient:
     def _record_trial_constraints(self, trial: optuna.Trial, metrics: dict[str, Any]) -> None:
         """Record signed residuals by rule on the live trial before it finishes."""
         rules = self._feasibility_config().rules
-        values = metrics.get("feasibility_constraints")
-        if values is None:
-            values = [FEASIBILITY_NOT_EVALUATED_CONSTRAINT] * len(rules)
+        values = metrics["feasibility_constraints"]
         for index, (rule, value) in enumerate(zip(rules, values, strict=True)):
             trial.set_constraint(f"{index}:{rule.rule}", float(value))
 
@@ -952,7 +950,10 @@ class NASModelClient:
         self._progress_warmup_count = len(getattr(optimizer, "warmup_params", []) or [])
         return descriptor
 
-    _recover_orphaned_trials = staticmethod(recover_orphaned_trials)
+    def _recover_orphaned_trials(self, study, config):
+        rules = self._feasibility_config().rules
+        keys = [f"{index}:{rule.rule}" for index, rule in enumerate(rules)]
+        recover_orphaned_trials(study, config, constraint_keys=keys)
 
     @staticmethod
     def _waiting_round_size(study: optuna.Study) -> int:
@@ -1701,6 +1702,28 @@ class NASModelClient:
         return split
 
     def objective(self, trial: optuna.Trial) -> float | tuple:
+        """Evaluate one candidate and record missing constraints before an early exit."""
+        try:
+            result = self._evaluate_trial(trial)
+        except (Exception, KeyboardInterrupt):
+            try:
+                self._record_missing_constraints(trial)
+            except Exception:
+                logger.exception("Failed to persist missing constraints for trial %s", trial.number)
+            raise
+        self._record_missing_constraints(trial)
+        return result
+
+    def _record_missing_constraints(self, trial: optuna.Trial) -> None:
+        rules = self._feasibility_config().rules
+        if rules:
+            recorded = trial.constraints
+            for index, rule in enumerate(rules):
+                key = f"{index}:{rule.rule}"
+                if key not in recorded:
+                    trial.set_constraint(key, FEASIBILITY_NOT_EVALUATED_CONSTRAINT)
+
+    def _evaluate_trial(self, trial: optuna.Trial) -> float | tuple:
         """Optimize CREST architecture and training hyperparameters.
 
         This objective samples model hyperparameters (e.g., filters, kernel size,
@@ -1955,8 +1978,6 @@ class NASModelClient:
             metrics.setdefault("arena_bytes", -1)
             apply_cadenced_metric_defaults(metrics, metrics)
             self._mark_feasibility_not_evaluated(metrics)
-            if "feasibility_constraints" not in metrics:
-                self._record_trial_constraints(trial, metrics)
             directions = self._study_directions()
             if self._score_is_multiobjective():
                 objective_names = [str(obj.metric) for obj in self.config.nas.score.params.objectives]
