@@ -33,7 +33,7 @@ dependencies:
       - pyyaml==6.0.4
       - pydantic>=2,<3
       # Dataset utilities
-      - numpy-quaternion==2024.0.12
+      - numpy-quaternion==2024.0.13
       - pydometer==2019.2.8
       - soundata==1.0.1
       - librosa==0.11.0
