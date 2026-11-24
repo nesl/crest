@@ -291,23 +291,48 @@ def test_invalid_declared_descriptor_propagates_before_objective(client,tmp_path
     client.objective.assert_not_called()
 
 
-@pytest.mark.parametrize("multi,cap,expected",[(False,10,1),(True,10,8),(True,3,3)])
-def test_native_round_boundaries_preserve_population_and_target_rules(client,tmp_path,multi,cap,expected):
-    client.config.optimizer=Dict(type="optuna")
-    client.config.training.nas_trials=1
-    client.config.training.max_total_trials=cap
+@pytest.mark.parametrize("sampler", [None, "nsga2"], ids=["default-tpe", "nsga2"])
+@pytest.mark.parametrize("multi", [False, True], ids=["scalar", "multi"])
+@pytest.mark.parametrize("first_pruned,cap,expected_rounds", [
+    (False, 10, [2]),
+    (True, 3, [2, 1]),
+    (True, 2, [2]),
+])
+def test_native_rounds_respect_completion_target_and_attempt_cap(
+    client, tmp_path, sampler, multi, first_pruned, cap, expected_rounds,
+):
+    client.config.optimizer = Dict(type="optuna")
+    if sampler is not None:
+        client.config.optimizer.sampler = sampler
+    client.config.training.nas_trials = 2
+    client.config.training.max_total_trials = cap
+    client.config.training.nas_multiobjective_population_size = 8
     if multi:
-        client.config.nas.score=Dict(type="multi-objective",metrics={},params={"objectives":[{"metric":"flops","direction":"minimize"},{"metric":"weight_bytes","direction":"minimize"}]})
-        client.objective=lambda trial:(float(trial.suggest_int("width",2,8)),1.0)
-    sizes=[]
-    original=optuna.Study.optimize
-    def optimize(study,objective,n_trials,**kwargs):
+        client.config.nas.score = Dict(type="multi-objective", metrics={}, params={"objectives": [
+            {"metric": "flops", "direction": "minimize"},
+            {"metric": "weight_bytes", "direction": "minimize"},
+        ]})
+
+    def objective(trial):
+        width = trial.suggest_int("width", 2, 8)
+        if first_pruned and trial.number == 0:
+            raise optuna.TrialPruned()
+        return (float(width), 1.0) if multi else float(width)
+
+    client.objective = objective
+    sizes = []
+    original = optuna.Study.optimize
+
+    def optimize(study, objective, n_trials, **kwargs):
         sizes.append(n_trials)
-        return original(study,objective,n_trials=n_trials,**kwargs)
-    with patch.object(optuna.Study,"optimize",optimize),patch.object(optuna.Study,"enqueue_trial",side_effect=AssertionError("native must never enqueue")):
-        result=execute(client,tmp_path)
-    assert sizes==[expected]
-    assert len(result.trials)==expected
+        return original(study, objective, n_trials=n_trials, **kwargs)
+
+    with patch.object(optuna.Study, "optimize", optimize), patch.object(
+        optuna.Study, "enqueue_trial", side_effect=AssertionError("native must never enqueue"),
+    ):
+        result = execute(client, tmp_path)
+    assert sizes == expected_rounds
+    assert len(result.trials) == sum(expected_rounds)
 
 
 def test_smoke_third_proposer_runs_exact_attempts_and_restores_budget(client,tmp_path):
