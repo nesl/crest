@@ -38,6 +38,7 @@ An already satisfied target leaves WAITING work untouched.
 `--smoke-test N` instead runs N additional attempts in a separate smoke-study database.
 
 RUNNING trials are never recovered automatically.
+The recovery audit lists configured constraints that the stopped worker never recorded. Previously recorded measurements remain on the failed trial.
 After confirming their workers have stopped, set `optimizer.recover_orphaned_trials: [12]` to the exact orphan trial numbers and resume.
 Listed RUNNING trials become FAIL and still consume attempts.
 Unknown or WAITING numbers are rejected.

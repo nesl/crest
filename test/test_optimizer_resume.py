@@ -15,7 +15,7 @@ from crest.optimizers.llm.providers.provider import FakeProvider
 from crest.optimizers.search_space import SearchParam
 from nas_model_client import (
     FEASIBILITY_NOT_EVALUATED_CONSTRAINT, FEASIBILITY_POLICY_SIGNATURE_ATTR,
-    OPTIMIZER_SIGNATURE_ATTR, PROPOSAL_ATTR,
+    OPTIMIZER_SIGNATURE_ATTR, ORPHAN_TRIAL_RECOVERY_ATTR, PROPOSAL_ATTR,
 )
 from test.test_nas_model_client import _build_test_client
 
@@ -104,14 +104,28 @@ def test_early_exit_persists_missing_constraints(campaign, error, state):
     assert frozen.constraints == {"0:latency": -3.0, "1:energy": FEASIBILITY_NOT_EVALUATED_CONSTRAINT}
 
 
-def test_recover_orphan_records_unevaluated_constraint(campaign):
+@pytest.mark.parametrize("error", [ValueError("evaluation"), KeyboardInterrupt()])
+def test_constraint_storage_error_preserves_original_exception(campaign, error):
+    client, _ = campaign
+    trial = MagicMock(number=0)
+    with patch.object(client, "_evaluate_trial", side_effect=error), patch.object(
+        client, "_record_missing_constraints", side_effect=OSError("storage unavailable")
+    ), pytest.raises(type(error)) as raised:
+        type(client).objective(client, trial)
+    assert raised.value is error
+
+
+def test_recover_orphan_audits_unevaluated_constraints(campaign):
     client, storage = campaign
-    client.config.nas.feasibility = Dict(rules=[Dict(rule="latency")])
+    client.config.nas.feasibility = Dict(rules=[Dict(rule="latency"), Dict(rule="energy")])
     study = optuna.create_study(storage=storage)
     orphan = study.ask()
-    client._recover_orphaned_trials(study, Dict(recover_orphaned_trials=[orphan.number]))
+    orphan.set_constraint("0:latency", -3.0)
+    with patch.object(study.sampler, "before_trial", side_effect=AssertionError("unexpected sampler hook")):
+        client._recover_orphaned_trials(study, Dict(recover_orphaned_trials=[orphan.number]))
     assert study.trials[0].state == TrialState.FAIL
-    assert study.trials[0].constraints == {"0:latency": FEASIBILITY_NOT_EVALUATED_CONSTRAINT}
+    assert study.trials[0].constraints == {"0:latency": -3.0}
+    assert study.user_attrs[ORPHAN_TRIAL_RECOVERY_ATTR][-1]["unevaluated_constraints"] == ["1:energy"]
 
 
 def test_llm_config_rejects_optuna_sampler():
