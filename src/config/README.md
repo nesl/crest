@@ -158,7 +158,6 @@ Common keys in the shipped config
 - `training.nas_epochs`
 - `training.model_epochs`
 - `training.nas_trials`
-- `training.nas_multiobjective_population_size`
 - `training.max_total_trials`
 - `training.quantization`
 - `training.latency_proxy_max_flops`
@@ -168,6 +167,7 @@ Common keys in the shipped config
 
 Runtime behavior
 
+- Older configs may contain `nas_multiobjective_population_size`; TPE has no generation size and the search loop uses the remaining trial budget.
 - `training.energy_aware` defaults to `false` when omitted
 - `training.quantization` is required and must use the mapping shape with `mode`, `search`, and non-empty `choices`.
   The main measured-board configs search `choices: [float, int8_ptq]` so float32 and int8 PTQ exports can be compared on the same backend.

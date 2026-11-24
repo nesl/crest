@@ -30,8 +30,6 @@ PROPOSAL_ATTR = "crest_proposal"
 def build_optimizer_signature(name, optimizer, config, sampler, sampler_options, training_config):
     """Describe effective settings as detached JSON data for strict resume checks."""
     options = dict(sampler_options)
-    if "constraints_func" in options:
-        options["constraints_func"] = "crest.persisted_feasibility_constraints.v1"
     public_sampler_names = {
         optuna.samplers.TPESampler: "optuna.samplers.TPESampler",
         optuna.samplers.NSGAIISampler: "optuna.samplers.NSGAIISampler",

@@ -306,7 +306,11 @@ class DummyTrial:
         self.report_calls = []
         self.number = 0
         self.params = {}
+        self.constraints = {}
         self.user_attrs = {}
+
+    def set_constraint(self, key, value):
+        self.constraints[key] = value
 
     def suggest_int(self, name, low, high):
         """Run suggest int.
@@ -1040,6 +1044,7 @@ class ObjectiveTests(unittest.TestCase):
         self.assertEqual(logged_metrics["feasibility_status"], "infeasible")
         self.assertEqual(logged_metrics["feasibility_rule"], "latency_budget")
         self.assertEqual(logged_metrics["feasibility_constraints"], [5.0])
+        self.assertEqual(trial.constraints, {"0:latency_budget": 5.0})
         self.assertEqual(json.loads(logged_metrics["feasibility_constraints_json"]), [5.0])
         self.assertFalse(self.mock_log.call_args.kwargs.get("pruned", False))
 
@@ -2383,8 +2388,8 @@ class RunNASTests(unittest.TestCase):
         provider_patch.start()
         self.addCleanup(provider_patch.stop)
 
-    def test_real_nsga_infrastructure_failure_consumes_budget_and_continues(self):
-        """NSGA must count an infrastructure failure toward budget and continue afterward."""
+    def test_real_tpe_infrastructure_failure_consumes_budget_and_continues(self):
+        """TPE must count an infrastructure failure toward budget and continue afterward."""
         with tempfile.TemporaryDirectory() as directory:
             client = _build_test_client(Path(directory))
             client.config.training.nas_trials = 2
@@ -2395,14 +2400,14 @@ class RunNASTests(unittest.TestCase):
                     Dict(metric="rmse_total", direction="minimize"),
                     Dict(metric="latency_ms", direction="minimize")]))
             def objective(trial):
-                """Fail the first proposal, then return valid NSGA objective values."""
+                """Fail the first proposal, then return valid multi-objective values."""
                 if trial.number == 0:
                     trial.set_user_attr("measurement_failure_class", "infrastructure")
                     raise MeasurementInfrastructureError("recovery exhausted")
                 return 1.0, 2.0
             client.objective = objective
             study = client.run_nas("infra", storage="sqlite:///" + str(Path(directory) / "study.db"))
-            self.assertIsInstance(study.sampler, optuna.samplers.NSGAIISampler)
+            self.assertIsInstance(study.sampler, optuna.samplers.TPESampler)
             self.assertEqual([t.state for t in study.trials], [TrialState.FAIL, TrialState.COMPLETE])
             self.assertIsNone(study.trials[0].values)
             self.assertEqual(len(study.trials), 2)  # No replacement proposal beyond attempt cap.
@@ -2749,8 +2754,8 @@ class RunNASTests(unittest.TestCase):
         self.assertEqual(dummy.metric_names_calls, [["rmse_total", "latency_ms"]])
         self.assertEqual(dummy.optimize_calls, [1])
 
-    def test_run_nas_wires_constraints_sampler_when_feasibility_enabled(self) -> None:
-        """Both sampler families should receive the persisted constraints hook."""
+    def test_run_nas_stores_policy_without_deprecated_sampler_callback(self) -> None:
+        """Trial-level constraints need no sampler callback."""
         client = _build_test_client()
         client.config.training.nas_trials = 1
         client.config.training.max_total_trials = 1
@@ -2774,9 +2779,7 @@ class RunNASTests(unittest.TestCase):
             with patch("nas_model_client.optuna.create_study", return_value=dummy):
                 client.run_nas(study_name="demo", storage="sqlite:///dummy.db")
 
-        constraints_func = mock_tpe.call_args.kwargs["constraints_func"]
-        self.assertIs(constraints_func.__self__, client)
-        self.assertIs(constraints_func.__func__, client._constraints_func.__func__)
+        self.assertNotIn("constraints_func", mock_tpe.call_args.kwargs)
         self.assertEqual(
             dummy.user_attrs["crest_feasibility_policy_signature"]["rules"][0]["rule"],
             "latency_budget",

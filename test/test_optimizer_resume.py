@@ -147,7 +147,7 @@ def test_signed_resume_obeys_existing_feasibility_checks(campaign, policy):
 
 @pytest.mark.parametrize("multi,old_name,public_name", [
     (False, "optuna.samplers._tpe.sampler.TPESampler", "optuna.samplers.TPESampler"),
-    (True, "optuna.samplers.nsgaii._sampler.NSGAIISampler", "optuna.samplers.NSGAIISampler"),
+    (True, "optuna.samplers._tpe.sampler.TPESampler", "optuna.samplers.TPESampler"),
 ])
 def test_exact_old_private_sampler_identity_resumes_but_options_remain_strict(campaign, multi, old_name, public_name):
     client, storage = campaign
@@ -217,7 +217,7 @@ def test_signed_resume_preserves_matching_feasibility_policy(campaign):
     result = client.run_nas("campaign", storage)
     assert result.trials == before
     assert result.user_attrs[FEASIBILITY_POLICY_SIGNATURE_ATTR] == policy
-    assert result.user_attrs[OPTIMIZER_SIGNATURE_ATTR]["sampler"]["options"]["constraints_func"] == "crest.persisted_feasibility_constraints.v1"
+    assert "constraints_func" not in result.user_attrs[OPTIMIZER_SIGNATURE_ATTR]["sampler"]["options"]
 
 
 def test_signed_waiting_identity_mismatch_rejected(campaign):
