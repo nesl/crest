@@ -1,31 +1,18 @@
 version: 2
+# Security updates have a separate PR limit.
 updates:
   - package-ecosystem: "conda"
     directory: "/"
     schedule:
       interval: "weekly"
-    groups:
-      tensorflow-stack:
-        patterns:
-          - "tensorflow*"
-          - "tf-keras"
-          - "keras-*"
-    ignore:
-      # Upgrade the interpreter and the native audio backend deliberately.
-      - dependency-name: "python"
-      # Review SoundFile and its bundled native library together.
-      - dependency-name: "libsndfile"
-      - dependency-name: "soundfile"
-        update-types:
-          - "version-update:semver-major"
-          - "version-update:semver-minor"
-          - "version-update:semver-patch"
-  # Monitor pyproject.toml constraints; compatible releases may require no edit.
+    open-pull-requests-limit: 0
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0
