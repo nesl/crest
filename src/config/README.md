@@ -167,7 +167,7 @@ Common keys in the shipped config
 
 Runtime behavior
 
-- `nas_multiobjective_population_size` sets the NSGA-II population size (default 50, minimum 2). TPE ignores this setting. Both samplers use the remaining trial budget to size each search round.
+- `training.nas_multiobjective_population_size` sets the NSGA-II population size (default 50, minimum 2). TPE ignores this setting. Both samplers use the remaining trial budget to size each search round.
 - `training.energy_aware` defaults to `false` when omitted
 - `training.quantization` is required and must use the mapping shape with `mode`, `search`, and non-empty `choices`.
   The main measured-board configs search `choices: [float, int8_ptq]` so float32 and int8 PTQ exports can be compared on the same backend.
@@ -228,6 +228,8 @@ optimizer:
 Native Optuna accepts `tpe` (the default) and `nsga2` (NSGA-II). Omitting the sampler selects multivariate TPE for both scalar and multi-objective searches. Use a new study name when switching samplers.
 
 See [training budgets](#training) for completion targets and attempt caps.
+For a study created before the Optuna 5.1 upgrade, use its original CREST revision and environment for an in-place extension. Even single-objective TPE settings changed. To use the new defaults, start a separate study and retain the original database.
+
 To extend a study, retain its name, database, and original experiment configuration and raise these totals.
 Proposal settings, sampler configuration, and feasibility policy must match on resume.
 Budgets, output paths, and transport timeouts may change.

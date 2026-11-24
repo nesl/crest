@@ -14,7 +14,7 @@ from crest.model import _normalize_optimizer_config
 from crest.optimizers.llm.providers.provider import FakeProvider
 from crest.optimizers.search_space import SearchParam
 from nas_model_client import (
-    FEASIBILITY_POLICY_SIGNATURE_ATTR,
+    FEASIBILITY_NOT_EVALUATED_CONSTRAINT, FEASIBILITY_POLICY_SIGNATURE_ATTR,
     OPTIMIZER_SIGNATURE_ATTR, PROPOSAL_ATTR,
 )
 from test.test_nas_model_client import _build_test_client
@@ -82,6 +82,41 @@ def test_signed_sqlite_repeated_extension_preserves_old_evidence(campaign):
     assert len(resumed.trials) == 6
     assert resumed.trials[:5] == previous_trials
     assert resumed.user_attrs[OPTIMIZER_SIGNATURE_ATTR] == signature
+
+
+@pytest.mark.parametrize("error,state", [
+    (optuna.TrialPruned, TrialState.PRUNED),
+    (RuntimeError, TrialState.FAIL),
+])
+def test_early_exit_persists_missing_constraints(campaign, error, state):
+    client, storage = campaign
+    client.config.nas.feasibility = Dict(rules=[Dict(rule="latency"), Dict(rule="energy")])
+    study = optuna.create_study(storage=storage)
+
+    def stop_after_one_measurement(trial):
+        trial.set_constraint("0:latency", -3.0)
+        raise error("evaluation interrupted")
+
+    with patch.object(client, "_evaluate_trial", side_effect=stop_after_one_measurement):
+        study.optimize(lambda trial: type(client).objective(client, trial), n_trials=1, catch=(RuntimeError,))
+    frozen = study.trials[0]
+    assert frozen.state == state
+    assert frozen.constraints == {"0:latency": -3.0, "1:energy": FEASIBILITY_NOT_EVALUATED_CONSTRAINT}
+
+
+def test_recover_orphan_records_unevaluated_constraint(campaign):
+    client, storage = campaign
+    client.config.nas.feasibility = Dict(rules=[Dict(rule="latency")])
+    study = optuna.create_study(storage=storage)
+    orphan = study.ask()
+    client._recover_orphaned_trials(study, Dict(recover_orphaned_trials=[orphan.number]))
+    assert study.trials[0].state == TrialState.FAIL
+    assert study.trials[0].constraints == {"0:latency": FEASIBILITY_NOT_EVALUATED_CONSTRAINT}
+
+
+def test_llm_config_rejects_optuna_sampler():
+    with pytest.raises(ValueError, match="optimizer.sampler"):
+        _normalize_optimizer_config(Dict(optimizer={"type": "llm_generator", "sampler": "nsga2"}))
 
 
 def test_nsga2_selection_changes_study_identity(campaign):
@@ -164,11 +199,12 @@ def test_signed_resume_obeys_existing_feasibility_checks(campaign, policy):
 
 @pytest.mark.parametrize("multi,old_name,public_name", [
     (False, "optuna.samplers._tpe.sampler.TPESampler", "optuna.samplers.TPESampler"),
-    (True, "optuna.samplers._tpe.sampler.TPESampler", "optuna.samplers.TPESampler"),
+    (True, "optuna.samplers.nsgaii._sampler.NSGAIISampler", "optuna.samplers.NSGAIISampler"),
 ])
 def test_exact_old_private_sampler_identity_resumes_but_options_remain_strict(campaign, multi, old_name, public_name):
     client, storage = campaign
     if multi:
+        client.config.optimizer.sampler = "nsga2"
         client.config.nas.score = Dict(type="multi-objective", metrics={}, params={"objectives": [
             {"name": "flops", "metric": "flops", "direction": "minimize"},
             {"name": "ram", "metric": "ram_bytes", "direction": "minimize"},

@@ -20,6 +20,8 @@ Choose a task below.
 ## Budgets and resume
 
 `training.nas_trials` and `training.max_total_trials` are study totals.
+For a study created before the Optuna 5.1 upgrade, use its original CREST revision and environment for an in-place extension. Even single-objective TPE settings changed. To use the new defaults, start a separate study and retain the original database.
+
 To extend 250 completions to 300, keep the same study name, database, artifact directory, and original experiment configuration, then raise the total target and cap.
 Optimizer identity checks do not fingerprint the whole experiment.
 Retain the original dataset, model, device, training, and score settings yourself.

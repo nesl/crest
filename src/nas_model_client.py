@@ -952,7 +952,9 @@ class NASModelClient:
         self._progress_warmup_count = len(getattr(optimizer, "warmup_params", []) or [])
         return descriptor
 
-    _recover_orphaned_trials = staticmethod(recover_orphaned_trials)
+    def _recover_orphaned_trials(self, study, config):
+        record_missing = self._record_missing_constraints if self._feasibility_enabled() else None
+        recover_orphaned_trials(study, config, record_missing=record_missing)
 
     @staticmethod
     def _waiting_round_size(study: optuna.Study) -> int:
@@ -1701,6 +1703,23 @@ class NASModelClient:
         return split
 
     def objective(self, trial: optuna.Trial) -> float | tuple:
+        """Evaluate one candidate and record missing constraints before an early exit."""
+        try:
+            return self._evaluate_trial(trial)
+        except (Exception, KeyboardInterrupt):
+            self._record_missing_constraints(trial)
+            raise
+
+    def _record_missing_constraints(self, trial: optuna.Trial) -> None:
+        rules = self._feasibility_config().rules
+        if rules:
+            recorded = trial.constraints
+            for index, rule in enumerate(rules):
+                key = f"{index}:{rule.rule}"
+                if key not in recorded:
+                    trial.set_constraint(key, FEASIBILITY_NOT_EVALUATED_CONSTRAINT)
+
+    def _evaluate_trial(self, trial: optuna.Trial) -> float | tuple:
         """Optimize CREST architecture and training hyperparameters.
 
         This objective samples model hyperparameters (e.g., filters, kernel size,

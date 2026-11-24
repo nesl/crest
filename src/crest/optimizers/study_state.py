@@ -79,7 +79,8 @@ def validate_optimizer_identity(study, signature, optimizer):
     if comparable != signature:
         raise RuntimeError(
             "Active optimizer or sampler settings do not match the existing study optimizer signature. "
-            "Restore the original configuration or select a new study name."
+            "Restore the original configuration or select a new study name. For a pre-Optuna 5.1 "
+            "study, use the original CREST revision and environment to extend it in place."
         )
 
 
@@ -103,7 +104,7 @@ def store_optimizer_signature(study: optuna.Study, signature: dict[str, Any]) ->
     study.set_user_attr(OPTIMIZER_SIGNATURE_ATTR, signature)
 
 
-def recover_orphaned_trials(study: optuna.Study, config: Any) -> None:
+def recover_orphaned_trials(study: optuna.Study, config: Any, *, record_missing=None) -> None:
     """Fail explicitly listed RUNNING trials after workers have stopped.
 
     Parameters
@@ -157,6 +158,9 @@ def recover_orphaned_trials(study: optuna.Study, config: Any) -> None:
                        "attestation": "listed_trial_workers_stopped",
                        "recorded_at_unix": time.time(), "target_state": "FAIL"})
         study.set_user_attr(ORPHAN_TRIAL_RECOVERY_ATTR, events)
+        if record_missing is not None:
+            # Trial numbers are study-local. Reopen the running trial by its storage ID.
+            record_missing(optuna.Trial(study, trial._trial_id))
         study.tell(trial.number, state=TrialState.FAIL)
         logger.warning("[NAS] Explicit orphan recovery marked trial %s FAIL.", trial.number)
 
