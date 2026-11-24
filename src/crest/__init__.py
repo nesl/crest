@@ -17,6 +17,7 @@ __all__ = [
     "model",
     "data",
     "geometry",
+    "utils",
     "devices",
     "errors",
     "interfaces",

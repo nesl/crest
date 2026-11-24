@@ -25,7 +25,7 @@ from pydometer import Pedometer
 # from geographiclib.geodesic import Geodesic
 from tqdm import tqdm
 
-from . import geometry
+from .utils import geometry
 
 logger = logging.getLogger(__name__)
 
