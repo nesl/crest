@@ -64,3 +64,12 @@ prepare-audio-dataset:
 clean:
 	rm -rf build dist *.egg-info
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
+.PHONY: site site-serve
+site:
+	mkdir -p build/crest
+	cp -R docs/website/. build/crest/
+	$(PYTHON) -m mkdocs build --strict -f docs/mkdocs.yml
+
+site-serve: site
+	$(PYTHON) -m http.server 8767 --bind 127.0.0.1 --directory build

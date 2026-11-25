@@ -1,0 +1,272 @@
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #fff;
+  --md-default-fg-color: #262a2e;
+  --md-default-fg-color--light: #505761;
+  --md-typeset-color: #34393e;
+  --md-typeset-a-color: #2774ae;
+  --md-accent-fg-color: #205e8f;
+  --md-code-bg-color: #f2f5f8;
+  --md-code-fg-color: #2a3c4d;
+  --crest-panel: #fff;
+  --crest-border: #dce2e7;
+  --crest-tint: #f2f6fa;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #171d24;
+  --md-default-fg-color: #edf2f7;
+  --md-default-fg-color--light: #bac6d2;
+  --md-typeset-color: #dee6ef;
+  --md-typeset-a-color: #81bfea;
+  --md-accent-fg-color: #a9d8fc;
+  --md-code-bg-color: #25313d;
+  --md-code-fg-color: #e1ebf5;
+  --crest-panel: #1c2630;
+  --crest-border: #394958;
+  --crest-tint: #233241;
+}
+
+[data-md-color-scheme] {
+  --md-primary-fg-color: #205e8f;
+  --md-primary-bg-color: #fff;
+}
+
+.md-grid {
+  max-width: 66rem;
+}
+
+.md-header {
+  box-shadow: none;
+}
+
+.md-header__title {
+  letter-spacing: -.02em;
+  margin-left: .55rem;
+}
+
+.md-tabs {
+  background-color: #205e8f;
+}
+
+.md-tabs__link--active,
+.md-tabs__item--active .md-tabs__link {
+  color: #fff;
+}
+
+.md-nav__link {
+  line-height: 1.45;
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  color: var(--md-default-fg-color);
+  font-weight: 690;
+  letter-spacing: -.035em;
+}
+
+.md-typeset h1 {
+  line-height: 1.1;
+}
+
+.md-typeset :not(pre) > code {
+  border-radius: .2rem;
+  padding-inline: .25em;
+}
+
+.md-typeset pre > code,
+.md-typeset .highlighttable,
+.md-typeset table:not([class]) {
+  border: 1px solid var(--crest-border);
+  border-radius: .35rem;
+}
+
+.md-typeset table:not([class]) th {
+  background: var(--crest-tint);
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset a:focus-visible,
+.md-nav a:focus-visible,
+.md-header a:focus-visible {
+  outline: 2px solid var(--md-accent-fg-color);
+  outline-offset: 4px;
+}
+
+.crest-home {
+  margin: .35rem 0 1.5rem;
+}
+
+.crest-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(1.5rem, 4vw, 3.2rem);
+  padding: clamp(1rem, 3vw, 2.5rem) 0;
+  border-bottom: 1px solid var(--crest-border);
+}
+
+.crest-hero h1 {
+  margin: 0;
+  color: var(--md-default-fg-color);
+  font-size: clamp(1.9rem, 4.25vw, 3.45rem);
+  font-weight: 720;
+  letter-spacing: -.065em;
+  line-height: 1.03;
+}
+
+.crest-hero-copy > p:last-of-type {
+  max-width: 26rem;
+  margin: 1rem 0 1.3rem;
+  color: var(--md-default-fg-color--light);
+  font-size: .87rem;
+  line-height: 1.6;
+}
+
+.crest-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .65rem 1rem;
+}
+
+.crest-actions a {
+  font-size: .68rem;
+  font-weight: 680;
+  line-height: 1.3;
+}
+
+.crest-actions a.crest-button {
+  display: inline-flex;
+  align-items: center;
+  gap: .7rem;
+  padding: .65rem .8rem;
+  border-radius: .3rem;
+  background: #2774ae;
+  color: white;
+}
+
+.crest-actions a.crest-button:hover {
+  background: #205e8f;
+}
+
+.crest-actions .crest-text-link {
+  color: var(--md-typeset-a-color);
+  text-decoration: underline;
+  text-decoration-color: currentColor;
+  text-underline-offset: .18em;
+}
+
+.crest-actions a:focus-visible {
+  outline-color: var(--md-accent-fg-color);
+}
+
+.crest-pathways {
+  margin-top: 2rem;
+}
+
+.crest-pathways h2,
+.crest-support h2 {
+  margin: 0 0 .7rem;
+  font-size: 1.3rem;
+}
+
+.crest-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .6rem;
+}
+
+.crest-cards a.crest-card {
+  display: block;
+  padding: .85rem .95rem 1rem;
+  border: 1px solid var(--crest-border);
+  border-radius: .4rem;
+  background: var(--crest-panel);
+  color: var(--md-typeset-color);
+}
+
+.crest-cards a.crest-card:hover {
+  border-color: var(--md-typeset-a-color);
+  background: var(--crest-tint);
+}
+
+.crest-card h3 {
+  display: flex;
+  justify-content: space-between;
+  gap: .5rem;
+  margin: 0 0 .25rem;
+  font-size: .88rem;
+  line-height: 1.35;
+}
+
+.crest-card h3 span {
+  color: var(--md-typeset-a-color);
+}
+
+.crest-card p {
+  margin: 0;
+  color: var(--md-default-fg-color--light);
+  font-size: .69rem;
+  line-height: 1.5;
+}
+
+.crest-support {
+  margin-top: 1.55rem;
+  padding: 1rem 0 0;
+  border-top: 1px solid var(--crest-border);
+}
+
+.crest-support dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .65rem 1.15rem;
+  margin: 0;
+  font-size: .72rem;
+}
+
+.crest-support dt {
+  font-weight: 700;
+}
+
+.crest-support dd {
+  margin: .15rem 0 0;
+  color: var(--md-default-fg-color--light);
+}
+
+@media (max-width: 52em) {
+  .crest-hero {
+    grid-template-columns: 1fr;
+  }
+
+
+}
+
+@media (max-width: 38em) {
+  .crest-cards,
+  .crest-support dl {
+    grid-template-columns: 1fr;
+  }
+}
+
+.crest-hero:has(.trial-figure) {
+  grid-template-columns: minmax(0, .82fr) minmax(0, 1.28fr);
+  align-items: center;
+}
+.crest-hero .trial-figure {
+  background: white;
+  border: 1px solid var(--crest-border);
+  border-radius: .65rem;
+  padding: clamp(.55rem, 1.8vw, 1.35rem);
+  margin: 0;
+  width: 100%;
+}
+.trial-map { position: relative; }
+.trial-map img { display: block; width: 100%; margin: 0; }
+.trial-node { position: absolute; display: block; border-radius: .35rem; }
+.trial-node:hover, .trial-node:focus-visible { background: #2774ae20; outline: 3px solid #2774ae; outline-offset: -2px; }
+.crest-hero .trial-figure figcaption { margin: .65rem 0 0; color: #505761; font-size: .68rem; font-style: normal; }
+.crest-hero .trial-figure figcaption a { color: #205e8f; text-decoration: underline; }
+@media (max-width: 52em) {
+  .crest-hero:has(.trial-figure) { grid-template-columns: 1fr; }
+}
