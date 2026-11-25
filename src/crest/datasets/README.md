@@ -56,19 +56,24 @@ The dataset path runs before task and model-family construction.
 
 ## Add A New Dataset
 
-Use [`oxiod.py`](oxiod.py) or [`urbansound8k_mel.py`](urbansound8k_mel.py) as the concrete starting point.
+A dataset adapter loads local data and supplies model-ready splits, input shape and dtype, and metadata for the selected task and model family.
 
-1. Add a new adapter module under [`src/crest/datasets/`](.).
-2. Implement `DatasetABC` from [`../interfaces/dataset.py`](../interfaces/dataset.py).
-3. Return a `DatasetBundle` with normalized `DataSplit` objects.
-4. Validate all required `dataset.params` fields in `validate_config(...)`.
-5. Keep dataset-specific preprocessing, cache validation, and split selection inside the dataset adapter or its preparation script.
-6. Register the adapter in [`../builtin_components.py`](../builtin_components.py) with `dataset_registry.register(...)`.
-7. Select it in config with `dataset.name` and put adapter-local knobs under `dataset.params`.
-8. Add hardware-free tests for validation, loading, metadata, and calibration behavior.
+1. Add a class under `src/crest/datasets/` that implements `DatasetABC.load(dataset_config)`. Return a `DatasetBundle` with a training split. Supply the validation and test splits required by the selected task. Set `input_shape` to the shape of one example without its batch dimension.
+2. Dataset hooks receive `dataset.params`. Implement `validate_config(dataset_config)` to check the parameters the adapter owns. Keep preprocessing and cache validation in the adapter or its preparation script. Check the loaded data for shape, dtype, split integrity, and metadata consistency.
+3. Populate `bundle.calibration` for representative export samples. The default `make_calibration_data` returns that field. Override it if your adapter needs a deterministic sampling rule or a fallback.
+4. Add a guarded call to `dataset_registry.register("your_key", YourDataset)` in [`builtin_components.py`](../builtin_components.py), following the existing registrations. Select your key under `dataset.name` and place its options under `dataset.params`.
 
-Components are registered explicitly and are not discovered from files in this directory.
-Dataset hooks receive `dataset.params`, rather than the root config.
+The UrbanSound8K adapter reads precomputed features from `cache_dir` and supplies class names, class count, and label encoding to the [sound classification task](../tasks/sound_classification.py). For example, these fixed-split settings come from [`nas_config_audio_portenta.yaml`](../../config/nas_config_audio_portenta.yaml).
+
+```yaml
+dataset:
+  name: urbansound8k_mel
+  params:
+    cache_dir: "data/urbansound8k/cache/v2_logmel_16k_2s_64mels_25ms_10ms_folds"
+    batch_period_ms: 2000
+```
+
+Use [`urbansound8k_mel.py`](urbansound8k_mel.py) as a template for cached features or [`oxiod.py`](oxiod.py) to wrap an existing splitter. Use a tiny local fixture to check deterministic loading, validation failures, and the actual calibration split. The UrbanSound8K tests are in [`test_urbansound8k_mel_dataset.py`](../../../test/test_urbansound8k_mel_dataset.py).
 
 ## Contract In Practice
 

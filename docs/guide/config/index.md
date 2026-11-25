@@ -1,6 +1,6 @@
 # Choose a configuration
 
-Start with the closest shipped YAML. Its scoring policy determines which measurements the run needs. For a first run on a workstation, the FLOPs/RMSE example disables both board measurement and compile-only requests.
+<!-- include: src/config/README.md#Choose an example configuration -->
 
 <!-- include: src/config/README.md#Example configs -->
 

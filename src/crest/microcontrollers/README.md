@@ -109,6 +109,21 @@ Supported STM options today
    - `signing_load_offset`
    - `signing_header_version`
 
+## Measurement windows
+
+An energy result belongs to a **candidate, board and measurement window**. Change the window and the number answers a different question, even when the model weights and board stay the same.
+
+The board under test draws power through an INA228 monitor. A separate harness reads the monitor over I²C and observes GPIO markers from the board to identify the measurement interval.
+
+| Runtime mode | Measurement window | Question it answers |
+| --- | --- | --- |
+| `back_to_back` | Repeated inferences run continuously. | What does inference cost when the device stays busy? |
+| `cadenced` | Scheduled windows include inference and the following sleep or wait interval. | What does a sensing period cost at this cadence? |
+
+For a cadenced study, read the deadline-miss telemetry alongside energy. A low-energy candidate that misses its deadline may be unsuitable for deployment. Set a feasibility rule if missed deadlines should affect selection.
+
+FLOPs and static memory traffic are available as desktop proxies. Build-reported RAM and flash usage require compilation. Energy and measured latency require the hardware path. Choose the cheapest workflow that actually supplies the metric you need.
+
 ## Runtime measurement notes
 
 ### Direct serial
@@ -166,18 +181,24 @@ Keep these toolchain differences behind the shared device interface.
 
 ### Add a new hardware backend
 
-Choose the path that matches your toolchain and runtime contract.
+A board backend stages an exported model, compiles it, uploads it, and returns runtime measurements through the [device interface](../devices.py).
 
 <a id="use-the-arduino-path-when"></a>
 <a id="use-the-stm32-path-when"></a>
 <a id="use-the-new-vendor-path-when"></a>
 
-- Arduino FQBN with `arduino-cli compile` and `arduino-cli upload`.
-  [Arduino bring-up](#arduino-bring-up-guide).
-- STM32 Cube / ST Edge AI / ST-LINK with a generated `Debug/makefile` and the shipped serial protocol.
-  [STM32 bring-up](#stm32-bring-up-guide).
-- A different build, flash/load, or runtime telemetry flow.
-  [new-vendor bring-up](#new-vendor-bring-up-guide).
+| Toolchain | Starting point |
+| --- | --- |
+| [Arduino CLI](#arduino-bring-up-guide) | Use [`arduino_ble33.py`](arduino_ble33.py) for a fixed FQBN or `arduino_portenta_h7.py` for board options. Both wrap `ArduinoDevice`, which already stages the sketch and handles compile, upload, and measurement. |
+| [STM32 Cube and ST Edge AI](#stm32-bring-up-guide) | Start from `stm32_nucleo_n657x0.py`. Check project staging, generation, ST-LINK loading, and the serial protocol against the new target. The current backend is built around the Nucleo N657X0-Q project and runtime contract. |
+| [Other toolchains](#new-vendor-bring-up-guide) | Implement `DeviceInterface` in a dedicated backend and provide the build, upload, and runtime integration. |
+
+1. Supply a `DeviceSpec` with the board identifier, RAM and flash limits, arena candidates, and any required toolchain metadata. Make capability flags match the workflow your backend supports.
+2. Implement or inherit `spec`, `compile`, `upload`, `measure`, and `evaluate`. Add candidate staging and cleanup if the backend needs a generated project. Return structured result objects for the shared controller.
+3. Add an entry in `_registry_entries()` in [`__init__.py`](__init__.py). Each entry maps a board name to a module path, wrapper class name, and default-spec symbol. The factory passes `serial_port` and `device_options` as keyword arguments. If you add board-specific settings, normalize them in `resolve_device_options`.
+4. Select the registry key in `device.name`. For the shipped Nano 33 BLE Sense wrapper, the key is `ARDUINO_NANO_33_BLE_SENSE`.
+
+Use mocked tool and serial responses to check timeout handling, telemetry parsing, and failure results. Then compile a candidate with the actual toolchain, upload it to a connected board, and verify runtime metrics. Measure energy with the CREST harness and INA228 telemetry path. See [`test_stm32_backend.py`](../../../test/test_stm32_backend.py) and [`test_stm32_runtime.py`](../../../test/test_stm32_runtime.py) for examples.
 
 ### Contract in practice
 

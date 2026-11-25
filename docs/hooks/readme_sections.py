@@ -56,4 +56,10 @@ def on_page_markdown(markdown, *, page, config, files):
         text = render_section(root / match["path"], match["title"], root)
         return "\n".join(match["indent"] + line if line else "" for line in text.splitlines())
 
+    # This index contains navigation only. The five API pages use Python docstrings.
+    if page.file.src_uri != "api/index.md" and not INCLUDE.search(markdown):
+        if not (page.file.src_uri.startswith("api/") and re.search(r"^::: crest\.", markdown, re.M)):
+            raise PluginError(
+                f"{page.file.src_uri} needs a repository Markdown include or a documented source exception"
+            )
     return INCLUDE.sub(expand, markdown)

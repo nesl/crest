@@ -27,3 +27,24 @@ through mkdocstrings. The documentation landing page and navigation are authored
 Install the packages in `docs/requirements.txt` and run `make site` from the repository
 root to check the result. GitHub Actions runs this build on pull requests and
 publishes successful builds from main when Pages is configured for Actions.
+
+### Documentation sources and exceptions
+
+| Pages | Where to edit | Reason |
+| --- | --- | --- |
+| Datasets, tasks, model families, boards | The extension section in each component README under `src/crest/` | Contributors read and edit the same instructions on GitHub and the website. |
+| Configuration overview and four settings guides | `src/config/README.md` | The short examples and full field descriptions belong with the shipped YAML files. |
+| Trial concepts, measurement windows, extension overview | `src/README.md` and `src/crest/microcontrollers/README.md` | These describe the shared pipeline and the backend measurement contract. The site adds diagrams and navigation. |
+| Run overview, first study, reproduction | Configuration, root, analysis and source READMEs | These pages select the existing workflow or analysis instructions. |
+| Setup, hardware, results | Root and source READMEs plus `src/GETTING_STARTED.md` | The getting-started file already owns the operator commands. Including it directly keeps those commands in one place. |
+| Documentation home | Root README for supported workloads and hardware, site template for the interactive trial map | The clickable regions, keyboard labels and guide destinations belong to the website. |
+| Registry, dataset, task, model-family and device API references | Python classes, functions and NumPy-style docstrings | mkdocstrings reads the actual signatures and contracts at build time. |
+| API reference index | `docs/guide/api/index.md` | It routes readers to the generated API pages and contains no implementation procedure. |
+
+The BSD footer serves the root `LICENSE`. The third-party notice is maintained in
+`docs/guide/legal/third-party-notices.txt` because it identifies the documentation
+toolchain and its bundled assets. The project homepage under `docs/website/` is
+a separate paper and software project page outside the MkDocs guide.
+
+New guide pages need a repository Markdown include. For a new exception, record
+the source and reason here and update the build check in `docs/hooks/readme_sections.py`.

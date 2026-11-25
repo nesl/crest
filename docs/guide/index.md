@@ -50,17 +50,8 @@ hide:
     </div>
   </section>
 
-  <section class="crest-support" aria-labelledby="crest-support-title">
-    <h2 id="crest-support-title">Built-in example workloads and targets</h2>
-    <dl>
-      <div>
-        <dt>Workloads</dt>
-        <dd>OxIOD inertial odometry and UrbanSound8K audio classification using prepared features.</dd>
-      </div>
-      <div>
-        <dt>Target backends</dt>
-        <dd>Arduino Nano 33 BLE Sense, Arduino Portenta H7, and STM32 NUCLEO-N657X0-Q.</dd>
-      </div>
-    </dl>
-  </section>
 </div>
+
+## Built-in example workloads and targets
+
+<!-- include: README.md#Supported workloads and hardware -->
