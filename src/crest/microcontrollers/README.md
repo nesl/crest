@@ -111,7 +111,7 @@ Supported STM options today
 
 ## Measurement windows
 
-An energy result belongs to a **candidate, board and measurement window**. Change the window and the number answers a different question, even when the model weights and board stay the same.
+Record the candidate, board and measurement window alongside each energy result.
 
 The board under test draws power through an INA228 monitor. A separate harness reads the monitor over I²C and observes GPIO markers from the board to identify the measurement interval.
 

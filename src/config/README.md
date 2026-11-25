@@ -153,20 +153,6 @@ Validation notes
 - For `STM32_NUCLEO_N657X0_Q`, `device.cpu_clock_mhz_options` is validated against the backend-supported set in code.
 - For `PORTENTA_H7` and `ARDUINO_NANO_33_BLE_SENSE`, cadenced mode requires `training.input_mode: uniform`.
 
-## Choose a workload and training budget
-
-A dataset loads the inputs, a task defines the outputs and metrics, and a model family defines which architectures CREST can explore. All three are selected explicitly.
-
-| Config field | OxIOD desktop example | Meaning |
-| --- | --- | --- |
-| `dataset.name` | `oxiod` | Adapter that prepares the input windows |
-| `task.name` | `odometry_regression` | Target definition and evaluation contract |
-| `model.family` | `odom_tcn` | Model builder and search space |
-
-### Set a training budget
-
-`training.nas_epochs` controls training per search candidate. `training.model_epochs` controls final retraining. In a constrained study, `training.nas_trials` is the target number of feasible completed trials and `training.max_total_trials` caps all attempts. Set both budgets deliberately when board time is scarce.
-
 ## `training`
 
 `training.random_seed` optionally resets Python, NumPy and TensorFlow to the same integer seed before each candidate evaluation and final fit.
@@ -221,6 +207,20 @@ Runtime behavior
   All stored trials, including failed, pruned, infeasible, RUNNING, and reserved WAITING trials, consume it.
   Constrained runs usually need a larger attempt cap than the completion target.
   See [optimizer resume behavior](#optimizer) before extending a study.
+
+## Choose a workload and training budget
+
+A dataset loads the inputs, a task defines the outputs and metrics, and a model family defines which architectures CREST can explore. All three are selected explicitly.
+
+| Config field | OxIOD desktop example | Meaning |
+| --- | --- | --- |
+| `dataset.name` | `oxiod` | Adapter that prepares the input windows |
+| `task.name` | `odometry_regression` | Target definition and evaluation contract |
+| `model.family` | `odom_tcn` | Model builder and search space |
+
+### Set a training budget
+
+`training.nas_epochs` controls training per search candidate. `training.model_epochs` controls final retraining. In a constrained study, `training.nas_trials` is the target number of feasible completed trials and `training.max_total_trials` caps all attempts.
 
 ## `dataset`, `task`, and `model`
 

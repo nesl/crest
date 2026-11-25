@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use CREST, please cite the paper below."
+title: Cross-platform Runtime Evaluation and Search Tool
+type: software
+repository-code: https://github.com/nesl/crest
+authors:
+  - family-names: Zales
+    given-names: Joseph Q.
+  - family-names: Sharma
+    given-names: Pragya
+  - family-names: Srivastava
+    given-names: Mani
+preferred-citation:
+  type: article
+  title: "Measure the Deployment, Not Just the Model: Rethinking Hardware-Aware Model Selection for Microcontrollers"
+  authors:
+    - family-names: Zales
+      given-names: Joseph Q.
+    - family-names: Sharma
+      given-names: Pragya
+    - family-names: Srivastava
+      given-names: Mani
+  journal: arXiv
+  year: 2026
+  doi: 10.48550/arXiv.2606.15004

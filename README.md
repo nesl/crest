@@ -97,6 +97,8 @@ Follow the [hardware guide](src/crest/microcontrollers/README.md) for board and 
 
 ## Documentation and examples
 
+Read the [CREST documentation](https://nesl.github.io/crest/docs/) for setup and extension guides. The [project page](https://nesl.github.io/crest/) presents the paper and case studies.
+
 - [Experiment configuration](src/config/README.md).
   Objectives, runtime schedules, constraints, and search settings.
 - [Case studies](src/config/case_study_configs/README.md).

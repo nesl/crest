@@ -68,7 +68,7 @@ clean:
 .PHONY: site site-serve
 site:
 	mkdir -p build/crest
-	cp -R docs/website/. build/crest/
+	rsync -a --delete --exclude=/docs/ --filter="hide /README.md" docs/website/ build/crest/
 	$(PYTHON) -m mkdocs build --strict -f docs/mkdocs.yml
 
 site-serve: site

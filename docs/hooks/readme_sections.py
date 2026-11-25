@@ -1,4 +1,5 @@
 """Render selected repository Markdown sections into the short website guides."""
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -26,13 +27,16 @@ SOURCE_LABELS = {
 
 def on_config(config):
     root = Path(config.config_file_path).resolve().parent.parent
-    config.extra["source_revision"] = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=root, text=True
-    ).strip()
+    revision = os.environ.get("CREST_SOURCE_REVISION") or os.environ.get("GITHUB_SHA")
+    if not revision and (root / ".git").exists():
+        revision = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
+    config.extra["source_revision"] = revision or "main"
     return config
 
 
-def render_section(source, title, root, revision):
+def render_section(source, title, root, revision, parent_level):
     """Keep subheadings and fenced examples; resolve links against the original file."""
     found = False
     level = 0
@@ -52,6 +56,9 @@ def render_section(source, title, root, revision):
             if heading and heading[2] == title and not found:
                 found, level = True, len(heading[1])
                 continue
+            if found and heading:
+                depth = min(6, parent_level + len(heading[1]) - level)
+                line = "#" * depth + " " + heading[2]
             if found:
                 line = LINK.sub(lambda m: resolve_link(m, source, root, revision), line)
         if found:
@@ -66,6 +73,8 @@ def resolve_link(match, source, root, revision):
     if url.scheme or url.netloc or url.path.startswith("/"):
         return match[0]
     target = (source.parent / url.path).resolve() if url.path else source
+    if not target.is_relative_to(root):
+        raise PluginError(f"Link {match[2]!r} in {source.relative_to(root)} points outside the repository")
     kind = "raw" if match[1].startswith("!") else "tree" if target.is_dir() else "blob"
     suffix = ("?" + url.query if url.query else "") + ("#" + url.fragment if url.fragment else "")
     return f"{match[1]}https://github.com/nesl/crest/{kind}/{revision}/{target.relative_to(root).as_posix()}{suffix})"
@@ -84,7 +93,9 @@ def on_page_markdown(markdown, *, page, config, files):
         if not source.is_file():
             raise PluginError(f"{page.file.src_uri} includes missing file {path}")
         try:
-            text = render_section(source, match["title"], root, revision)
+            headings = re.findall(r"^(#{1,6}) ", markdown[:match.start()], re.M)
+            parent_level = len(headings[-1]) if headings else 1
+            text = render_section(source, match["title"], root, revision, parent_level)
         except PluginError as error:
             raise PluginError(f"{page.file.src_uri}: {error}") from error
         label = SOURCE_LABELS.get(path, path)
@@ -99,6 +110,7 @@ def on_page_markdown(markdown, *, page, config, files):
             )
     rendered = INCLUDE.sub(expand, markdown)
     if sources:
-        links = " and the ".join(sources.values())
+        labels = list(sources.values())
+        links = labels[0] if len(labels) == 1 else ", the ".join(labels[:-1]) + " and the " + labels[-1]
         rendered = f"{rendered.rstrip()}\n\nFor more information, read the {links}.\n"
     return rendered

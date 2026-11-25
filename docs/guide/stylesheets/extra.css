@@ -254,19 +254,19 @@
   align-items: center;
 }
 .crest-hero .trial-figure {
-  background: white;
+  background: var(--crest-panel);
   border: 1px solid var(--crest-border);
   border-radius: .65rem;
   padding: clamp(.55rem, 1.8vw, 1.35rem);
   margin: 0;
   width: 100%;
 }
-.trial-map { position: relative; }
+.trial-map { position: relative; background: white; }
 .trial-map img { display: block; width: 100%; margin: 0; }
 .trial-node { position: absolute; display: block; border-radius: .35rem; }
 .trial-node:hover, .trial-node:focus-visible { background: #2774ae20; outline: 3px solid #2774ae; outline-offset: -2px; }
-.crest-hero .trial-figure figcaption { margin: .65rem 0 0; color: #505761; font-size: .68rem; font-style: normal; }
-.crest-hero .trial-figure figcaption a { color: #205e8f; text-decoration: underline; }
+.crest-hero .trial-figure figcaption { margin: .65rem 0 0; color: var(--md-default-fg-color--light); font-size: .8rem; font-style: normal; }
+.crest-hero .trial-figure figcaption a { color: var(--md-typeset-a-color); text-decoration: underline; }
 @media (max-width: 52em) {
   .crest-hero:has(.trial-figure) { grid-template-columns: 1fr; }
 }

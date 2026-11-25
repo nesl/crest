@@ -2,7 +2,7 @@ site_name: CREST Documentation
 site_url: https://nesl.github.io/crest/docs/
 docs_dir: guide
 site_dir: ../build/crest/docs
-site_description: Run hardware-in-the-loop neural architecture searches for embedded sensing.
+site_description: CREST compares models on microcontrollers under the timing and energy constraints of a sensing application.
 repo_url: https://github.com/nesl/crest
 repo_name: nesl/crest
 edit_uri: ""
@@ -47,14 +47,14 @@ nav:
   - Documentation: index.md
   - Run a study:
     - run/index.md
-    - Set up your environment: run/setup.md
-    - Your first study: run/first-study.md
-    - Connect hardware: run/hardware.md
-    - Read the results: run/results.md
-    - Reproduce an analysis: run/reproduce.md
+    - Set up CREST: run/setup.md
+    - Run a first study: run/first-study.md
+    - Run with hardware: run/hardware.md
+    - Read study results: run/results.md
+    - Reproduce an experiment: run/reproduce.md
   - Concepts:
     - concepts/index.md
-    - Measurement windows: concepts/measurement.md
+    - What the board measures: concepts/measurement.md
   - Configuration:
     - config/index.md
     - Workload and training: config/workload.md
@@ -63,14 +63,14 @@ nav:
     - Outputs and connections: config/outputs.md
   - Extend CREST:
     - extend/index.md
-    - Datasets: extend/datasets.md
-    - Tasks: extend/tasks.md
-    - Model families: extend/models.md
-    - Boards: extend/boards.md
+    - Add a dataset: extend/datasets.md
+    - Add a task: extend/tasks.md
+    - Add a model family: extend/models.md
+    - Add a board: extend/boards.md
   - API reference:
     - api/index.md
-    - Component registry: api/registry.md
-    - Datasets: api/datasets.md
-    - Tasks: api/tasks.md
-    - Model families: api/models.md
-    - Device backends: api/devices.md
+    - Registration and selection: api/registry.md
+    - Dataset API: api/datasets.md
+    - Task API: api/tasks.md
+    - Model family API: api/models.md
+    - Device API: api/devices.md

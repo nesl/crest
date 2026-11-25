@@ -4,7 +4,7 @@ https://nesl.github.io/crest/
 
 ## Acknowledgments
 
-Parts of this project page were adopted from the [Academic Project Page Template](https://github.com/eliahuhorwitz/Academic-project-page-template), which was adopted from the [Nerfies](https://nerfies.github.io) project page.
+Parts of this project page were adapted from the [Academic Project Page Template](https://github.com/eliahuhorwitz/Academic-project-page-template), which was adapted from the [Nerfies](https://nerfies.github.io) project page.
 
 ## Website License
 
@@ -35,7 +35,7 @@ publishes successful builds from main when Pages is configured for Actions.
 | Datasets, tasks, model families, boards | The extension section in each component README under `src/crest/` | Contributors read and edit the same instructions on GitHub and the website. |
 | Configuration overview and four settings guides | `src/config/README.md` | The short examples and full field descriptions belong with the shipped YAML files. |
 | Trial concepts, measurement windows, extension overview | `src/README.md` and `src/crest/microcontrollers/README.md` | These describe the shared pipeline and the backend measurement contract. The site adds diagrams and navigation. |
-| Run overview, first study, reproduction | Configuration, root, analysis and source READMEs | These pages select the existing workflow or analysis instructions. |
+| Run overview, first study, reproduction | Getting-started guide, root, analysis and source READMEs | These pages select the existing workflow or analysis instructions. |
 | Setup, hardware, results | Root and source READMEs plus `src/GETTING_STARTED.md` | The getting-started file already owns the operator commands. Including it directly keeps those commands in one place. |
 | Documentation home | Root README for supported workloads and hardware, site template for the interactive trial map | The clickable regions, keyboard labels and guide destinations belong to the website. |
 | Registry, dataset, task, model-family and device API references | Python classes, functions and NumPy-style docstrings | mkdocstrings reads the actual signatures and contracts at build time. |
@@ -48,3 +48,5 @@ a separate paper and software project page outside the MkDocs guide.
 
 New guide pages need a repository Markdown include. For a new exception, record
 the source and reason here and update the build check in `docs/hooks/readme_sections.py`.
+
+For a source archive without Git metadata, set `CREST_SOURCE_REVISION` to the release tag or commit when building. Otherwise source links from archive builds open `main`.
