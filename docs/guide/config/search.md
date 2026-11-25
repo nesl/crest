@@ -23,6 +23,6 @@ nas:
 With `nas.feasibility.train_if_infeasible: false`, an infeasible candidate skips training and still consumes an attempt. When training is enabled for infeasible candidates, their objective values can be measured while the constraint violation stays recorded.
 
 ??? info "Scoring, pruning and feasibility fields"
-<!-- config-section `nas` -->
+    <!-- include: src/config/README.md#`nas` -->
 
 [Inspect trial outputs](../run/results.md)

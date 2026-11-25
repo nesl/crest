@@ -23,7 +23,7 @@ theme:
       accent: custom
       toggle: {icon: material/weather-sunny, name: Switch to light mode}
 extra_css: [stylesheets/extra.css]
-hooks: [hooks/config_sections.py]
+hooks: [hooks/readme_sections.py]
 markdown_extensions:
   - admonition
   - pymdownx.details

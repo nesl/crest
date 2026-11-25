@@ -11,9 +11,9 @@ Set `outputs.artifact_stem` to distinguish a study's artifacts. CREST combines t
 | `logging.level` | Start with `INFO` to follow trial progress |
 
 ??? info "Artifact naming and derived paths"
-<!-- config-section `outputs` -->
+    <!-- include: src/config/README.md#`outputs` -->
 
 ??? info "Socket settings"
-<!-- config-section `network` -->
+    <!-- include: src/config/README.md#`network` -->
 
 [Read a result](../run/results.md)
