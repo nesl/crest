@@ -11,6 +11,10 @@ For the source architecture and extension map, see [`../README.md`](../README.md
 
 Case-study reproducibility configs live under [`case_study_configs/`](case_study_configs/).
 
+## Choose an example configuration
+
+Start with the closest shipped YAML. Its scoring policy determines which measurements the run needs. For a first run on a workstation, the FLOPs/RMSE example disables both board measurement and compile-only requests.
+
 ## Example configs
 
 | If You Want To... | Start With | Hardware Requirement |
@@ -30,7 +34,7 @@ The STM32 example is the most complete commented score/prune reference.
 
 ## Audio fold rotation
 
-Audio configs can optionally run final reporting across UrbanSound8K folds.
+The UrbanSound8K audio example can report final results across dataset folds.
 
 - `task.params.evaluation.protocol: fixed_split | fold_rotation`
 - `task.params.evaluation.fold_rotation.test_folds`, defaulting to all 10 UrbanSound8K folds.
@@ -49,7 +53,7 @@ The main top-level blocks are as follows.
 
 - `device` Hardware target, HIL runtime behavior, timing, harness options, and backend-owned device options.
 - `dataset` Required dataset selection block.
-  The built-in OxIOD dataset uses `dataset.name: oxiod` plus the keys under `dataset.params`.
+  The OxIOD odometry example uses `dataset.name: oxiod` plus the keys under `dataset.params`.
 - `task` Required task selection block.
   Task-owned final reporting policy, such as audio fold rotation, lives under `task.params.evaluation`.
 - `model` Required model-family selection block.
@@ -63,6 +67,18 @@ The main top-level blocks are as follows.
   Set `type: llm_generator` to propose candidates with an LLM.
 
 `dataset`, `task`, and `model` are required configuration blocks.
+
+## Choose target measurements
+
+Choose the measurements you need before choosing the hardware settings. A desktop study can still request compilation if the scoring policy references compiler-reported metrics.
+
+| Goal | `device.hil` | `device.compile_when_hil_disabled` |
+| --- | --- | --- |
+| Pure desktop search with task metrics and FLOPs | `false` | `false` |
+| Fetch compiler-reported RAM or flash for selected metrics | `false` | `auto` |
+| Collect measured latency or board energy | `true` | Applies only when HIL is disabled |
+
+For measured runs, set `device.name` to the target backend and `device.runtime_mode` to `back_to_back` or `cadenced`. In cadenced mode CREST can derive the latency budget from dataset timing, or you can give a positive `device.latency_budget_ms`.
 
 ## `device`
 
@@ -191,6 +207,20 @@ Runtime behavior
   All stored trials, including failed, pruned, infeasible, RUNNING, and reserved WAITING trials, consume it.
   Constrained runs usually need a larger attempt cap than the completion target.
   See [optimizer resume behavior](#optimizer) before extending a study.
+
+## Choose a workload and training budget
+
+A dataset loads the inputs, a task defines the outputs and metrics, and a model family defines which architectures CREST can explore. All three are selected explicitly.
+
+| Config field | OxIOD desktop example | Meaning |
+| --- | --- | --- |
+| `dataset.name` | `oxiod` | Adapter that prepares the input windows |
+| `task.name` | `odometry_regression` | Target definition and evaluation contract |
+| `model.family` | `odom_tcn` | Model builder and search space |
+
+### Set a training budget
+
+`training.nas_epochs` controls training per search candidate. `training.model_epochs` controls final retraining. In a constrained study, `training.nas_trials` is the target number of feasible completed trials and `training.max_total_trials` caps all attempts.
 
 ## `dataset`, `task`, and `model`
 
@@ -434,6 +464,30 @@ model:
   search: {}
 ```
 
+## Choose objectives and constraints
+
+Choose a scalar score when one ranking expresses the trade-off you care about. Use multiple objectives when you want to inspect a Pareto front. The shipped desktop OxIOD example minimizes validation error and model FLOPs separately.
+
+```yaml
+nas:
+  score:
+    type: multi-objective
+    params:
+      objectives:
+        - metric: rmse_total
+          direction: minimize
+        - metric: flops
+          direction: minimize
+  prune:
+    rules: []
+```
+
+### Decide what happens to an unsuitable candidate
+
+**Pruning rules** can stop a trial before fitting. **Feasibility rules** expose deployment constraints to the sampler. A candidate that exceeds a deadline can be marked infeasible while keeping its result available for analysis. Each signed constraint is feasible at or below zero.
+
+With `nas.feasibility.train_if_infeasible: false`, an infeasible candidate skips training and still consumes an attempt. When training is enabled for infeasible candidates, their objective values can be measured while the constraint violation stays recorded.
+
 ## `nas`
 
 The `nas` block owns scoring, pruning, and constrained-feasibility policy.
@@ -481,6 +535,18 @@ Practical guidance
 - in cadenced multi-objective runs, overload is telemetry unless you add a `nas.feasibility.rules` constraint such as `cadenced_deadline_miss_count > 0`
 
 The most complete commented examples remain in [`nas_config_stm32.yaml`](nas_config_stm32.yaml) itself.
+
+## Choose output paths and connections
+
+Set `outputs.artifact_stem` to distinguish a study's artifacts. CREST combines that stem with the device name to derive the model and checkpoint names. Use a fresh output location when changing a study's objectives or deployment assumptions.
+
+| Setting | What to check |
+| --- | --- |
+| `outputs.models_dir` | Root for model artifacts |
+| `outputs.candidate_dir` | Candidate output location |
+| `outputs.log_file_name` | Name of the trial CSV |
+| `network.host`, `network.port` | Endpoint the training host can reach for HIL |
+| `logging.level` | Start with `INFO` to follow trial progress |
 
 ## `outputs`
 

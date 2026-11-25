@@ -151,3 +151,7 @@ firmware/stm32/crest_stm32_lrun/**
 
 # Shared fixed candidates required by the CS3 campaign configs.
 !src/config/case_study_configs/cs3/warmup_params.json
+
+# Figures and icons distributed with the CREST website
+!docs/guide/**/*.png
+!docs/website/**/*.png

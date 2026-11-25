@@ -1,0 +1,76 @@
+site_name: CREST Documentation
+site_url: https://nesl.github.io/crest/docs/
+docs_dir: guide
+site_dir: ../build/crest/docs
+site_description: CREST compares models on microcontrollers under the timing and energy constraints of a sensing application.
+repo_url: https://github.com/nesl/crest
+repo_name: nesl/crest
+edit_uri: ""
+theme:
+  name: material
+  custom_dir: overrides
+  logo: images/crest.svg
+  favicon: images/crest.svg
+  font: false
+  features: [navigation.tabs, navigation.indexes, navigation.footer, search.highlight, content.code.copy]
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle: {icon: material/weather-night, name: Switch to dark mode}
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle: {icon: material/weather-sunny, name: Switch to light mode}
+extra_css: [stylesheets/extra.css]
+hooks: [hooks/readme_sections.py]
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - attr_list
+  - tables
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [../src]
+          options:
+            docstring_style: numpy
+            show_source: false
+            show_root_full_path: false
+            members_order: source
+nav:
+  - Project homepage: /crest/
+  - Documentation: index.md
+  - Run a study:
+    - run/index.md
+    - Set up CREST: run/setup.md
+    - Run a first study: run/first-study.md
+    - Run with hardware: run/hardware.md
+    - Read study results: run/results.md
+    - Reproduce an experiment: run/reproduce.md
+  - Concepts:
+    - concepts/index.md
+    - What the board measures: concepts/measurement.md
+  - Configuration:
+    - config/index.md
+    - Workload and training: config/workload.md
+    - Target and schedule: config/target.md
+    - Objectives and feasibility: config/search.md
+    - Outputs and connections: config/outputs.md
+  - Extend CREST:
+    - extend/index.md
+    - Add a dataset: extend/datasets.md
+    - Add a task: extend/tasks.md
+    - Add a model family: extend/models.md
+    - Add a board: extend/boards.md
+  - API reference:
+    - api/index.md
+    - Registration and selection: api/registry.md
+    - Dataset API: api/datasets.md
+    - Task API: api/tasks.md
+    - Model family API: api/models.md
+    - Device API: api/devices.md

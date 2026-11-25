@@ -61,26 +61,24 @@ Microcontroller backends own TFLite staging, compile/upload flow, and device tel
 
 ## Add A New Model Family
 
-Use [`odom_tcn.py`](odom_tcn.py) or [`audio_dscnn/family.py`](audio_dscnn/family.py) as the concrete starting point.
+A model family converts a trial's architecture parameters and a `ModelBuildContext` into a Keras model. The context supplies the dataset's input shape and dtype and the task's target specification.
 
-1. Add a new module under [`src/crest/model_families/`](.).
-2. Implement a `ModelFamilyABC` subclass from [`../interfaces/model_family.py`](../interfaces/model_family.py).
-3. Implement the required methods.
-   - `sample_hparams(trial, ctx, config)`
-   - `build_model(hparams, ctx, config)`
-   - For explicit proposers, including LLM generation, also implement `trial_search_space(ctx, config)` with the exact raw parameters sampled by `sample_hparams(...)`.
-4. Keep family-specific logic inside the family.
-   - search-space sampling
-   - input-shape interpretation from `ModelBuildContext`
-   - family-local helper composition for builders, decoders, or export materialization
-   - family-specific export-model materialization.
-5. Register the class in [`../builtin_components.py`](../builtin_components.py) with `model_family_registry.register(...)`.
-6. Select it through `model.family` in config.
-7. Put family-owned knobs under `model.params` and `model.search`.
-8. Verify both the training/NAS path and the HIL/export path.
+1. Create a [`ModelFamilyABC` subclass](../interfaces/model_family.py) under `src/crest/model_families/`. Implement `sample_hparams(trial, ctx, config)` and `build_model(hparams, ctx, config)`. Return an uncompiled model for the task to compile.
+2. Validate family settings with `validate_config` and sampled or replayed choices with `validate_hparams`. Use `decode_trial_hparams` if saved values need rebuilding. For explicit proposers, implement `trial_search_space(ctx, config)` with the same names, bounds, and choices that `sample_hparams` uses.
+3. Check the export path. The base class can build an untrained model or load a trained checkpoint. Override `materialize_export_model` for family-specific transformations and supply `custom_objects()` if checkpoints use custom Keras types.
+4. Register the family with `model_family_registry` in [`builtin_components.py`](../builtin_components.py). Select it under `model.family`, set the export variant in `model.params.export_variant`, and put search overrides in `model.search`.
 
-Components are registered explicitly and are not discovered from files in this directory.
-Families receive the `model` configuration subtree, with options under `model.params` and search controls under `model.search`.
+For example, both the [Portenta](../../config/nas_config_audio_portenta.yaml) and [STM32](../../config/nas_config_audio_stm32.yaml) audio studies select the DS-CNN family and export a model with untrained weights. Each study configures its board separately.
+
+```yaml
+model:
+  family: audio_dscnn
+  params:
+    export_variant: untrained
+  search: {}
+```
+
+See [audio DS-CNN](audio_dscnn/family.py) for categorical search overrides and [odometry TCN](odom_tcn.py) for a custom export transformation. Test sampling and output shape with a small context, then try the export on the intended backend. The [DS-CNN tests](../../../test/test_audio_dscnn.py) and [TCN tests](../../../test/test_odom_tcn.py) show both families in use.
 
 ## Contract In Practice
 

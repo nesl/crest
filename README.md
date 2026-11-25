@@ -52,7 +52,7 @@ The [source guide](src/README.md) describes the component interfaces and how to 
 
 - Git, Conda, and Make.
   The supplied environment installs Python 3.11 and the project's Python dependencies.
-- A local OxIOD dataset for odometry or UrbanSound8K dataset for audio classification.
+- Prepare data for the workload you choose. The built-in odometry example uses OxIOD, and the audio classification example uses UrbanSound8K. For another dataset, see the [dataset adapter guide](src/crest/datasets/README.md#add-a-new-dataset).
 - For hardware evaluation, a supported target board and its build/programming tools.
   Energy measurements also need the CREST harness and INA228 monitor.
 - A GPU is optional.
@@ -60,6 +60,8 @@ The [source guide](src/README.md) describes the component interfaces and how to 
 - Provider credentials are needed only for live LLM candidate generation.
 
 ## Getting started
+
+### Install CREST
 
 ```bash
 git clone --recurse-submodules https://github.com/nesl/crest.git
@@ -69,11 +71,19 @@ conda activate crest
 make install
 ```
 
-Obtain OxIOD using the [dataset instructions](data/dataset_download_and_splits/README.md), then prepare it and run three hardware-free search attempts.
+### Prepare OxIOD
+
+For the built-in odometry example, obtain the OxIOD Complete Dataset archive using the [dataset instructions](data/dataset_download_and_splits/README.md), then prepare it from the repository root.
 
 ```bash
 make prepare-dataset OXIOD_ZIP=/path/to/OxIOD.zip
+```
 
+### Run a workstation smoke test
+
+Run three hardware-free search attempts for the OxIOD odometry example with the `crest` environment active.
+
+```bash
 python src/nas_model_client.py \
   --config src/config/nas_config_flops_rmse.yaml \
   --smoke-test 3 \
@@ -81,21 +91,25 @@ python src/nas_model_client.py \
 ```
 
 This example evaluates TCN models using validation error and FLOPs.
-It requires the prepared dataset but no board or LLM credentials.
+It requires the prepared dataset but no board or LLM credentials. For a full search, review the training and attempt budgets, omit `--smoke-test`, and choose a fresh study name.
 See the [getting-started guide](src/GETTING_STARTED.md) for GPU setup, full searches, hardware connections, and saved outputs.
 
 ## Supported workloads and hardware
 
-| Workload | Dataset | Model family | Example configuration |
+| Example workload | Dataset | Model family | Example configuration |
 | --- | --- | --- | --- |
 | Inertial odometry | OxIOD | Temporal convolutional network (TCN) | [Proxy search](src/config/nas_config_flops_rmse.yaml) |
 | Audio classification | UrbanSound8K log-mel features | Depthwise-separable CNN (DS-CNN) | [STM32 audio search](src/config/nas_config_audio_stm32.yaml) |
 
-Hardware backends support **Arduino Nano 33 BLE Sense**, **Arduino Portenta H7** (CM7 and CM4), and **STM32 NUCLEO-N657X0-Q**.
+Hardware backends currently support **Arduino Nano 33 BLE Sense**, **Arduino Portenta H7** (CM7 and CM4), and **STM32 NUCLEO-N657X0-Q**.
+To add support for another target, see [how to add a hardware backend](src/crest/microcontrollers/README.md#add-a-new-hardware-backend).
+
 Energy measurements use a separate harness MCU and an INA228 power monitor.
 Follow the [hardware guide](src/crest/microcontrollers/README.md) for board and toolchain setup.
 
 ## Documentation and examples
+
+Read the [CREST documentation](https://nesl.github.io/crest/docs/) for setup and extension guides. The [project page](https://nesl.github.io/crest/) presents the paper and case studies.
 
 - [Experiment configuration](src/config/README.md).
   Objectives, runtime schedules, constraints, and search settings.
