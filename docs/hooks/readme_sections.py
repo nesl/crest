@@ -2,13 +2,26 @@
 import re
 import subprocess
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from mkdocs.exceptions import PluginError
 
 INCLUDE = re.compile(r"^(?P<indent> *)<!-- include: (?P<path>[^#\n]+?)#(?P<title>.+?) -->$", re.M)
 HEADING = re.compile(r"^(#{1,6}) (.+?)\s*$")
 LINK = re.compile(r"(\!?\[[^\]\n]*\]\()([^\s)]+)(\))")
+
+
+SOURCE_LABELS = {
+    "README.md": "project README",
+    "src/README.md": "source code README",
+    "src/config/README.md": "config README",
+    "src/crest/datasets/README.md": "dataset README",
+    "src/crest/tasks/README.md": "task README",
+    "src/crest/model_families/README.md": "model-family README",
+    "src/crest/microcontrollers/README.md": "hardware backend README",
+    "src/GETTING_STARTED.md": "getting-started guide",
+    "analysis_scripts/README.md": "analysis scripts README",
+}
 
 
 def on_config(config):
@@ -63,8 +76,19 @@ def on_page_markdown(markdown, *, page, config, files):
 
     revision = config.extra["source_revision"]
 
+    sources = {}
+
     def expand(match):
-        text = render_section(root / match["path"], match["title"], root, revision)
+        path = match["path"]
+        source = root / path
+        if not source.is_file():
+            raise PluginError(f"{page.file.src_uri} includes missing file {path}")
+        try:
+            text = render_section(source, match["title"], root, revision)
+        except PluginError as error:
+            raise PluginError(f"{page.file.src_uri}: {error}") from error
+        label = SOURCE_LABELS.get(path, path)
+        sources[path] = f"[full {label} on GitHub](https://github.com/nesl/crest/blob/{revision}/{quote(path)})"
         return "\n".join(match["indent"] + line if line else "" for line in text.splitlines())
 
     # This index contains navigation only. The five API pages use Python docstrings.
@@ -73,4 +97,8 @@ def on_page_markdown(markdown, *, page, config, files):
             raise PluginError(
                 f"{page.file.src_uri} needs a repository Markdown include or a documented source exception"
             )
-    return INCLUDE.sub(expand, markdown.replace("{source_revision}", revision))
+    rendered = INCLUDE.sub(expand, markdown)
+    if sources:
+        links = " and the ".join(sources.values())
+        rendered = f"{rendered.rstrip()}\n\nFor more information, read the {links}.\n"
+    return rendered
