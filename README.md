@@ -102,7 +102,7 @@ See the [getting-started guide](src/GETTING_STARTED.md) for GPU setup, full sear
 | Audio classification | UrbanSound8K log-mel features | Depthwise-separable CNN (DS-CNN) | [STM32 audio search](src/config/nas_config_audio_stm32.yaml) |
 
 Hardware backends currently support **Arduino Nano 33 BLE Sense**, **Arduino Portenta H7** (CM7 and CM4), and **STM32 NUCLEO-N657X0-Q**.
-An ESP32 backend is in development. For other targets, see [how to add a hardware backend](src/crest/microcontrollers/README.md#add-a-new-hardware-backend).
+To add support for another target, see [how to add a hardware backend](src/crest/microcontrollers/README.md#add-a-new-hardware-backend).
 
 Energy measurements use a separate harness MCU and an INA228 power monitor.
 Follow the [hardware guide](src/crest/microcontrollers/README.md) for board and toolchain setup.
