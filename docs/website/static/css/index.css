@@ -284,19 +284,29 @@ a:focus {
 }
 
 .crest-page .hero-buttons {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  justify-items: center;
   gap: 0.75rem;
-  justify-content: center;
   margin-top: 2rem;
 }
 
 .crest-page .hero-buttons .button {
+  margin: 0 !important;
   min-width: 0;
   width: auto;
   height: 2.25rem;
   padding: 0.45rem 1rem !important;
   font-size: 0.9rem !important;
+}
+
+.hero-buttons > :first-child { justify-self: end; }
+.hero-buttons > :last-child { justify-self: start; }
+.hero-buttons svg { width: 1em; height: 1em; margin-right: .45em; }
+
+@media (max-width: 32rem) {
+  .crest-page .hero-buttons { grid-template-columns: 1fr; }
+  .hero-buttons > :first-child, .hero-buttons > :last-child { justify-self: center; }
 }
 
 .crest-page .hero-buttons .button.is-primary {
