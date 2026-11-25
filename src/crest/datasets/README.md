@@ -63,7 +63,7 @@ A dataset adapter loads local data and supplies model-ready splits, input shape 
 3. Populate `bundle.calibration` for representative export samples. The default `make_calibration_data` returns that field. Override it if your adapter needs a deterministic sampling rule or a fallback.
 4. Add a guarded call to `dataset_registry.register("your_key", YourDataset)` in [`builtin_components.py`](../builtin_components.py), following the existing registrations. Select your key under `dataset.name` and place its options under `dataset.params`.
 
-The UrbanSound8K adapter reads precomputed features from `cache_dir` and supplies class names, class count, and label encoding to the [sound classification task](../tasks/sound_classification.py). For example, these fixed-split settings come from [`nas_config_audio_portenta.yaml`](../../config/nas_config_audio_portenta.yaml).
+In the audio classification example, the UrbanSound8K adapter reads precomputed features from `cache_dir` and supplies class names, class count, and label encoding to the [sound classification task](../tasks/sound_classification.py). For example, these fixed-split settings come from [`nas_config_audio_portenta.yaml`](../../config/nas_config_audio_portenta.yaml).
 
 ```yaml
 dataset:

@@ -9,15 +9,9 @@ Run commands from the repository root with the `crest` environment active.
 
 ## Environment setup
 
-Install Git, Conda, and Make, then clone and install CREST.
+Install Git, Conda and Make, then follow the [CREST installation commands](../README.md#install-crest).
 
-```bash
-git clone --recurse-submodules https://github.com/nesl/crest.git
-cd crest
-conda env create -f environment.yml -n crest
-conda activate crest
-make install
-```
+### Existing clones and GPU setup
 
 For an existing clone without submodules, run `git submodule update --init --recursive`.
 The base environment supports CPU execution.
@@ -37,13 +31,11 @@ If `nvidia-smi` sees the GPU but TensorFlow returns `[]`, check that the CUDA ex
 
 ## Dataset preparation
 
-For OxIOD, obtain the Complete Dataset archive using the [dataset guide](../data/dataset_download_and_splits/README.md), then run.
+For the OxIOD odometry example, follow the [archive preparation instructions](../README.md#prepare-oxiod).
 
-```bash
-make prepare-dataset OXIOD_ZIP=/path/to/OxIOD.zip
-```
+### Prepare UrbanSound8K
 
-For UrbanSound8K, follow the same guide to obtain the audio and prepare cached log-mel features.
+For the UrbanSound8K audio classification example, follow the [dataset guide](../data/dataset_download_and_splits/README.md) to obtain the audio and prepare cached log-mel features.
 
 ```bash
 make prepare-audio-dataset
@@ -53,7 +45,7 @@ Download options, dataset terms, paths, and fold-rotation caches are documented 
 
 ## Choose a configuration
 
-| Workflow | Starting configuration | Hardware |
+| Example workflow | Starting configuration | Hardware |
 | --- | --- | --- |
 | OxIOD proxy search | [FLOPs](config/nas_config_flops_rmse.yaml) or [memory proxy](config/nas_config_memory_proxy.yaml) | None |
 | OxIOD Arduino HIL | [Nano 33 BLE](config/nas_config_ble.yaml) or [Portenta H7](config/nas_config_portenta.yaml) | Target board; harness for harness measurements |
@@ -67,16 +59,7 @@ For hardware-free audio, adapt the audio config with `device.hil: false` and obj
 
 ## Run without hardware
 
-Start with three OxIOD search attempts.
-
-```bash
-python src/nas_model_client.py \
-  --config src/config/nas_config_flops_rmse.yaml \
-  --smoke-test 3 --study-name oxiod_proxy_smoke
-```
-
-This requires the prepared dataset and evaluates models on the host.
-For a full search, omit `--smoke-test` and choose a fresh study name after reviewing the training and attempt budgets in the config.
+Follow the [workstation smoke test](../README.md#run-a-workstation-smoke-test) to evaluate candidates for the OxIOD example on the host.
 
 ## Hardware setup
 

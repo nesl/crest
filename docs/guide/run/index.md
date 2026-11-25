@@ -4,4 +4,4 @@
 
 ## Workstation example
 
-<!-- include: src/GETTING_STARTED.md#Run without hardware -->
+<!-- include: README.md#Run a workstation smoke test -->

@@ -34,7 +34,7 @@ The STM32 example is the most complete commented score/prune reference.
 
 ## Audio fold rotation
 
-Audio configs can optionally run final reporting across UrbanSound8K folds.
+The UrbanSound8K audio example can report final results across dataset folds.
 
 - `task.params.evaluation.protocol: fixed_split | fold_rotation`
 - `task.params.evaluation.fold_rotation.test_folds`, defaulting to all 10 UrbanSound8K folds.
@@ -53,7 +53,7 @@ The main top-level blocks are as follows.
 
 - `device` Hardware target, HIL runtime behavior, timing, harness options, and backend-owned device options.
 - `dataset` Required dataset selection block.
-  The built-in OxIOD dataset uses `dataset.name: oxiod` plus the keys under `dataset.params`.
+  The OxIOD odometry example uses `dataset.name: oxiod` plus the keys under `dataset.params`.
 - `task` Required task selection block.
   Task-owned final reporting policy, such as audio fold rotation, lives under `task.params.evaluation`.
 - `model` Required model-family selection block.

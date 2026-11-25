@@ -17,16 +17,16 @@ hide:
     <figure class="trial-figure">
       <div class="trial-map">
 <img src="images/crest-trial-flow.png" alt="The optimizer samples a candidate. The model family builds it, and the HIL server sends it to the target backend for compilation and measurement. Proxy, quality, latency, energy, RAM, flash, and status feed back into the trial decision.">
-<a class="trial-node" href="config/search/" title="Optimizer client, search objectives" aria-label="Optimizer client, search objectives" style="left:6.6667%;top:0.0000%;width:24.8718%;height:18.3150%"></a>
-<a class="trial-node" href="api/models/" title="Model family, building candidates" aria-label="Model family, building candidates" style="left:41.0256%;top:0.0000%;width:24.8718%;height:18.3150%"></a>
-<a class="trial-node" href="run/hardware/" title="HIL server, hardware setup" aria-label="HIL server, hardware setup" style="left:75.0000%;top:0.0000%;width:25.0000%;height:18.3150%"></a>
-<a class="trial-node" href="config/" title="Proxies, desktop study configurations" aria-label="Proxies, desktop study configurations" style="left:47.0513%;top:23.6264%;width:12.8205%;height:15.2015%"></a>
-<a class="trial-node" href="api/tasks/" title="Task, training and evaluation" aria-label="Task, training and evaluation" style="left:6.6667%;top:46.7033%;width:24.8718%;height:17.9487%"></a>
-<a class="trial-node" href="api/devices/" title="Target backend, program and run a trial" aria-label="Target backend, program and run a trial" style="left:40.8974%;top:46.5201%;width:25.0000%;height:18.1319%"></a>
-<a class="trial-node" href="extend/boards/" title="Target backend, compile firmware" aria-label="Target backend, compile firmware" style="left:75.0000%;top:46.5201%;width:25.0000%;height:18.1319%"></a>
-<a class="trial-node" href="run/results/" title="Quality metrics, read study results" aria-label="Quality metrics, read study results" style="left:12.8205%;top:70.6960%;width:12.8205%;height:15.2015%"></a>
-<a class="trial-node" href="concepts/measurement/" title="Latency and energy, measurement windows" aria-label="Latency and energy, measurement windows" style="left:47.1795%;top:70.6960%;width:12.8205%;height:15.2015%"></a>
-<a class="trial-node" href="config/target/" title="RAM and flash, compiler-reported metrics" aria-label="RAM and flash, compiler-reported metrics" style="left:81.1538%;top:70.6960%;width:12.8205%;height:15.2015%"></a>
+<a class="trial-node" href="config/search/" title="Configure search objectives" aria-label="Configure search objectives" style="left:6.6667%;top:0.0000%;width:24.8718%;height:18.3150%"></a>
+<a class="trial-node" href="api/models/" title="Build candidates with a model family" aria-label="Build candidates with a model family" style="left:41.0256%;top:0.0000%;width:24.8718%;height:18.3150%"></a>
+<a class="trial-node" href="run/hardware/" title="Set up the HIL server" aria-label="Set up the HIL server" style="left:75.0000%;top:0.0000%;width:25.0000%;height:18.3150%"></a>
+<a class="trial-node" href="config/" title="Choose a desktop proxy configuration" aria-label="Choose a desktop proxy configuration" style="left:47.0513%;top:23.6264%;width:12.8205%;height:15.2015%"></a>
+<a class="trial-node" href="api/tasks/" title="Train and evaluate a model with the task API" aria-label="Train and evaluate a model with the task API" style="left:6.6667%;top:46.7033%;width:24.8718%;height:17.9487%"></a>
+<a class="trial-node" href="api/devices/" title="Program and measure a candidate with the device API" aria-label="Program and measure a candidate with the device API" style="left:40.8974%;top:46.5201%;width:25.0000%;height:18.1319%"></a>
+<a class="trial-node" href="extend/boards/" title="Add a board backend for firmware compilation" aria-label="Add a board backend for firmware compilation" style="left:75.0000%;top:46.5201%;width:25.0000%;height:18.1319%"></a>
+<a class="trial-node" href="run/results/" title="Find quality metrics in study results" aria-label="Find quality metrics in study results" style="left:12.8205%;top:70.6960%;width:12.8205%;height:15.2015%"></a>
+<a class="trial-node" href="concepts/measurement/" title="Understand latency and energy measurement windows" aria-label="Understand latency and energy measurement windows" style="left:47.1795%;top:70.6960%;width:12.8205%;height:15.2015%"></a>
+<a class="trial-node" href="config/target/" title="Configure RAM and flash measurements" aria-label="Configure RAM and flash measurements" style="left:81.1538%;top:70.6960%;width:12.8205%;height:15.2015%"></a>
       </div>
       <figcaption>Select a box to explore the docs. <a href="images/crest-trial-flow.png">View full-size diagram</a></figcaption>
     </figure>

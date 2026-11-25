@@ -1,3 +1,5 @@
+# Copyright (c) 2026 UCLA Networked & Embedded Systems Laboratory
+# SPDX-License-Identifier: BSD-3-Clause
 """Render selected repository Markdown sections into the short website guides."""
 import os
 import re
@@ -36,13 +38,10 @@ def on_config(config):
     return config
 
 
-def render_section(source, title, root, revision, parent_level):
-    """Keep subheadings and fenced examples; resolve links against the original file."""
-    found = False
-    level = 0
+def markdown_lines(text):
+    """Yield each line with a flag for Markdown outside fenced code."""
     fence = ""
-    lines = []
-    for line in source.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
         if fence:
             if re.fullmatch(r" {0,3}" + re.escape(fence[0]) + "{%d,} *" % len(fence), line):
@@ -50,6 +49,18 @@ def render_section(source, title, root, revision, parent_level):
         elif marker:
             fence = marker[1]
         else:
+            yield line, True
+            continue
+        yield line, False
+
+
+def render_section(source, title, root, revision, parent_level):
+    """Keep subheadings and fenced examples; resolve links against the original file."""
+    found = False
+    level = 0
+    lines = []
+    for line, is_markdown in markdown_lines(source.read_text(encoding="utf-8")):
+        if is_markdown:
             heading = HEADING.match(line)
             if heading and found and len(heading[1]) <= level:
                 break
@@ -93,8 +104,10 @@ def on_page_markdown(markdown, *, page, config, files):
         if not source.is_file():
             raise PluginError(f"{page.file.src_uri} includes missing file {path}")
         try:
-            headings = re.findall(r"^(#{1,6}) ", markdown[:match.start()], re.M)
-            parent_level = len(headings[-1]) if headings else 1
+            parent_level = 1
+            for line, is_markdown in markdown_lines(markdown[:match.start()]):
+                if is_markdown and (heading := HEADING.match(line)):
+                    parent_level = len(heading[1])
             text = render_section(source, match["title"], root, revision, parent_level)
         except PluginError as error:
             raise PluginError(f"{page.file.src_uri}: {error}") from error

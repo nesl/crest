@@ -8,7 +8,7 @@
 ??? info "Training and quantization fields"
     <!-- include: src/config/README.md#`training` -->
 
-??? info "UrbanSound8K fold rotation"
+??? info "Fold rotation in the UrbanSound8K example"
     <!-- include: src/config/README.md#Audio fold rotation -->
 
 [Extend a component](../extend/index.md) · [Choose objectives](search.md)

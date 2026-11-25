@@ -12,7 +12,7 @@ If you are working on dataset loading, task semantics, or model architecture, us
 
 ## Use a supported board
 
-CREST supports Arduino Nano 33 BLE Sense, Portenta H7 (CM7 and CM4), and STM32 NUCLEO-N657X0-Q.
+The backends currently shipped with CREST support Arduino Nano 33 BLE Sense, Portenta H7 (CM7 and CM4), and STM32 NUCLEO-N657X0-Q.
 Choose a matching [example configuration](../../config/README.md#example-configs), prepare the dataset, and set the device and harness serial ports.
 Follow [Getting started](../../GETTING_STARTED.md#running-nas-and-hil) to launch the HIL server and training client.
 

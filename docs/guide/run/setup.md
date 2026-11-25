@@ -6,10 +6,14 @@
 
 ## Environment
 
-<!-- include: src/GETTING_STARTED.md#Environment setup -->
+<!-- include: README.md#Install CREST -->
 
-## Prepare the dataset
+<!-- include: src/GETTING_STARTED.md#Existing clones and GPU setup -->
 
-<!-- include: src/GETTING_STARTED.md#Dataset preparation -->
+## Prepare data for an example workload
+
+<!-- include: README.md#Prepare OxIOD -->
+
+<!-- include: src/GETTING_STARTED.md#Prepare UrbanSound8K -->
 
 [Run a first study](first-study.md)
