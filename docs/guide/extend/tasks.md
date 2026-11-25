@@ -4,4 +4,4 @@
 
 [Read the API reference](../api/tasks.md)
 
-[Full task README on GitHub](https://github.com/nesl/crest/blob/main/src/crest/tasks/README.md)
+For more information, read the [full task README on GitHub](https://github.com/nesl/crest/blob/{source_revision}/src/crest/tasks/README.md).

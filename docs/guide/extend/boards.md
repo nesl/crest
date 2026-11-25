@@ -4,4 +4,4 @@
 
 [Read the API reference](../api/devices.md)
 
-[Full hardware backend README on GitHub](https://github.com/nesl/crest/blob/main/src/crest/microcontrollers/README.md)
+For more information, read the [full hardware backend README on GitHub](https://github.com/nesl/crest/blob/{source_revision}/src/crest/microcontrollers/README.md).

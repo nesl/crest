@@ -4,4 +4,4 @@
 
 [Read the API reference](../api/datasets.md)
 
-[Full dataset README on GitHub](https://github.com/nesl/crest/blob/main/src/crest/datasets/README.md)
+For more information, read the [full dataset README on GitHub](https://github.com/nesl/crest/blob/{source_revision}/src/crest/datasets/README.md).
