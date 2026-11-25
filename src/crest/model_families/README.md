@@ -61,26 +61,24 @@ Microcontroller backends own TFLite staging, compile/upload flow, and device tel
 
 ## Add A New Model Family
 
-Use [`odom_tcn.py`](odom_tcn.py) or [`audio_dscnn/family.py`](audio_dscnn/family.py) as the concrete starting point.
+A model family turns a trial’s architecture choices into a Keras model. CREST passes it a `ModelBuildContext` with the input shape, input dtype, and task’s target specification. The [audio DS-CNN family](audio_dscnn/family.py) shows how to use that context for classification. The [odometry TCN family](odom_tcn.py) shows how to build a model with two outputs.
 
-1. Add a new module under [`src/crest/model_families/`](.).
-2. Implement a `ModelFamilyABC` subclass from [`../interfaces/model_family.py`](../interfaces/model_family.py).
-3. Implement the required methods.
-   - `sample_hparams(trial, ctx, config)`
-   - `build_model(hparams, ctx, config)`
-   - For explicit proposers, including LLM generation, also implement `trial_search_space(ctx, config)` with the exact raw parameters sampled by `sample_hparams(...)`.
-4. Keep family-specific logic inside the family.
-   - search-space sampling
-   - input-shape interpretation from `ModelBuildContext`
-   - family-local helper composition for builders, decoders, or export materialization
-   - family-specific export-model materialization.
-5. Register the class in [`../builtin_components.py`](../builtin_components.py) with `model_family_registry.register(...)`.
-6. Select it through `model.family` in config.
-7. Put family-owned knobs under `model.params` and `model.search`.
-8. Verify both the training/NAS path and the HIL/export path.
+1. **Build the model.** Create a [`ModelFamilyABC` subclass](../interfaces/model_family.py) in this directory. Implement `sample_hparams(trial, ctx, config)` to sample and normalize one candidate’s parameters. Implement `build_model(hparams, ctx, config)` to turn them into an uncompiled Keras model. The task handles compilation.
+2. **Describe the search space.** If an explicit proposer such as the LLM generator will use the family, implement `trial_search_space(ctx, config)`. Its parameter names, bounds, and choices must match the raw values sampled by `sample_hparams`. Use `validate_config` and `validate_hparams` for family-specific constraints. If replay needs to reconstruct build-time values from saved parameters, implement `decode_trial_hparams`.
+3. **Choose the export behavior.** The base class can build an untrained candidate or load a trained model from a checkpoint. Supply `custom_objects()` when loading requires custom Keras objects. Override `materialize_export_model` if preparing the model for hardware requires a family-specific transformation.
+4. **Register and select the family.** Register the class with `model_family_registry.register(...)` in [`builtin_components.py`](../builtin_components.py). Use that registry key as `model.family` in the study YAML. Put build and export settings under `model.params` and search overrides under `model.search`.
 
-Components are registered explicitly and are not discovered from files in this directory.
-Families receive the `model` configuration subtree, with options under `model.params` and search controls under `model.search`.
+The [Portenta audio study](../../config/nas_config_audio_portenta.yaml) selects the registered DS-CNN family and prepares an untrained candidate for hardware evaluation:
+
+```yaml
+model:
+  family: audio_dscnn
+  params:
+    export_variant: untrained
+  search: {}
+```
+
+**Check the family before a full search.** Build one candidate with a small context and check its outputs against the task’s target specification. Exercise the export variant your study selects, then verify the candidate on the intended backend. The [audio DS-CNN tests](../../../test/test_audio_dscnn.py) and [odometry TCN tests](../../../test/test_odom_tcn.py) provide examples.
 
 ## Contract In Practice
 
