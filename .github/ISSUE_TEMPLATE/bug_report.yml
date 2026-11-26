@@ -1,0 +1,32 @@
+name: Bug report
+description: Report a problem with CREST and share how to reproduce it.
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Describe what you expected and what happened instead. Include the error message if you saw one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can we reproduce it?
+      description: Include the steps and command you ran. If you used a study configuration, name the shipped YAML file and list your changes, or paste the smallest relevant snippet.
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Which software versions did you use?
+      description: Include the CREST commit or release, your operating system, and your Python version if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Which hardware or toolchain was involved?
+      description: For compilation or board issues, include the target board, toolchain version, and whether you compiled only or ran on the board.
